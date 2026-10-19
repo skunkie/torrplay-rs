@@ -6,8 +6,9 @@ SPDX-License-Identifier: MIT
 
 # 1. Contract linting and example validation
 
-- Status: accepted for specification linting and example validation; code
-  generation is decided in milestone 3.
+- Status: accepted for specification linting and example validation;
+  [ADR 6](0006-contract-validation.md) decides code generation and how the
+  server's traffic is validated.
 - Date: 2026-10-19
 
 ## Context
