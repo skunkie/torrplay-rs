@@ -495,6 +495,30 @@ so the patch to keep peers while idle (P5) is not needed; without
 `TCP_NODELAY`, which librqbit never sets, small messages waited about
 40 ms for delayed acknowledgments, a candidate patch for E6.
 
+### E5: readers without blocking permits
+
+The test in `spikes/engine-spike/tests/e5_readers.rs` opens streams on a
+memory torrent's missing pieces before the torrent starts, then starts it.
+
+- **Waiting streams stop the torrent.** On the unpatched pin, with the
+  default of eight blocking permits, eight waiting streams took every
+  permit, so no piece could be written and none of them ever read a byte;
+  a ninth stream could not even open. Upstream made streams hold the
+  permit for their whole life in `5bf0128a` so that their reads would not
+  stall behind writes, at the cost of this starvation.
+- **The fork's fifth commit (P3) removes the stream's permit.** Stream
+  reads already run through `block_in_place` without the semaphore, so
+  they neither wait behind writes nor keep writes from running. Twelve
+  readers waiting at once then all read their pieces byte for byte, in
+  each of five runs on one CPU (RDR-04). **Supported with P3.**
+- **Idle readers kept as streams cost nothing bounded.** Once a stream
+  holds no permit, the lifecycle's limits of 4 idle readers per torrent
+  and 16 overall bound memory and pinned ranges, not engine concurrency.
+- **TorrPlay readers can use `FileStream`.** Question 5 kept open reading
+  through TorrPlay's own storage after a completion check, to avoid the
+  permit. With P3 and E3's stale-read fix, `FileStream` already waits
+  correctly for missing and evicted pieces, so that bypass is not needed.
+
 ## Fallback engines
 
 - **A maintained librqbit fork.** If upstream declines the patches, keep
@@ -515,8 +539,6 @@ so the patch to keep peers while idle (P5) is not needed; without
 - Does a priority hook replacing `iter_next_pieces` suffice for highest-wins
   priorities and readahead rebalancing, or do peer request pipelines also
   need cancellation when priorities change?
-- Does holding streams without the blocking semaphore permit remove the
-  starvation risk with more than eight concurrent and idle readers?
 - How long can `pwrite_all` wait for cache capacity before it stalls peer
   tasks, and what is the bounded fallback when pinned ranges exceed cache
   capacity?
