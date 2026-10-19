@@ -215,20 +215,14 @@ async fn an_evicted_piece_is_marked_missing_and_downloaded_again() -> anyhow::Re
     })
     .await?;
 
-    assert_eq!(cached.evict(&[5, 6])?, 2);
+    // The seeder reconnects at once, so the pieces may download again
+    // before any check here; the counters below tell what happened.
     assert_eq!(
-        cached.evict(&[5])?,
-        0,
+        cached.evict(&[5, 6, 5])?,
+        2,
         "a missing piece is not evicted twice"
     );
-    let stats = cache.audit()?;
-    assert_eq!(
-        (stats.usage_bytes, stats.eviction_count),
-        (total - 2 * piece, 2)
-    );
-    let torrent = handle.stats();
-    assert_eq!(torrent.progress_bytes, total - 2 * piece);
-    assert!(!torrent.finished);
+    assert_eq!(cache.audit()?.eviction_count, 2);
 
     check_every_file(&handle, &spec).await?;
     bounded(
@@ -268,12 +262,15 @@ async fn pieces_evicted_while_paused_are_missing_after_starting() -> anyhow::Res
     assert_eq!(cached.evict(&[0, 63])?, 2);
     assert_eq!(handle.stats().progress_bytes, total - 2 * piece);
     bounded("starting", leecher.session.unpause(&handle)).await?;
-    let torrent = handle.stats();
-    assert_eq!(torrent.progress_bytes, total - 2 * piece);
-    assert!(!torrent.finished);
-
+    // The pieces may download again before any check here, so count what
+    // the started torrent downloaded: its counters start from zero.
     check_every_file(&handle, &spec).await?;
     bounded("completing the download", handle.wait_until_completed()).await?;
+    assert_eq!(
+        live_stats(&handle)?.snapshot.downloaded_and_checked_bytes,
+        2 * piece,
+        "exactly the evicted pieces counted as missing after starting"
+    );
     assert_eq!(cache.audit()?.usage_bytes, total);
 
     leecher.session.stop().await;

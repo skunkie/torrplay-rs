@@ -429,10 +429,11 @@ number of rounds and fails when nothing is evictable.
   streams byte for byte, with at least 24 evictions, and its long-evicted
   start streams correctly again. **Supported.**
 - **An evicted piece is marked missing and downloaded again** (CAC-02 and
-  CAC-03). Evicting pieces of a finished torrent, whose seeder was already
-  dropped as not needed, lowers progress and cache usage by exactly those
-  pieces; reading them reconnects the seeder, and every fetched byte passes
-  its hash check. **Supported with P1.**
+  CAC-03). Evicting two pieces of a finished torrent, whose seeder was
+  already dropped as not needed, reconnects the seeder at once; the torrent
+  downloads exactly those pieces again, every fetched byte passes its hash
+  check, and cache usage returns to the torrent's size. **Supported with
+  P1.**
 - **Eviction while paused works** (CAC-04): evicted pieces count as missing
   after the torrent starts and download again. **Supported with P1.**
 - **Paused torrents are evicted first** (CAC-08): a started torrent needing
