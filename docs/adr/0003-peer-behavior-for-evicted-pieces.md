@@ -89,10 +89,11 @@ or C.
 Adopt option A for the prototype: torrents in `memory` storage mode do not
 upload, and torrents in `disk` storage mode upload normally. It is the only
 option that never advertises a piece the engine may later evict, so it
-cannot violate the protocol. The prototype has memory storage only, so this
-peer policy needs no engine patch: enabling the `disable-upload` Cargo
-feature and setting `disable_upload` for the session is enough. Eviction
-itself still needs the completion invalidation patch from ADR 2.
+cannot violate the protocol. The fork's per-torrent upload switch (patch P2,
+see the spike findings below) applies it: the adapter adds every memory
+torrent with `AddTorrentOptions::disable_upload`, so disk torrents can later
+share the session and upload. Eviction itself still needs the completion
+invalidation patch from ADR 2.
 
 Storage mode transitions follow from that rule:
 
@@ -127,31 +128,62 @@ peers without the Fast Extension.
   `memory` storage mode, and must document that they do not upload.
 - Upload and seeding statistics are zero for torrents in `memory` storage
   mode, which affects trackers that enforce ratios.
-- Idle torrents in `memory` storage mode shed peers, so time to first byte
-  after an idle period includes reconnecting. Keeping peers while idle needs
-  a patch to the finished check in `task_peer_adder`.
-- The prototype enables the `disable-upload` Cargo feature. When disk
-  storage arrives, the per-torrent upload switch becomes part of the
-  librqbit patch set maintained with ADR 2's revision pin.
+- Finished torrents in `memory` storage mode without streams shed peers that
+  have the whole torrent, so time to first byte after an eviction includes
+  reconnecting. The spike measured the cost and keeps the behavior.
+- The per-torrent upload switch is part of the librqbit patch set
+  maintained in ADR 2's fork; the `disable-upload` Cargo feature is not
+  needed.
 - Moving to option D later changes swarm behavior but not the API, because
   the API does not expose the policy for `memory` storage.
+
+## Spike findings
+
+E4 tests the policy in `spikes/engine-spike/tests/e4_peer_policy.rs`. A
+minimal raw BEP 3 peer connects to the torrent and records the messages it
+receives, because librqbit's peers do not expose them. Against a torrent
+that uploads, the same probe receives a bitfield and an unchoke and is
+served the block it requests, so its observations are meaningful.
+
+- **The per-torrent upload switch is a small patch (P2).**
+  `AddTorrentOptions::disable_upload` sets librqbit's existing per-torrent
+  option, which the `disable-upload` feature could previously set only for
+  a whole session; the feature still sets it for every torrent. librqbit
+  also unchoked every peer even with upload disabled, inviting requests it
+  would refuse, so the patch keeps such peers choked. The change is about
+  40 lines and does not depend on the other patches, so it can be proposed
+  upstream alone.
+- **A memory torrent announces nothing** (PEER-01). While it completed
+  pieces under sustained eviction, the probe received no bitfield, no
+  `have`, and no unchoke. A request it sent anyway closed the connection
+  without a block, and upload statistics stayed zero. **Supported with
+  P2.**
+- **Idle peers are shed only by finished torrents.** A memory torrent that
+  is not finished keeps its peers and keeps downloading. A finished one
+  without streams disconnects peers that have the whole torrent, and
+  completion invalidation reconnects them as soon as a piece is evicted,
+  before any stream asks for it.
+- **Reconnecting costs little; Nagle's algorithm costs more** (PEER-02). On
+  loopback, the first byte of an evicted piece arrived 42 to 46 ms after
+  the eviction in most of 25 rounds, against 25 to 125 µs for a resident
+  piece. Setting `TCP_NODELAY` on peer sockets, which librqbit never does,
+  cut that to 0.8 to 1.4 ms: small messages such as requests otherwise wait
+  for a delayed acknowledgment. Reconnecting therefore adds about a
+  millisecond here plus the network's connection and handshake round
+  trips, so keeping peers while idle (P5) is not needed now. The
+  milestone 5 benchmarks measure it on real networks. Setting
+  `TCP_NODELAY` is a candidate patch for E6, which measures seek latency.
 
 ## Open questions for the spike
 
 - How much does option A reduce download rate and time to first byte
   compared with uploading, measured against controlled local leechers that
   use a reciprocal choking algorithm, such as libtorrent-based clients?
-- How much does reconnecting after an idle period add to time to first
-  byte, and do peers ignored while idle stay reachable? Should memory
-  torrents keep their peers while idle, at the cost of a patch to the
-  finished check?
-- Does any request still reach a torrent in `memory` storage mode, for
-  example from peers that ignore an empty bitfield, and does closing the
-  connection on it cause bans or reconnect loops?
+- Do peers that receive no unchoke and no bitfield, such as
+  libtorrent-based clients, ban a memory torrent or reconnect in loops?
 - Does the engine close existing connections and stop announcing pieces
   correctly on a `disk` to `memory` transition, while active readers
   continue?
-- How large is the per-torrent upload switch patch that disk storage will
-  need, and would upstream accept it on its own?
+- Would upstream accept the per-torrent upload switch on its own?
 - If option D becomes necessary, which subset of BEP 6 do the controlled
   peers require, and how do peers without the extension behave?

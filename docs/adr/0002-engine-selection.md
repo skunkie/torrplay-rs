@@ -484,6 +484,17 @@ number of rounds and fails when nothing is evictable.
   example when partial pieces fill the cache. The tests' capacities leave
   room, and E6's reservation before request removes the failure.
 
+### E4: peer policy
+
+[ADR 3](0003-peer-behavior-for-evicted-pieces.md#spike-findings) records the
+details. The fork adds the per-torrent upload switch (P2), which also keeps
+peers of a torrent that does not upload choked, and a memory torrent then
+announces no piece and refuses requests (PEER-01). Reconnecting after an
+eviction cost about a millisecond on loopback once `TCP_NODELAY` was set,
+so the patch to keep peers while idle (P5) is not needed; without
+`TCP_NODELAY`, which librqbit never sets, small messages waited about
+40 ms for delayed acknowledgments, a candidate patch for E6.
+
 ## Fallback engines
 
 - **A maintained librqbit fork.** If upstream declines the patches, keep
