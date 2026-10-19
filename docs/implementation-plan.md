@@ -27,7 +27,7 @@ Deliver these artifacts before production handlers:
 - CI checks for the specification: add the pinned linter and example validation to CI with the first `api/openapi.yaml`, and document matching local commands in `docs/development.md`.
 - [`docs/api-conventions.md`](api-conventions.md): naming, HTTP semantics, pagination, errors, links, and evolution policy.
 - [`docs/lifecycle.md`](lifecycle.md): state transitions, cancellation, deletion, shutdown, and restart behavior.
-- `docs/acceptance.md`: correctness scenarios, the boundary between cache usage and process memory, and the benchmark protocol, including the access-trace format and target devices.
+- [`docs/acceptance.md`](acceptance.md): correctness scenarios, the boundary between cache usage and process memory, and the benchmark protocol, including the access-trace format and target devices.
 - Short architecture decision records under `docs/adr/` for engine selection, [resource identity](adr/0004-resource-identity.md), [storage](adr/0005-storage.md), peer behavior for evicted pieces, and contract tooling. Draft the engine selection and peer behavior records here and finalize them from the milestone 2 capability report.
 
 ### Naming and representations
