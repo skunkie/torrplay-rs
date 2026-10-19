@@ -449,6 +449,19 @@ number of rounds and fails when nothing is evictable.
   the next torrent in CAC-09 failed for lack of room. The adapter releases
   a torrent's cache usage as soon as librqbit has deleted it, and later
   reads and writes of the deleted torrent fail.
+- **A torrent must be attached before it starts.** The cache can evict a
+  torrent's pieces only once the adapter has attached the engine handle,
+  which exists only after `add_torrent` returns. A torrent added started
+  begins downloading at once, so on a slow runner its first writes filled
+  the cache with pieces nothing could evict, and the failed write failed
+  the torrent. The adapter adds memory torrents paused, attaches them, and
+  then starts them.
+- **Starting a torrent as its initial check ends fails it.** librqbit
+  clears its check-running flag before it switches the torrent to paused,
+  and a start in between runs a second check, which finds the storage
+  already taken and fails the torrent. The adapter starts a torrent only
+  after `wait_until_initialized`; the upstream fix is to clear the flag
+  under the state lock.
 - **No lock-order inversion** shows: four readers of two torrents that
   evict each other's pieces, two passes each, finish byte for byte, each
   read within its bound.

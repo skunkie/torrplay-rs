@@ -25,7 +25,12 @@ const KIB: u64 = 1024;
 const MIB: u64 = 1024 * KIB;
 
 /// Adds `spec` to the leecher with memory storage from `factory`, with the
-/// seeder as its only peer, and attaches it so the cache can evict it.
+/// seeder as its only peer, and attaches it so the cache can evict it. The
+/// torrent is added paused and started once attached, as the adapter must:
+/// otherwise its first writes can fill the cache before any piece is
+/// evictable, and a write that fails fails the torrent. Starting it waits
+/// for the initial check, because librqbit runs a second check, which fails
+/// the torrent, if a start arrives as the first one ends.
 async fn add_in_memory(
     leecher: &Leecher,
     seeder: &Seeder,
@@ -34,6 +39,7 @@ async fn add_in_memory(
 ) -> anyhow::Result<(Arc<ManagedTorrent>, CachedTorrent)> {
     let options = AddTorrentOptions {
         storage_factory: Some(factory.clone().into_boxed()),
+        paused: true,
         ..leecher.add_options(&[seeder.addr])?
     };
     let handle = bounded(
@@ -46,6 +52,8 @@ async fn add_in_memory(
     .into_handle()
     .context("the torrent was not added")?;
     let cached = factory.attach(&handle)?;
+    bounded("the initial check", handle.wait_until_initialized()).await?;
+    bounded("starting the torrent", leecher.session.unpause(&handle)).await?;
     Ok((handle, cached))
 }
 
@@ -342,7 +350,15 @@ async fn opening_and_deleting_torrents_in_a_loop_leaves_nothing_behind() -> anyh
     for round in 0..100 {
         let (handle, cached) = add_in_memory(&leecher, &seeder, &spec, &factory).await?;
         let offset = (round * 37 * KIB) % (spec.total_size_bytes() - 64 * KIB);
-        let bytes = read_range(&handle, 0, offset, Some(64 * KIB as usize)).await?;
+        let bytes = read_range(&handle, 0, offset, Some(64 * KIB as usize))
+            .await
+            .with_context(|| {
+                format!(
+                    "round {round}: {:?} {:?}",
+                    handle.stats().state,
+                    handle.stats().error
+                )
+            })?;
         assert_eq!(
             generator::first_mismatch(spec.file_seed(0), offset, &bytes),
             None,
