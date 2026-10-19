@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# Remove once the pinned actionlint release recognizes this hosted runner.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
