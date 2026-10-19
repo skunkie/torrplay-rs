@@ -11,7 +11,7 @@
 
 use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -87,6 +87,9 @@ pub struct Seeder {
     pub handle: Arc<ManagedTorrent>,
     /// The address peers connect to.
     pub addr: SocketAddr,
+    /// The content on disk: the file of a single-file torrent, or the
+    /// directory of a multi-file one.
+    pub root: PathBuf,
     _dir: TempDir,
 }
 
@@ -94,6 +97,16 @@ impl Seeder {
     /// Writes the fixture's content, adds `metainfo` over it, and waits until
     /// the initial check confirms every piece.
     pub async fn start(spec: &FixtureSpec, metainfo: &[u8]) -> anyhow::Result<Self> {
+        Self::start_with_peers(spec, metainfo, &[]).await
+    }
+
+    /// Like [`start`](Self::start), and also connects to `peers`, so a
+    /// leecher can gain this seeder after it started.
+    pub async fn start_with_peers(
+        spec: &FixtureSpec,
+        metainfo: &[u8],
+        peers: &[SocketAddr],
+    ) -> anyhow::Result<Self> {
         let dir = tempfile::tempdir()?;
         let root = spec.write_content(dir.path())?;
         let session = new_session(dir.path()).await?;
@@ -104,6 +117,7 @@ impl Seeder {
                 Some(AddTorrentOptions {
                     output_folder: Some(output_folder_for(spec, &root)?),
                     overwrite: true,
+                    initial_peers: (!peers.is_empty()).then(|| peers.to_vec()),
                     ..Default::default()
                 }),
             ),
@@ -119,6 +133,7 @@ impl Seeder {
             session,
             handle,
             addr,
+            root,
             _dir: dir,
         })
     }
