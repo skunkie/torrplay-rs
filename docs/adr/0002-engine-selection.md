@@ -571,6 +571,28 @@ and reports its position. The tests are in
   should use a small window for memory torrents rather than cancel
   requests; the milestone 5 benchmarks tune it.
 
+### E7: adversarial peers
+
+The tests in `spikes/engine-spike/tests/e7_adversarial_peers.rs` need no
+engine patch.
+
+- **Corrupt blocks never reach a reader** (CAC-11). A memory torrent whose
+  only peer sent corrupt blocks fetched them, failed every hash check, and
+  verified nothing; once a valid seeder connected, every piece came again
+  from it and the reader received the file byte for byte. P4's release
+  hook drops each failed piece's buffer, and the cache's accounting held.
+  **Supported.**
+- **librqbit uploads what it reads without hashing it.** The corrupt peer
+  was an ordinary librqbit seeder whose file changed on disk after its
+  initial check. Memory torrents do not upload (ADR 3), but disk torrents
+  in milestone 6 would pass on disk corruption until a peer's hash check
+  rejects it, and the peer then disconnects them.
+- **Mismatched metadata is discarded** (LIF-12). A minimal BEP 9 peer
+  served metadata of the right size whose hash did not match; librqbit
+  discarded it, did not fail the torrent, and used the metadata of a valid
+  peer that answered later. The torrent's files then read correctly.
+  **Supported.**
+
 ## Fallback engines
 
 - **A maintained librqbit fork.** If upstream declines the patches, keep
