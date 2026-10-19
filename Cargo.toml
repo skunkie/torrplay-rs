@@ -27,8 +27,8 @@ anyhow = "1"
 # each. docs/adr/0002-engine-selection.md records why, and
 # docs/development.md how to update it. TLS uses rustls so builds do not
 # depend on a system OpenSSL.
-librqbit = { git = "https://github.com/skunkie/rqbit", rev = "b5de742fff831b46f156ea69257f5a4f0e1ec11e", default-features = false, features = ["rust-tls"] }
-librqbit-core = { git = "https://github.com/skunkie/rqbit", rev = "b5de742fff831b46f156ea69257f5a4f0e1ec11e", default-features = false }
+librqbit = { git = "https://github.com/skunkie/rqbit", rev = "6c8c975d40a9908d97559adbfc7a5fb714d8257a", default-features = false, features = ["rust-tls"] }
+librqbit-core = { git = "https://github.com/skunkie/rqbit", rev = "6c8c975d40a9908d97559adbfc7a5fb714d8257a", default-features = false }
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "time"] }
