@@ -519,6 +519,58 @@ memory torrent's missing pieces before the torrent starts, then starts it.
   permit. With P3 and E3's stale-read fix, `FileStream` already waits
   correctly for missing and evicted pieces, so that bypass is not needed.
 
+### E6: scheduling and reservation before request
+
+The fork's sixth commit (P4) adds three things:
+- `TorrentStorage::reserve_piece`, called under the torrent's state lock
+  before a piece is reserved for a peer, which can leave it unrequested;
+  `TorrentStorage::release_piece`, called when a requested piece goes back
+  to the queue unverified.
+- A `PieceSelector`, set per torrent, that replaces the streams' readahead
+  and can turn off downloading other pieces.
+- `ManagedTorrent::reselect_pieces`, which wakes peers waiting for
+  something to request.
+
+The commit also exports `FileStream`. It adds about 200 lines, most of them
+tests.
+
+`crates/torrplay-engine` builds on it. The cache reserves a piece's room as
+a pending allocation, and a reservation that does not fit waits for an
+evictor task, which evicts with no lock held and wakes the torrents whose
+reservations then fit. Each torrent's scheduler is its piece selector: it
+requests only what its readers need, most urgent first, and pins pieces in
+the tiers ADR 5's spike findings describe. A `Reader` wraps `FileStream`
+and reports its position. The tests are in
+`spikes/engine-spike/tests/e6_scheduling.rs`.
+
+- **A torrent downloads only what its readers need.** A reader streamed a
+  file four times the cache capacity byte for byte, and every piece was
+  downloaded exactly once. Without a selector, librqbit's 32 MiB readahead
+  per stream outran a small cache: CAC-09's torrents evicted and
+  downloaded pieces thousands of times per 64 KiB read, and its 100 rounds
+  took 30 s instead of 8. **Supported with P4.**
+- **Reservation before request keeps writes from failing.** A cache that
+  fills with pieces nothing can evict now leaves the torrent waiting rather
+  than failed, as the rewritten E2 test records. Six readers whose current
+  pieces alone needed more than the capacity all finished byte for byte
+  within capacity (CAC-05), and a piece longer than the capacity is never
+  requested, so the torrent stays healthy (CAC-06). **Supported with P4.**
+- **File-boundary pieces stay resident** (CAC-10). While a reader of a
+  `multi-boundary` file existed, its file's first and last pieces and its
+  current piece stayed resident as another torrent's reader evicted around
+  them, while an unpinned piece it had read was evicted. **Supported.**
+- **Highest-wins priorities and rebalancing** (RDR-05, in part RDR-06) are
+  computed by the scheduler from reader positions alone, so the selector
+  hook suffices; the scheduler's unit tests cover overlapping windows, a
+  backward seek, and windows shrinking as readers are added. The hook does
+  not cancel outstanding requests when priorities change.
+- **Outstanding requests set seek latency.** With the download limited to
+  16 MiB/s, the first byte after a seek took 14 to 124 ms with librqbit's
+  default window of 128 blocks per peer, and 9 to 11 ms with 16: the
+  worst case is the 2 MiB already requested draining first. The adapter
+  should use a small window for memory torrents rather than cancel
+  requests; the milestone 5 benchmarks tune it.
+
 ## Fallback engines
 
 - **A maintained librqbit fork.** If upstream declines the patches, keep
@@ -536,12 +588,6 @@ memory torrent's missing pieces before the torrent starts, then starts it.
 - Does the peer policy that [ADR 3](0003-peer-behavior-for-evicted-pieces.md)
   proposes, no upload from memory storage, hold up? ADR 3 lists the
   measurements.
-- Does a priority hook replacing `iter_next_pieces` suffice for highest-wins
-  priorities and readahead rebalancing, or do peer request pipelines also
-  need cancellation when priorities change?
-- How long can `pwrite_all` wait for cache capacity before it stalls peer
-  tasks, and what is the bounded fallback when pinned ranges exceed cache
-  capacity?
 - How do v2-only torrent files and magnets fail, and which hybrid torrent
   files load as v1 before PR #701 is released?
 - Should the accepted hash mismatch in `validate_fastresume` be reported

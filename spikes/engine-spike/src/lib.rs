@@ -21,6 +21,10 @@ use librqbit::{
     SessionOptions,
 };
 use tempfile::TempDir;
+use torrplay_engine::cache::PieceCache;
+use torrplay_engine::evictor::Evictor;
+use torrplay_engine::scheduler::TorrentScheduler;
+use torrplay_engine::storage::{CachedTorrent, MemoryStorageFactory};
 use torrplay_fixtures::{FixtureSpec, Layout};
 
 /// The longest any single step of an experiment may take.
@@ -150,6 +154,98 @@ impl Leecher {
             overwrite: true,
             initial_peers: Some(peers.to_vec()),
             ..Default::default()
+        })
+    }
+}
+
+/// A piece cache with its memory storage factory and running evictor.
+pub struct MemoryCache {
+    /// The cache.
+    pub cache: Arc<PieceCache>,
+    /// The factory for torrents in memory storage mode.
+    pub factory: MemoryStorageFactory,
+    evictor: Evictor,
+}
+
+impl MemoryCache {
+    /// Creates a cache of `capacity_bytes` and starts its evictor.
+    pub fn start(capacity_bytes: u64) -> Self {
+        let cache = PieceCache::new(capacity_bytes);
+        Self {
+            factory: MemoryStorageFactory::new(cache.clone()),
+            evictor: Evictor::spawn(cache.clone()),
+            cache,
+        }
+    }
+
+    /// Stops the evictor, failing if it failed.
+    pub async fn shutdown(self) -> anyhow::Result<()> {
+        bounded("stopping the evictor", self.evictor.shutdown()).await
+    }
+}
+
+/// A torrent in memory storage mode whose readers decide what it downloads.
+pub struct ScheduledTorrent {
+    /// The torrent.
+    pub handle: Arc<ManagedTorrent>,
+    /// Its pieces in the cache.
+    pub cached: CachedTorrent,
+    /// Its piece selector, which opens readers.
+    pub scheduler: Arc<TorrentScheduler>,
+}
+
+impl MemoryCache {
+    /// Adds `spec` to `leecher` with `peers` as its only peers, as the
+    /// adapter will: without upload and with a scheduler sharing
+    /// `readahead_bytes`, paused until it is attached to the cache and its
+    /// initial check has ended, and then started.
+    pub async fn add_scheduled(
+        &self,
+        leecher: &Leecher,
+        peers: &[SocketAddr],
+        spec: &FixtureSpec,
+        readahead_bytes: u64,
+    ) -> anyhow::Result<ScheduledTorrent> {
+        self.add_scheduled_with(leecher, peers, spec, readahead_bytes, |_| {})
+            .await
+    }
+
+    /// Like [`add_scheduled`](Self::add_scheduled), letting `tune` adjust
+    /// the options, such as peer options or rate limits.
+    pub async fn add_scheduled_with(
+        &self,
+        leecher: &Leecher,
+        peers: &[SocketAddr],
+        spec: &FixtureSpec,
+        readahead_bytes: u64,
+        tune: impl FnOnce(&mut AddTorrentOptions),
+    ) -> anyhow::Result<ScheduledTorrent> {
+        let scheduler = TorrentScheduler::new(readahead_bytes);
+        let mut options = AddTorrentOptions {
+            storage_factory: Some(self.factory.clone().into_boxed()),
+            piece_selector: Some(scheduler.clone()),
+            disable_upload: true,
+            paused: true,
+            ..leecher.add_options(peers)?
+        };
+        tune(&mut options);
+        let handle = bounded(
+            "adding a torrent",
+            leecher
+                .session
+                .add_torrent(AddTorrent::from_bytes(spec.metainfo().bytes), Some(options)),
+        )
+        .await?
+        .into_handle()
+        .context("the torrent was not added")?;
+        let cached = self.factory.attach(&handle)?;
+        scheduler.bind(&cached, &handle)?;
+        bounded("the initial check", handle.wait_until_initialized()).await?;
+        bounded("starting the torrent", leecher.session.unpause(&handle)).await?;
+        Ok(ScheduledTorrent {
+            handle,
+            cached,
+            scheduler,
         })
     }
 }

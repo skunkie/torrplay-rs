@@ -11,10 +11,9 @@ use std::io::SeekFrom;
 use std::sync::Arc;
 
 use anyhow::Context;
-use engine_spike::{Leecher, Seeder, bounded};
+use engine_spike::{Leecher, MemoryCache, Seeder, bounded};
 use librqbit::{AddTorrent, AddTorrentOptions, ManagedTorrent};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
-use torrplay_engine::cache::PieceCache;
 use torrplay_engine::storage::{CachedTorrent, MemoryStorageFactory};
 use torrplay_fixtures::{FixtureSpec, catalog, generator};
 
@@ -60,8 +59,9 @@ async fn twelve_waiting_readers_do_not_block_piece_writes() -> anyhow::Result<()
     let piece_length = u64::from(spec.piece_length);
     let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
     let leecher = Leecher::start().await?;
-    let factory = MemoryStorageFactory::new(PieceCache::new(4 * MIB));
-    let (handle, _cached) = add_paused_in_memory(&leecher, &seeder, &spec, &factory).await?;
+    let memory = MemoryCache::start(4 * MIB);
+    let factory = &memory.factory;
+    let (handle, _cached) = add_paused_in_memory(&leecher, &seeder, &spec, factory).await?;
 
     // Each reader opens its stream and seeks before the torrent starts, so
     // all twelve are waiting at once.
@@ -112,5 +112,6 @@ async fn twelve_waiting_readers_do_not_block_piece_writes() -> anyhow::Result<()
 
     leecher.session.stop().await;
     seeder.session.stop().await;
+    memory.shutdown().await?;
     Ok(())
 }
