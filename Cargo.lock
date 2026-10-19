@@ -3296,6 +3296,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "torrplay-core"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "sha2",
+ "thiserror 2.0.21",
+ "tokio",
+ "torrplay-fixtures",
+]
+
+[[package]]
 name = "torrplay-engine"
 version = "0.1.0"
 dependencies = [
