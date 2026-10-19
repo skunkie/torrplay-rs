@@ -36,7 +36,8 @@ on 2026-10-19. PR and issue numbers refer to the rqbit repository.
 
 Each capability receives one verdict:
 
-- **Supported**: works through the public API of the released crate.
+- **Supported**: works through the public API of librqbit at the pinned
+  revision.
 - **Bounded patch**: needs a small, local change to librqbit that can be
   maintained as an isolated fork or proposed upstream.
 - **Blocked**: needs a redesign of librqbit or a different engine.
@@ -52,8 +53,10 @@ Piece completion lives in several places:
 - `PieceTracker` in `crates/librqbit/src/piece_tracker.rs` wraps the chunk
   tracker and records in-flight pieces per peer.
 - `TorrentStateLive` in `crates/librqbit/src/torrent_state/live/mod.rs`
-  keeps atomic counters such as `have_bytes` and
-  `downloaded_and_checked_pieces`, which also feed the finished state.
+  keeps atomic counters: `have_bytes` tracks verified data, while
+  `downloaded_and_checked_bytes` and `downloaded_and_checked_pieces` count
+  every verified download. The finished state comes from
+  `HaveNeededSelected`, not from these counters.
 - The `BitVFactory` in `crates/librqbit/src/bitv_factory.rs` persists the
   `have` bitfield as fastresume data through the JSON or PostgreSQL session
   persistence stores, flushed by `DiskBackedBitV` in `bitv.rs`. With
@@ -70,13 +73,14 @@ dies with in-flight pieces, returns early when `have` is set. The
 
 A patch must add one operation that, under the torrent state lock, clears the
 `have` bit and the piece's `chunk_status` blocks, requeues the piece if it is
-selected, updates `HaveNeededSelected`, `per_file_bytes`, and the live
-counters, marks the bitfield for flushing, and wakes waiting peer tasks
-through `new_pieces_notify`. Clearing `chunk_status` matters: otherwise
-`mark_chunk_downloaded` reports `PreviouslyCompleted` and discards the blocks
-of the re-download. If the torrent was finished, `on_piece_completed` may
-already have disconnected peers that have the full torrent, so invalidation
-must also call `reconnect_all_not_needed_peers`.
+selected, updates `HaveNeededSelected`, `per_file_bytes`, and the
+`have_bytes` counter, marks the bitfield for flushing, and wakes waiting peer
+tasks through `new_pieces_notify`. The download counters stay unchanged, so
+a re-download counts as another download. Clearing `chunk_status` matters:
+otherwise `mark_chunk_downloaded` reports `PreviouslyCompleted` and discards
+the blocks of the re-download. If the torrent was finished,
+`on_piece_completed` may already have disconnected peers that have the full
+torrent, so invalidation must also call `reconnect_all_not_needed_peers`.
 
 **Verdict: bounded patch.** The records are few and in one crate, but the
 change touches finished-state handling, so the spike must test eviction and
@@ -114,10 +118,18 @@ data, the engine still believes the piece is complete:
 - A failed `pwrite_all` calls `on_fatal_error` and moves the whole torrent to
   the error state. Storage cannot refuse a write when the cache is full; it
   must evict or wait, and waiting blocks a thread inside `block_in_place`.
-- `FileOps::initial_check` treats read errors as missing pieces, and
-  `validate_fastresume` discards fastresume data when sampled pieces fail to
-  read. Memory storage must run without fastresume so a restart does not
-  trust a stale bitfield.
+- `FileOps::initial_check` treats read errors as missing pieces. With
+  fastresume enabled, `validate_fastresume` in
+  `crates/librqbit/src/torrent_state/initializing.rs` checks the first saved
+  piece of each file and a random sample of the rest. It discards the saved
+  bitfield only when `check_piece` returns an error; a sampled piece whose
+  hash does not match, `Ok(false)`, does not discard it. After a restart,
+  memory storage holds no pieces, so its saved bitfield is discarded only if
+  reads of missing pieces fail. Memory storage must therefore return an error
+  for every read of a piece it does not hold and never fill it with zeros;
+  readers depend on the same rule. Fastresume is a session-wide option, so
+  this rule, not disabling fastresume, keeps memory torrents correct in a
+  session that also has disk torrents.
 
 **Verdict: supported for storing and reading piece data; eviction requires
 the completion invalidation patch from question 1.** The TorrPlay storage
@@ -184,7 +196,7 @@ registers a readahead window of `PER_STREAM_BUF_DEFAULT`, a 32 MiB constant,
 from its current position. `TorrentStreams::iter_next_pieces` interleaves the
 windows of all streams in random order, and `PieceTracker::acquire_piece`
 takes those pieces before the ordinary queue, after first stealing pieces
-from peers ten times slower. The ordinary queue follows a fixed file order
+from peers ten times slower. The ordinary queue follows file index order
 and fetches the first and last piece of each file before the rest
 (`FileInfo::iter_piece_priorities`). Streams can fetch pieces of files that
 are not selected.
@@ -285,9 +297,9 @@ blocking semaphore permit. The patches above are still needed. Related work:
   merge but which conflicts with `main`, and PR #693 make the readahead
   window configurable per stream. Commit `79ff792e` on `main` adds
   `PeerConnectionOptions::max_request_window` so an urgent piece after a
-  seek waits behind fewer queued requests. PRs
-  #696 and #702 let several or faster peers fetch the pieces a stream waits
-  on. PR #574, conflicting, exposes the piece bitfield and a streaming window.
+  seek waits behind fewer queued requests. PRs #696 and #702 let several or
+  faster peers fetch the pieces a stream waits on. PR #574, conflicting,
+  exposes the piece bitfield and a streaming window.
   None of them adds per-piece priorities or pinning.
 - **Streaming fixes.** Commit `8ebbd6c8` on `main` makes `stream` wait for
   the initial check instead of failing while it runs.
@@ -319,9 +331,9 @@ alongside its consumer and tests.
   `crates/librqbit/src/torrent_state/live/mod.rs`), and the lifecycle evicts
   paused torrents' pieces first, so a piece evicted while paused must not
   count as verified when the torrent starts again.
-- Which peer policy should memory storage use: disconnecting requesters,
-  disabling upload, or a minimal BEP 6 patch? Measure the effect on download
-  rate from controlled local peers.
+- Does the peer policy that [ADR 3](0003-peer-behavior-for-evicted-pieces.md)
+  proposes, no upload from memory storage, hold up? ADR 3 lists the
+  measurements.
 - How do pinned ranges interact with the gap between the `have` check and
   `pread_exact` in a reader, and must readers retry once after an eviction
   race?
@@ -335,6 +347,8 @@ alongside its consumer and tests.
   capacity?
 - How do v2-only torrent files and magnets fail, and which hybrid torrent
   files load as v1 before PR #701 is released?
+- Should the accepted hash mismatch in `validate_fastresume` be reported
+  upstream as a bug, since it lets corrupted disk data pass the check?
 - Which listen port, DHT, and port mapping settings does the session need,
   and which become TorrPlay settings?
 - Will upstream accept the invalidation and priority patches, so the fork
