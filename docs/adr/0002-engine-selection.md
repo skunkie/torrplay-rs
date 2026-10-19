@@ -30,6 +30,9 @@ capability report confirms or overturns each verdict below.
 The research read librqbit 9.0.1, the latest release, tagged `v9.0.1` at
 commit `a499d2f2` and released on 2026-08-20 on GitHub and crates.io. Paths
 below are relative to the rqbit repository. Nothing was compiled or run.
+[Upstream work after 9.0.1](#upstream-work-after-901) covers the unreleased
+`main` branch at commit `57e95d16` (2026-10-09) and the pull requests open
+on 2026-10-19. PR and issue numbers refer to the rqbit repository.
 
 Each capability receives one verdict:
 
@@ -161,13 +164,17 @@ and has no file tree or piece layers. Peer IDs and info hashes are 20-byte
 `Id20` values throughout.
 
 A hybrid torrent carries a complete v1 info dictionary with BEP 47 padding
-files, which `FileInfo` marks as `padding` and fills with zeros on read, so
-it probably loads as a v1 torrent identified by its SHA-1 info hash.
+files, which `FileInfo` marks as `padding` and fills with zeros on read.
+However, `TorrentMetaV1Info::validate` rejects repeated file names, padding
+files included, with `BadTorrentDuplicateFilenames`. BEP 47 names a padding
+file after its length, so a hybrid torrent with two padding files of equal
+length cannot be added; open PR #701 fixes this. Other hybrid torrents load
+as v1 torrents identified by their SHA-1 info hash.
 
 **Verdict: blocked for v2 and hybrid identities.** This matches the
 prototype's v1-only scope. The spike must confirm how a v2-only torrent file
-fails so the server can map it to the defined problem type, and whether
-hybrid torrent files work as v1.
+fails so the server can map it to the defined problem type, and which
+hybrid torrent files load as v1.
 
 ### 5. Piece priority, readahead, and concurrent readers
 
@@ -232,6 +239,49 @@ completion, which keeps the patch to a priority hook.
 **Verdict: supported.** Pin `librqbit = "=9.0.1"` and a toolchain no older
 than 1.94.
 
+## Upstream work after 9.0.1
+
+Neither `main` nor an open pull request provides per-piece completion
+invalidation, sends BEP 6 Reject Request, or stops a stream from holding a
+blocking semaphore permit. The patches above are still needed. Related work:
+
+- **Completion invalidation.** In issue #224 (2024), the maintainer rejected
+  storage-driven deletion. Their position was that streams must decide when a
+  piece can go, that deletion needs access to the chunk tracker, and that
+  they want one working PR stack with an example memory storage. Draft PR
+  #241, which deletes pieces after streaming, has stalled since 2024 and
+  conflicts with `main`. PR #670 adds an on-demand recheck, but it pauses
+  the torrent and disconnects its peers, so it cannot serve eviction. Commit
+  `5f0d0ba6` on `main` keeps queued pieces disjoint from `have`, an
+  invariant the invalidation patch must keep.
+- **Storage hooks.** PR #657 calls `on_piece_completed` before setting the
+  `have` bit and makes its failure fatal. PR #653 forwards it through the
+  storage middlewares. Both are open.
+- **BEP 6.** PR #581 parses Fast Extension messages and handles them when
+  received, but it neither advertises the handshake bit nor sends Reject
+  Request. It also bundles unrelated tracker and socket RPC changes, has no
+  description, and conflicts with `main`. Issue #584 requests BEP 6.
+- **BEP 52.** Issue #546 tracks a design that lands in small slices. PR
+  #562, which adds SHA-256 support, is merged; PR #554 (about 7,800 lines)
+  was turned down as too large, and PR #568 was closed until its code has a
+  consumer. PR #701 fixes adding hybrid torrents with equal-length padding
+  files.
+- **Readahead and priorities.** PR #640, which the maintainer offered to
+  merge but which conflicts with `main`, and PR #693 make the readahead
+  window configurable per stream. Commit `79ff792e` on `main` adds
+  `PeerConnectionOptions::max_request_window` so an urgent piece after a
+  seek waits behind fewer queued requests. PRs
+  #696 and #702 let several or faster peers fetch the pieces a stream waits
+  on. PR #574, conflicting, exposes the piece bitfield and a streaming window.
+  None of them adds per-piece priorities or pinning.
+- **Streaming fixes.** Commit `8ebbd6c8` on `main` makes `stream` wait for
+  the initial check instead of failing while it runs.
+
+The maintainer's `AI_POLICY.md` requires disclosure of AI use and asks for
+small, reviewable pull requests rather than large generated ones. Upstream
+proposals should follow it, with each patch landing in a separate PR
+alongside its consumer and tests.
+
 ## Fallback engines
 
 - **A maintained librqbit fork.** If upstream declines the patches, keep
@@ -263,9 +313,12 @@ than 1.94.
 - How long can `pwrite_all` wait for cache capacity before it stalls peer
   tasks, and what is the bounded fallback when pinned ranges exceed cache
   capacity?
-- How do v2-only torrent files and magnets fail, and do hybrid torrent files
-  load as v1?
+- How do v2-only torrent files and magnets fail, and which hybrid torrent
+  files load as v1 before PR #701 is released?
 - Which listen port, DHT, and port mapping settings does the session need,
   and which become TorrPlay settings?
 - Will upstream accept the invalidation and priority patches, so the fork
-  stays temporary?
+  stays temporary? Issue #224 asks for a complete stack with an example
+  memory storage, which the spike's storage could provide.
+- Do the unreleased fixes on `main` matter enough to pin a revision instead
+  of 9.0.1, or can the spike wait for the next release?
