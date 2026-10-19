@@ -53,14 +53,16 @@ anacrolix/torrent.
 **A. No upload from memory storage.** A torrent in `memory` storage mode
 sends no bitfield and no `have` messages, so peers never learn about any of
 its pieces. A request is then a protocol violation, and closing the
-connection is a correct answer. This needs the per-torrent upload switch.
-The cost is reciprocity: peers whose choking algorithm rewards upload, as
-in BEP 3's tit-for-tat, may unchoke TorrPlay less often, and private
-trackers may count it against a ratio. A second cost follows from the
-engine's finished check: memory torrents select no files while background
-downloads are absent, so between streams they count as finished, ignore new
-peers, and mark them not needed. Every stream after an idle period then
-waits for peers to reconnect before its first byte.
+connection is a correct answer. While every torrent uses memory storage, as
+in the prototype, the session-wide `disable_upload` option implements this
+without a patch; once disk storage exists, it needs the per-torrent upload
+switch. The cost is reciprocity: peers whose choking algorithm rewards
+upload, as in BEP 3's tit-for-tat, may unchoke TorrPlay less often, and
+private trackers may count it against a ratio. A second cost follows from
+the engine's finished check: memory torrents select no files while
+background downloads are absent, so between streams they count as finished,
+ignore new peers, and mark them not needed. Every stream after an idle
+period then waits for peers to reconnect before its first byte.
 
 **B. Upload, and disconnect peers that request evicted pieces.** This works
 without patches beyond completion invalidation. Every eviction of an
@@ -87,19 +89,26 @@ or C.
 Adopt option A for the prototype: torrents in `memory` storage mode do not
 upload, and torrents in `disk` storage mode upload normally. It is the only
 option that never advertises a piece the engine may later evict, so it
-cannot violate the protocol, and it needs the smallest engine patch.
+cannot violate the protocol. The prototype has memory storage only, so this
+peer policy needs no engine patch: enabling the `disable-upload` Cargo
+feature and setting `disable_upload` for the session is enough. Eviction
+itself still needs the completion invalidation patch from ADR 2.
 
 Storage mode transitions follow from that rule:
 
 - From `memory` to `disk`, the torrent starts uploading. It may send the
   bitfield to new connections and `have` messages for verified pieces to
-  existing ones, because announcing more pieces is always allowed.
+  existing ones, because announcing more pieces is always allowed. librqbit
+  sends `have` messages only when a piece completes, so announcing pieces
+  the torrent already holds needs engine support; otherwise the torrent
+  closes its existing connections so that reconnecting peers receive the
+  bitfield.
 - From `disk` to `memory`, the torrent stops uploading and closes its
   existing peer connections, because those peers may hold `have`
   announcements for pieces that memory storage can evict. Reconnecting
   peers receive no bitfield.
 
-Completion invalidation is still required: readers and re-download depend
+No upload does not make that patch optional: readers and re-download depend
 on it, and a peer that requests a piece anyway must not receive data the
 storage no longer holds.
 
@@ -116,8 +125,9 @@ peers without the Fast Extension.
 - Idle torrents in `memory` storage mode shed peers, so time to first byte
   after an idle period includes reconnecting. Keeping peers while idle needs
   a patch to the finished check in `task_peer_adder`.
-- The per-torrent upload switch becomes part of the librqbit patch set
-  maintained with ADR 2's revision pin.
+- The prototype enables the `disable-upload` Cargo feature. When disk
+  storage arrives, the per-torrent upload switch becomes part of the
+  librqbit patch set maintained with ADR 2's revision pin.
 - Moving to option D later changes swarm behavior but not the API, because
   the API does not expose the policy for `memory` storage.
 
@@ -136,7 +146,7 @@ peers without the Fast Extension.
 - Does the engine close existing connections and stop announcing pieces
   correctly on a `disk` to `memory` transition, while active readers
   continue?
-- How large is the per-torrent upload switch patch, and would upstream
-  accept it on its own?
+- How large is the per-torrent upload switch patch that disk storage will
+  need, and would upstream accept it on its own?
 - If option D becomes necessary, which subset of BEP 6 do the controlled
   peers require, and how do peers without the extension behave?
