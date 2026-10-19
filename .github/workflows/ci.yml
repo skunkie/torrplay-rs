@@ -95,11 +95,35 @@ jobs:
             "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
           echo "${ACTIONLINT_SHA256}  ${RUNNER_TEMP}/${archive}" | sha256sum --check --strict
           tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}" actionlint
-      - name: Lint workflows and embedded shell scripts
+      - name: Lint workflows and shell scripts
         shell: bash
         run: |
           test "$(shellcheck --version | sed -n 's/^version: //p')" = "${SHELLCHECK_VERSION#v}"
           "${RUNNER_TEMP}/actionlint" -color
+          shellcheck scripts/*.sh
+
+  contract:
+    name: API contract lint
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    env:
+      # Pinned by digest, since it runs against the checked-out repository,
+      # to a release at least two weeks old, so a broken or compromised
+      # release has time to be found and withdrawn before CI runs it.
+      VACUUM_IMAGE: dshanley/vacuum:v0.30.6@sha256:e13b08c36d5858753cafe677282bb38d9b7ca7945f3a3afba403ed47520dc5af
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the project's vacuum rules
+        shell: bash
+        run: scripts/check-vacuum-rules.sh docker run --rm -v "${PWD}:/work:ro" "${VACUUM_IMAGE}"
+      # Any warning or info finding costs a point, so a minimum score of 100
+      # fails on every finding. The rules check above holds that to be true.
+      - name: Lint the specification and validate its examples
+        if: hashFiles('api/openapi.yaml') != ''
+        shell: bash
+        run: docker run --rm -v "${PWD}:/work:ro" "${VACUUM_IMAGE}" lint -r .vacuum.yml --min-score 100 -d -b api/openapi.yaml
 
   quality:
     name: Rust quality

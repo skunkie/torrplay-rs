@@ -17,6 +17,8 @@ Run from the repository root:
 ```sh
 reuse lint
 actionlint -color
+shellcheck scripts/*.sh
+scripts/check-vacuum-rules.sh vacuum
 git diff --check
 git diff --cached --check
 ```
@@ -37,14 +39,35 @@ reusable workflow calls. Licensing and workflow validation run immediately.
 The repository-stage job enables Rust jobs once a root `Cargo.toml` exists.
 It rejects a manifest without `Cargo.lock` and `rust-toolchain.toml`, and
 rejects committed Rust sources or nested manifests without a root manifest.
-Rust jobs are explicitly skipped during the planning stage.
+Rust jobs are explicitly skipped during the planning stage. The contract job
+checks the vacuum rules on every run and lints `api/openapi.yaml` once it
+exists.
 
-## Introducing the API contract
+## API contract checks
 
-With the first `api/openapi.yaml`, add a pinned specification linter, a pinned
-example validator, contract examples, and their local and CI commands. Both
-tools must support OpenAPI 3.2; the plan defines the fallback to 3.1 when no
-adequate tool does. Evaluate tooling against the actual schema, including
+[vacuum](https://quobix.com/vacuum/) lints `api/openapi.yaml` against the
+ruleset in `.vacuum.yml` and validates its examples against their schemas;
+the [contract tooling decision](adr/0001-contract-tooling.md) records why.
+Write examples with `value`: vacuum does not read the `dataValue` and
+`serializedValue` fields of OpenAPI 3.2, so the ruleset rejects them.
+
+```sh
+vacuum lint -r .vacuum.yml --min-score 100 -d -b api/openapi.yaml
+```
+
+Install vacuum at the release CI pins: the tag in `VACUUM_IMAGE` in
+`.github/workflows/ci.yml`. Download it from the project's GitHub releases and
+verify the archive against the release's `checksums.txt`. Any warning or info
+finding costs a point, so a minimum score of 100 fails on every finding.
+
+`scripts/check-vacuum-rules.sh` holds the ruleset to the fixtures in
+`api/testdata`. The clean document must pass every rule; the violations
+document must break each project rule in `.vacuum.yml`, so a new rule needs a
+planted violation there; and documents with a single warning or info finding
+must fail the minimum score. It needs jq. Run it after changing the ruleset,
+the fixtures, or the vacuum version.
+
+Evaluate generators against the actual schema in milestone 3, including
 multipart input, binary responses, merge patches, and Problem Details. When
 generation is introduced, commit the intended artifacts and make regeneration
 followed by a zero-diff check part of CI.
