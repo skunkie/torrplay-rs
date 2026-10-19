@@ -360,6 +360,37 @@ builds; librqbit accepts their metainfo and reports the same info hashes.
   advisory RUSTSEC-2026-0293; TorrPlay uses TCP only, and `deny.toml`
   records the exception until a librqbit change upgrades it.
 
+### E2: memory storage without eviction
+
+`crates/torrplay-engine` adds the piece cache, with one cache capacity for
+every torrent in memory storage mode, and a `TorrentStorage` over it.
+Reads and writes are translated from file offsets to pieces and split at
+piece boundaries. A piece's whole buffer is reserved when its first block
+arrives, so partial pieces count in full toward cache usage. Tests audit
+the accountant after each phase: cache usage must equal the bytes of the
+resident buffers and never exceed capacity.
+
+- **Storing and serving pieces from the cache works.** Streams are
+  byte-accurate, every piece is resident once, and `on_piece_completed`
+  marks pieces verified. **Supported**, confirming question 2's verdict for
+  storing and reading.
+- **A write the cache cannot hold fails the whole torrent.** With capacity
+  below the torrent's size and no eviction, the torrent ends in `Error`
+  ("reserving 16384 bytes would exceed the cache capacity"), while cache
+  usage stays within capacity. The cache must therefore make room before
+  the engine requests a piece, as ADR 5's bounded fallback requires; it
+  cannot refuse a write.
+- **Deleting a torrent releases its cache usage.** librqbit drops the
+  torrent's storage, and only that torrent's bytes return to capacity.
+- **Pausing keeps cached pieces.** librqbit's `take` moves the storage into
+  the paused state intact, and after resuming, every file reads correctly
+  from the cache with the seeder stopped. This supports the lifecycle's rule
+  that a paused torrent's pieces stay cached.
+
+Simplifications to remove before milestone 4: buffers are allocated and
+copied while the cache lock is held, and freed buffers are not retained for
+reuse.
+
 ## Fallback engines
 
 - **A maintained librqbit fork.** If upstream declines the patches, keep

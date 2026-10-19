@@ -669,6 +669,7 @@ dependencies = [
  "librqbit",
  "tempfile",
  "tokio",
+ "torrplay-engine",
  "torrplay-fixtures",
 ]
 
@@ -2969,6 +2970,16 @@ dependencies = [
  "futures-sink",
  "pin-project-lite",
  "tokio",
+]
+
+[[package]]
+name = "torrplay-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "librqbit",
+ "librqbit-core",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
