@@ -108,9 +108,14 @@ Storage mode transitions follow from that rule:
   announcements for pieces that memory storage can evict. Reconnecting
   peers receive no bitfield.
 
-No upload does not make that patch optional: readers and re-download depend
-on it, and a peer that requests a piece anyway must not receive data the
-storage no longer holds.
+Not uploading does not make the completion invalidation patch optional,
+because readers and re-download depend on it: without it, the engine treats
+an evicted piece as present, so a reader fails instead of waiting and the
+piece is never downloaded again. Peers do not depend on it under this
+policy, because with `disable_upload` the engine closes the connection on
+any request before it checks `have`. That changes under options B, C, and
+D, which upload from memory storage and answer requests according to
+`have`.
 
 Option D is the planned successor if the spike shows that option A
 materially slows downloads; option B or C then remains the fallback for
