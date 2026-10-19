@@ -85,8 +85,16 @@ Rust 1.99.1 with rustfmt and Clippy, and rustup installs it on first use, so
 local and CI builds use the same version. `clippy.toml` lets tests use
 `unwrap` and `expect`, which the workspace lints flag in production code.
 
-The workspace currently has one crate. `crates/torrplay-fixtures` generates
-the deterministic payloads and v1 metainfo that `docs/acceptance.md` defines.
+The workspace has two members:
+
+- `crates/torrplay-fixtures` generates the deterministic payloads and the
+  v1, v2-only, and hybrid metainfo that `docs/acceptance.md` defines.
+- `spikes/engine-spike` holds the milestone 2 experiments against librqbit,
+  one test file per experiment. It is disposable; the capability report in
+  `docs/adr/0002-engine-selection.md` keeps its findings.
+
+librqbit is a git dependency on the revision ADR 2 pins. With `rust-tls` it
+builds aws-lc-sys, which needs CMake and a C compiler.
 
 These are the CI checks:
 

@@ -8,13 +8,32 @@
 
 [advisories]
 yanked = "deny"
+ignore = [
+    # ringbuf 0.4 in librqbit-utp; the fix needs ringbuf 0.5, which only a
+    # librqbit change can bring. TorrPlay listens and connects over TCP only,
+    # so the uTP code that uses ringbuf never runs. Revisit with the fork.
+    { id = "RUSTSEC-2026-0293", reason = "uTP is unused; fixing it needs a librqbit change" },
+]
 
 [licenses]
+# Permissive licenses that librqbit's dependencies use and that allow
+# distributing the project under MIT with their notices preserved.
 allow = [
     "Apache-2.0",
+    "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
+    "ISC",
     "MIT",
+    "MIT-0",
+    "Unicode-3.0",
+    "Zlib",
 ]
 confidence-threshold = 0.9
+exceptions = [
+    # MPL-2.0 is file-level copyleft and compatible with a larger MIT work;
+    # it is allowed only for this unmodified dependency.
+    { crate = "option-ext", allow = ["MPL-2.0"] },
+]
 
 [bans]
 multiple-versions = "warn"
@@ -25,4 +44,5 @@ allow-wildcard-paths = true
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = []
+# librqbit at the revision ADR 2 pins.
+allow-git = ["https://github.com/ikatson/rqbit"]
