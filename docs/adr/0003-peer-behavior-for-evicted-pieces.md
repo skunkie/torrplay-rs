@@ -34,6 +34,13 @@ pinned `main` revision:
   so making it a per-torrent option is a small patch.
 - The engine never chokes peers; it unchokes every peer after the
   handshake.
+- With upload disabled, a torrent that is finished and has no active
+  streams ignores new peers and marks them not needed (`task_peer_adder` in
+  `crates/librqbit/src/torrent_state/live/mod.rs`). librqbit treats a
+  torrent with no selected files as finished. Starting a stream on an
+  unfinished file reconnects the peers marked not needed
+  (`maybe_reconnect_needed_peers_for_file` in
+  `crates/librqbit/src/torrent_state/streaming.rs`).
 - BEP 6 is not implemented, and no open upstream pull request sends Reject
   Request.
 
@@ -49,7 +56,11 @@ its pieces. A request is then a protocol violation, and closing the
 connection is a correct answer. This needs the per-torrent upload switch.
 The cost is reciprocity: peers whose choking algorithm rewards upload, as
 in BEP 3's tit-for-tat, may unchoke TorrPlay less often, and private
-trackers may count it against a ratio.
+trackers may count it against a ratio. A second cost follows from the
+engine's finished check: memory torrents select no files while background
+downloads are absent, so between streams they count as finished, ignore new
+peers, and mark them not needed. Every stream after an idle period then
+waits for peers to reconnect before its first byte.
 
 **B. Upload, and disconnect peers that request evicted pieces.** This works
 without patches beyond completion invalidation. Every eviction of an
@@ -102,6 +113,9 @@ peers without the Fast Extension.
   `memory` storage mode, and must document that they do not upload.
 - Upload and seeding statistics are zero for torrents in `memory` storage
   mode, which affects trackers that enforce ratios.
+- Idle torrents in `memory` storage mode shed peers, so time to first byte
+  after an idle period includes reconnecting. Keeping peers while idle needs
+  a patch to the finished check in `task_peer_adder`.
 - The per-torrent upload switch becomes part of the librqbit patch set
   maintained with ADR 2's revision pin.
 - Moving to option D later changes swarm behavior but not the API, because
@@ -112,6 +126,10 @@ peers without the Fast Extension.
 - How much does option A reduce download rate and time to first byte
   compared with uploading, measured against controlled local leechers that
   use a reciprocal choking algorithm, such as libtorrent-based clients?
+- How much does reconnecting after an idle period add to time to first
+  byte, and do peers ignored while idle stay reachable? Should memory
+  torrents keep their peers while idle, at the cost of a patch to the
+  finished check?
 - Does any request still reach a torrent in `memory` storage mode, for
   example from peers that ignore an empty bitfield, and does closing the
   connection on it cause bans or reconnect loops?

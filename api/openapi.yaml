@@ -120,6 +120,7 @@ paths:
                         size_bytes: 1073740800
                         file_count: 1
                         created_at: '2026-10-19T12:00:00Z'
+                        failure: null
                         links:
                           self: /api/v1/torrents/trr_01
                           configuration: /api/v1/torrents/trr_01/configuration
@@ -193,6 +194,7 @@ paths:
                     size_bytes: null
                     file_count: null
                     created_at: '2026-10-19T12:00:00Z'
+                    failure: null
                     links:
                       self: /api/v1/torrents/trr_01
                       configuration: /api/v1/torrents/trr_01/configuration
@@ -219,7 +221,10 @@ paths:
     get:
       operationId: getTorrent
       summary: Read a torrent
-      description: Returns a torrent's metadata and observed state.
+      description: >-
+        Returns a torrent's metadata and observed state. docs/lifecycle.md
+        defines how the observed state follows from metadata, the desired
+        state, and failures.
       tags: [Torrents]
       parameters:
         - $ref: '#/components/parameters/IfNoneMatch'
@@ -249,6 +254,7 @@ paths:
                     size_bytes: 1073740800
                     file_count: 1
                     created_at: '2026-10-19T12:00:00Z'
+                    failure: null
                     links:
                       self: /api/v1/torrents/trr_01
                       configuration: /api/v1/torrents/trr_01/configuration
@@ -319,7 +325,10 @@ paths:
       summary: Change a torrent's configuration
       description: >-
         Applies a JSON merge patch to the configuration. The request must
-        carry If-Match with the configuration's current ETag.
+        carry If-Match with the configuration's current ETag. Pausing closes
+        the torrent's peer connections and cancels its streams; pausing and
+        then starting a failed torrent restarts it. The observed state follows
+        once the engine applies the change.
       tags: [Torrents]
       parameters:
         - $ref: '#/components/parameters/IfMatch'
@@ -465,7 +474,9 @@ paths:
         Streams a file's bytes, whole or as a single byte range. Audio, video,
         raster image, and WebVTT files are served inline with their own media
         type; every other file is served as application/octet-stream for
-        download. A Range header with more than one range is ignored.
+        download. A Range header with more than one range is ignored. The
+        request is a lifecycle-conflict while metadata is unavailable or the
+        torrent is paused or failed.
       tags: [Files]
       parameters:
         - $ref: '#/components/parameters/Range'
@@ -562,8 +573,8 @@ paths:
       operationId: headTorrentFileContent
       summary: Read a file's content headers
       description: >-
-        Returns the headers a GET would return, without a body. It never
-        creates readers or prefetches piece data.
+        Returns the headers and status a GET would return, without a body. It
+        never creates readers or prefetches piece data.
       tags: [Files]
       parameters:
         - $ref: '#/components/parameters/Range'
@@ -636,9 +647,9 @@ paths:
                   summary: A torrent being downloaded
                   value:
                     downloaded_bytes: 536870912
-                    uploaded_bytes: 1048576
+                    uploaded_bytes: 0
                     download_rate_bytes_per_second: 4194304
-                    upload_rate_bytes_per_second: 65536
+                    upload_rate_bytes_per_second: 0
                     peer_count: 12
                     completion_ratio: 0.5
                     links:
@@ -966,6 +977,13 @@ components:
                 title: Lifecycle conflict
                 status: 409
                 detail: The torrent's metadata is still being retrieved.
+            paused:
+              summary: Content of a paused torrent
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/lifecycle-conflict
+                title: Lifecycle conflict
+                status: 409
+                detail: The torrent is paused; start it to stream its files.
     DuplicateTorrent:
       description: A torrent with the same info hash already exists.
       content:
@@ -1235,6 +1253,7 @@ components:
         - size_bytes
         - file_count
         - created_at
+        - failure
         - links
       properties:
         id:
@@ -1262,7 +1281,10 @@ components:
         storage_mode:
           type: string
           readOnly: true
-          description: Where the torrent keeps piece data. The prototype has only memory storage.
+          description: >-
+            Where the torrent keeps piece data. The prototype has only memory
+            storage, in which a torrent downloads the pieces its readers need
+            but never uploads, because evicted pieces cannot be served.
           enum: [memory]
           examples: [memory]
         size_bytes:
@@ -1285,6 +1307,19 @@ components:
           readOnly: true
           description: When the torrent was created, in UTC.
           examples: ['2026-10-19T12:00:00Z']
+        failure:
+          type: [object, 'null']
+          readOnly: true
+          description: >-
+            Why the torrent failed, or null unless its observed state is
+            failed. Pausing and then starting the torrent clears it.
+          required: [detail]
+          properties:
+            detail:
+              type: string
+              description: An explanation of the failure.
+              examples: [A piece could not be written to storage.]
+          examples: [null]
         links:
           type: object
           readOnly: true
@@ -1492,8 +1527,10 @@ components:
           type: integer
           format: int64
           minimum: 0
-          description: Bytes uploaded to peers since the torrent was created.
-          examples: [1048576]
+          description: >-
+            Bytes uploaded to peers since the torrent was created. Always 0 in
+            memory storage mode, which does not upload.
+          examples: [0]
         download_rate_bytes_per_second:
           type: integer
           format: int64
@@ -1504,8 +1541,8 @@ components:
           type: integer
           format: int64
           minimum: 0
-          description: The current upload rate.
-          examples: [65536]
+          description: The current upload rate, always 0 in memory storage mode.
+          examples: [0]
         peer_count:
           type: integer
           format: int64

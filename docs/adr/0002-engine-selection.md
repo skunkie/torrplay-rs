@@ -314,6 +314,11 @@ alongside its consumer and tests.
 - Can the completion invalidation patch run from the storage eviction path
   without lock-order inversion between the cache lock and the torrent state
   lock, and does re-download work after the torrent finished?
+- Does invalidation also work on a paused torrent? Pausing moves the chunk
+  tracker into `TorrentStatePaused` (`pause` in
+  `crates/librqbit/src/torrent_state/live/mod.rs`), and the lifecycle evicts
+  paused torrents' pieces first, so a piece evicted while paused must not
+  count as verified when the torrent starts again.
 - Which peer policy should memory storage use: disconnecting requesters,
   disabling upload, or a minimal BEP 6 patch? Measure the effect on download
   rate from controlled local peers.

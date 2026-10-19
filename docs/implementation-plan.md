@@ -26,7 +26,7 @@ Deliver these artifacts before production handlers:
 - `api/openapi.yaml`: the authoritative public HTTP contract, kept at the repository root because the server, tests, and future clients share it. Target the latest OpenAPI release, [3.2.1](https://spec.openapis.org/oas/v3.2.1.html). Select the specification linter and example validator in this milestone and require OpenAPI 3.2 support from them; fall back to 3.1 only if no adequate pinned tool supports 3.2, and record the reason in the contract tooling decision record. Record any OpenAPI 3.2 feature the selected tools do not support in that decision record, together with the rule that keeps the specification from using it.
 - CI checks for the specification: add the pinned linter and example validation to CI with the first `api/openapi.yaml`, and document matching local commands in `docs/development.md`.
 - [`docs/api-conventions.md`](api-conventions.md): naming, HTTP semantics, pagination, errors, links, and evolution policy.
-- `docs/lifecycle.md`: state transitions, cancellation, deletion, shutdown, and restart behavior.
+- [`docs/lifecycle.md`](lifecycle.md): state transitions, cancellation, deletion, shutdown, and restart behavior.
 - `docs/acceptance.md`: correctness scenarios, the boundary between cache usage and process memory, and the benchmark protocol, including the access-trace format and target devices.
 - Short architecture decision records under `docs/adr/` for engine selection, resource identity, storage, peer behavior for evicted pieces, and contract tooling. Draft the engine selection and peer behavior records here and finalize them from the milestone 2 capability report.
 
