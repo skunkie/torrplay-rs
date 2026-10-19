@@ -140,11 +140,14 @@ deleted torrent are not evicted: they are released in the background, do
 not increase `eviction_count`, and stop counting toward cache usage as they
 are released.
 
-An eviction removes the piece from the cache index first, so readers treat
-it as missing, then performs completion invalidation in the engine, and
-only then frees or reuses the piece buffer. The cache does not hold its own
-lock while it takes the engine's torrent state lock, which ADR 2 lists as a
-lock-order risk. Background downloads, once they exist, never pin; their
+An eviction performs completion invalidation in the engine, which, under
+the torrent state lock, calls the storage to remove the piece from the
+cache index and then marks it missing; only then is the piece buffer freed
+or reused. A reader whose read finds the piece gone therefore finds it
+missing when it checks again, and no write for the piece can begin until it
+is requeued. The cache never holds its own lock while it takes the engine's
+torrent state lock, so the lock order is always torrent state, then cache,
+as the E3 findings in ADR 2 confirm. Background downloads, once they exist, never pin; their
 pieces are ordinary eviction candidates.
 
 ### Bounded fallback

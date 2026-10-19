@@ -95,8 +95,30 @@ The workspace has three members:
   one test file per experiment. It is disposable; the capability report in
   `docs/adr/0002-engine-selection.md` keeps its findings.
 
-librqbit is a git dependency on the revision ADR 2 pins. With `rust-tls` it
-builds aws-lc-sys, which needs CMake and a C compiler.
+librqbit is a git dependency on a commit of the `torrplay/patches` branch of
+the [skunkie/rqbit](https://github.com/skunkie/rqbit) fork, which ADR 2
+describes. With `rust-tls` it builds aws-lc-sys, which needs CMake and a C
+compiler.
+
+To change a patch, work in a checkout of the fork on `torrplay/patches`.
+Keep one commit per patch so each can be proposed upstream on its own, and
+run librqbit's own checks there:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy -p librqbit --no-default-features --features rust-tls --all-targets -- -D warnings
+cargo test -p librqbit --lib --no-default-features --features rust-tls
+```
+
+While iterating, point this workspace at the checkout with a
+`[patch."https://github.com/skunkie/rqbit"]` section in `Cargo.toml` that
+lists `librqbit` and `librqbit-core` by path; never commit it. Push the
+branch, set `rev` in `Cargo.toml` to the new full commit hash, and run
+`cargo update -w` so that `Cargo.lock` changes only the librqbit sources.
+Rebasing onto a newer upstream revision rewrites the branch: keep each
+patch's `GIT_COMMITTER_DATE` equal to its `GIT_AUTHOR_DATE`, push the
+rebased branch under a new name rather than force-pushing, so pinned
+commits stay reachable, and record the new base revision in ADR 2.
 
 These are the CI checks:
 

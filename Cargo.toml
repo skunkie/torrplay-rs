@@ -22,11 +22,13 @@ unwrap_used = "warn"
 
 [workspace.dependencies]
 anyhow = "1"
-# librqbit at an unreleased main revision that carries fixes the spike needs;
-# docs/adr/0002-engine-selection.md records why. TLS uses rustls so builds do
-# not depend on a system OpenSSL.
-librqbit = { git = "https://github.com/ikatson/rqbit", rev = "57e95d16c830863a1fde32d8fa98153b53a3d0b4", default-features = false, features = ["rust-tls"] }
-librqbit-core = { git = "https://github.com/ikatson/rqbit", rev = "57e95d16c830863a1fde32d8fa98153b53a3d0b4", default-features = false }
+# librqbit from the torrplay/patches branch of the skunkie/rqbit fork: the
+# unreleased upstream revision 57e95d16 plus the spike's patches, one commit
+# each. docs/adr/0002-engine-selection.md records why, and
+# docs/development.md how to update it. TLS uses rustls so builds do not
+# depend on a system OpenSSL.
+librqbit = { git = "https://github.com/skunkie/rqbit", rev = "529cda31d868a014b3d16723981f7739a57f350c", default-features = false, features = ["rust-tls"] }
+librqbit-core = { git = "https://github.com/skunkie/rqbit", rev = "529cda31d868a014b3d16723981f7739a57f350c", default-features = false }
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "time"] }

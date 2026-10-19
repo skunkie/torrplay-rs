@@ -266,6 +266,11 @@ or `librqbit` manifest since the release, so `Cargo.lock` must record the
 Git source and revision. Any engine patches start from this revision.
 Return to a crates.io release once one contains these fixes.
 
+The patches live on the `torrplay/patches` branch of the
+[skunkie/rqbit](https://github.com/skunkie/rqbit) fork, cut from that
+revision with one commit per patch, and torrplay-rs pins an exact commit of
+that branch. `docs/development.md` describes how to update it.
+
 ## Upstream work after 9.0.1
 
 Neither `main` nor an open pull request provides per-piece completion
@@ -391,6 +396,94 @@ Simplifications to remove before milestone 4: buffers are allocated and
 copied while the cache lock is held, and freed buffers are not retained for
 reuse.
 
+### E3: eviction with completion invalidation
+
+The fork adds three commits. The first fixes an upstream race: when a torrent
+finished, librqbit marked its seeders not needed before their connections
+closed, so a reconnect requested in that window, by selecting files,
+opening a stream, or now invalidation, left the peer queued, and the
+closing connection then dropped it from the peer table for good. A torrent
+with one seeder could then never download again; E3 hit this in about one
+run in five. The fix leaves the peer live until its task ends.
+
+The second is the completion invalidation patch (P1).
+`ManagedTorrent::invalidate_pieces` works on live and paused torrents and
+performs the operation question 1 describes. For each piece it first calls
+a new `TorrentStorage::on_piece_invalidated` hook, under the torrent's state
+lock, where the storage drops the piece's data or refuses by returning an
+error. Per-file progress is now counted in the same critical section that
+marks a piece verified, so invalidation never sees one without the other.
+A finished torrent's peers wake on the new-pieces notification instead of a
+fixed 5-second sleep.
+
+The memory storage evicts from the write path: when a piece's reservation
+does not fit, it asks the cache for the least recently used verified
+pieces, those of paused and failed torrents first, and invalidates them
+through the engine. Within the hook the cache removes each piece and frees
+its bytes. The cache never holds its lock while calling the engine, and the
+engine calls the cache only with its own locks held, so the order is always
+torrent state, then cache, as for every read. A write retries a bounded
+number of rounds and fails when nothing is evictable.
+
+- **Sustained eviction works** (CAC-01). A file four times an 8 MiB capacity
+  streams byte for byte, with at least 24 evictions, and its long-evicted
+  start streams correctly again. **Supported.**
+- **An evicted piece is marked missing and downloaded again** (CAC-02 and
+  CAC-03). Evicting two pieces of a finished torrent, whose seeder was
+  already dropped as not needed, reconnects the seeder at once; the torrent
+  downloads exactly those pieces again, every fetched byte passes its hash
+  check, and cache usage returns to the torrent's size. **Supported with
+  P1.**
+- **Eviction while paused works** (CAC-04): evicted pieces count as missing
+  after the torrent starts and download again. **Supported with P1.**
+- **Paused torrents are evicted first** (CAC-08): a started torrent needing
+  room took every byte from a paused one and lost none of its own.
+- **Partial pieces stay resident** (CAC-07): the cache refuses to evict an
+  unverified piece, and the engine then keeps it completed.
+- **Open and remove cycles clean up** (CAC-09): after 100 rounds of adding a
+  torrent, reading a range, and deleting it, cache usage, resident pieces,
+  torrents, and the seeder's connections return to zero. Task counts are
+  not measured; that needs the task tracking E1 found missing.
+- **A deleted torrent's pieces outlive the deletion.** librqbit drops a
+  deleted torrent's storage only when its last peer task ends, and until
+  then its pieces hold capacity that nothing can evict: on a slow CI runner
+  the next torrent in CAC-09 failed for lack of room. The adapter releases
+  a torrent's cache usage as soon as librqbit has deleted it, and later
+  reads and writes of the deleted torrent fail.
+- **A torrent must be attached before it starts.** The cache can evict a
+  torrent's pieces only once the adapter has attached the engine handle,
+  which exists only after `add_torrent` returns. A torrent added started
+  begins downloading at once, so on a slow runner its first writes filled
+  the cache with pieces nothing could evict, and the failed write failed
+  the torrent. The adapter adds memory torrents paused, attaches them, and
+  then starts them.
+- **Starting a torrent as its initial check ends fails it.** librqbit
+  clears its check-running flag before it switches the torrent to paused,
+  and a start in between runs a second check, which finds the storage
+  already taken and fails the torrent. The adapter starts a torrent only
+  after `wait_until_initialized`; the upstream fix is to clear the flag
+  under the state lock.
+- **No lock-order inversion** shows: four readers of two torrents that
+  evict each other's pieces, two passes each, finish byte for byte, each
+  read within its bound.
+- **The reader race is closed in the engine** by the third commit. A reader
+  checks `have`, then reads without the state lock, so eviction can come in
+  between. The storage may have dropped the data, failing the read, or the
+  requeued piece may already be downloading again, so the read succeeds
+  with unverified bytes. That second case returned wrong data on Windows CI
+  and in four of six runs on one CPU. The torrent now counts invalidations
+  under its lock before any data is dropped; a reader takes the count with
+  its `have` check, compares it after reading, and polls again if it
+  changed. No run failed after the fix, ten of them on one CPU. This
+  answers the open question about retrying; the commit belongs with P1
+  when proposed upstream.
+- **Without pinning, readers lose pieces they are about to read**, and the
+  torrent keeps downloading every evicted piece in the background. Both are
+  correct but wasteful; E6's pinning and priority hook bound them.
+- **A write still fails the torrent when no piece is evictable**, for
+  example when partial pieces fill the cache. The tests' capacities leave
+  room, and E6's reservation before request removes the failure.
+
 ## Fallback engines
 
 - **A maintained librqbit fork.** If upstream declines the patches, keep
@@ -405,20 +498,9 @@ reuse.
 
 ## Open questions for the spike
 
-- Can the completion invalidation patch run from the storage eviction path
-  without lock-order inversion between the cache lock and the torrent state
-  lock, and does re-download work after the torrent finished?
-- Does invalidation also work on a paused torrent? Pausing moves the chunk
-  tracker into `TorrentStatePaused` (`pause` in
-  `crates/librqbit/src/torrent_state/live/mod.rs`), and the lifecycle evicts
-  paused torrents' pieces first, so a piece evicted while paused must not
-  count as verified when the torrent starts again.
 - Does the peer policy that [ADR 3](0003-peer-behavior-for-evicted-pieces.md)
   proposes, no upload from memory storage, hold up? ADR 3 lists the
   measurements.
-- How do pinned ranges interact with the gap between the `have` check and
-  `pread_exact` in a reader, and must readers retry once after an eviction
-  race?
 - Does a priority hook replacing `iter_next_pieces` suffice for highest-wins
   priorities and readahead rebalancing, or do peer request pipelines also
   need cancellation when priorities change?

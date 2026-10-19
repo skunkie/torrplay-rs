@@ -8,32 +8,115 @@
 //! librqbit addresses storage by file and file-relative offset. Pieces can
 //! span files, so each read and write is translated to torrent offsets and
 //! split at piece boundaries before it reaches the cache.
+//!
+//! A write whose piece does not fit evicts verified pieces first. Eviction
+//! goes through librqbit's completion invalidation, which calls
+//! [`TorrentStorage::on_piece_invalidated`] under the torrent's state lock;
+//! the piece leaves the cache there, so a reader that finds it gone also
+//! finds it marked missing.
 
+use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use anyhow::Context;
 use librqbit::storage::{BoxStorageFactory, StorageFactory, StorageFactoryExt, TorrentStorage};
-use librqbit::{ManagedTorrentShared, TorrentMetadata};
+use librqbit::{ManagedTorrent, ManagedTorrentShared, TorrentMetadata};
 use librqbit_core::lengths::{Lengths, ValidPieceIndex};
 
-use crate::cache::{PieceCache, TorrentKey};
+use crate::cache::{CacheError, PieceCache, PieceInvalidator, TorrentKey};
+
+/// How many times a write evicts and retries before it fails.
+const EVICTION_ROUNDS: usize = 4;
 
 /// Creates a [`MemoryStorage`] for each torrent added with it.
 #[derive(Clone)]
 pub struct MemoryStorageFactory {
     cache: Arc<PieceCache>,
+    // Torrents created but not attached yet, by librqbit torrent ID.
+    unattached: Arc<Mutex<HashMap<usize, (TorrentKey, Lengths)>>>,
 }
 
 impl MemoryStorageFactory {
     /// Creates a factory whose torrents share `cache`.
     pub fn new(cache: Arc<PieceCache>) -> Self {
-        Self { cache }
+        Self {
+            cache,
+            unattached: Arc::default(),
+        }
     }
 
     /// Returns the factory in the boxed form librqbit's options take.
     pub fn into_boxed(self) -> BoxStorageFactory {
         self.boxed()
+    }
+
+    /// Lets the cache evict the pieces of `torrent`, which was added with
+    /// this factory, by invalidating their completion in the engine.
+    pub fn attach(&self, torrent: &Arc<ManagedTorrent>) -> anyhow::Result<CachedTorrent> {
+        let (key, lengths) = self
+            .unattached
+            .lock()
+            .map_err(|_| anyhow::anyhow!("the factory was poisoned"))?
+            .remove(&torrent.id())
+            .context("the torrent has no memory storage from this factory")?;
+        let invalidator = Arc::new(EngineInvalidator {
+            torrent: Arc::downgrade(torrent),
+            lengths,
+        });
+        self.cache.attach_invalidator(key, invalidator.clone())?;
+        Ok(CachedTorrent {
+            cache: self.cache.clone(),
+            key,
+            invalidator,
+        })
+    }
+}
+
+/// A torrent whose pieces the cache may evict.
+pub struct CachedTorrent {
+    cache: Arc<PieceCache>,
+    key: TorrentKey,
+    invalidator: Arc<EngineInvalidator>,
+}
+
+impl CachedTorrent {
+    /// Records whether the torrent is started. The pieces of paused and
+    /// failed torrents are evicted first.
+    pub fn set_started(&self, started: bool) -> Result<(), CacheError> {
+        self.cache.set_started(self.key, started)
+    }
+
+    /// Releases every piece of the torrent and returns their bytes to the
+    /// capacity. Call it once the torrent is deleted: librqbit drops a
+    /// deleted torrent's storage only when its last peer task ends, and until
+    /// then the pieces would hold capacity that nothing can evict. Later
+    /// reads and writes of the torrent fail.
+    pub fn release(&self) -> Result<(), CacheError> {
+        self.cache.release_torrent(self.key)
+    }
+
+    /// Evicts the given verified pieces through completion invalidation and
+    /// returns how many the engine marked missing.
+    pub fn evict(&self, pieces: &[u32]) -> anyhow::Result<usize> {
+        self.invalidator.invalidate(pieces)
+    }
+}
+
+struct EngineInvalidator {
+    // Weak, so the cache never keeps a deleted torrent alive.
+    torrent: Weak<ManagedTorrent>,
+    lengths: Lengths,
+}
+
+impl PieceInvalidator for EngineInvalidator {
+    fn invalidate(&self, pieces: &[u32]) -> anyhow::Result<usize> {
+        let torrent = self.torrent.upgrade().context("the torrent was deleted")?;
+        let pieces: Vec<_> = pieces
+            .iter()
+            .filter_map(|&piece| self.lengths.validate_piece_index(piece))
+            .collect();
+        torrent.invalidate_pieces(&pieces)
     }
 }
 
@@ -42,12 +125,17 @@ impl StorageFactory for MemoryStorageFactory {
 
     fn create(
         &self,
-        _shared: &ManagedTorrentShared,
+        shared: &ManagedTorrentShared,
         metadata: &TorrentMetadata,
     ) -> anyhow::Result<MemoryStorage> {
+        let key = self.cache.register_torrent()?;
+        self.unattached
+            .lock()
+            .map_err(|_| anyhow::anyhow!("the factory was poisoned"))?
+            .insert(shared.id, (key, *metadata.lengths()));
         let pieces = TorrentPieces {
             cache: self.cache.clone(),
-            key: self.cache.register_torrent()?,
+            key,
             lengths: *metadata.lengths(),
             file_offsets: metadata
                 .file_infos
@@ -112,6 +200,41 @@ impl TorrentPieces {
     }
 }
 
+impl TorrentPieces {
+    fn write(
+        &self,
+        piece: u32,
+        piece_length: usize,
+        offset: usize,
+        data: &[u8],
+    ) -> anyhow::Result<()> {
+        for _ in 0..EVICTION_ROUNDS {
+            match self
+                .cache
+                .write(self.key, piece, piece_length, offset, data)
+            {
+                Err(CacheError::CapacityExceeded { needed_bytes, .. }) => {
+                    let batches = self.cache.eviction_candidates(needed_bytes)?;
+                    if batches.is_empty() {
+                        break;
+                    }
+                    for batch in batches {
+                        // A torrent that cannot invalidate, for example
+                        // because it was deleted, frees nothing; the next
+                        // round picks other pieces, and the last write
+                        // reports the shortfall.
+                        let _ = batch.invalidator.invalidate(&batch.pieces);
+                    }
+                }
+                result => return Ok(result?),
+            }
+        }
+        Ok(self
+            .cache
+            .write(self.key, piece, piece_length, offset, data)?)
+    }
+}
+
 impl Drop for TorrentPieces {
     fn drop(&mut self) {
         // A poisoned cache cannot be repaired here; its later operations
@@ -161,11 +284,7 @@ impl TorrentStorage for MemoryStorage {
             file_id,
             offset,
             buf.len(),
-            |piece, length, in_piece, range| {
-                Ok(pieces
-                    .cache
-                    .write(pieces.key, piece, length, in_piece, &buf[range])?)
-            },
+            |piece, length, in_piece, range| pieces.write(piece, length, in_piece, &buf[range]),
         )
     }
 
@@ -196,5 +315,10 @@ impl TorrentStorage for MemoryStorage {
     fn on_piece_completed(&self, piece: ValidPieceIndex) -> anyhow::Result<()> {
         let pieces = self.pieces()?;
         Ok(pieces.cache.mark_verified(pieces.key, piece.get())?)
+    }
+
+    fn on_piece_invalidated(&self, piece: ValidPieceIndex) -> anyhow::Result<()> {
+        let pieces = self.pieces()?;
+        Ok(pieces.cache.evict(pieces.key, piece.get())?)
     }
 }
