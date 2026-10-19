@@ -22,4 +22,5 @@ anyhow.workspace = true
 librqbit.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
+torrplay-engine = { path = "../../crates/torrplay-engine" }
 torrplay-fixtures.workspace = true
