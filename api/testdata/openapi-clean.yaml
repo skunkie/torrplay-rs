@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: MIT
 
 # A document that passes every rule in .vacuum.yml, which the documents
-# beside it each break in a known way.
+# beside it each break in a known way. Its links object carries a registered
+# relation name with a hyphen, which the snake_case rule must skip.
 openapi: 3.2.1
 info:
   title: TorrPlay rules fixture
@@ -72,6 +73,14 @@ components:
       description: The number of pieces in a torrent.
       required: [piece_count]
       properties:
+        links:
+          type: object
+          description: Links to related resources.
+          properties:
+            service-desc:
+              type: string
+              description: The OpenAPI document.
+              examples: [/api/v1/openapi.yaml]
         piece_count:
           type: integer
           format: int64

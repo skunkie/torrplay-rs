@@ -73,6 +73,14 @@ components:
       description: The number of pieces in a torrent.
       required: [piece_count]
       properties:
+        links:
+          type: object
+          description: Links to related resources.
+          properties:
+            service-desc:
+              type: string
+              description: The OpenAPI document.
+              examples: [/api/v1/openapi.yaml]
         piece_count:
           type: integer
           format: int64
