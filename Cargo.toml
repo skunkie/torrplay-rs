@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+[workspace]
+resolver = "3"
+members = ["crates/torrplay-fixtures"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+publish = false
+repository = "https://github.com/skunkie/torrplay-rs"
+rust-version = "1.99"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+expect_used = "warn"
+unwrap_used = "warn"

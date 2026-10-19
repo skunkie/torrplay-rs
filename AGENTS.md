@@ -9,7 +9,7 @@ SPDX-License-Identifier: MIT
 ## Project scope and workflow
 
 - Build a Rust implementation of TorrPlay with a contract-first REST API. Follow `docs/implementation-plan.md` and complete the current milestone before expanding scope, except where the plan explicitly allows milestones to overlap. TorrServer support is excluded; qBittorrent compatibility is deferred and optional.
-- The repository currently contains planning documents and development infrastructure. Do not add placeholder Rust code to satisfy CI. Introduce the Cargo project when implementing the planned server or engine spike.
+- The repository holds the milestone 1 documents, development infrastructure, and a Cargo workspace for the milestone 2 engine spike. Do not add placeholder Rust code to satisfy CI; add crates when an experiment or milestone needs them.
 - Treat Go TorrPlay as a behavioral reference. Native paths, payloads, database formats, and implementation details do not require backward compatibility. Record intentional behavioral differences and preserve externally defined protocols when adding their adapters.
 - Keep domain logic, torrent-engine integration, storage, and HTTP transport separate. Start with few crates and introduce abstractions when concrete responsibilities justify them. Keep shared logic in libraries and executable entry points focused on startup and interfaces.
 - Preserve unrelated user changes. Report what changed, which checks ran, and any checks that could not run. Do not report skipped checks as passed.

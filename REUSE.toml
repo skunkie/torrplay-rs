@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+version = 1
+
+# Cargo generates the lockfile, and its format has no place for a header.
+[[annotations]]
+path = "Cargo.lock"
+SPDX-FileCopyrightText = "2026 TorrPlay"
+SPDX-License-Identifier = "MIT"

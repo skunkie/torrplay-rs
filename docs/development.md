@@ -7,8 +7,10 @@ SPDX-License-Identifier: MIT
 # Development
 
 Start with the [implementation plan](implementation-plan.md). The repository
-currently contains planning documents and development infrastructure. Define
-the REST contract and lifecycle semantics before implementing the server.
+holds the milestone 1 contract and design documents, development
+infrastructure, and the Cargo workspace that milestone 2's engine spike
+builds on. Update the contract and lifecycle semantics before implementing
+public HTTP behavior.
 
 ## Checks available now
 
@@ -39,7 +41,7 @@ reusable workflow calls. Licensing and workflow validation run immediately.
 The repository-stage job enables Rust jobs once a root `Cargo.toml` exists.
 It rejects a manifest without `Cargo.lock` and `rust-toolchain.toml`, and
 rejects committed Rust sources or nested manifests without a root manifest.
-Rust jobs are explicitly skipped during the planning stage. The contract job
+Without a root manifest, Rust jobs are explicitly skipped. The contract job
 checks the vacuum rules on every run and lints `api/openapi.yaml` once it
 exists.
 
@@ -75,14 +77,18 @@ followed by a zero-diff check part of CI.
 Keep HTTP behavior tests separate from engine tests so lifecycle and protocol
 semantics can be verified with a fake engine and controlled payloads.
 
-## Introducing Rust code
+## Rust checks
 
-Commit the root Cargo manifest, application lockfile, and a
-`rust-toolchain.toml` pinned to an exact released toolchain. Include rustfmt
-and Clippy components. The setup action reads that toolchain file; local and
-CI builds must use the same version.
+The root `Cargo.toml` defines the workspace and its shared lint policy;
+`Cargo.lock` and `rust-toolchain.toml` are committed. The toolchain file pins
+Rust 1.99.1 with rustfmt and Clippy, and rustup installs it on first use, so
+local and CI builds use the same version. `clippy.toml` lets tests use
+`unwrap` and `expect`, which the workspace lints flag in production code.
 
-Once the Cargo project exists, these are the CI checks:
+The workspace currently has one crate. `crates/torrplay-fixtures` generates
+the deterministic payloads and v1 metainfo that `docs/acceptance.md` defines.
+
+These are the CI checks:
 
 ```sh
 cargo fmt --all -- --check
@@ -91,7 +97,15 @@ cargo build --locked --workspace --all-targets
 cargo test --locked --workspace
 cargo test --locked --workspace --all-features
 RUSTDOCFLAGS='-D warnings' cargo doc --locked --workspace --all-features --no-deps
+cargo-deny --locked check
 ```
+
+[cargo-deny](https://github.com/EmbarkStudios/cargo-deny) checks licenses,
+advisories, duplicate versions, and dependency sources against `deny.toml`.
+Install the release CI pins, `CARGO_DENY_VERSION` in
+`.github/workflows/ci.yml`, from its GitHub releases, and verify the archive
+against the release's `.sha256` file. Extend the allowed licenses only for
+licenses compatible with distributing the project under MIT.
 
 Apply formatting with `cargo fmt --all` before checking it. Run the other
 checks without modifying the lockfile; update dependencies explicitly when
