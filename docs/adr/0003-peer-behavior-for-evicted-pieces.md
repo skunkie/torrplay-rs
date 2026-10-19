@@ -6,7 +6,9 @@ SPDX-License-Identifier: MIT
 
 # 3. Peer behavior for evicted pieces
 
-- Status: proposed; the milestone 2 engine spike finalizes it.
+- Status: accepted. The milestone 2 spike confirmed option A (PEER-01,
+  PEER-02); the open questions below are for the milestone 5 benchmarks
+  and the disk storage mode.
 - Date: 2026-10-19
 
 ## Context
@@ -174,7 +176,7 @@ served the block it requests, so its observations are meaningful.
   milestone 5 benchmarks measure it on real networks. Setting
   `TCP_NODELAY` is a candidate patch for E6, which measures seek latency.
 
-## Open questions for the spike
+## Open questions
 
 - How much does option A reduce download rate and time to first byte
   compared with uploading, measured against controlled local leechers that

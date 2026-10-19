@@ -119,10 +119,12 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 
 **Pinning**
 : Exempting pieces from eviction while something depends on them. A
-  **pinned range** is a byte range whose pieces are pinned: the readahead
-  windows of active and idle readers, active preload ranges, and
-  file-boundary ranges that players read for container headers and indexes.
-  When pinned ranges exceed cache capacity, a bounded fallback applies.
+  **pinned range** is a byte range whose pieces are pinned: the current
+  piece of each active and idle reader, file-boundary ranges that players
+  read for container headers and indexes, readers' next pieces, and active
+  preload ranges. Beyond current pieces, pins stay within a readahead budget;
+  the rest of a readahead window has priority without a pin. When pinned
+  ranges still exceed cache capacity, a bounded fallback applies.
 
 **Piece completion**
 : The engine's record of which pieces it has downloaded and verified, which
