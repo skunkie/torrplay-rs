@@ -1,0 +1,1673 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+openapi: 3.2.1
+info:
+  title: TorrPlay API
+  summary: Torrent streaming backend.
+  description: >-
+    The native REST API of the TorrPlay Rust prototype. It manages torrents,
+    lists their files, and streams file content with byte ranges.
+    docs/api-conventions.md defines the naming, linking, pagination, and error
+    conventions every operation follows, including the 405 and 406 responses
+    any operation may return.
+  version: 0.1.0
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: http://127.0.0.1:{port}
+    description: The prototype, which listens on loopback only.
+    variables:
+      port:
+        default: '8080'
+        description: The configured listen port.
+tags:
+  - name: Service
+    description: The entry point and the OpenAPI document.
+  - name: Torrents
+    description: Torrents the application tracks, with their configuration.
+  - name: Files
+    description: Files listed in torrent metadata and their content.
+  - name: Statistics
+    description: Measurements of torrents and of the piece cache.
+  - name: Health
+    description: Liveness and readiness checks outside the versioned API.
+
+paths:
+  /api/v1:
+    get:
+      operationId: getEntryPoint
+      summary: Read the entry point
+      description: >-
+        Returns links to the top-level resources and to the OpenAPI document.
+        A request for /api/v1/ is redirected here with 308 Permanent Redirect.
+      tags: [Service]
+      responses:
+        '200':
+          description: The entry point's links.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntryPoint'
+              examples:
+                entry_point:
+                  summary: The entry point
+                  value:
+                    links:
+                      self: /api/v1
+                      torrents: /api/v1/torrents
+                      cache_statistics: /api/v1/cache/statistics
+                      service-desc: /api/v1/openapi.yaml
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/openapi.yaml:
+    get:
+      operationId: getOpenApiDocument
+      summary: Read the OpenAPI document
+      description: Returns this OpenAPI document.
+      tags: [Service]
+      responses:
+        '200':
+          description: The OpenAPI document as YAML.
+          content:
+            application/yaml:
+              schema:
+                type: string
+              examples:
+                document:
+                  summary: The start of the document
+                  value: "openapi: 3.2.1\n"
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/torrents:
+    get:
+      operationId: listTorrents
+      summary: List torrents
+      description: >-
+        Returns a page of torrents, newest first by creation time, with the
+        torrent ID as the tie-breaker.
+      tags: [Torrents]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/ObservedStateFilter'
+      responses:
+        '200':
+          description: The requested page of torrents.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TorrentPage'
+              examples:
+                last_page:
+                  summary: A single, last page
+                  value:
+                    items:
+                      - id: trr_01
+                        name: Example Collection
+                        info_hashes:
+                          - algorithm: sha1
+                            value: 0123456789abcdef0123456789abcdef01234567
+                        observed_state: downloading
+                        storage_mode: memory
+                        size_bytes: 1073740800
+                        file_count: 1
+                        created_at: '2026-10-19T12:00:00Z'
+                        links:
+                          self: /api/v1/torrents/trr_01
+                          configuration: /api/v1/torrents/trr_01/configuration
+                          files: /api/v1/torrents/trr_01/files
+                          statistics: /api/v1/torrents/trr_01/statistics
+                    links:
+                      self: /api/v1/torrents
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      operationId: createTorrent
+      summary: Create a torrent
+      description: >-
+        Creates a torrent from a magnet URI in JSON or from an uploaded torrent
+        file in a multipart form. The torrent exists as soon as this returns;
+        metadata for a magnet URI is retrieved in the background. Retrying is
+        safe: a client whose request timed out receives either 201 or a
+        duplicate-torrent problem that links to the torrent its first attempt
+        created.
+      tags: [Torrents]
+      requestBody:
+        description: >-
+          A magnet URI in a JSON body of at most 16384 bytes, or a torrent file
+          of at most 10485760 bytes in a multipart form. Larger bodies are
+          content-too-large.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TorrentCreation'
+            examples:
+              magnet:
+                summary: A magnet URI
+                value:
+                  magnet_uri: 'magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Example+Collection'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TorrentFileUpload'
+            encoding:
+              torrent_file:
+                contentType: application/x-bittorrent
+            examples:
+              upload:
+                summary: An uploaded torrent file
+                value:
+                  torrent_file: d8:announce20:http://tracker.test/4:infod6:lengthi1024e4:name8:file.bin12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaaee
+                  desired_state: paused
+      responses:
+        '201':
+          description: The torrent was created.
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Torrent'
+              examples:
+                retrieving:
+                  summary: A torrent whose metadata is being retrieved
+                  value:
+                    id: trr_01
+                    name: null
+                    info_hashes:
+                      - algorithm: sha1
+                        value: 0123456789abcdef0123456789abcdef01234567
+                    observed_state: retrieving_metadata
+                    storage_mode: memory
+                    size_bytes: null
+                    file_count: null
+                    created_at: '2026-10-19T12:00:00Z'
+                    links:
+                      self: /api/v1/torrents/trr_01
+                      configuration: /api/v1/torrents/trr_01/configuration
+                      files: /api/v1/torrents/trr_01/files
+                      statistics: /api/v1/torrents/trr_01/statistics
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '409':
+          $ref: '#/components/responses/DuplicateTorrent'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/UnprocessableTorrent'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
+  /api/v1/torrents/{torrent_id}:
+    parameters:
+      - $ref: '#/components/parameters/TorrentId'
+    get:
+      operationId: getTorrent
+      summary: Read a torrent
+      description: Returns a torrent's metadata and observed state.
+      tags: [Torrents]
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The torrent.
+          headers:
+            ETag:
+              $ref: '#/components/headers/StateETag'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Torrent'
+              examples:
+                downloading:
+                  summary: A torrent with metadata
+                  value:
+                    id: trr_01
+                    name: Example Collection
+                    info_hashes:
+                      - algorithm: sha1
+                        value: 0123456789abcdef0123456789abcdef01234567
+                    observed_state: downloading
+                    storage_mode: memory
+                    size_bytes: 1073740800
+                    file_count: 1
+                    created_at: '2026-10-19T12:00:00Z'
+                    links:
+                      self: /api/v1/torrents/trr_01
+                      configuration: /api/v1/torrents/trr_01/configuration
+                      files: /api/v1/torrents/trr_01/files
+                      statistics: /api/v1/torrents/trr_01/statistics
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      operationId: deleteTorrent
+      summary: Delete a torrent
+      description: >-
+        Removes a torrent. Its streams in progress are canceled individually,
+        and its cached pieces are released in the background, which
+        /api/v1/cache/statistics reflects.
+      tags: [Torrents]
+      responses:
+        '204':
+          description: The torrent was removed.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
+  /api/v1/torrents/{torrent_id}/configuration:
+    parameters:
+      - $ref: '#/components/parameters/TorrentId'
+    get:
+      operationId: getTorrentConfiguration
+      summary: Read a torrent's configuration
+      description: Returns the writable configuration of a torrent.
+      tags: [Torrents]
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The configuration.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ConfigurationETag'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TorrentConfiguration'
+              examples:
+                started:
+                  summary: A started torrent
+                  value:
+                    desired_state: started
+                    links:
+                      self: /api/v1/torrents/trr_01/configuration
+                      torrent: /api/v1/torrents/trr_01
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    patch:
+      operationId: updateTorrentConfiguration
+      summary: Change a torrent's configuration
+      description: >-
+        Applies a JSON merge patch to the configuration. The request must
+        carry If-Match with the configuration's current ETag.
+      tags: [Torrents]
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        description: >-
+          The configuration members to change, in a body of at most 16384
+          bytes. Larger bodies are content-too-large.
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/TorrentConfigurationPatch'
+            examples:
+              pause:
+                summary: Pause the torrent
+                value:
+                  desired_state: paused
+      responses:
+        '200':
+          description: The updated configuration.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ConfigurationETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TorrentConfiguration'
+              examples:
+                paused:
+                  summary: A paused torrent
+                  value:
+                    desired_state: paused
+                    links:
+                      self: /api/v1/torrents/trr_01/configuration
+                      torrent: /api/v1/torrents/trr_01
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
+  /api/v1/torrents/{torrent_id}/files:
+    parameters:
+      - $ref: '#/components/parameters/TorrentId'
+    get:
+      operationId: listTorrentFiles
+      summary: List a torrent's files
+      description: >-
+        Returns a page of the files in a torrent's metadata, in metadata
+        order. Before metadata is available, the request is a
+        lifecycle-conflict.
+      tags: [Files]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: A page of files.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TorrentFilePage'
+              examples:
+                last_page:
+                  summary: A single, last page
+                  value:
+                    items:
+                      - id: fil_01
+                        path: [Example Collection, part-1.mkv]
+                        size_bytes: 1073740800
+                        media_type: video/x-matroska
+                        links:
+                          self: /api/v1/torrents/trr_01/files/fil_01
+                          content: /api/v1/torrents/trr_01/files/fil_01/content
+                          torrent: /api/v1/torrents/trr_01
+                    links:
+                      self: /api/v1/torrents/trr_01/files
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/LifecycleConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/torrents/{torrent_id}/files/{file_id}:
+    parameters:
+      - $ref: '#/components/parameters/TorrentId'
+      - $ref: '#/components/parameters/FileId'
+    get:
+      operationId: getTorrentFile
+      summary: Read a file
+      description: Returns a file's metadata and links.
+      tags: [Files]
+      responses:
+        '200':
+          description: The file.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TorrentFile'
+              examples:
+                video:
+                  summary: A video file
+                  value:
+                    id: fil_01
+                    path: [Example Collection, part-1.mkv]
+                    size_bytes: 1073740800
+                    media_type: video/x-matroska
+                    links:
+                      self: /api/v1/torrents/trr_01/files/fil_01
+                      content: /api/v1/torrents/trr_01/files/fil_01/content
+                      torrent: /api/v1/torrents/trr_01
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/LifecycleConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/torrents/{torrent_id}/files/{file_id}/content:
+    parameters:
+      - $ref: '#/components/parameters/TorrentId'
+      - $ref: '#/components/parameters/FileId'
+    get:
+      operationId: getTorrentFileContent
+      summary: Stream a file's content
+      description: >-
+        Streams a file's bytes, whole or as a single byte range. Audio, video,
+        raster image, and WebVTT files are served inline with their own media
+        type; every other file is served as application/octet-stream for
+        download. A Range header with more than one range is ignored.
+      tags: [Files]
+      parameters:
+        - $ref: '#/components/parameters/Range'
+        - $ref: '#/components/parameters/IfRange'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The whole file.
+          headers:
+            Accept-Ranges:
+              $ref: '#/components/headers/AcceptRanges'
+            Content-Length:
+              $ref: '#/components/headers/ContentLength'
+            Content-Disposition:
+              $ref: '#/components/headers/ContentDisposition'
+            ETag:
+              $ref: '#/components/headers/ContentETag'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptions'
+            Content-Security-Policy:
+              $ref: '#/components/headers/ContentSecurityPolicy'
+          content:
+            video/*:
+              schema:
+                type: string
+                contentMediaType: video/*
+            audio/*:
+              schema:
+                type: string
+                contentMediaType: audio/*
+            image/*:
+              schema:
+                type: string
+                contentMediaType: image/*
+            text/vtt:
+              schema:
+                type: string
+                contentMediaType: text/vtt
+            application/octet-stream:
+              schema:
+                type: string
+                contentMediaType: application/octet-stream
+        '206':
+          description: The requested byte range.
+          headers:
+            Accept-Ranges:
+              $ref: '#/components/headers/AcceptRanges'
+            Content-Length:
+              $ref: '#/components/headers/ContentLength'
+            Content-Range:
+              $ref: '#/components/headers/ContentRange'
+            Content-Disposition:
+              $ref: '#/components/headers/ContentDisposition'
+            ETag:
+              $ref: '#/components/headers/ContentETag'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptions'
+            Content-Security-Policy:
+              $ref: '#/components/headers/ContentSecurityPolicy'
+          content:
+            video/*:
+              schema:
+                type: string
+                contentMediaType: video/*
+            audio/*:
+              schema:
+                type: string
+                contentMediaType: audio/*
+            image/*:
+              schema:
+                type: string
+                contentMediaType: image/*
+            text/vtt:
+              schema:
+                type: string
+                contentMediaType: text/vtt
+            application/octet-stream:
+              schema:
+                type: string
+                contentMediaType: application/octet-stream
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/LifecycleConflict'
+        '416':
+          $ref: '#/components/responses/RangeNotSatisfiable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+    head:
+      operationId: headTorrentFileContent
+      summary: Read a file's content headers
+      description: >-
+        Returns the headers a GET would return, without a body. It never
+        creates readers or prefetches piece data.
+      tags: [Files]
+      parameters:
+        - $ref: '#/components/parameters/Range'
+        - $ref: '#/components/parameters/IfRange'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The headers of the whole file.
+          headers:
+            Accept-Ranges:
+              $ref: '#/components/headers/AcceptRanges'
+            Content-Length:
+              $ref: '#/components/headers/ContentLength'
+            Content-Disposition:
+              $ref: '#/components/headers/ContentDisposition'
+            ETag:
+              $ref: '#/components/headers/ContentETag'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptions'
+            Content-Security-Policy:
+              $ref: '#/components/headers/ContentSecurityPolicy'
+        '206':
+          description: The headers of the requested byte range.
+          headers:
+            Accept-Ranges:
+              $ref: '#/components/headers/AcceptRanges'
+            Content-Length:
+              $ref: '#/components/headers/ContentLength'
+            Content-Range:
+              $ref: '#/components/headers/ContentRange'
+            Content-Disposition:
+              $ref: '#/components/headers/ContentDisposition'
+            ETag:
+              $ref: '#/components/headers/ContentETag'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptions'
+            Content-Security-Policy:
+              $ref: '#/components/headers/ContentSecurityPolicy'
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/LifecycleConflict'
+        '416':
+          $ref: '#/components/responses/RangeNotSatisfiable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/torrents/{torrent_id}/statistics:
+    parameters:
+      - $ref: '#/components/parameters/TorrentId'
+    get:
+      operationId: getTorrentStatistics
+      summary: Read a torrent's statistics
+      description: Returns transfer and peer measurements for a torrent.
+      tags: [Statistics]
+      responses:
+        '200':
+          description: The current torrent measurements.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TorrentStatistics'
+              examples:
+                downloading:
+                  summary: A torrent being downloaded
+                  value:
+                    downloaded_bytes: 536870912
+                    uploaded_bytes: 1048576
+                    download_rate_bytes_per_second: 4194304
+                    upload_rate_bytes_per_second: 65536
+                    peer_count: 12
+                    completion_ratio: 0.5
+                    links:
+                      self: /api/v1/torrents/trr_01/statistics
+                      torrent: /api/v1/torrents/trr_01
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
+  /api/v1/cache/statistics:
+    get:
+      operationId: getCacheStatistics
+      summary: Read piece cache statistics
+      description: Returns the global piece cache's capacity and usage.
+      tags: [Statistics]
+      responses:
+        '200':
+          description: The current piece cache measurements.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CacheStatistics'
+              examples:
+                in_use:
+                  summary: A partly used cache
+                  value:
+                    capacity_bytes: 268435456
+                    usage_bytes: 201326592
+                    pinned_bytes: 33554432
+                    eviction_count: 140
+                    links:
+                      self: /api/v1/cache/statistics
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /livez:
+    get:
+      operationId: getLiveness
+      summary: Check liveness
+      description: Reports whether the process is running and serving requests.
+      tags: [Health]
+      responses:
+        '200':
+          $ref: '#/components/responses/Healthy'
+        '503':
+          $ref: '#/components/responses/Unhealthy'
+
+  /readyz:
+    get:
+      operationId: getReadiness
+      summary: Check readiness
+      description: >-
+        Reports whether the application can serve API requests. It reports
+        unavailable while the engine is starting or shutting down.
+      tags: [Health]
+      responses:
+        '200':
+          $ref: '#/components/responses/Healthy'
+        '503':
+          $ref: '#/components/responses/Unhealthy'
+
+components:
+  parameters:
+    TorrentId:
+      name: torrent_id
+      in: path
+      required: true
+      description: The torrent's ID.
+      schema:
+        type: string
+      example: trr_01
+    FileId:
+      name: file_id
+      in: path
+      required: true
+      description: The file's ID within its torrent.
+      schema:
+        type: string
+      example: fil_01
+    PageSize:
+      name: page_size
+      in: query
+      description: The maximum number of items in a page.
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 200
+        default: 50
+      example: 50
+    Cursor:
+      name: cursor
+      in: query
+      description: >-
+        An opaque position from a next link. It is valid only with the filters
+        it was issued for.
+      schema:
+        type: string
+      example: eyJhZnRlciI6InRycl8wMSJ9
+    ObservedStateFilter:
+      name: observed_state
+      in: query
+      description: >-
+        Limits the page to torrents in any of the given observed states. Repeat
+        it to match several.
+      style: form
+      explode: true
+      schema:
+        type: array
+        items:
+          $ref: '#/components/schemas/ObservedState'
+      example: [downloading, paused]
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: >-
+        The configuration's current strong ETag. A request without it receives
+        428; a stale value receives 412.
+      schema:
+        type: string
+      example: '"cfg-3"'
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      description: An ETag the client holds; a match receives 304.
+      schema:
+        type: string
+      example: '"st-17"'
+    Range:
+      name: Range
+      in: header
+      description: A single byte range, including open-ended and suffix ranges.
+      schema:
+        type: string
+      example: bytes=1048576-
+    IfRange:
+      name: If-Range
+      in: header
+      description: >-
+        The content ETag the range applies to; a mismatch returns the whole
+        file.
+      schema:
+        type: string
+      example: '"sha1-0123456789abcdef0123456789abcdef01234567-0"'
+
+  headers:
+    Location:
+      description: The created torrent's URI.
+      required: true
+      schema:
+        type: string
+        format: uri-reference
+      example: /api/v1/torrents/trr_01
+    StateETag:
+      description: A validator that changes whenever the torrent's representation changes.
+      required: true
+      schema:
+        type: string
+      example: '"st-17"'
+    ConfigurationETag:
+      description: A strong validator that changes only when the configuration changes.
+      required: true
+      schema:
+        type: string
+      example: '"cfg-3"'
+    ContentETag:
+      description: A strong validator that identifies the file's bytes.
+      required: true
+      schema:
+        type: string
+      example: '"sha1-0123456789abcdef0123456789abcdef01234567-0"'
+    CacheControl:
+      description: Requires caches to revalidate the representation before reuse.
+      required: true
+      schema:
+        type: string
+        const: no-cache
+      example: no-cache
+    AcceptRanges:
+      description: Advertises byte-range support.
+      required: true
+      schema:
+        type: string
+        const: bytes
+      example: bytes
+    ContentLength:
+      description: The number of bytes in the body.
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+      example: 1073740800
+    ContentRange:
+      description: The byte range in the body and the file's total length.
+      required: true
+      schema:
+        type: string
+      example: bytes 1048576-1073740799/1073740800
+    ContentDisposition:
+      description: >-
+        Inline for audio, video, raster image, and WebVTT files and attachment
+        for every other file, with the file name encoded as RFC 6266 specifies.
+      required: true
+      schema:
+        type: string
+      example: inline; filename="part-1.mkv"
+    ContentTypeOptions:
+      description: Stops browsers from guessing a different media type.
+      required: true
+      schema:
+        type: string
+        const: nosniff
+      example: nosniff
+    ContentSecurityPolicy:
+      description: Sandboxes the content if a browser opens it as a document.
+      required: true
+      schema:
+        type: string
+        const: sandbox
+      example: sandbox
+    MatchedETag:
+      description: The current validator, which the client's If-None-Match matched.
+      required: true
+      schema:
+        type: string
+      example: '"st-17"'
+    RetryAfter:
+      description: The number of seconds after which a retry may succeed.
+      schema:
+        type: integer
+        format: int32
+        minimum: 0
+      example: 5
+    UnsatisfiedRange:
+      description: The file's total length, for a range that cannot be satisfied.
+      required: true
+      schema:
+        type: string
+      example: bytes */1073740800
+
+  responses:
+    NotModified:
+      description: The representation matches the ETag the client holds.
+      headers:
+        ETag:
+          $ref: '#/components/headers/MatchedETag'
+    Healthy:
+      description: The check passes.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Health'
+          examples:
+            ok:
+              summary: A passing check
+              value:
+                status: ok
+    Unhealthy:
+      description: The check fails.
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            starting:
+              summary: The engine is starting
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/engine-unavailable
+                title: Engine unavailable
+                status: 503
+                detail: The torrent engine is starting.
+    MalformedRequest:
+      description: The request cannot be parsed or has an invalid parameter.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ValidationProblem'
+          examples:
+            page_size:
+              summary: A page size out of bounds
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/malformed-request
+                title: Malformed request
+                status: 400
+                detail: A parameter is invalid.
+                errors:
+                  - detail: Must be between 1 and 200.
+                    parameter: page_size
+    NotFound:
+      description: The target resource does not exist.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            torrent:
+              summary: A missing torrent
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/not-found
+                title: Not found
+                status: 404
+                detail: No torrent has the ID trr_99.
+    LifecycleConflict:
+      description: The resource's current state does not allow the request.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            metadata:
+              summary: Metadata is not available yet
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/lifecycle-conflict
+                title: Lifecycle conflict
+                status: 409
+                detail: The torrent's metadata is still being retrieved.
+    DuplicateTorrent:
+      description: A torrent with the same info hash already exists.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/DuplicateTorrentProblem'
+          examples:
+            duplicate:
+              summary: The torrent already exists
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/duplicate-torrent
+                title: Duplicate torrent
+                status: 409
+                detail: A torrent with this info hash already exists.
+                torrent: /api/v1/torrents/trr_01
+    PreconditionFailed:
+      description: If-Match does not match the configuration's current ETag.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            stale:
+              summary: A stale ETag
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/precondition-failed
+                title: Precondition failed
+                status: 412
+                detail: The configuration changed since the ETag was issued.
+    ContentTooLarge:
+      description: The request body exceeds its documented limit.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            torrent_file:
+              summary: An oversized torrent file
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/content-too-large
+                title: Content too large
+                status: 413
+                detail: The request body exceeds 10485760 bytes.
+    UnsupportedMediaType:
+      description: The request's Content-Type is not accepted by the operation.
+      headers:
+        Accept:
+          description: The request media types the operation accepts.
+          schema:
+            type: string
+          example: application/json, multipart/form-data
+        Accept-Patch:
+          description: The patch media types a PATCH operation accepts.
+          schema:
+            type: string
+          example: application/merge-patch+json
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            media_type:
+              summary: An unsupported media type
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/unsupported-media-type
+                title: Unsupported media type
+                status: 415
+                detail: The operation does not accept text/plain.
+    RangeNotSatisfiable:
+      description: No requested range overlaps the content.
+      headers:
+        Content-Range:
+          $ref: '#/components/headers/UnsatisfiedRange'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            past_end:
+              summary: A range past the end of the file
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/range-not-satisfiable
+                title: Range not satisfiable
+                status: 416
+                detail: The range starts after the end of the file.
+    ValidationFailed:
+      description: The body parses but violates its schema or a documented rule.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ValidationProblem'
+          examples:
+            desired_state:
+              summary: An unknown desired state
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/validation-failed
+                title: Validation failed
+                status: 422
+                detail: The body is invalid.
+                errors:
+                  - detail: Must be started or paused.
+                    pointer: /desired_state
+    UnprocessableTorrent:
+      description: >-
+        The torrent input is invalid, or it is a valid torrent the engine
+        cannot handle.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ValidationProblem'
+          examples:
+            invalid_metainfo:
+              summary: An uploaded file that is not torrent metainfo
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/validation-failed
+                title: Validation failed
+                status: 422
+                detail: The body is invalid.
+                errors:
+                  - detail: Not valid torrent metainfo.
+                    pointer: /torrent_file
+            v2_only:
+              summary: A v2-only torrent
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/unsupported-torrent
+                title: Unsupported torrent
+                status: 422
+                detail: Only BitTorrent v1 and hybrid torrents are supported.
+    PreconditionRequired:
+      description: The PATCH request omits If-Match.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            missing_if_match:
+              summary: A PATCH without If-Match
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/precondition-required
+                title: Precondition required
+                status: 428
+                detail: Send If-Match with the configuration's current ETag.
+    InternalError:
+      description: An unexpected failure.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            internal:
+              summary: An unexpected failure
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/internal-error
+                title: Internal error
+                status: 500
+                detail: The request failed unexpectedly.
+    EngineUnavailable:
+      description: The torrent engine cannot serve the request right now.
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            shutting_down:
+              summary: The engine is shutting down
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/engine-unavailable
+                title: Engine unavailable
+                status: 503
+                detail: The torrent engine is shutting down.
+
+  schemas:
+    EntryPoint:
+      type: object
+      description: The API's entry point.
+      required: [links]
+      properties:
+        links:
+          type: object
+          description: Links to the top-level resources and the OpenAPI document.
+          required: [self, torrents, cache_statistics, service-desc]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: The entry point.
+              examples: [/api/v1]
+            torrents:
+              type: string
+              format: uri-reference
+              description: The torrents collection.
+              examples: [/api/v1/torrents]
+            cache_statistics:
+              type: string
+              format: uri-reference
+              description: The piece cache's statistics.
+              examples: [/api/v1/cache/statistics]
+            service-desc:
+              type: string
+              format: uri-reference
+              description: The OpenAPI document, under its RFC 8631 relation name.
+              examples: [/api/v1/openapi.yaml]
+
+    DesiredState:
+      type: string
+      description: The state the client wants a torrent in.
+      enum: [started, paused]
+      examples: [started]
+
+    ObservedState:
+      type: string
+      description: >-
+        The state the engine reports for a torrent. Clients must handle values
+        added later.
+      enum: [retrieving_metadata, downloading, paused, failed]
+      examples: [downloading]
+
+    TorrentCreation:
+      type: object
+      description: The input that creates a torrent from a magnet URI.
+      additionalProperties: false
+      required: [magnet_uri]
+      properties:
+        magnet_uri:
+          type: string
+          description: >-
+            A magnet URI with a BitTorrent v1 or hybrid info hash, at most 8192
+            characters.
+          maxLength: 8192
+          examples: ['magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567']
+        desired_state:
+          $ref: '#/components/schemas/CreationDesiredState'
+
+    TorrentFileUpload:
+      type: object
+      description: The multipart form that creates a torrent from a torrent file.
+      additionalProperties: false
+      required: [torrent_file]
+      properties:
+        torrent_file:
+          type: string
+          contentMediaType: application/x-bittorrent
+          description: The torrent file, at most 10485760 bytes.
+          examples: ['d8:announce20:http://tracker.test/4:infod6:lengthi1024e4:name8:file.bin12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaaee']
+        desired_state:
+          $ref: '#/components/schemas/CreationDesiredState'
+
+    CreationDesiredState:
+      type: string
+      description: The state a new torrent starts in. It defaults to started.
+      enum: [started, paused]
+      default: started
+      examples: [paused]
+
+    Torrent:
+      type: object
+      description: A torrent the application tracks.
+      required:
+        - id
+        - name
+        - info_hashes
+        - observed_state
+        - storage_mode
+        - size_bytes
+        - file_count
+        - created_at
+        - links
+      properties:
+        id:
+          type: string
+          readOnly: true
+          description: The torrent's opaque, stable ID.
+          examples: [trr_01]
+        name:
+          type: [string, 'null']
+          readOnly: true
+          description: The name from the metadata, or null until metadata is available.
+          examples: [Example Collection]
+        info_hashes:
+          type: array
+          readOnly: true
+          description: The torrent's protocol identifiers.
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/InfoHash'
+          examples:
+            - - algorithm: sha1
+                value: 0123456789abcdef0123456789abcdef01234567
+        observed_state:
+          $ref: '#/components/schemas/ObservedState'
+        storage_mode:
+          type: string
+          readOnly: true
+          description: Where the torrent keeps piece data. The prototype has only memory storage.
+          enum: [memory]
+          examples: [memory]
+        size_bytes:
+          type: [integer, 'null']
+          format: int64
+          minimum: 0
+          readOnly: true
+          description: The total size of the torrent's files, or null until metadata is available.
+          examples: [1073740800]
+        file_count:
+          type: [integer, 'null']
+          format: int64
+          minimum: 0
+          readOnly: true
+          description: The number of files, or null until metadata is available.
+          examples: [1]
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+          description: When the torrent was created, in UTC.
+          examples: ['2026-10-19T12:00:00Z']
+        links:
+          type: object
+          readOnly: true
+          description: Links from a torrent to its related resources.
+          required: [self, configuration, files, statistics]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: This torrent.
+              examples: [/api/v1/torrents/trr_01]
+            configuration:
+              type: string
+              format: uri-reference
+              description: The torrent's configuration.
+              examples: [/api/v1/torrents/trr_01/configuration]
+            files:
+              type: string
+              format: uri-reference
+              description: >-
+                The torrent's files, which return lifecycle-conflict until
+                metadata is available.
+              examples: [/api/v1/torrents/trr_01/files]
+            statistics:
+              type: string
+              format: uri-reference
+              description: The torrent's statistics.
+              examples: [/api/v1/torrents/trr_01/statistics]
+
+    InfoHash:
+      type: object
+      description: A protocol identifier of a torrent's info dictionary.
+      required: [algorithm, value]
+      properties:
+        algorithm:
+          type: string
+          description: The hash algorithm. Clients must handle values added later.
+          enum: [sha1]
+          examples: [sha1]
+        value:
+          type: string
+          description: The hash in lowercase hexadecimal.
+          pattern: '^[0-9a-f]{40}$'
+          examples: [0123456789abcdef0123456789abcdef01234567]
+
+    TorrentPage:
+      type: object
+      description: A page of torrents.
+      required: [items, links]
+      properties:
+        items:
+          type: array
+          description: The torrents on this page.
+          items:
+            $ref: '#/components/schemas/Torrent'
+          examples: [[]]
+        links:
+          type: object
+          description: Links from a page of torrents.
+          required: [self]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: This page of torrents.
+              examples: [/api/v1/torrents]
+            next:
+              type: string
+              format: uri-reference
+              description: The next page of torrents, omitted on the last page.
+              examples: ['/api/v1/torrents?cursor=eyJhZnRlciI6InRycl8wMSJ9']
+
+    TorrentConfiguration:
+      type: object
+      description: The writable configuration of a torrent.
+      required: [desired_state, links]
+      properties:
+        desired_state:
+          $ref: '#/components/schemas/DesiredState'
+        links:
+          type: object
+          readOnly: true
+          description: Links from a configuration.
+          required: [self, torrent]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: This configuration.
+              examples: [/api/v1/torrents/trr_01/configuration]
+            torrent:
+              type: string
+              format: uri-reference
+              description: The torrent this configuration belongs to.
+              examples: [/api/v1/torrents/trr_01]
+
+    TorrentConfigurationPatch:
+      type: object
+      description: >-
+        A JSON merge patch of a torrent's configuration. Omitted members keep
+        their values.
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        desired_state:
+          $ref: '#/components/schemas/DesiredState'
+
+    TorrentFile:
+      type: object
+      description: A file listed in a torrent's metadata.
+      required: [id, path, size_bytes, media_type, links]
+      properties:
+        id:
+          type: string
+          description: The file's ID, stable within its torrent.
+          examples: [fil_01]
+        path:
+          type: array
+          description: The file's path components from the metadata, in order.
+          minItems: 1
+          items:
+            type: string
+          examples:
+            - [Example Collection, part-1.mkv]
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The file's size.
+          examples: [1073740800]
+        media_type:
+          type: string
+          description: >-
+            The media type the content is served with, derived from the file
+            name; application/octet-stream unless the file is audio, video, a
+            raster image, or WebVTT.
+          examples: [video/x-matroska]
+        links:
+          type: object
+          description: Links from a file.
+          required: [self, content, torrent]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: This file.
+              examples: [/api/v1/torrents/trr_01/files/fil_01]
+            content:
+              type: string
+              format: uri-reference
+              description: The file's content.
+              examples: [/api/v1/torrents/trr_01/files/fil_01/content]
+            torrent:
+              type: string
+              format: uri-reference
+              description: The torrent the file belongs to.
+              examples: [/api/v1/torrents/trr_01]
+
+    TorrentFilePage:
+      type: object
+      description: A page of a torrent's files.
+      required: [items, links]
+      properties:
+        items:
+          type: array
+          description: The files on this page.
+          items:
+            $ref: '#/components/schemas/TorrentFile'
+          examples: [[]]
+        links:
+          type: object
+          description: Links from a page of files.
+          required: [self]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: This page of files.
+              examples: [/api/v1/torrents/trr_01/files]
+            next:
+              type: string
+              format: uri-reference
+              description: The next page of files, omitted on the last page.
+              examples: ['/api/v1/torrents/trr_01/files?cursor=eyJhZnRlciI6ImZpbF8wMSJ9']
+
+    TorrentStatistics:
+      type: object
+      description: Transfer and peer measurements for a torrent.
+      required:
+        - downloaded_bytes
+        - uploaded_bytes
+        - download_rate_bytes_per_second
+        - upload_rate_bytes_per_second
+        - peer_count
+        - completion_ratio
+        - links
+      properties:
+        downloaded_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Bytes downloaded from peers since the torrent was created.
+          examples: [536870912]
+        uploaded_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Bytes uploaded to peers since the torrent was created.
+          examples: [1048576]
+        download_rate_bytes_per_second:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The current download rate.
+          examples: [4194304]
+        upload_rate_bytes_per_second:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The current upload rate.
+          examples: [65536]
+        peer_count:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The number of connected peers.
+          examples: [12]
+        completion_ratio:
+          type: [number, 'null']
+          format: double
+          minimum: 0
+          maximum: 1
+          description: >-
+            The fraction of the torrent's pieces currently held, from 0.0 to
+            1.0, or null until metadata is available.
+          examples: [0.5]
+        links:
+          type: object
+          description: Links from a torrent's statistics.
+          required: [self, torrent]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: These statistics.
+              examples: [/api/v1/torrents/trr_01/statistics]
+            torrent:
+              type: string
+              format: uri-reference
+              description: The torrent these statistics measure.
+              examples: [/api/v1/torrents/trr_01]
+
+    CacheStatistics:
+      type: object
+      description: >-
+        The global piece cache's capacity and usage. Cache usage is reported
+        separately from process memory and does not bound it.
+      required: [capacity_bytes, usage_bytes, pinned_bytes, eviction_count, links]
+      properties:
+        capacity_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The configured cache capacity.
+          examples: [268435456]
+        usage_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            The bytes counted against capacity, including pending allocations
+            and retained reusable buffers.
+          examples: [201326592]
+        pinned_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The bytes in pinned ranges, which eviction skips.
+          examples: [33554432]
+        eviction_count:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The number of pieces evicted since the process started.
+          examples: [140]
+        links:
+          type: object
+          description: Links from the cache statistics.
+          required: [self]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: The cache statistics.
+              examples: [/api/v1/cache/statistics]
+
+    Health:
+      type: object
+      description: The result of a passing health check.
+      required: [status]
+      properties:
+        status:
+          type: string
+          description: Always ok for a passing check.
+          enum: [ok]
+          examples: [ok]
+
+    Problem:
+      type: object
+      description: An RFC 9457 problem details object.
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri
+          description: >-
+            The problem type, a tag URI under
+            tag:skunkie.github.io,2026:torrplay/problems/.
+          examples: ['tag:skunkie.github.io,2026:torrplay/problems/not-found']
+        title:
+          type: string
+          description: A short summary that is the same for every occurrence of the type.
+          examples: [Not found]
+        status:
+          type: integer
+          format: int32
+          minimum: 400
+          maximum: 599
+          description: The HTTP status code of the response.
+          examples: [404]
+        detail:
+          type: string
+          description: An explanation of this occurrence, omitted when there is none.
+          examples: [No torrent has the ID trr_99.]
+        instance:
+          type: string
+          format: uri-reference
+          description: An identifier of this occurrence, omitted when there is none.
+          examples: [/api/v1/torrents/trr_99]
+
+    ValidationProblem:
+      description: A problem that lists the invalid parameters or body members.
+      allOf:
+        - $ref: '#/components/schemas/Problem'
+        - type: object
+          properties:
+            errors:
+              type: array
+              description: >-
+                The individual validation failures, omitted when the request
+                cannot be parsed far enough to locate them.
+              items:
+                $ref: '#/components/schemas/ValidationError'
+
+    ValidationError:
+      type: object
+      description: >-
+        One validation failure, located by a parameter name or by a JSON
+        Pointer into the body.
+      required: [detail]
+      properties:
+        detail:
+          type: string
+          description: What is wrong with the value.
+          examples: [Must be between 1 and 200.]
+        parameter:
+          type: string
+          description: The name of the invalid path or query parameter.
+          examples: [page_size]
+        pointer:
+          type: string
+          description: An RFC 6901 JSON Pointer to the invalid body member.
+          examples: [/desired_state]
+
+    DuplicateTorrentProblem:
+      description: A duplicate-torrent problem that links to the existing torrent.
+      allOf:
+        - $ref: '#/components/schemas/Problem'
+        - type: object
+          required: [torrent]
+          properties:
+            torrent:
+              type: string
+              format: uri-reference
+              description: The existing torrent with the same info hash.
+              examples: [/api/v1/torrents/trr_01]
