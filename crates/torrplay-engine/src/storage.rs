@@ -87,6 +87,15 @@ impl CachedTorrent {
         self.cache.set_started(self.key, started)
     }
 
+    /// Releases every piece of the torrent and returns their bytes to the
+    /// capacity. Call it once the torrent is deleted: librqbit drops a
+    /// deleted torrent's storage only when its last peer task ends, and until
+    /// then the pieces would hold capacity that nothing can evict. Later
+    /// reads and writes of the torrent fail.
+    pub fn release(&self) -> Result<(), CacheError> {
+        self.cache.release_torrent(self.key)
+    }
+
     /// Evicts the given verified pieces through completion invalidation and
     /// returns how many the engine marked missing.
     pub fn evict(&self, pieces: &[u32]) -> anyhow::Result<usize> {

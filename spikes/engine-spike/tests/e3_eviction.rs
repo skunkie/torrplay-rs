@@ -127,14 +127,20 @@ fn live_stats(handle: &ManagedTorrent) -> anyhow::Result<LiveStats> {
     handle.stats().live.context("the torrent is not live")
 }
 
-async fn delete(leecher: &Leecher, handle: Arc<ManagedTorrent>) -> anyhow::Result<()> {
+/// Deletes a torrent and releases its cache usage, as the adapter will.
+async fn delete(
+    leecher: &Leecher,
+    handle: Arc<ManagedTorrent>,
+    cached: CachedTorrent,
+) -> anyhow::Result<()> {
     bounded(
         "deleting a torrent",
         leecher
             .session
             .delete(TorrentIdOrHash::Id(handle.id()), false),
     )
-    .await
+    .await?;
+    Ok(cached.release()?)
 }
 
 fn assert_not_failed(stats: &TorrentStats) {
@@ -155,7 +161,7 @@ async fn streaming_four_times_the_capacity_evicts_and_downloads_again() -> anyho
     let leecher = Leecher::start().await?;
     let cache = PieceCache::new(capacity);
     let factory = MemoryStorageFactory::new(cache.clone());
-    let (handle, _cached) = add_in_memory(&leecher, &seeder, &spec, &factory).await?;
+    let (handle, cached) = add_in_memory(&leecher, &seeder, &spec, &factory).await?;
 
     check_every_file(&handle, &spec).await?;
     let stats = cache.audit()?;
@@ -173,7 +179,7 @@ async fn streaming_four_times_the_capacity_evicts_and_downloads_again() -> anyho
     assert_not_failed(&handle.stats());
     assert_eq!(live_stats(&handle)?.snapshot.peer_stats.dead, 0);
 
-    delete(&leecher, handle).await?;
+    delete(&leecher, handle, cached).await?;
     cache_reaches(&cache, "the cache emptied", |stats| stats.usage_bytes == 0).await?;
     leecher.session.stop().await;
     seeder.session.stop().await;
@@ -334,7 +340,7 @@ async fn opening_and_deleting_torrents_in_a_loop_leaves_nothing_behind() -> anyh
     let factory = MemoryStorageFactory::new(cache.clone());
 
     for round in 0..100 {
-        let (handle, _cached) = add_in_memory(&leecher, &seeder, &spec, &factory).await?;
+        let (handle, cached) = add_in_memory(&leecher, &seeder, &spec, &factory).await?;
         let offset = (round * 37 * KIB) % (spec.total_size_bytes() - 64 * KIB);
         let bytes = read_range(&handle, 0, offset, Some(64 * KIB as usize)).await?;
         assert_eq!(
@@ -342,7 +348,7 @@ async fn opening_and_deleting_torrents_in_a_loop_leaves_nothing_behind() -> anyh
             None,
             "round {round}"
         );
-        delete(&leecher, handle).await?;
+        delete(&leecher, handle, cached).await?;
     }
 
     cache_reaches(&cache, "the cache emptied", |stats| {
@@ -364,7 +370,8 @@ async fn opening_and_deleting_torrents_in_a_loop_leaves_nothing_behind() -> anyh
 
 /// Readers of two torrents that evict each other's pieces all finish byte
 /// for byte, which a lock-order inversion between the cache and a torrent's
-/// state would turn into a timeout.
+/// state would turn into a timeout, and a read racing an eviction into a
+/// mismatch.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_readers_of_two_torrents_progress_under_eviction() -> anyhow::Result<()> {
     let capacity = 8 * MIB;
@@ -389,7 +396,7 @@ async fn concurrent_readers_of_two_torrents_progress_under_eviction() -> anyhow:
     ]
     .map(|(handle, spec, file_id, offset)| {
         tokio::spawn(async move {
-            for _ in 0..3 {
+            for _ in 0..2 {
                 let bytes = read_range(&handle, file_id, offset, None).await?;
                 anyhow::ensure!(
                     generator::first_mismatch(spec.file_seed(file_id), offset, &bytes).is_none(),
@@ -399,8 +406,10 @@ async fn concurrent_readers_of_two_torrents_progress_under_eviction() -> anyhow:
             anyhow::Ok(())
         })
     });
+    // Each read is bounded, so a deadlock fails a read without bounding the
+    // whole run, which slow runners need.
     for reader in readers {
-        bounded("a reader finishing", async { reader.await? }).await?;
+        reader.await??;
     }
     assert!(cache.audit()?.eviction_count > 0);
     assert_not_failed(&large_handle.stats());

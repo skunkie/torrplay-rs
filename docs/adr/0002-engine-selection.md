@@ -398,7 +398,7 @@ reuse.
 
 ### E3: eviction with completion invalidation
 
-The fork adds two commits. The first fixes an upstream race: when a torrent
+The fork adds three commits. The first fixes an upstream race: when a torrent
 finished, librqbit marked its seeders not needed before their connections
 closed, so a reconnect requested in that window, by selecting files,
 opening a stream, or now invalidation, left the peer queued, and the
@@ -443,15 +443,26 @@ number of rounds and fails when nothing is evictable.
   torrent, reading a range, and deleting it, cache usage, resident pieces,
   torrents, and the seeder's connections return to zero. Task counts are
   not measured; that needs the task tracking E1 found missing.
+- **A deleted torrent's pieces outlive the deletion.** librqbit drops a
+  deleted torrent's storage only when its last peer task ends, and until
+  then its pieces hold capacity that nothing can evict: on a slow CI runner
+  the next torrent in CAC-09 failed for lack of room. The adapter releases
+  a torrent's cache usage as soon as librqbit has deleted it, and later
+  reads and writes of the deleted torrent fail.
 - **No lock-order inversion** shows: four readers of two torrents that
-  evict each other's pieces, three passes each, finish byte for byte within
-  their bounds.
-- **The reader race is closed in the engine.** A reader checks `have`, then
-  reads without the state lock, so eviction can come in between. Because
-  the storage drops data only under the state lock while the piece is
-  marked missing, a failed read checks `have` again: a missing piece makes
-  the reader wait, and a piece downloaded again in the meantime is read
-  once more. This answers the open question about retrying.
+  evict each other's pieces, two passes each, finish byte for byte, each
+  read within its bound.
+- **The reader race is closed in the engine** by the third commit. A reader
+  checks `have`, then reads without the state lock, so eviction can come in
+  between. The storage may have dropped the data, failing the read, or the
+  requeued piece may already be downloading again, so the read succeeds
+  with unverified bytes. That second case returned wrong data on Windows CI
+  and in four of six runs on one CPU. The torrent now counts invalidations
+  under its lock before any data is dropped; a reader takes the count with
+  its `have` check, compares it after reading, and polls again if it
+  changed. No run failed after the fix, ten of them on one CPU. This
+  answers the open question about retrying; the commit belongs with P1
+  when proposed upstream.
 - **Without pinning, readers lose pieces they are about to read**, and the
   torrent keeps downloading every evicted piece in the background. Both are
   correct but wasteful; E6's pinning and priority hook bound them.
