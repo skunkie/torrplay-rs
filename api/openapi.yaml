@@ -110,7 +110,7 @@ paths:
                   summary: A single, last page
                   value:
                     items:
-                      - id: trr_01
+                      - id: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
                         name: Example Collection
                         info_hashes:
                           - algorithm: sha1
@@ -122,10 +122,10 @@ paths:
                         created_at: '2026-10-19T12:00:00Z'
                         failure: null
                         links:
-                          self: /api/v1/torrents/trr_01
-                          configuration: /api/v1/torrents/trr_01/configuration
-                          files: /api/v1/torrents/trr_01/files
-                          statistics: /api/v1/torrents/trr_01/statistics
+                          self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+                          configuration: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/configuration
+                          files: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files
+                          statistics: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/statistics
                     links:
                       self: /api/v1/torrents
         '400':
@@ -184,7 +184,7 @@ paths:
                 retrieving:
                   summary: A torrent whose metadata is being retrieved
                   value:
-                    id: trr_01
+                    id: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
                     name: null
                     info_hashes:
                       - algorithm: sha1
@@ -196,10 +196,10 @@ paths:
                     created_at: '2026-10-19T12:00:00Z'
                     failure: null
                     links:
-                      self: /api/v1/torrents/trr_01
-                      configuration: /api/v1/torrents/trr_01/configuration
-                      files: /api/v1/torrents/trr_01/files
-                      statistics: /api/v1/torrents/trr_01/statistics
+                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+                      configuration: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/configuration
+                      files: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files
+                      statistics: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/statistics
         '400':
           $ref: '#/components/responses/MalformedRequest'
         '409':
@@ -244,7 +244,7 @@ paths:
                 downloading:
                   summary: A torrent with metadata
                   value:
-                    id: trr_01
+                    id: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
                     name: Example Collection
                     info_hashes:
                       - algorithm: sha1
@@ -256,10 +256,10 @@ paths:
                     created_at: '2026-10-19T12:00:00Z'
                     failure: null
                     links:
-                      self: /api/v1/torrents/trr_01
-                      configuration: /api/v1/torrents/trr_01/configuration
-                      files: /api/v1/torrents/trr_01/files
-                      statistics: /api/v1/torrents/trr_01/statistics
+                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+                      configuration: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/configuration
+                      files: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files
+                      statistics: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/statistics
         '304':
           $ref: '#/components/responses/NotModified'
         '404':
@@ -312,8 +312,8 @@ paths:
                   value:
                     desired_state: started
                     links:
-                      self: /api/v1/torrents/trr_01/configuration
-                      torrent: /api/v1/torrents/trr_01
+                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/configuration
+                      torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
         '304':
           $ref: '#/components/responses/NotModified'
         '404':
@@ -362,8 +362,8 @@ paths:
                   value:
                     desired_state: paused
                     links:
-                      self: /api/v1/torrents/trr_01/configuration
-                      torrent: /api/v1/torrents/trr_01
+                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/configuration
+                      torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
         '400':
           $ref: '#/components/responses/MalformedRequest'
         '404':
@@ -409,16 +409,16 @@ paths:
                   summary: A single, last page
                   value:
                     items:
-                      - id: fil_01
+                      - id: fil_xfuperelxpqq4qhvgmtq62qwv4
                         path: [Example Collection, part-1.mkv]
                         size_bytes: 1073740800
                         media_type: video/x-matroska
                         links:
-                          self: /api/v1/torrents/trr_01/files/fil_01
-                          content: /api/v1/torrents/trr_01/files/fil_01/content
-                          torrent: /api/v1/torrents/trr_01
+                          self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
+                          content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+                          torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
                     links:
-                      self: /api/v1/torrents/trr_01/files
+                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files
         '400':
           $ref: '#/components/responses/MalformedRequest'
         '404':
@@ -448,14 +448,14 @@ paths:
                 video:
                   summary: A video file
                   value:
-                    id: fil_01
+                    id: fil_xfuperelxpqq4qhvgmtq62qwv4
                     path: [Example Collection, part-1.mkv]
                     size_bytes: 1073740800
                     media_type: video/x-matroska
                     links:
-                      self: /api/v1/torrents/trr_01/files/fil_01
-                      content: /api/v1/torrents/trr_01/files/fil_01/content
-                      torrent: /api/v1/torrents/trr_01
+                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
+                      content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+                      torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -653,8 +653,8 @@ paths:
                     peer_count: 12
                     completion_ratio: 0.5
                     links:
-                      self: /api/v1/torrents/trr_01/statistics
-                      torrent: /api/v1/torrents/trr_01
+                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/statistics
+                      torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
@@ -726,7 +726,7 @@ components:
       description: The torrent's ID.
       schema:
         type: string
-      example: trr_01
+      example: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
     FileId:
       name: file_id
       in: path
@@ -734,7 +734,7 @@ components:
       description: The file's ID within its torrent.
       schema:
         type: string
-      example: fil_01
+      example: fil_xfuperelxpqq4qhvgmtq62qwv4
     PageSize:
       name: page_size
       in: query
@@ -754,7 +754,7 @@ components:
         it was issued for.
       schema:
         type: string
-      example: eyJhZnRlciI6InRycl8wMSJ9
+      example: eyJhZnRlciI6InRycl83bmRxNG0ya3piNmh4dzNyanB0NXljNHVsYSJ9
     ObservedStateFilter:
       name: observed_state
       in: query
@@ -809,7 +809,7 @@ components:
       schema:
         type: string
         format: uri-reference
-      example: /api/v1/torrents/trr_01
+      example: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
     StateETag:
       description: A validator that changes whenever the torrent's representation changes.
       required: true
@@ -962,7 +962,7 @@ components:
                 type: tag:skunkie.github.io,2026:torrplay/problems/not-found
                 title: Not found
                 status: 404
-                detail: No torrent has the ID trr_99.
+                detail: No torrent has the ID trr_wjrvmrmv2x4p77h4gzl5twylli.
     LifecycleConflict:
       description: The resource's current state does not allow the request.
       content:
@@ -998,7 +998,7 @@ components:
                 title: Duplicate torrent
                 status: 409
                 detail: A torrent with this info hash already exists.
-                torrent: /api/v1/torrents/trr_01
+                torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
     PreconditionFailed:
       description: If-Match does not match the configuration's current ETag.
       content:
@@ -1260,7 +1260,7 @@ components:
           type: string
           readOnly: true
           description: The torrent's opaque, stable ID.
-          examples: [trr_01]
+          examples: [trr_7ndq4m2kzb6hxw3rjpt5yc4ula]
         name:
           type: [string, 'null']
           readOnly: true
@@ -1330,24 +1330,24 @@ components:
               type: string
               format: uri-reference
               description: This torrent.
-              examples: [/api/v1/torrents/trr_01]
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula]
             configuration:
               type: string
               format: uri-reference
               description: The torrent's configuration.
-              examples: [/api/v1/torrents/trr_01/configuration]
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/configuration]
             files:
               type: string
               format: uri-reference
               description: >-
                 The torrent's files, which return lifecycle-conflict until
                 metadata is available.
-              examples: [/api/v1/torrents/trr_01/files]
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files]
             statistics:
               type: string
               format: uri-reference
               description: The torrent's statistics.
-              examples: [/api/v1/torrents/trr_01/statistics]
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/statistics]
 
     InfoHash:
       type: object
@@ -1390,7 +1390,7 @@ components:
               type: string
               format: uri-reference
               description: The next page of torrents, omitted on the last page.
-              examples: ['/api/v1/torrents?cursor=eyJhZnRlciI6InRycl8wMSJ9']
+              examples: ['/api/v1/torrents?cursor=eyJhZnRlciI6InRycl83bmRxNG0ya3piNmh4dzNyanB0NXljNHVsYSJ9']
 
     TorrentConfiguration:
       type: object
@@ -1409,12 +1409,12 @@ components:
               type: string
               format: uri-reference
               description: This configuration.
-              examples: [/api/v1/torrents/trr_01/configuration]
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/configuration]
             torrent:
               type: string
               format: uri-reference
               description: The torrent this configuration belongs to.
-              examples: [/api/v1/torrents/trr_01]
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula]
 
     TorrentConfigurationPatch:
       type: object
@@ -1435,7 +1435,7 @@ components:
         id:
           type: string
           description: The file's ID, stable within its torrent.
-          examples: [fil_01]
+          examples: [fil_xfuperelxpqq4qhvgmtq62qwv4]
         path:
           type: array
           description: The file's path components from the metadata, in order.
@@ -1466,17 +1466,17 @@ components:
               type: string
               format: uri-reference
               description: This file.
-              examples: [/api/v1/torrents/trr_01/files/fil_01]
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4]
             content:
               type: string
               format: uri-reference
               description: The file's content.
-              examples: [/api/v1/torrents/trr_01/files/fil_01/content]
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content]
             torrent:
               type: string
               format: uri-reference
               description: The torrent the file belongs to.
-              examples: [/api/v1/torrents/trr_01]
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula]
 
     TorrentFilePage:
       type: object
@@ -1498,12 +1498,12 @@ components:
               type: string
               format: uri-reference
               description: This page of files.
-              examples: [/api/v1/torrents/trr_01/files]
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files]
             next:
               type: string
               format: uri-reference
               description: The next page of files, omitted on the last page.
-              examples: ['/api/v1/torrents/trr_01/files?cursor=eyJhZnRlciI6ImZpbF8wMSJ9']
+              examples: ['/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files?cursor=eyJhZnRlciI6ImZpbF94ZnVwZXJlbHhwcXE0cWh2Z210cTYycXd2NCJ9']
 
     TorrentStatistics:
       type: object
@@ -1567,12 +1567,12 @@ components:
               type: string
               format: uri-reference
               description: These statistics.
-              examples: [/api/v1/torrents/trr_01/statistics]
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/statistics]
             torrent:
               type: string
               format: uri-reference
               description: The torrent these statistics measure.
-              examples: [/api/v1/torrents/trr_01]
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula]
 
     CacheStatistics:
       type: object
@@ -1599,7 +1599,9 @@ components:
           type: integer
           format: int64
           minimum: 0
-          description: The bytes in pinned ranges, which eviction skips.
+          description: >-
+            The full length of each resident piece covered by at least one
+            pinned range, counted once. Eviction skips these pieces.
           examples: [33554432]
         eviction_count:
           type: integer
@@ -1655,12 +1657,12 @@ components:
         detail:
           type: string
           description: An explanation of this occurrence, omitted when there is none.
-          examples: [No torrent has the ID trr_99.]
+          examples: [No torrent has the ID trr_wjrvmrmv2x4p77h4gzl5twylli.]
         instance:
           type: string
           format: uri-reference
           description: An identifier of this occurrence, omitted when there is none.
-          examples: [/api/v1/torrents/trr_99]
+          examples: [/api/v1/torrents/trr_wjrvmrmv2x4p77h4gzl5twylli]
 
     ValidationProblem:
       description: A problem that lists the invalid parameters or body members.
@@ -1707,4 +1709,4 @@ components:
               type: string
               format: uri-reference
               description: The existing torrent with the same info hash.
-              examples: [/api/v1/torrents/trr_01]
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula]

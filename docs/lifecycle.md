@@ -52,6 +52,10 @@ at any moment. Clients must handle observed states added later.
 - A torrent whose v1 info hash matches an existing torrent is a
   `duplicate-torrent` problem that links to the existing one. Retrying a
   creation that timed out is therefore safe.
+- A duplicate request does not change the existing torrent, with one
+  exception: if the existing torrent has no metadata yet and the request
+  uploads a torrent file, the server uses that file's metadata and ends
+  metadata retrieval. The response is still `duplicate-torrent`.
 - Input the engine cannot use is rejected before the torrent exists:
   invalid metainfo or magnet URIs are `validation-failed`, and v2-only
   torrents are `unsupported-torrent`.
@@ -66,6 +70,11 @@ at any moment. Clients must handle observed states added later.
   Starting resumes it.
 - Metadata a peer sends that does not match the info hash is discarded, and
   retrieval continues with other peers; it does not fail the torrent.
+- Retrieved metadata that matches the info hash but lists two files with the
+  same path, or two files with the same file ID, fails the torrent with a
+  `failure` detail naming the cause. Retrieval is not retried, because peers
+  would send the same metadata again. An uploaded torrent file with such
+  metadata is `validation-failed` instead.
 - Until metadata is available, the files collection, its members, and their
   content return `lifecycle-conflict` (409).
 
@@ -79,8 +88,9 @@ the engine has applied the change.
   ETag stays the same.
 - **Pause** closes the torrent's peer connections, stops metadata retrieval,
   cancels the torrent's streams in progress, and releases its readers,
-  including idle readers. Its cached pieces stay in the piece cache, unpinned,
-  as the first candidates for eviction.
+  including idle readers. Its verified pieces stay in the piece cache,
+  unpinned, as the first candidates for eviction. Its partial pieces are
+  discarded and their reservations released.
 - **Start** reconnects to the swarm and resumes metadata retrieval if
   metadata is still unavailable.
 - Content requests to a `paused` torrent return `lifecycle-conflict`.
@@ -89,11 +99,14 @@ the engine has applied the change.
 ## Failure
 
 A torrent fails when the engine cannot continue it, for example when a
-piece cannot be written to storage. Metadata retrieval never fails a
-torrent by itself.
+piece cannot be written to storage or when retrieved metadata is invalid, as
+[Metadata retrieval](#metadata-retrieval) describes. A lack of reachable
+peers never fails a torrent.
 
 - The torrent's observed state becomes `failed` and `failure` describes the
-  cause. Its streams are canceled and its readers released.
+  cause. Its streams are canceled and its readers released. Its partial
+  pieces are discarded and their reservations released; its verified pieces
+  stay in the piece cache as for a paused torrent.
 - Content requests to a failed torrent return `lifecycle-conflict`.
 - A failed torrent stays failed until the client sets its desired state to
   `paused` and then to `started`. Starting clears `failure` and restarts the
@@ -120,6 +133,10 @@ torrent by itself.
   cannot block piece writes or exhaust the engine's capacity for concurrent
   streams; [ADR 2](adr/0002-engine-selection.md) records the engine patch
   this requires.
+- When the piece cache needs room and finds no evictable piece, its bounded
+  fallback may release the oldest idle readers before their idle timeout, as
+  [ADR 5](adr/0005-storage.md) describes. This is a third release condition
+  for idle readers, beside the idle timeout and the idle reader limits.
 - A reader's pins and piece priorities are released when it is released,
   canceled, replaced, or its idle timeout expires.
 - Active playback, the presence of any active or idle reader in any torrent,
@@ -130,8 +147,10 @@ torrent by itself.
 
 ## Cache behavior
 
-- Cached pieces of a torrent count toward cache usage until they are
-  evicted or the torrent is deleted, whatever its state.
+- Verified pieces of a torrent count toward cache usage until they are
+  evicted or the torrent is deleted, whatever its state. Partial pieces stay
+  resident only while their torrent is started; pausing, failure, and
+  deletion discard them and release their reservations.
 - Unpinned pieces of paused and failed torrents are evicted before unpinned
   pieces of started torrents.
 - Torrents in memory storage do not upload, as
@@ -146,8 +165,9 @@ torrent by itself.
   repeated `DELETE`.
 - Streams in progress are canceled, readers released, metadata retrieval
   stopped, and peer connections closed.
-- Cached pieces are released in the background; `/api/v1/cache/statistics`
-  shows cache usage falling as they are.
+- Partial pieces are discarded and their reservations released. Verified
+  pieces are released in the background without counting as evictions;
+  `/api/v1/cache/statistics` shows cache usage falling as they are.
 - Creating a torrent with the same info hash afterward creates a new torrent
   with a new ID.
 
