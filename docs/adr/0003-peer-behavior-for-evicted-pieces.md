@@ -89,9 +89,10 @@ or C.
 Adopt option A for the prototype: torrents in `memory` storage mode do not
 upload, and torrents in `disk` storage mode upload normally. It is the only
 option that never advertises a piece the engine may later evict, so it
-cannot violate the protocol. The prototype has memory storage only, so it
-needs no engine patch: enabling the `disable-upload` Cargo feature and
-setting `disable_upload` for the session is enough.
+cannot violate the protocol. The prototype has memory storage only, so this
+peer policy needs no engine patch: enabling the `disable-upload` Cargo
+feature and setting `disable_upload` for the session is enough. Eviction
+itself still needs the completion invalidation patch from ADR 2.
 
 Storage mode transitions follow from that rule:
 
@@ -107,7 +108,7 @@ Storage mode transitions follow from that rule:
   announcements for pieces that memory storage can evict. Reconnecting
   peers receive no bitfield.
 
-Completion invalidation is still required: readers and re-download depend
+No upload does not make that patch optional: readers and re-download depend
 on it, and a peer that requests a piece anyway must not receive data the
 storage no longer holds.
 
