@@ -9,11 +9,13 @@
 //! span files, so each read and write is translated to torrent offsets and
 //! split at piece boundaries before it reaches the cache.
 //!
-//! A write whose piece does not fit evicts verified pieces first. Eviction
-//! goes through librqbit's completion invalidation, which calls
-//! [`TorrentStorage::on_piece_invalidated`] under the torrent's state lock;
-//! the piece leaves the cache there, so a reader that finds it gone also
-//! finds it marked missing.
+//! librqbit asks [`TorrentStorage::reserve_piece`] before it requests a
+//! piece, and the cache reserves the piece's room then or makes the request
+//! wait for the evictor. Eviction goes through librqbit's completion
+//! invalidation, which calls [`TorrentStorage::on_piece_invalidated`] under
+//! the torrent's state lock; the piece leaves the cache there, so a reader
+//! that finds it gone also finds it marked missing. A write to a piece
+//! nobody reserved evicts from the write path.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -24,7 +26,7 @@ use librqbit::storage::{BoxStorageFactory, StorageFactory, StorageFactoryExt, To
 use librqbit::{ManagedTorrent, ManagedTorrentShared, TorrentMetadata};
 use librqbit_core::lengths::{Lengths, ValidPieceIndex};
 
-use crate::cache::{CacheError, PieceCache, PieceInvalidator, TorrentKey};
+use crate::cache::{CacheError, EngineTorrent, PieceCache, Reservation, TorrentKey};
 
 /// How many times a write evicts and retries before it fails.
 const EVICTION_ROUNDS: usize = 4;
@@ -34,7 +36,15 @@ const EVICTION_ROUNDS: usize = 4;
 pub struct MemoryStorageFactory {
     cache: Arc<PieceCache>,
     // Torrents created but not attached yet, by librqbit torrent ID.
-    unattached: Arc<Mutex<HashMap<usize, (TorrentKey, Lengths)>>>,
+    unattached: Arc<Mutex<HashMap<usize, (TorrentKey, Layout)>>>,
+}
+
+/// Where a torrent's pieces and files lie.
+#[derive(Clone)]
+pub(crate) struct Layout {
+    pub(crate) lengths: Lengths,
+    /// The offset in the torrent and the length of each file.
+    pub(crate) files: Vec<(u64, u64)>,
 }
 
 impl MemoryStorageFactory {
@@ -54,30 +64,32 @@ impl MemoryStorageFactory {
     /// Lets the cache evict the pieces of `torrent`, which was added with
     /// this factory, by invalidating their completion in the engine.
     pub fn attach(&self, torrent: &Arc<ManagedTorrent>) -> anyhow::Result<CachedTorrent> {
-        let (key, lengths) = self
+        let (key, layout) = self
             .unattached
             .lock()
             .map_err(|_| anyhow::anyhow!("the factory was poisoned"))?
             .remove(&torrent.id())
             .context("the torrent has no memory storage from this factory")?;
-        let invalidator = Arc::new(EngineInvalidator {
+        let engine = Arc::new(EngineHandle {
             torrent: Arc::downgrade(torrent),
-            lengths,
+            lengths: layout.lengths,
         });
-        self.cache.attach_invalidator(key, invalidator.clone())?;
+        self.cache.attach_engine(key, engine.clone())?;
         Ok(CachedTorrent {
             cache: self.cache.clone(),
             key,
-            invalidator,
+            layout,
+            engine,
         })
     }
 }
 
 /// A torrent whose pieces the cache may evict.
 pub struct CachedTorrent {
-    cache: Arc<PieceCache>,
-    key: TorrentKey,
-    invalidator: Arc<EngineInvalidator>,
+    pub(crate) cache: Arc<PieceCache>,
+    pub(crate) key: TorrentKey,
+    pub(crate) layout: Layout,
+    engine: Arc<EngineHandle>,
 }
 
 impl CachedTorrent {
@@ -99,17 +111,28 @@ impl CachedTorrent {
     /// Evicts the given verified pieces through completion invalidation and
     /// returns how many the engine marked missing.
     pub fn evict(&self, pieces: &[u32]) -> anyhow::Result<usize> {
-        self.invalidator.invalidate(pieces)
+        self.engine.invalidate(pieces)
+    }
+
+    /// Whether a piece of the torrent has a buffer in the cache.
+    pub fn is_resident(&self, piece: u32) -> Result<bool, CacheError> {
+        self.cache.is_resident(self.key, piece)
     }
 }
 
-struct EngineInvalidator {
+struct EngineHandle {
     // Weak, so the cache never keeps a deleted torrent alive.
     torrent: Weak<ManagedTorrent>,
     lengths: Lengths,
 }
 
-impl PieceInvalidator for EngineInvalidator {
+impl EngineTorrent for EngineHandle {
+    fn reselect(&self) {
+        if let Some(torrent) = self.torrent.upgrade() {
+            torrent.reselect_pieces();
+        }
+    }
+
     fn invalidate(&self, pieces: &[u32]) -> anyhow::Result<usize> {
         let torrent = self.torrent.upgrade().context("the torrent was deleted")?;
         let pieces: Vec<_> = pieces
@@ -132,7 +155,20 @@ impl StorageFactory for MemoryStorageFactory {
         self.unattached
             .lock()
             .map_err(|_| anyhow::anyhow!("the factory was poisoned"))?
-            .insert(shared.id, (key, *metadata.lengths()));
+            .insert(
+                shared.id,
+                (
+                    key,
+                    Layout {
+                        lengths: *metadata.lengths(),
+                        files: metadata
+                            .file_infos
+                            .iter()
+                            .map(|file| (file.offset_in_torrent, file.len))
+                            .collect(),
+                    },
+                ),
+            );
         let pieces = TorrentPieces {
             cache: self.cache.clone(),
             key,
@@ -223,7 +259,7 @@ impl TorrentPieces {
                         // because it was deleted, frees nothing; the next
                         // round picks other pieces, and the last write
                         // reports the shortfall.
-                        let _ = batch.invalidator.invalidate(&batch.pieces);
+                        let _ = batch.engine.invalidate(&batch.pieces);
                     }
                 }
                 result => return Ok(result?),
@@ -320,5 +356,24 @@ impl TorrentStorage for MemoryStorage {
     fn on_piece_invalidated(&self, piece: ValidPieceIndex) -> anyhow::Result<()> {
         let pieces = self.pieces()?;
         Ok(pieces.cache.evict(pieces.key, piece.get())?)
+    }
+
+    fn reserve_piece(&self, piece: ValidPieceIndex) -> bool {
+        let Ok(pieces) = self.pieces() else {
+            return false;
+        };
+        let length = pieces.lengths.piece_length(piece) as usize;
+        // An error, such as a released torrent, leaves the piece unrequested.
+        matches!(
+            pieces.cache.reserve(pieces.key, piece.get(), length),
+            Ok(Reservation::Reserved)
+        )
+    }
+
+    fn release_piece(&self, piece: ValidPieceIndex) {
+        if let Ok(pieces) = self.pieces() {
+            // A poisoned cache reports itself on its next operation.
+            let _ = pieces.cache.release_unverified(pieces.key, piece.get());
+        }
     }
 }

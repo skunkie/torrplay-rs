@@ -103,30 +103,32 @@ async fn memory_storage_streams_byte_for_byte() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Records ADR 2's finding that a failed write fails the whole torrent:
-/// without eviction, a cache smaller than the torrent ends in `Error`.
+/// ADR 2 found that a write the cache cannot hold fails the whole torrent.
+/// Since E6 the storage reserves a piece's room before the torrent requests
+/// it, so a cache that fills up with nothing evictable leaves the torrent
+/// waiting, not failed. This torrent is not attached, so nothing of it is
+/// evictable.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_torrent_larger_than_capacity_fails_without_eviction() -> anyhow::Result<()> {
+async fn a_torrent_larger_than_capacity_waits_without_eviction() -> anyhow::Result<()> {
     let spec = catalog::single_small();
     let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
     let leecher = Leecher::start().await?;
-    let cache = PieceCache::new(4 * u64::from(spec.piece_length));
+    let capacity = 4 * u64::from(spec.piece_length);
+    let cache = PieceCache::new(capacity);
     let handle = add_in_memory(&leecher, &seeder, &spec, &cache).await?;
 
-    bounded("the torrent failing", async {
-        loop {
-            if matches!(handle.stats().state, TorrentStatsState::Error) {
-                return Ok(());
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+    cache_reaches(&cache, "the cache filling up", |stats| {
+        stats.verified_pieces == 4 && stats.waiting_pieces > 0
     })
     .await?;
-    eprintln!("error state: {:?}", handle.stats().error);
+    // Peers retry within five seconds; give them a round.
+    tokio::time::sleep(Duration::from_secs(6)).await;
     let stats = cache.audit()?;
+    assert_eq!(stats.usage_bytes, capacity);
     assert!(
-        stats.peak_usage_bytes <= stats.capacity_bytes,
-        "the capacity holds even as the torrent fails"
+        !matches!(handle.stats().state, TorrentStatsState::Error),
+        "the torrent failed: {:?}",
+        handle.stats().error
     );
 
     leecher.session.stop().await;

@@ -227,22 +227,47 @@ the first eviction.
 - Capacity changes at runtime, which settings add in milestone 6, follow the
   same eviction order and fallback when capacity shrinks below usage.
 
-## Open questions for the spike
+## Spike findings
 
-- Can eviction call completion invalidation without lock-order inversion
-  between the piece cache and the torrent state lock, including on paused
-  and finished torrents?
-- Can the priority hook reserve capacity when the engine selects a piece,
-  so `pwrite_all` never has to wait for room? If not, how long may a write
-  wait inside `block_in_place` before it stalls peer tasks?
-- Does the completion invalidation patch also clear the written blocks of
-  discarded partial pieces, both in started torrents and in paused and
-  failed ones, whose chunk tracker librqbit moves into `TorrentStatePaused`?
-  Otherwise blocks sent again are discarded as `PreviouslyCompleted` and the
-  pieces never verify.
-- Must a reader retry once when a piece is evicted between its completion
-  check and its read, or does pinning the reader's current piece rule this
-  out?
+The milestone 2 spike built the piece cache in `crates/torrplay-engine`
+and tested it in `spikes/engine-spike`; ADR 2 records each experiment.
+These findings bear on this record, and the capability report decides
+which become part of the decision.
+
+- **Eviction works without lock-order inversion** (E3), on started,
+  paused, and finished torrents. The order is the torrent's state lock,
+  then the cache's, as [eviction order](#eviction-order) describes.
+- **Capacity is reserved when the engine selects a piece** (E6). librqbit
+  asks the storage under the torrent's state lock, where eviction is not
+  possible, so a reservation that does not fit waits instead. An evictor
+  task holding no lock evicts verified, unpinned pieces and wakes the
+  torrents whose reservations now fit, and writes never wait for room.
+  Usage stayed within capacity in every test, including six readers whose
+  minimum windows needed more than the whole cache.
+- **Discarded partial pieces are cleared.** When librqbit requeues a piece
+  whose peer died, whose hash check failed, or whose torrent paused, it
+  already marks the piece's blocks missing, and the storage's new release
+  hook drops the partial buffer and its reservation. Partial pieces of
+  started torrents that stall are not yet discarded after the piece wait
+  bound.
+- **Readers do not retry; the engine does** (E3). A stream that loses its
+  piece between its completion check and its read polls again, so pinning
+  is not needed for correctness, only to avoid downloading a piece twice.
+- **Pins come in tiers** (E6). A reader always pins its current piece.
+  Within the readahead budget, readers also pin their files' first and last
+  pieces, and then their next pieces; the rest of a readahead window has
+  priority but no pin. This applies the bounded fallback ahead of time: it
+  keeps pinned bytes within the budget, apart from current pieces, which
+  their readers can always read and leave, so pins cannot deadlock the
+  cache. Whether full windows should stay pinned with the reactive fallback
+  above, or the tiers replace it, is for the capability report.
+- **A piece longer than the capacity is never requested** (CAC-06). Its
+  reservation is refused outright, so the torrent stays healthy and its
+  readers wait. How to report such a torrent remains open below.
+- **A torrent must be attached to the cache before it starts** (E3), or its
+  first writes can fill the cache before any of its pieces are evictable.
+
+## Open questions for the spike
 - How large should file-boundary ranges be for common containers, and does
   pinning the first and last piece suffice for Matroska and MP4 indexes?
 - What minimum readahead window keeps a single reader at playback rate with

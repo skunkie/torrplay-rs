@@ -27,9 +27,9 @@ anyhow = "1"
 # each. docs/adr/0002-engine-selection.md records why, and
 # docs/development.md how to update it. TLS uses rustls so builds do not
 # depend on a system OpenSSL.
-librqbit = { git = "https://github.com/skunkie/rqbit", rev = "6c8c975d40a9908d97559adbfc7a5fb714d8257a", default-features = false, features = ["rust-tls"] }
-librqbit-core = { git = "https://github.com/skunkie/rqbit", rev = "6c8c975d40a9908d97559adbfc7a5fb714d8257a", default-features = false }
+librqbit = { git = "https://github.com/skunkie/rqbit", rev = "161632fc3d92a3f0a1a63afe4932eab4b73c57ae", default-features = false, features = ["rust-tls"] }
+librqbit-core = { git = "https://github.com/skunkie/rqbit", rev = "161632fc3d92a3f0a1a63afe4932eab4b73c57ae", default-features = false }
 tempfile = "3"
 thiserror = "2"
-tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 torrplay-fixtures = { path = "crates/torrplay-fixtures" }

@@ -20,3 +20,4 @@ anyhow.workspace = true
 librqbit.workspace = true
 librqbit-core.workspace = true
 thiserror.workspace = true
+tokio.workspace = true

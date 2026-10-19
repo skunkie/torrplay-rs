@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use engine_spike::{Leecher, Seeder, bounded};
+use engine_spike::{Leecher, MemoryCache, Seeder, bounded};
 use librqbit::api::{LiveStats, TorrentIdOrHash};
 use librqbit::{AddTorrent, AddTorrentOptions, ManagedTorrent, TorrentStats, TorrentStatsState};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -167,9 +167,9 @@ async fn streaming_four_times_the_capacity_evicts_and_downloads_again() -> anyho
     let spec = catalog::large(capacity);
     let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
     let leecher = Leecher::start().await?;
-    let cache = PieceCache::new(capacity);
-    let factory = MemoryStorageFactory::new(cache.clone());
-    let (handle, cached) = add_in_memory(&leecher, &seeder, &spec, &factory).await?;
+    let memory = MemoryCache::start(capacity);
+    let (cache, factory) = (&memory.cache, &memory.factory);
+    let (handle, cached) = add_in_memory(&leecher, &seeder, &spec, factory).await?;
 
     check_every_file(&handle, &spec).await?;
     let stats = cache.audit()?;
@@ -188,9 +188,10 @@ async fn streaming_four_times_the_capacity_evicts_and_downloads_again() -> anyho
     assert_eq!(live_stats(&handle)?.snapshot.peer_stats.dead, 0);
 
     delete(&leecher, handle, cached).await?;
-    cache_reaches(&cache, "the cache emptied", |stats| stats.usage_bytes == 0).await?;
+    cache_reaches(cache, "the cache emptied", |stats| stats.usage_bytes == 0).await?;
     leecher.session.stop().await;
     seeder.session.stop().await;
+    memory.shutdown().await?;
     Ok(())
 }
 
@@ -205,9 +206,9 @@ async fn an_evicted_piece_is_marked_missing_and_downloaded_again() -> anyhow::Re
     let total = spec.total_size_bytes();
     let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
     let leecher = Leecher::start().await?;
-    let cache = PieceCache::new(4 * MIB);
-    let factory = MemoryStorageFactory::new(cache.clone());
-    let (handle, cached) = add_in_memory(&leecher, &seeder, &spec, &factory).await?;
+    let memory = MemoryCache::start(4 * MIB);
+    let (cache, factory) = (&memory.cache, &memory.factory);
+    let (handle, cached) = add_in_memory(&leecher, &seeder, &spec, factory).await?;
     bounded("completing the download", handle.wait_until_completed()).await?;
     eventually("the seeder dropped as not needed", || {
         let peers = live_stats(&handle)?.snapshot.peer_stats;
@@ -241,6 +242,7 @@ async fn an_evicted_piece_is_marked_missing_and_downloaded_again() -> anyhow::Re
 
     leecher.session.stop().await;
     seeder.session.stop().await;
+    memory.shutdown().await?;
     Ok(())
 }
 
@@ -253,9 +255,9 @@ async fn pieces_evicted_while_paused_are_missing_after_starting() -> anyhow::Res
     let total = spec.total_size_bytes();
     let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
     let leecher = Leecher::start().await?;
-    let cache = PieceCache::new(4 * MIB);
-    let factory = MemoryStorageFactory::new(cache.clone());
-    let (handle, cached) = add_in_memory(&leecher, &seeder, &spec, &factory).await?;
+    let memory = MemoryCache::start(4 * MIB);
+    let (cache, factory) = (&memory.cache, &memory.factory);
+    let (handle, cached) = add_in_memory(&leecher, &seeder, &spec, factory).await?;
     bounded("completing the download", handle.wait_until_completed()).await?;
 
     bounded("pausing", leecher.session.pause(&handle)).await?;
@@ -275,6 +277,7 @@ async fn pieces_evicted_while_paused_are_missing_after_starting() -> anyhow::Res
 
     leecher.session.stop().await;
     seeder.session.stop().await;
+    memory.shutdown().await?;
     Ok(())
 }
 
@@ -288,11 +291,11 @@ async fn a_paused_torrent_is_evicted_before_a_started_one() -> anyhow::Result<()
     let started_seeder = Seeder::start(&started_spec, &started_spec.metainfo().bytes).await?;
     let leecher = Leecher::start().await?;
     let capacity = 2 * MIB;
-    let cache = PieceCache::new(capacity);
-    let factory = MemoryStorageFactory::new(cache.clone());
+    let memory = MemoryCache::start(capacity);
+    let (cache, factory) = (&memory.cache, &memory.factory);
 
     let (paused, paused_cached) =
-        add_in_memory(&leecher, &paused_seeder, &paused_spec, &factory).await?;
+        add_in_memory(&leecher, &paused_seeder, &paused_spec, factory).await?;
     bounded(
         "completing the first download",
         paused.wait_until_completed(),
@@ -301,7 +304,7 @@ async fn a_paused_torrent_is_evicted_before_a_started_one() -> anyhow::Result<()
     bounded("pausing", leecher.session.pause(&paused)).await?;
     paused_cached.set_started(false)?;
 
-    let (started, _) = add_in_memory(&leecher, &started_seeder, &started_spec, &factory).await?;
+    let (started, _) = add_in_memory(&leecher, &started_seeder, &started_spec, factory).await?;
     check_every_file(&started, &started_spec).await?;
     bounded(
         "completing the second download",
@@ -331,40 +334,55 @@ async fn a_paused_torrent_is_evicted_before_a_started_one() -> anyhow::Result<()
     leecher.session.stop().await;
     paused_seeder.session.stop().await;
     started_seeder.session.stop().await;
+    memory.shutdown().await?;
     Ok(())
 }
 
 /// CAC-09: opening, streaming, and deleting 100 torrents in a loop returns
 /// cache usage, torrents, and peer connections to their starting levels.
+/// The torrents are added as the adapter adds them, with a scheduler, so
+/// they download only what their reader needs.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn opening_and_deleting_torrents_in_a_loop_leaves_nothing_behind() -> anyhow::Result<()> {
     let spec = catalog::single_small();
     let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
     let leecher = Leecher::start().await?;
-    let cache = PieceCache::new(512 * KIB);
-    let factory = MemoryStorageFactory::new(cache.clone());
+    let memory = MemoryCache::start(512 * KIB);
+    let cache = &memory.cache;
 
     for round in 0..100 {
-        let (handle, cached) = add_in_memory(&leecher, &seeder, &spec, &factory).await?;
+        let torrent = memory
+            .add_scheduled(&leecher, &[seeder.addr], &spec, 256 * KIB)
+            .await?;
         let offset = (round * 37 * KIB) % (spec.total_size_bytes() - 64 * KIB);
-        let bytes = read_range(&handle, 0, offset, Some(64 * KIB as usize))
-            .await
-            .with_context(|| {
-                format!(
-                    "round {round}: {:?} {:?}",
-                    handle.stats().state,
-                    handle.stats().error
-                )
-            })?;
+        let mut reader = bounded(
+            "opening a reader",
+            torrent.scheduler.open(&torrent.handle, 0),
+        )
+        .await?;
+        let mut bytes = vec![0; 64 * KIB as usize];
+        bounded("reading a range", async {
+            reader.seek(SeekFrom::Start(offset)).await?;
+            Ok(reader.read_exact(&mut bytes).await?)
+        })
+        .await
+        .with_context(|| {
+            format!(
+                "round {round}: {:?} {:?}",
+                torrent.handle.stats().state,
+                torrent.handle.stats().error
+            )
+        })?;
         assert_eq!(
             generator::first_mismatch(spec.file_seed(0), offset, &bytes),
             None,
             "round {round}"
         );
-        delete(&leecher, handle, cached).await?;
+        drop(reader);
+        delete(&leecher, torrent.handle, torrent.cached).await?;
     }
 
-    cache_reaches(&cache, "the cache emptied", |stats| {
+    cache_reaches(cache, "the cache emptied", |stats| {
         stats.usage_bytes == 0 && stats.resident_pieces == 0
     })
     .await?;
@@ -378,6 +396,7 @@ async fn opening_and_deleting_torrents_in_a_loop_leaves_nothing_behind() -> anyh
 
     leecher.session.stop().await;
     seeder.session.stop().await;
+    memory.shutdown().await?;
     Ok(())
 }
 
@@ -393,12 +412,12 @@ async fn concurrent_readers_of_two_torrents_progress_under_eviction() -> anyhow:
     let large_seeder = Seeder::start(&large, &large.metainfo().bytes).await?;
     let multi_seeder = Seeder::start(&multi, &multi.metainfo().bytes).await?;
     let leecher = Leecher::start().await?;
-    let cache = PieceCache::new(capacity);
-    let factory = MemoryStorageFactory::new(cache.clone());
+    let memory = MemoryCache::start(capacity);
+    let (cache, factory) = (&memory.cache, &memory.factory);
     let (large_handle, _large_cached) =
-        add_in_memory(&leecher, &large_seeder, &large, &factory).await?;
+        add_in_memory(&leecher, &large_seeder, &large, factory).await?;
     let (multi_handle, _multi_cached) =
-        add_in_memory(&leecher, &multi_seeder, &multi, &factory).await?;
+        add_in_memory(&leecher, &multi_seeder, &multi, factory).await?;
 
     let half = large.total_size_bytes() / 2;
     let readers = [
@@ -431,5 +450,6 @@ async fn concurrent_readers_of_two_torrents_progress_under_eviction() -> anyhow:
     leecher.session.stop().await;
     large_seeder.session.stop().await;
     multi_seeder.session.stop().await;
+    memory.shutdown().await?;
     Ok(())
 }

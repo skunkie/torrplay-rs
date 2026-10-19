@@ -12,12 +12,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use engine_spike::{Leecher, Seeder, bounded};
+use engine_spike::{Leecher, MemoryCache, Seeder, bounded};
 use librqbit::api::LiveStats;
 use librqbit::{AddTorrent, AddTorrentOptions, ManagedTorrent};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use torrplay_engine::cache::PieceCache;
 use torrplay_engine::storage::{CachedTorrent, MemoryStorageFactory};
 use torrplay_fixtures::{FixtureSpec, catalog, generator};
 
@@ -232,8 +231,9 @@ async fn a_memory_torrent_announces_nothing_and_refuses_requests() -> anyhow::Re
     let spec = catalog::large(capacity);
     let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
     let leecher = Leecher::start().await?;
-    let factory = MemoryStorageFactory::new(PieceCache::new(capacity));
-    let (handle, _cached) = add_in_memory(&leecher, &seeder, &spec, &factory).await?;
+    let memory = MemoryCache::start(capacity);
+    let factory = &memory.factory;
+    let (handle, _cached) = add_in_memory(&leecher, &seeder, &spec, factory).await?;
 
     let mut probe = ProbePeer::connect(leecher_addr(&leecher)?, spec.metainfo().info_hash).await?;
     let before = live_stats(&handle)?.snapshot.downloaded_and_checked_pieces;
@@ -259,6 +259,7 @@ async fn a_memory_torrent_announces_nothing_and_refuses_requests() -> anyhow::Re
 
     leecher.session.stop().await;
     seeder.session.stop().await;
+    memory.shutdown().await?;
     Ok(())
 }
 
@@ -272,8 +273,9 @@ async fn a_stream_after_an_idle_period_reconnects_and_succeeds() -> anyhow::Resu
     let piece_length = u64::from(spec.piece_length);
     let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
     let leecher = Leecher::start().await?;
-    let factory = MemoryStorageFactory::new(PieceCache::new(4 * MIB));
-    let (handle, cached) = add_in_memory(&leecher, &seeder, &spec, &factory).await?;
+    let memory = MemoryCache::start(4 * MIB);
+    let factory = &memory.factory;
+    let (handle, cached) = add_in_memory(&leecher, &seeder, &spec, factory).await?;
 
     let mut resident = Vec::new();
     let mut after_eviction = Vec::new();
@@ -305,6 +307,7 @@ async fn a_stream_after_an_idle_period_reconnects_and_succeeds() -> anyhow::Resu
 
     leecher.session.stop().await;
     seeder.session.stop().await;
+    memory.shutdown().await?;
     Ok(())
 }
 

@@ -87,8 +87,9 @@ local and CI builds use the same version. `clippy.toml` lets tests use
 
 The workspace has three members:
 
-- `crates/torrplay-engine` holds the piece cache and the librqbit storage
-  over it, and grows into the engine adapter.
+- `crates/torrplay-engine` holds the piece cache, its evictor task, the
+  librqbit storage over it, and the scheduler that turns readers into piece
+  priorities, and grows into the engine adapter.
 - `crates/torrplay-fixtures` generates the deterministic payloads and the
   v1, v2-only, and hybrid metainfo that `docs/acceptance.md` defines.
 - `spikes/engine-spike` holds the milestone 2 experiments against librqbit,
