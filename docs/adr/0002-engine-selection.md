@@ -309,6 +309,57 @@ small, reviewable pull requests rather than large generated ones. Upstream
 proposals should follow it, with each patch landing in a separate PR
 alongside its consumer and tests.
 
+## Spike findings
+
+The milestone 2 spike records what it observes here, experiment by
+experiment, and the capability report at its end turns these findings into
+final verdicts. Tests live in `spikes/engine-spike/tests`.
+
+### E1: baseline on unpatched librqbit
+
+Run against the pinned revision with librqbit's disk storage, local seeders
+on loopback, and DHT, trackers, local service discovery, UPnP, and
+fastresume off. The torrents are the fixtures `crates/torrplay-fixtures`
+builds; librqbit accepts their metainfo and reports the same info hashes.
+
+- **Uploaded metadata is usable at once.** A torrent added from its file has
+  its name and files before any peer connects. **Supported.**
+- **Magnet metadata retrieval happens inside `add_torrent`.** The torrent
+  exists only after metadata arrives, so there is no handle to pause, and
+  `AddTorrentOptions::paused` does not stop retrieval. Canceling the
+  `add_torrent` future leaves no torrent behind and closes the connection
+  to the peer. The adapter must therefore own retrieval for the lifecycle:
+  the torrent resource exists while the adapter runs the future, pausing
+  cancels it, and starting runs it again. **Supported through the adapter.**
+- **A magnet with no peer source fails at once** with "no known way to
+  resolve peers", instead of waiting. In the prototype, DHT or trackers
+  normally supply peers; when none exist, the adapter keeps the torrent in
+  `retrieving_metadata` and retries when peers become available, rather than
+  reporting failure.
+- **Streaming is byte-accurate** for whole files and for ranges across piece
+  and file boundaries, including a one-byte file inside a shared piece
+  (STR-01 and STR-02 through the engine). **Supported.**
+- **Deleting a torrent ends its streams** with an I/O error ("no chunk
+  tracker, torrent neither paused nor live") rather than end of file, and no
+  read hangs. The HTTP layer must treat it as a canceled stream.
+  **Supported.**
+- **A v2-only torrent fails with a generic decode error** ("missing field
+  `pieces`"), the same kind as invalid metainfo. Since errors must not be
+  told apart by their text, the adapter must recognize v2-only metainfo
+  itself, by `meta version` 2 without v1 `pieces`, to return
+  `unsupported-torrent` instead of `validation-failed`.
+- **Hybrid torrents load under their v1 info hash**, and one with two
+  padding files of equal length fails with "duplicate filenames in
+  torrent", confirming the finding about PR #701 above.
+- **`Session::stop` does not join its tasks.** It pauses torrents, cancels
+  the session token, and sleeps one second. The lifecycle's shutdown order
+  and the requirement that tests verify task cleanup need either an engine
+  patch that joins the session's tasks or an adapter that tracks them.
+- **Build:** with `rust-tls`, librqbit builds aws-lc-sys, which needs CMake
+  and a C compiler on every platform. `ringbuf` 0.4 in librqbit-utp has
+  advisory RUSTSEC-2026-0293; TorrPlay uses TCP only, and `deny.toml`
+  records the exception until a librqbit change upgrades it.
+
 ## Fallback engines
 
 - **A maintained librqbit fork.** If upstream declines the patches, keep

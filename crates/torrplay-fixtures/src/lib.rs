@@ -8,12 +8,14 @@
 //! content comes from the generator in [`generator`], and its BitTorrent v1
 //! metainfo is built here directly from that content, with files in spec
 //! order, so the same spec yields the same bytes and info hash everywhere.
-//! [`catalog`] holds the fixtures `docs/acceptance.md` lists.
+//! [`catalog`] holds the fixtures `docs/acceptance.md` lists, including the
+//! v2-only and hybrid torrents that check the prototype's v1-only boundary.
 
 pub mod catalog;
 pub mod generator;
 
 mod bencode;
+mod v2;
 
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
@@ -103,32 +105,16 @@ impl FixtureSpec {
     /// Returns the SHA-1 hash of each piece, computed from the generated
     /// content of the files concatenated in metadata order.
     pub fn piece_hashes(&self) -> Vec<[u8; 20]> {
-        let piece_length = u64::from(self.piece_length);
-        let mut hashes = Vec::new();
-        let mut hasher = Sha1::new();
-        let mut in_piece = 0;
-        let mut chunk = vec![0; CHUNK_BYTES];
-        for (index, file) in self.files().iter().enumerate() {
-            let seed = self.file_seed(index);
-            let mut offset = 0;
-            while offset < file.size_bytes {
-                let len = (file.size_bytes - offset)
-                    .min(piece_length - in_piece)
-                    .min(CHUNK_BYTES as u64) as usize;
-                generator::fill(seed, offset, &mut chunk[..len]);
-                hasher.update(&chunk[..len]);
-                offset += len as u64;
-                in_piece += len as u64;
-                if in_piece == piece_length {
-                    hashes.push(hasher.finalize_reset().into());
-                    in_piece = 0;
-                }
-            }
-        }
-        if in_piece > 0 {
-            hashes.push(hasher.finalize().into());
-        }
-        hashes
+        let segments = self
+            .files()
+            .iter()
+            .enumerate()
+            .map(|(index, file)| Segment::Generated {
+                seed: self.file_seed(index),
+                size_bytes: file.size_bytes,
+            })
+            .collect::<Vec<_>>();
+        sha1_piece_hashes(&segments, self.piece_length)
     }
 
     /// Builds the bencoded v1 torrent file and its info hash.
@@ -215,6 +201,59 @@ impl FixtureSpec {
             percent_encode(&self.torrent_name)
         )
     }
+}
+
+/// A run of torrent content in v1 piece order: a generated file, or the
+/// zeros of a BEP 47 padding file.
+#[derive(Clone, Copy, Debug)]
+enum Segment {
+    Generated { seed: u64, size_bytes: u64 },
+    Zeros { size_bytes: u64 },
+}
+
+impl Segment {
+    fn size_bytes(self) -> u64 {
+        match self {
+            Self::Generated { size_bytes, .. } | Self::Zeros { size_bytes } => size_bytes,
+        }
+    }
+
+    fn fill(self, offset: u64, buf: &mut [u8]) {
+        match self {
+            Self::Generated { seed, .. } => generator::fill(seed, offset, buf),
+            Self::Zeros { .. } => buf.fill(0),
+        }
+    }
+}
+
+/// Hashes the concatenated segments into SHA-1 pieces of `piece_length`.
+fn sha1_piece_hashes(segments: &[Segment], piece_length: u32) -> Vec<[u8; 20]> {
+    let piece_length = u64::from(piece_length);
+    let mut hashes = Vec::new();
+    let mut hasher = Sha1::new();
+    let mut in_piece = 0;
+    let mut chunk = vec![0; CHUNK_BYTES];
+    for segment in segments {
+        let size_bytes = segment.size_bytes();
+        let mut offset = 0;
+        while offset < size_bytes {
+            let len = (size_bytes - offset)
+                .min(piece_length - in_piece)
+                .min(CHUNK_BYTES as u64) as usize;
+            segment.fill(offset, &mut chunk[..len]);
+            hasher.update(&chunk[..len]);
+            offset += len as u64;
+            in_piece += len as u64;
+            if in_piece == piece_length {
+                hashes.push(hasher.finalize_reset().into());
+                in_piece = 0;
+            }
+        }
+    }
+    if in_piece > 0 {
+        hashes.push(hasher.finalize().into());
+    }
+    hashes
 }
 
 /// Formats bytes as lowercase hexadecimal, as info hashes are written.

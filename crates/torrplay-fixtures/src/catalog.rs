@@ -120,6 +120,54 @@ pub fn media_names() -> FixtureSpec {
     )
 }
 
+/// A truncated torrent file, which must be rejected as invalid metainfo.
+pub fn invalid_metainfo() -> Vec<u8> {
+    let mut bytes = single_small().metainfo().bytes;
+    bytes.truncate(bytes.len() / 2);
+    bytes
+}
+
+/// Files for a v2-only torrent; build it with
+/// [`FixtureSpec::v2_only_metainfo`].
+pub fn v2_only() -> FixtureSpec {
+    multi(
+        "v2-only",
+        7,
+        16 * KIB,
+        vec![("video.mkv".into(), 40_000), ("notes.txt".into(), 3_000)],
+    )
+}
+
+/// Files for a hybrid torrent whose two padding files differ in length;
+/// build it with [`FixtureSpec::hybrid_metainfo`].
+pub fn hybrid() -> FixtureSpec {
+    multi(
+        "hybrid",
+        8,
+        16 * KIB,
+        vec![
+            ("part-1.bin".into(), 10_000),
+            ("part-2.bin".into(), 20_000),
+            ("part-3.bin".into(), 5_000),
+        ],
+    )
+}
+
+/// Files for a hybrid torrent with two padding files of equal length, which
+/// share the BEP 47 name `.pad/6384`.
+pub fn hybrid_equal_padding() -> FixtureSpec {
+    multi(
+        "hybrid-equal-padding",
+        9,
+        16 * KIB,
+        vec![
+            ("part-1.bin".into(), 10_000),
+            ("part-2.bin".into(), 10_000),
+            ("part-3.bin".into(), 10_000),
+        ],
+    )
+}
+
 /// The benchmark video: one 2 GiB file with 2 MiB pieces.
 pub fn bench_video() -> FixtureSpec {
     single("bench-video", "bench-video.mkv", 101, 2 * MIB, 2 * GIB)
@@ -172,6 +220,9 @@ mod tests {
             oversized_piece(),
             many_files(),
             media_names(),
+            v2_only(),
+            hybrid(),
+            hybrid_equal_padding(),
             bench_video(),
             bench_episodes(),
         ];
@@ -179,6 +230,14 @@ mod tests {
         seeds.sort_unstable();
         seeds.dedup();
         assert_eq!(seeds.len(), specs.len());
+    }
+
+    #[test]
+    fn invalid_metainfo_is_a_strict_prefix() {
+        let full = single_small().metainfo().bytes;
+        let invalid = invalid_metainfo();
+        assert!(invalid.len() < full.len());
+        assert_eq!(&full[..invalid.len()], invalid.as_slice());
     }
 
     #[test]
