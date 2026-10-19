@@ -78,10 +78,12 @@ rules:
       functionOptions:
         type: snake
 
+  # Members of a links object are link relation names, kept as registered
+  # (RFC 8288) even when they contain hyphens, such as service-desc.
   torrplay-property-snake-case:
     description: A JSON field is snake_case.
     severity: warn
-    given: $..properties
+    given: $..[?(@property != 'links')].properties
     then:
       field: '@key'
       function: casing

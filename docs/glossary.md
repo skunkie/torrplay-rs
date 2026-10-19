@@ -11,11 +11,11 @@ documentation. They follow established usage: HTTP terms from
 [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html), BitTorrent terms from
 the [BitTorrent specifications](https://www.bittorrent.org/beps/bep_0000.html)
 (BEPs), and cache and torrent-client terms in their common meaning. Derive
-public names from them according to the API conventions, for example a
-`preloads` collection or a `readahead_bytes` field. Update this glossary
-before introducing or redefining a domain term. Externally defined protocols
-such as Stremio, DLNA/UPnP, and MCP keep their own terminology inside their
-adapters.
+public names from them according to the
+[API conventions](api-conventions.md), for example a `preloads` collection
+or a `readahead_bytes` field. Update this glossary before introducing or
+redefining a domain term. Externally defined protocols such as Stremio,
+DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 
 ## HTTP and resources
 
