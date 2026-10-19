@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# Production code avoids unwrap and expect; test assertions may use them.
+allow-expect-in-tests = true
+allow-unwrap-in-tests = true
