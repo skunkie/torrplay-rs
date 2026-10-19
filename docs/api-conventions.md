@@ -257,9 +257,10 @@ status is not.
 
 ## Service endpoints
 
-- `GET /api/v1/` returns the API's entry point, and `/api/v1` without the
-  trailing slash answers `308 Permanent Redirect` to it. The entry point has
-  links to the top-level collections and resources and a `service-desc` link
+- `GET /api/v1` returns the API's entry point, and `/api/v1/` with a
+  trailing slash answers `308 Permanent Redirect` to it, since paths never
+  end in a slash *(linted)*. The entry point has links to the top-level
+  collections and resources and a `service-desc` link
   ([RFC 8631](https://www.rfc-editor.org/rfc/rfc8631.html)) to the OpenAPI
   document, served at `/api/v1/openapi.yaml` as `application/yaml`
   ([RFC 9512](https://www.rfc-editor.org/rfc/rfc9512.html)).

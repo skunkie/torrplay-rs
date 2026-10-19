@@ -44,7 +44,7 @@ Deliver these artifacts before production handlers:
 
 ### Initial resource surface
 
-All paths below are relative to `/api/v1`.
+All paths below are relative to `/api/v1`; the entry point, `/`, is `/api/v1` itself.
 
 | Method | Path | Purpose |
 |---|---|---|
