@@ -6,8 +6,9 @@ SPDX-License-Identifier: MIT
 
 # 5. Storage
 
-- Status: proposed; the milestone 2 engine spike confirms the engine
-  behavior this record depends on, and milestone 4 finalizes it.
+- Status: proposed. The milestone 2 spike confirmed the engine behavior
+  this record depends on, as ADR 2's capability report records, and
+  milestone 4 finalizes it.
 - Date: 2026-10-19
 
 ## Context
@@ -80,7 +81,11 @@ when blocks are written. A reservation that would exceed cache capacity first
 releases retained reusable buffers, then evicts, and otherwise leaves the
 piece unrequested as described under [bounded fallback](#bounded-fallback);
 writes never wait for room. Cache usage therefore stays within cache
-capacity at every moment, not only on average.
+capacity at every moment, not only on average. The engine asks for the
+reservation under its torrent state lock, where eviction cannot run, so a
+reservation that needs eviction leaves the piece unrequested while an
+evictor task, holding no lock, evicts and then asks the torrent to select
+pieces again.
 
 Cache capacity does not bound the process. Hash verification, peer
 connections, HTTP responses, metadata, and engine bookkeeping allocate
@@ -110,14 +115,20 @@ indefinitely. Other partial pieces of started torrents stay resident.
 Eviction skips pinned pieces. Every pinned range has an owner and is
 released when its owner is released, canceled, replaced, or expires:
 
-- **Readahead windows.** Each active or idle reader pins the pieces of its
-  readahead window, starting with the piece at its current position.
-  Readahead windows are shared and rebalanced across concurrent readers, so
-  their total stays within a share of cache capacity.
-- **File-boundary ranges.** A reader also pins the first and last pieces of
-  the file it reads, which players read repeatedly for container headers and
-  indexes. Their size is a spike question.
+- **Current pieces.** Each active or idle reader always pins the piece at
+  its current position.
+- **File-boundary ranges.** Within the torrent's readahead budget, a reader
+  also pins the first and last pieces of the file it reads, which players
+  read repeatedly for container headers and indexes.
+- **Next pieces.** Within what remains of the budget, a reader pins the
+  piece after its current one.
 - **Preload ranges.** From milestone 6, each active preload pins its range.
+
+The rest of a reader's readahead window has the reader's piece priority but
+no pin: its pieces stay resident through eviction order, since they were
+verified recently, rather than by a guarantee. Readahead windows are shared
+and rebalanced across concurrent readers, so their total stays within the
+readahead budget, a share of cache capacity.
 
 A piece covered by several pinned ranges is pinned once. Because eviction
 works on whole pieces, `pinned_bytes` reports the full length of every
@@ -136,9 +147,9 @@ Only verified, unpinned pieces are evicted, in this order:
 
 Within each class the least recently used piece goes first, where use is a
 reader reading from the piece or the piece being verified. Pieces of a
-deleted torrent are not evicted: they are released in the background, do
-not increase `eviction_count`, and stop counting toward cache usage as they
-are released.
+deleted torrent are not evicted: the adapter releases them as soon as the
+engine has deleted the torrent, without waiting for the engine's tasks to
+end, and they do not increase `eviction_count`.
 
 An eviction performs completion invalidation in the engine, which, under
 the torrent state lock, calls the storage to remove the piece from the
@@ -147,16 +158,25 @@ or reused. A reader whose read finds the piece gone therefore finds it
 missing when it checks again, and no write for the piece can begin until it
 is requeued. The cache never holds its own lock while it takes the engine's
 torrent state lock, so the lock order is always torrent state, then cache,
-as the E3 findings in ADR 2 confirm. Background downloads, once they exist, never pin; their
-pieces are ordinary eviction candidates.
+as the E3 findings in ADR 2 confirm. Background downloads, once they exist,
+never pin; their pieces are ordinary eviction candidates.
 
 ### Bounded fallback
 
 Pinned ranges and partial pieces can exceed cache capacity, for example
 with many concurrent readers, large pieces, or a small capacity. Cache usage
 must stay within capacity, and readers must still make progress where
-possible. When a reservation finds no evictable piece, the cache reduces
-pins in this order until the reservation fits:
+possible.
+
+Readahead pins are bounded ahead of time, as [pinning](#pinning)
+describes: each torrent's pins stay within its readahead budget except for
+its readers' current pieces, and next pieces lose their pins before
+file-boundary pieces do. Every pinned piece beyond the budget is therefore
+a reader's current piece, which an active reader can read and leave and an
+idle reader gives up through the first step below, so pins cannot deadlock
+the cache; the spike showed it with six active readers whose current
+pieces alone needed more than the capacity. When a reservation still finds
+no evictable piece, the cache reduces other pins in this order:
 
 1. Release the oldest idle readers, with their pins, as the idle reader
    limits already do. This is a third release condition beside the idle
@@ -164,19 +184,15 @@ pins in this order until the reservation fits:
    before milestone 4 implements the fallback.
 2. Once preloads exist, shrink each preload's pinned range to its first
    piece. The preload contract in milestone 6 may refine this.
-3. Shrink the readahead windows of active readers, furthest-ahead pieces
-   first, down to a minimum of the piece at each reader's current position
-   and the next piece.
-4. Unpin file-boundary ranges of active readers.
 
-If the minimum windows of active readers and the partial pieces still
+If the current pieces of active readers and the partial pieces still
 exceed capacity, the cache admits no new piece, and the engine does not
-request pieces it cannot store. A reader whose next piece cannot be stored
-waits like any reader for a missing piece and is canceled when the piece
-wait bound expires. Restored room, from a canceled reader or a verified
-piece leaving the minimum window, readmits waiting pieces in piece priority
-order, and among pieces of equal priority in the order they started
-waiting, so no reader waits behind others indefinitely.
+request pieces it cannot store. A reader whose piece cannot be stored waits
+like any reader for a missing piece and is canceled when the piece wait
+bound expires. Restored room, from a canceled reader or a reader leaving
+its current piece, readmits waiting pieces in piece priority order, and
+among pieces of equal priority in the order they started waiting, so no
+reader waits behind others indefinitely.
 
 The cache never answers a write it cannot hold with a failure, because a
 failed write fails the whole torrent. Instead, capacity is reserved before
@@ -243,7 +259,7 @@ which become part of the decision.
   task holding no lock evicts verified, unpinned pieces and wakes the
   torrents whose reservations now fit, and writes never wait for room.
   Usage stayed within capacity in every test, including six readers whose
-  minimum windows needed more than the whole cache.
+  current pieces alone needed more than the whole cache.
 - **Discarded partial pieces are cleared.** When librqbit requeues a piece
   whose peer died, whose hash check failed, or whose torrent paused, it
   already marks the piece's blocks missing, and the storage's new release
@@ -259,15 +275,16 @@ which become part of the decision.
   priority but no pin. This applies the bounded fallback ahead of time: it
   keeps pinned bytes within the budget, apart from current pieces, which
   their readers can always read and leave, so pins cannot deadlock the
-  cache. Whether full windows should stay pinned with the reactive fallback
-  above, or the tiers replace it, is for the capability report.
+  cache. The capability report adopts the tiers, which [pinning](#pinning)
+  and [bounded fallback](#bounded-fallback) now describe; readmission in
+  piece priority order across torrents is still to be built.
 - **A piece longer than the capacity is never requested** (CAC-06). Its
   reservation is refused outright, so the torrent stays healthy and its
   readers wait. How to report such a torrent remains open below.
 - **A torrent must be attached to the cache before it starts** (E3), or its
   first writes can fill the cache before any of its pieces are evictable.
 
-## Open questions for the spike
+## Open questions
 - How large should file-boundary ranges be for common containers, and does
   pinning the first and last piece suffice for Matroska and MP4 indexes?
 - What minimum readahead window keeps a single reader at playback rate with

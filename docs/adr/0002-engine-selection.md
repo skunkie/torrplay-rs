@@ -6,7 +6,9 @@ SPDX-License-Identifier: MIT
 
 # 2. Torrent engine selection
 
-- Status: proposed; the milestone 2 engine spike finalizes it.
+- Status: accepted. TorrPlay uses librqbit from the `torrplay/patches`
+  branch of the skunkie/rqbit fork, with the patches the
+  [capability report](#capability-report) lists.
 - Date: 2026-10-19
 
 ## Context
@@ -21,9 +23,10 @@ The prototype supports BitTorrent v1 only.
 
 [rqbit](https://github.com/ikatson/rqbit) provides librqbit, a Rust torrent
 library with file streaming and a pluggable storage trait, and is the
-candidate engine. This record summarizes desk research on its source so the
-spike starts with known risks. It is not a decision yet; the spike's
-capability report confirms or overturns each verdict below.
+candidate engine. This record summarizes desk research on its source, which
+gave the spike its known risks, the spike's findings, and the
+[capability report](#capability-report) that confirms or overturns each
+verdict and leads to the [decision](#decision).
 
 ## Evaluation
 
@@ -593,29 +596,136 @@ engine patch.
   peer that answered later. The torrent's files then read correctly.
   **Supported.**
 
+## Capability report
+
+### Verdicts
+
+Each capability the implementation plan names for the gate, with the desk
+research's verdict and the spike's:
+
+| Capability | Desk verdict | Spike verdict | Evidence |
+|---|---|---|---|
+| Metadata from a torrent file, usable without peers | Supported | **Supported** | E1 |
+| Metadata from a magnet through controlled peers, with pause and mismatched metadata | Supported | **Supported**; the adapter owns retrieval, because it runs inside `add_torrent` | E1, E7 (LIF-12) |
+| Byte-accurate streaming, seeking, removal during playback | Supported | **Supported** | E1 (STR-01, STR-02) |
+| Storage of piece data in the piece cache | Supported | **Supported** | E2 |
+| Eviction with completion invalidation, live, paused, and finished | Bounded patch | **Bounded patch**: P1 and its read-race fix | E3 (CAC-01 to CAC-04, CAC-08) |
+| Peer behavior after eviction | Supported, crude | **Bounded patch**: P2, per torrent and without unchoking | E4 (PEER-01, PEER-02) |
+| Readers that hold no bounded engine resource | Bounded patch | **Bounded patch**: P3 | E5 (RDR-04) |
+| Piece priorities, pinning, and reservation before request | Bounded patch | **Bounded patch**: P4 | E6 (CAC-05, CAC-06, CAC-10) |
+| Integrity against corrupt peers | Not assessed | **Supported** | E7 (CAC-11) |
+| BitTorrent v2 and hybrid identities | Blocked | **Blocked**, as expected: v2-only torrents fail with a generic error the adapter must classify; hybrid ones load as v1 | E1 (API-20) |
+| License, toolchain, platforms | Supported | **Supported**: cargo-deny passes; CI builds and tests on Linux, Windows, and macOS | E0 |
+
+No capability the gate requires is blocked. v2 and hybrid identities are
+outside the prototype's scope.
+
+### Patch set
+
+The fork's `torrplay/patches` branch holds six commits on upstream
+`57e95d16`, each small enough to propose on its own:
+
+| Commit | Patch | Purpose |
+|---|---|---|
+| `520f46a2` | Fix | Keep a disconnecting seeder live until its task ends, so a reconnect cannot drop it for good |
+| `c4ead3d5` | P1 | Let a storage invalidate completed pieces, live or paused |
+| `529cda31` | P1 fix | Make a stream poll again when its read raced with invalidation |
+| `b5de742f` | P2 | Let a torrent opt out of uploading, keeping its peers choked |
+| `6c8c975d` | P3 | Stop streams from holding a blocking permit while they wait |
+| `161632fc` | P4 | Let the embedder choose and reserve pieces to request |
+
+Two more patches remain candidates. Setting `TCP_NODELAY` on peer sockets
+cut the time to first byte after a reconnect from about 43 ms to about
+1 ms on loopback (ADR 3). Keeping a check-running flag until the state lock
+switches the torrent would fix the start-during-check race that E3 avoids
+in the adapter. The patch to keep peers while idle (P5) is not needed.
+
+### Milestone 2 scenarios
+
+Every scenario `docs/acceptance.md` assigns to milestone 2, with the cache
+and eviction gate, and the test that checks it in `spikes/engine-spike`:
+
+| Scenario | Result | Test |
+|---|---|---|
+| API-20 | Pass: recorded which v2-only and hybrid torrents load | `e1_baseline::records_which_v2_and_hybrid_torrents_load` |
+| LIF-02 | Pass | `e1_baseline::magnet_metadata_is_retrieved_from_a_local_seeder` |
+| LIF-03 | Pass for the engine: canceling retrieval leaves no torrent and closes connections; starting runs retrieval again | `e1_baseline::canceling_metadata_retrieval_leaves_no_torrent` |
+| LIF-12 | Pass | `e7_adversarial_peers::mismatched_metadata_is_discarded_for_a_valid_peer` |
+| STR-01 | Pass, engine part | `e1_baseline::streams_every_file_byte_for_byte` |
+| STR-02 | Pass, engine part | `e1_baseline::streams_ranges_across_piece_and_file_boundaries` |
+| RDR-04 | Pass with P3 | `e5_readers::twelve_waiting_readers_do_not_block_piece_writes` |
+| PEER-01 | Pass with P2 | `e4_peer_policy::a_memory_torrent_announces_nothing_and_refuses_requests` |
+| PEER-02 | Pass; measured in ADR 3 | `e4_peer_policy::a_stream_after_an_idle_period_reconnects_and_succeeds` |
+| CAC-01 | Pass | `e3_eviction::streaming_four_times_the_capacity_evicts_and_downloads_again`, `e6_scheduling::a_scheduled_torrent_downloads_only_what_its_reader_needs` |
+| CAC-02 | Pass | `e3_eviction::an_evicted_piece_is_marked_missing_and_downloaded_again` |
+| CAC-03 | Pass | the same test, after the seeder was dropped as not needed |
+| CAC-04 | Pass | `e3_eviction::pieces_evicted_while_paused_are_missing_after_starting` |
+| CAC-05 | Partial: usage stays within capacity and every reader finishes, with pins in the tiers ADR 5 now defines; waiting reservations are readmitted as room appears, not yet in piece priority order across torrents | `e6_scheduling::readers_whose_windows_exceed_capacity_all_progress` |
+| CAC-06 | Pass for the engine: the piece is never requested and the torrent stays healthy; how to report it stays open in ADR 5 | `e6_scheduling::a_piece_longer_than_the_capacity_is_never_requested` |
+| CAC-07 | Pass: partial pieces are never evicted, and reservations count as pending allocations | `cache` unit tests; every E3 and E6 audit |
+| CAC-08 | Pass | `e3_eviction::a_paused_torrent_is_evicted_before_a_started_one` |
+| CAC-09 | Partial: cache usage, torrents, readers, and peer connections return to zero; task counts are not measured | `e3_eviction::opening_and_deleting_torrents_in_a_loop_leaves_nothing_behind` |
+| CAC-10 | Pass | `e6_scheduling::file_boundary_pieces_stay_resident_while_read` |
+| CAC-11 | Pass | `e7_adversarial_peers::corrupt_blocks_fail_and_come_again_from_a_valid_peer` |
+
+RDR-05 and the readahead rebalancing of RDR-06 belong to milestone 4; the
+scheduler's unit tests already cover them.
+
+### Gaps for later milestones
+
+- **The adapter does not yet hide librqbit.** `crates/torrplay-engine`'s
+  public API still takes `ManagedTorrent` and returns `FileStream`-backed
+  readers. Milestone 4 builds the facade the plan describes, with the add
+  sequence E3 found necessary: add paused with the scheduler, attach,
+  wait for the initial check, then start.
+- **Task cleanup.** `Session::stop` joins nothing, so CAC-09 cannot count
+  tasks. The adapter must track the session's tasks, or a patch must join
+  them, before the lifecycle's shutdown order can be tested.
+- **Readmission order.** The evictor wakes every torrent whose waiting
+  reservation fits; milestone 4 orders readmission by piece priority across
+  torrents to complete CAC-05.
+- **Discarding stalled partial pieces** after the piece wait bound, as ADR 5
+  requires, is not implemented.
+- **Request window.** Seek latency depends on outstanding requests; the
+  adapter should configure a small `max_request_window` for memory
+  torrents, tuned by the milestone 5 benchmarks.
+
+## Decision
+
+Proceed with librqbit. Eviction with completion invalidation, peer behavior
+after eviction, and scheduling all work with bounded patches, and every
+gate scenario passes or, for CAC-05 and CAC-09, passes in what the engine
+must provide, leaving adapter work listed above. Contract tooling and the
+server (milestone 3) can start.
+
+- Depend on the fork, pinned by full commit hash; `docs/development.md`
+  describes updating it.
+- Propose the patches upstream one at a time, starting with the three
+  fixes, which are upstream bugs on their own, then P2 and P3, then P1 and
+  P4, with the spike's memory storage as the example issue #224 asks for.
+  Return to a released librqbit once one contains them.
+- Treat a librqbit update as a rebase of the patch set, verified by the
+  spike's tests until milestone 4's tests replace them.
+
 ## Fallback engines
 
-- **A maintained librqbit fork.** If upstream declines the patches, keep
-  them in an isolated fork pinned by revision, as AGENTS.md allows. The
-  patches above touch the chunk tracker, the piece acquisition order, the
-  streaming permit, and optionally the peer protocol.
+- **A maintained librqbit fork.** This is now the plan: the patches stay in
+  the isolated fork until upstream accepts them, as AGENTS.md allows. They
+  touch the chunk tracker, the piece tracker's acquisition, the streaming
+  permit, peer choking, and the storage trait.
 - **libtorrent-rasterbar 2.x through C++ bindings.** It implements BEP 6 and
   BEP 52, per-piece priorities and deadlines, and a custom disk interface,
   under the BSD-3-Clause license. It costs a C++ toolchain and FFI
   maintenance, and needs its own check for completion invalidation before it
   counts as a fallback.
 
-## Open questions for the spike
+## Open questions
 
-- Does the peer policy that [ADR 3](0003-peer-behavior-for-evicted-pieces.md)
-  proposes, no upload from memory storage, hold up? ADR 3 lists the
-  measurements.
-- How do v2-only torrent files and magnets fail, and which hybrid torrent
-  files load as v1 before PR #701 is released?
 - Should the accepted hash mismatch in `validate_fastresume` be reported
-  upstream as a bug, since it lets corrupted disk data pass the check?
-- Which listen port, DHT, and port mapping settings does the session need,
-  and which become TorrPlay settings?
-- Will upstream accept the invalidation and priority patches, so the fork
-  stays temporary? Issue #224 asks for a complete stack with an example
-  memory storage, which the spike's storage could provide.
+  upstream as a bug, since it lets corrupted disk data pass the check? With
+  E7's finding that librqbit uploads what it reads without hashing it, disk
+  torrents in milestone 6 depend on it.
+- Which listen port, DHT, and port mapping settings become TorrPlay
+  settings? The spike fixed them: TCP only on an ephemeral loopback port,
+  with DHT, trackers, local service discovery, UPnP, and fastresume off.
+- Will upstream accept the patches, so the fork stays temporary?
