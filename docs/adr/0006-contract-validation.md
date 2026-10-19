@@ -45,7 +45,7 @@ violations against the torrent representation's response schema.
 | progenitor | 0.15.1 | client generator | Ruled out: its parser, `openapiv3` 2.2.0, rejects the document at the first OpenAPI 3.1 `type` array |
 | dropshot | 0.17.1 | code-first server | Ruled out: it emits OpenAPI 3.0.3 only |
 | utoipa | 6.0.0 | code-first document | Can emit OpenAPI 3.2 with `$self`, tag `parent` and `kind`, HEAD, and `dataValue`; see below |
-| openapi-generator | 7.25.0 | server and client generators | Ruled out: it does not recognize OpenAPI 3.2 and generates nothing; see below |
+| openapi-generator | 7.25.0 | server and client generators | Ruled out: it does not recognize OpenAPI 3.2, and from a 3.1 copy it generates code that does not compile; see below |
 | oas3 | 0.22.0 | document model | Parses the document, though it claims OpenAPI 3.1 |
 | jsonschema | 0.59.0 | JSON Schema validator | Validates all 56 examples; catches every planted violation in strict mode, below |
 
@@ -55,12 +55,27 @@ parser falls back to its Swagger 2 converter on
 `openapi: 3.2.1`. It then reports 21 errors, such as `requestBody` and
 `content` being unexpected. With validation skipped, it writes no code.
 
-A scratch copy relabeled `3.1.0` validates, which shows that the version
-is the obstacle; the contract itself was not changed. Even from that copy,
-its axum server would contradict the contract:
-- `createTorrent` accepts only the multipart body, dropping the JSON one.
-- 61 code paths answer malformed headers and bodies with plain-text errors
-  instead of Problem Details.
+The contract uses no feature that only OpenAPI 3.2 has, so a scratch copy
+relabeled `3.1.0` loses nothing, and it validates; the version alone is the
+obstacle. Generating from such a copy, while `api/openapi.yaml` stays
+authoritative, was tried as a way around it. The axum server and models it
+generated were not usable:
+- **It does not compile.** `createTorrent` has a JSON and a multipart
+  request body, and the generated handler passes one where the other's
+  type is expected.
+- **It contradicts the contract.** Handlers accept only the multipart body,
+  and 61 code paths answer malformed headers and bodies with plain-text
+  errors instead of Problem Details.
+- **Its models lose information.** Inline enumerations such as
+  `storage_mode` become plain strings, which the generator itself notes it
+  does not fully support, and every string gets an unrelated cross-site
+  scripting check. Its `Nullable` fields and nested types would save little
+  over handwritten serde types, which tests must validate against the
+  contract either way.
+
+An older copy would be worse. progenitor needs OpenAPI 3.0, which would
+turn `type` arrays into `nullable` and lose `const` and the `examples`
+arrays the vacuum rules require.
 
 utoipa is the only credible option for linking Rust types to the
 contract, and it was rejected:
