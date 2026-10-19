@@ -150,6 +150,10 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 : The presence of at least one active or idle reader. It is the global
   condition that pauses background downloads.
 
+**Piece wait bound**
+: The longest a reader waits for a missing piece before its stream is
+  canceled. It bounds stalls when peers cannot supply the piece.
+
 **Readahead**
 : Fetching data ahead of a reader's current position. The **readahead
   window** is that range; its size is shared and rebalanced across
