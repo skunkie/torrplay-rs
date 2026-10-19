@@ -236,8 +236,23 @@ completion, which keeps the patch to a priority hook.
   APIs: 9.0.0 followed 8.1.1 after 14 months, and 9.0.1 fixed `read_chunk`
   bounds when serving a piece to peers.
 
-**Verdict: supported.** Pin `librqbit = "=9.0.1"` and a toolchain no older
-than 1.94.
+**Verdict: supported.** Use a toolchain no older than 1.94.
+
+The spike pins librqbit as a Git dependency on revision
+`57e95d16c830863a1fde32d8fa98153b53a3d0b4` of `main` rather than on the
+9.0.1 release, because it needs fixes that are not released yet:
+
+- `8ebbd6c8` makes `stream` wait for the initial check instead of failing.
+- `5f0d0ba6` keeps queued pieces disjoint from `have`, the invariant the
+  completion invalidation patch builds on.
+- `79ff792e` adds `PeerConnectionOptions::max_request_window`, which
+  shortens the wait for an urgent piece after a seek.
+- `57e95d16` reads a peer handshake until it is complete.
+
+`main` still declares version 9.0.1 and has not changed its CI toolchains
+or `librqbit` manifest since the release, so `Cargo.lock` must record the
+Git source and revision. Any engine patches start from this revision.
+Return to a crates.io release once one contains these fixes.
 
 ## Upstream work after 9.0.1
 
@@ -320,5 +335,3 @@ alongside its consumer and tests.
 - Will upstream accept the invalidation and priority patches, so the fork
   stays temporary? Issue #224 asks for a complete stack with an example
   memory storage, which the spike's storage could provide.
-- Do the unreleased fixes on `main` matter enough to pin a revision instead
-  of 9.0.1, or can the spike wait for the next release?
