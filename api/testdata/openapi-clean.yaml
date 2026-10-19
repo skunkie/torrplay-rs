@@ -1,0 +1,80 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# A document that passes every rule in .vacuum.yml, which the documents
+# beside it each break in a known way.
+openapi: 3.2.1
+info:
+  title: TorrPlay rules fixture
+  description: A fixture for the project's vacuum rules.
+  version: 0.0.0
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: http://127.0.0.1:8080/api/v1
+    description: The local server.
+tags:
+  - name: Torrents
+    description: Torrents the application tracks.
+paths:
+  /torrents/{torrent_id}/piece-counts:
+    get:
+      operationId: listTorrentPieceCounts
+      summary: List piece counts
+      description: Lists the piece counts of a torrent.
+      tags: [Torrents]
+      parameters:
+        - name: torrent_id
+          in: path
+          required: true
+          description: The torrent ID.
+          schema:
+            type: string
+          example: trr_01
+        - name: page_size
+          in: query
+          description: The maximum number of items in a page.
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 200
+          example: 50
+      responses:
+        '200':
+          description: The piece counts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PieceCount'
+              examples:
+                counted:
+                  summary: A counted torrent
+                  value:
+                    piece_count: 12
+        '404':
+          description: No torrent has the ID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PieceCount'
+              examples:
+                missing:
+                  summary: A missing torrent
+                  value:
+                    piece_count: 0
+components:
+  schemas:
+    PieceCount:
+      type: object
+      description: The number of pieces in a torrent.
+      required: [piece_count]
+      properties:
+        piece_count:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The number of pieces.
+          examples: [12]

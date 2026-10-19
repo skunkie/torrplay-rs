@@ -1,0 +1,94 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# A document that breaks each of the project's own rules in .vacuum.yml at
+# least once, and carries one example its schema rejects, so
+# scripts/check-vacuum-rules.sh can check that each rule still reports it.
+openapi: 3.2.1
+info:
+  title: TorrPlay rules fixture
+  description: Info description without a period
+  version: 0.0.0
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: http://127.0.0.1:8080/api/v1
+    description: The local server.
+tags:
+  - name: torrents
+    description: Torrents the application tracks.
+paths:
+  /torrents/{torrentId}/pieceCounts:
+    get:
+      operationId: ListTorrentPieceCounts
+      summary: List piece counts.
+      description: Lists the piece counts of a torrent.
+      tags: [torrents]
+      parameters:
+        - name: torrentId
+          in: path
+          required: true
+          description: The torrent ID.
+          schema:
+            type: string
+          example: trr_01
+        - name: pageSize
+          in: query
+          description: The maximum number of items in a page.
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 200
+          example: 50
+      responses:
+        '200':
+          description: The piece counts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PieceCount'
+              examples:
+                counted:
+                  summary: A counted torrent
+                  value:
+                    piece_count: many
+                    description: Example data without a period
+        '404':
+          description: No torrent has the ID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PieceCount'
+              examples:
+                missing:
+                  summary: A missing torrent
+                  dataValue:
+                    piece_count: 0
+                serialized:
+                  summary: A serialized missing torrent
+                  serializedValue: '{"piece_count":0}'
+components:
+  schemas:
+    PieceCount:
+      type: object
+      description: The number of pieces in a torrent.
+      required: [piece_count]
+      properties:
+        piece_count:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The number of pieces.
+          examples: [12]
+        description:
+          type: string
+          description: A note.
+          examples: [Counted.]
+        pieceTotal:
+          type: integer
+          format: int64
+          description: The total.
+          examples: [12]
