@@ -246,7 +246,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_wait_longer_than_the_threshold_is_a_stall() {
-        let url = server(Duration::from_millis(800)).await;
+        let url = server(Duration::from_secs(1)).await;
         let start = Instant::now();
         let record = play(&Client::new(), &url, "r", 0, &event(None), false, start).await;
         assert_eq!(record.error, None);
@@ -256,7 +256,13 @@ mod tests {
         let [stall] = record.stalls.as_slice() else {
             panic!("one stall expected: {:?}", record.stalls);
         };
-        assert!((700.0..1500.0).contains(&stall.duration_ms), "{stall:?}");
+        // The pause begins as the server hands over the first part, so
+        // reading that part takes some of it.
+        assert!(
+            stall.duration_ms > STALL_THRESHOLD.as_secs_f64() * 1000.0
+                && stall.duration_ms < 1500.0,
+            "{stall:?}"
+        );
     }
 
     #[tokio::test]
