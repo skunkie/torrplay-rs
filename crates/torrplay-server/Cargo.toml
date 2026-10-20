@@ -29,6 +29,7 @@ tokio.workspace = true
 tokio-util.workspace = true
 torrplay-api.workspace = true
 torrplay-core.workspace = true
+tracing.workspace = true
 url.workspace = true
 
 [dev-dependencies]
@@ -37,3 +38,4 @@ reqwest.workspace = true
 torrplay-contract.workspace = true
 torrplay-core = { workspace = true, features = ["fake"] }
 torrplay-fixtures.workspace = true
+tracing-subscriber.workspace = true

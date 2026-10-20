@@ -13,6 +13,11 @@
 //! readers. Errors are Problem Details of the types the API conventions
 //! define, including `405` and `406` for every resource.
 //!
+//! Each response is logged with `tracing` by method, route template, and
+//! status. Logs never carry request paths, queries, or bodies, and engine
+//! errors are logged with URLs and magnet URIs redacted, so private tracker
+//! passkeys stay out of them.
+//!
 //! Binding the listener and the shutdown sequence belong to the caller; the
 //! prototype listens on loopback only.
 
@@ -23,14 +28,18 @@ mod files;
 mod headers;
 mod problem;
 mod query;
+mod redact;
 mod representation;
 mod service;
 mod torrents;
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use axum::Router;
+use axum::extract::{MatchedPath, Request};
 use axum::http::{StatusCode, header};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get};
 use torrplay_core::engine::Engine;
@@ -78,7 +87,25 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
         .route("/readyz", get(service::readiness::<E>))
         .fallback(unknown_resource)
         .layer(axum::middleware::map_response(method_not_allowed))
+        .layer(axum::middleware::from_fn(log_response))
         .with_state(app)
+}
+
+/// Logs each response by method, route template, and status, when its
+/// headers are ready. The template names the route without the IDs, query,
+/// or anything else the client sent.
+async fn log_response(route: Option<MatchedPath>, request: Request, next: Next) -> Response {
+    let method = request.method().clone();
+    let started = Instant::now();
+    let response = next.run(request).await;
+    tracing::info!(
+        method = %method,
+        route = route.as_ref().map_or("unmatched", MatchedPath::as_str),
+        status = response.status().as_u16(),
+        elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        "response",
+    );
+    response
 }
 
 async fn unknown_resource() -> Problem {

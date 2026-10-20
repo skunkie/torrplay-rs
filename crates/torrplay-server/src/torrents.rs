@@ -188,7 +188,10 @@ pub(crate) async fn create<E: Engine>(
             desired_state,
             created_at: SystemTime::now(),
         })
-        .map_err(|_| Problem::internal())?;
+        .map_err(|error| {
+            tracing::error!(%error, "a torrent could not be registered");
+            Problem::internal()
+        })?;
     let record = match registration {
         Registration::Duplicate {
             existing,

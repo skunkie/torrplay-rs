@@ -17,6 +17,8 @@ use serde::Serialize;
 use torrplay_api as api;
 use torrplay_core::engine::{EngineError, SourceRejection};
 
+use crate::redact::redact;
+
 /// The tag URI every problem type lies under.
 const PROBLEM_TYPE_BASE: &str = "tag:skunkie.github.io,2026:torrplay/problems/";
 
@@ -353,11 +355,23 @@ impl From<EngineError> for Problem {
             // Callers map an invalid source with the pointer of the member
             // that carried it; reaching here means an engine contradicted
             // its own inspection.
-            EngineError::Rejected(SourceRejection::Invalid { .. })
+            EngineError::Internal(source) => {
+                tracing::error!(
+                    error = %redact(&source.to_string()),
+                    "the torrent engine failed"
+                );
+                Self::internal()
+            }
+            error @ (EngineError::Rejected(SourceRejection::Invalid { .. })
             | EngineError::DuplicateTorrent
             | EngineError::MetadataMismatch
-            | EngineError::RangeOutOfBounds
-            | EngineError::Internal(_) => Self::internal(),
+            | EngineError::RangeOutOfBounds) => {
+                tracing::error!(
+                    error = %redact(&error.to_string()),
+                    "the torrent engine contradicted itself"
+                );
+                Self::internal()
+            }
         }
     }
 }

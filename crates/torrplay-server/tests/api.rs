@@ -16,7 +16,9 @@ mod common;
 use std::collections::HashSet;
 use std::time::Duration;
 
-use common::{BOUNDARY, Exchange, TestServer, form, form_request, json_request, request};
+use common::{
+    BOUNDARY, Exchange, LogCapture, TestServer, form, form_request, json_request, request,
+};
 use http::{Method, StatusCode, header};
 use serde_json::{Value, json};
 use torrplay_core::engine::{CacheStatistics, Ratio, TorrentStatistics};
@@ -1105,6 +1107,7 @@ mod scenario {
     /// API-21: a private tracker's passkey never appears in a response,
     /// across every operation and its errors. The server does not log.
     pub async fn passkey_redaction() {
+        let logs = LogCapture::start();
         let server = TestServer::start().await;
         let secret = "s3cr3tpasskey";
         let uri = format!(
@@ -1154,6 +1157,13 @@ mod scenario {
             server.send(empty(Method::DELETE, &path)).await,
         ];
         exchanges.push(server.get(&path).await);
+        // An engine failure that quotes the tracker URL is logged redacted.
+        server.engine.inject_fault(Some(&format!(
+            "announce to http://tracker.test/{secret}/announce failed"
+        )));
+        exchanges.push(server.get(&format!("{path}/statistics")).await);
+        exchanges.push(server.get("/api/v1/cache/statistics").await);
+        server.engine.inject_fault(None);
         for exchange in exchanges {
             let text = String::from_utf8_lossy(&exchange.body);
             assert!(!text.contains(secret), "{text}");
@@ -1162,6 +1172,14 @@ mod scenario {
             }
         }
         server.stop().await;
+        let logged = logs.text();
+        assert!(logged.contains("the torrent engine failed"), "{logged}");
+        assert!(logged.contains("http://tracker.test/…"), "{logged}");
+        assert!(
+            logged.contains("route=\"/api/v1/torrents/{torrent_id}\""),
+            "{logged}"
+        );
+        assert!(!logged.contains(secret), "{logged}");
     }
 
     /// Unexpected engine failures are `internal-error`, and nothing they

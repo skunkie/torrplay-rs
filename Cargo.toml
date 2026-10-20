@@ -30,7 +30,7 @@ unwrap_used = "warn"
 
 [workspace.dependencies]
 anyhow = "1"
-axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "matched-path", "tokio"] }
 bytes = "1"
 # Without default features it does not read the system clock or time zone.
 chrono = { version = "0.4", default-features = false, features = ["serde", "std"] }
@@ -62,4 +62,6 @@ torrplay-api = { path = "crates/torrplay-api" }
 torrplay-contract = { path = "crates/torrplay-contract" }
 torrplay-core = { path = "crates/torrplay-core" }
 torrplay-fixtures = { path = "crates/torrplay-fixtures" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
 url = { version = "2", features = ["serde"] }

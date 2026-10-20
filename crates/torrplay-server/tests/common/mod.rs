@@ -408,3 +408,65 @@ pub fn form(parts: &[(&str, Option<&str>, Vec<u8>)]) -> Request<Vec<u8>> {
         .body(body)
         .expect("a request")
 }
+
+/// Collects the log lines written on this thread while it lives. Tests run
+/// on a current-thread runtime, so the server's tasks log here too.
+///
+/// One global subscriber writes every thread's lines to that thread's
+/// capture, if any. Per-thread default subscribers would miss events,
+/// because `tracing` caches whether a callsite is enabled across threads.
+pub struct LogCapture {
+    lines: Arc<Mutex<Vec<u8>>>,
+}
+
+thread_local! {
+    static CAPTURE: std::cell::RefCell<Option<Arc<Mutex<Vec<u8>>>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+struct CaptureWriter;
+
+impl std::io::Write for CaptureWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        CAPTURE.with(|capture| {
+            if let Some(lines) = capture.borrow().as_ref() {
+                lines
+                    .lock()
+                    .expect("the log buffer")
+                    .extend_from_slice(bytes);
+            }
+        });
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl LogCapture {
+    pub fn start() -> Self {
+        static INSTALL: std::sync::Once = std::sync::Once::new();
+        INSTALL.call_once(|| {
+            let subscriber = tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::INFO)
+                .with_writer(|| CaptureWriter)
+                .finish();
+            tracing::subscriber::set_global_default(subscriber)
+                .expect("no other global subscriber");
+        });
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        CAPTURE.with(|capture| *capture.borrow_mut() = Some(Arc::clone(&lines)));
+        Self { lines }
+    }
+
+    pub fn text(&self) -> String {
+        String::from_utf8_lossy(&self.lines.lock().expect("the log buffer")).into_owned()
+    }
+}
+
+impl Drop for LogCapture {
+    fn drop(&mut self) {
+        CAPTURE.with(|capture| *capture.borrow_mut() = None);
+    }
+}
