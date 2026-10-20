@@ -48,6 +48,8 @@ pub struct Sample {
 pub struct TorrentRecord {
     pub fixture: String,
     pub source: Source,
+    /// From the start of the trace until the creation request was sent.
+    pub requested_ms: f64,
     /// From the start of the trace until the creation request returned.
     pub created_ms: f64,
     /// From the start of the trace until metadata was available.
@@ -79,7 +81,8 @@ pub struct Summary {
     /// The median resident set size over the second half of the run.
     pub steady_rss_bytes: u64,
     pub peak_cache_usage_bytes: u64,
-    pub eviction_count: u64,
+    /// Evictions over the run, when the target reports them.
+    pub eviction_count: Option<u64>,
 }
 
 /// Runs `trace` against `target`, whose server process is `pid`.
@@ -98,6 +101,7 @@ pub async fn run<T: Target + 'static>(
     let mut torrents = BTreeMap::new();
     let mut records = BTreeMap::new();
     for (fixture, &source) in &trace.fixtures {
+        let requested_ms = start.elapsed().as_secs_f64() * 1000.0;
         let torrent = target
             .create(
                 source,
@@ -111,6 +115,7 @@ pub async fn run<T: Target + 'static>(
             TorrentRecord {
                 fixture: fixture.clone(),
                 source,
+                requested_ms,
                 created_ms: start.elapsed().as_secs_f64() * 1000.0,
                 metadata_ms: None,
                 downloaded_bytes: None,
@@ -274,9 +279,8 @@ pub fn summarize(samples: &[Sample]) -> Summary {
             .unwrap_or(0),
         eviction_count: samples
             .iter()
-            .filter_map(|s| s.cache.map(|cache| cache.eviction_count))
-            .max()
-            .unwrap_or(0),
+            .filter_map(|s| s.cache.and_then(|cache| cache.eviction_count))
+            .max(),
     }
 }
 
@@ -330,7 +334,7 @@ mod tests {
                 system_seconds: 0.5,
                 cache: Some(CacheSample {
                     usage_bytes: rss * 2,
-                    eviction_count: n as u64,
+                    eviction_count: Some(n as u64),
                 }),
             })
             .collect();
@@ -339,7 +343,7 @@ mod tests {
         assert_eq!(summary.steady_rss_bytes, 40, "the median of 20, 40, and 50");
         assert_eq!(summary.user_seconds, 5.0);
         assert_eq!(summary.peak_cache_usage_bytes, 180);
-        assert_eq!(summary.eviction_count, 5);
+        assert_eq!(summary.eviction_count, Some(5));
         assert_eq!(summarize(&[]), Summary::default());
     }
 }

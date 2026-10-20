@@ -17,8 +17,8 @@ use tokio::net::TcpListener;
 use tokio::process::{Child, Command};
 use torrplay_bench::fixtures::{self, FixtureDir};
 use torrplay_bench::runner::{self, RunRecord};
-use torrplay_bench::target::TorrPlay;
-use torrplay_bench::{seed, trace, tracker};
+use torrplay_bench::target::{GoTorrPlay, TorrPlay};
+use torrplay_bench::{seed, summary, trace, tracker};
 
 const USAGE: &str = "\
 Usage:
@@ -28,10 +28,14 @@ Usage:
       Serves a tracker that answers every announce with the given seeders.
   torrplay-bench seed --dir <DIR> --listen <ADDRESS>
       Seeds every fixture from <DIR>'s content.
-  torrplay-bench run --trace <FILE> --dir <DIR> --torrplay <BINARY> --out <FILE>
-                     [--label <KEY=VALUE>]...
-      Starts a fresh torrplay, replays the trace once, stops it, and writes
-      the run's measurements as JSON.
+  torrplay-bench run --trace <FILE> --dir <DIR> --out <FILE>
+                     (--torrplay <BINARY> | --go-torrplay <BINARY>) [--label <KEY=VALUE>]...
+      Starts a fresh server of either implementation, replays the trace
+      once, stops it, and writes the run's measurements as JSON.
+  torrplay-bench summarize --out <FILE> <RUN>...
+      Groups runs by trace, implementation, and labels, writes each
+      measurement's median, 90th percentile, minimum, and maximum as JSON,
+      and prints them as Markdown.
 ";
 
 /// How long a server may take to become ready.
@@ -97,6 +101,9 @@ fn main() -> ExitCode {
         }
     };
     let result = runtime.block_on(async {
+        if command == "summarize" {
+            return summarize(args.collect());
+        }
         let options = Options::parse(args)?;
         match command.as_str() {
             "fixtures" => fixtures(&options),
@@ -117,6 +124,24 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn summarize(args: Vec<String>) -> anyhow::Result<()> {
+    let (out, runs) = match args.as_slice() {
+        [flag, out, runs @ ..] if flag == "--out" && !runs.is_empty() => (out, runs),
+        _ => anyhow::bail!("summarize needs --out <FILE> and at least one run file"),
+    };
+    let runs = runs
+        .iter()
+        .map(|path| {
+            let text = std::fs::read_to_string(path).with_context(|| format!("reading {path}"))?;
+            serde_json::from_str(&text).with_context(|| format!("parsing {path}"))
+        })
+        .collect::<anyhow::Result<Vec<serde_json::Value>>>()?;
+    let groups = summary::summarize(&runs);
+    std::fs::write(out, serde_json::to_vec_pretty(&groups)?)?;
+    print!("{}", summary::markdown(&groups));
+    Ok(())
 }
 
 fn fixtures(options: &Options) -> anyhow::Result<()> {
@@ -154,6 +179,7 @@ async fn run_seed(options: &Options) -> anyhow::Result<()> {
 #[derive(Serialize)]
 struct RunFile {
     trace: String,
+    implementation: Implementation,
     labels: BTreeMap<String, String>,
     started_unix_ms: u128,
     environment: Environment,
@@ -204,13 +230,13 @@ async fn free_port() -> anyhow::Result<u16> {
     Ok(TcpListener::bind("127.0.0.1:0").await?.local_addr()?.port())
 }
 
-async fn wait_ready(client: &reqwest::Client, base: &str, child: &mut Child) -> anyhow::Result<()> {
+async fn wait_ready(client: &reqwest::Client, url: &str, child: &mut Child) -> anyhow::Result<()> {
     tokio::time::timeout(READY_TIMEOUT, async {
         loop {
             if let Some(status) = child.try_wait()? {
                 anyhow::bail!("the server exited with {status}");
             }
-            if let Ok(response) = client.get(format!("{base}/readyz")).send().await
+            if let Ok(response) = client.get(url).send().await
                 && response.status().is_success()
             {
                 return Ok(());
@@ -234,8 +260,17 @@ async fn stop(child: &mut Child, pid: u32) -> anyhow::Result<bool> {
     Ok(status.success())
 }
 
+/// Which implementation a run starts.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+enum Implementation {
+    #[serde(rename = "torrplay")]
+    TorrPlay,
+    #[serde(rename = "go-torrplay")]
+    GoTorrPlay,
+}
+
 async fn run(options: &Options) -> anyhow::Result<()> {
-    options.only(&["trace", "dir", "torrplay", "out", "label"])?;
+    options.only(&["trace", "dir", "torrplay", "go-torrplay", "out", "label"])?;
     let trace_path = PathBuf::from(options.one("trace")?);
     let trace = trace::parse(&std::fs::read_to_string(&trace_path)?)
         .with_context(|| format!("reading {}", trace_path.display()))?;
@@ -250,20 +285,44 @@ async fn run(options: &Options) -> anyhow::Result<()> {
         })
         .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
     let fixtures = FixtureDir::new(options.one("dir")?);
-    let binary = options.one("torrplay")?.to_owned();
+    let (implementation, binary) = match (options.one("torrplay"), options.one("go-torrplay")) {
+        (Ok(binary), Err(_)) => (Implementation::TorrPlay, binary.to_owned()),
+        (Err(_), Ok(binary)) => (Implementation::GoTorrPlay, binary.to_owned()),
+        _ => anyhow::bail!("give exactly one of --torrplay and --go-torrplay"),
+    };
 
     let api = SocketAddr::from(([127, 0, 0, 1], free_port().await?));
-    let args = vec![
-        "--listen".to_owned(),
-        api.to_string(),
-        "--peer-port".to_owned(),
-        free_port().await?.to_string(),
-        "--cache-capacity".to_owned(),
-        trace.cache_capacity_bytes.to_string(),
-        "--no-dht".to_owned(),
-        "--log-level".to_owned(),
-        "warn".to_owned(),
-    ];
+    // Go TorrPlay keeps its settings in its data directory; each run gets a
+    // fresh one, as each run gets a fresh process.
+    let data = tempfile::tempdir()?;
+    let args = match implementation {
+        Implementation::TorrPlay => vec![
+            "--listen".to_owned(),
+            api.to_string(),
+            "--peer-port".to_owned(),
+            free_port().await?.to_string(),
+            "--cache-capacity".to_owned(),
+            trace.cache_capacity_bytes.to_string(),
+            "--no-dht".to_owned(),
+            "--log-level".to_owned(),
+            "warn".to_owned(),
+        ],
+        Implementation::GoTorrPlay => vec![
+            "--data-dir".to_owned(),
+            data.path()
+                .to_str()
+                .context("temporary paths must be UTF-8")?
+                .to_owned(),
+            "--ipaddr".to_owned(),
+            api.ip().to_string(),
+            "--port".to_owned(),
+            api.port().to_string(),
+        ],
+    };
+    let ready_path = match implementation {
+        Implementation::TorrPlay => "/readyz",
+        Implementation::GoTorrPlay => "/api/system/health",
+    };
     let started_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
     let launched = Instant::now();
     let mut child = Command::new(&binary)
@@ -275,11 +334,22 @@ async fn run(options: &Options) -> anyhow::Result<()> {
     let pid = child.id().context("the server has no process ID")?;
     let client = reqwest::Client::new();
     let base = format!("http://{api}");
-    wait_ready(&client, &base, &mut child).await?;
+    wait_ready(&client, &format!("{base}{ready_path}"), &mut child).await?;
     let ready_ms = launched.elapsed().as_secs_f64() * 1000.0;
 
-    let target = Arc::new(TorrPlay::new(client.clone(), base));
-    let record = runner::run(target, client, pid, &trace, &fixtures).await;
+    let record = match implementation {
+        Implementation::TorrPlay => {
+            let target = Arc::new(TorrPlay::new(client.clone(), base));
+            runner::run(target, client, pid, &trace, &fixtures).await
+        }
+        Implementation::GoTorrPlay => {
+            let target = Arc::new(GoTorrPlay::new(client.clone(), base));
+            match target.configure(trace.cache_capacity_bytes).await {
+                Ok(()) => runner::run(target, client, pid, &trace, &fixtures).await,
+                Err(error) => Err(error),
+            }
+        }
+    };
     let stopping = Instant::now();
     let exit_success = stop(&mut child, pid).await?;
     let record = record?;
@@ -289,6 +359,7 @@ async fn run(options: &Options) -> anyhow::Result<()> {
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned())
             .unwrap_or_default(),
+        implementation,
         labels,
         started_unix_ms,
         environment: environment(),
