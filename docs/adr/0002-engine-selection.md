@@ -707,6 +707,25 @@ server (milestone 3) can start.
 - Treat a librqbit update as a rebase of the patch set, verified by the
   spike's tests until milestone 4's tests replace them.
 
+### Network configuration
+
+Milestone 4 fixes the session's network configuration as constants, which
+milestone 6 may turn into settings:
+
+| Option | Value | Why |
+|---|---|---|
+| Peer listener | TCP on port 4240, all interfaces, IPv4 and IPv6 | A fixed port lets peers connect in; uTP stays off while librqbit marks it unstable |
+| DHT | On, state not persisted | Magnet URIs without trackers need it to find peers |
+| Trackers | On | Torrents and magnet URIs name them |
+| Local service discovery | Off | It announces the user's torrents to the local network |
+| UPnP port mapping | Off | It changes the user's router without consent |
+| Fastresume | Off | Memory storage has nothing to resume, as ADR 5 records |
+
+The HTTP API still listens on loopback only; only the peer listener faces
+the network. Tests keep the spike's isolated configuration: an ephemeral
+loopback port, with DHT, trackers, local service discovery, and UPnP off,
+so no test reaches a public swarm.
+
 ## Fallback engines
 
 - **A maintained librqbit fork.** This is now the plan: the patches stay in
@@ -725,7 +744,7 @@ server (milestone 3) can start.
   upstream as a bug, since it lets corrupted disk data pass the check? With
   E7's finding that librqbit uploads what it reads without hashing it, disk
   torrents in milestone 6 depend on it.
-- Which listen port, DHT, and port mapping settings become TorrPlay
-  settings? The spike fixed them: TCP only on an ephemeral loopback port,
-  with DHT, trackers, local service discovery, UPnP, and fastresume off.
+- Which of the [network configuration](#network-configuration) options
+  become TorrPlay settings in milestone 6, and does a taken peer port need
+  a fallback?
 - Will upstream accept the patches, so the fork stays temporary?

@@ -58,7 +58,8 @@ at any moment. Clients must handle observed states added later.
   metadata retrieval. The response is still `duplicate-torrent`.
 - Input the engine cannot use is rejected before the torrent exists:
   invalid metainfo or magnet URIs are `validation-failed`, and v2-only
-  torrents are `unsupported-torrent`.
+  torrents and uploaded torrents whose piece length exceeds cache capacity
+  are `unsupported-torrent`.
 - Torrent IDs are random, so they are not reused, including across restarts.
 
 ## Metadata retrieval
@@ -75,6 +76,10 @@ at any moment. Clients must handle observed states added later.
   `failure` detail naming the cause. Retrieval is not retried, because peers
   would send the same metadata again. An uploaded torrent file with such
   metadata is `validation-failed` instead.
+- Retrieved metadata whose piece length exceeds cache capacity fails the
+  torrent the same way, with a `failure` detail naming the piece length and
+  the cache capacity, since the cache could never hold one of its pieces;
+  [ADR 5](adr/0005-storage.md) records why.
 - Until metadata is available, the files collection, its members, and their
   content return `lifecycle-conflict` (409).
 

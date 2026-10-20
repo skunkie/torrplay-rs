@@ -228,7 +228,8 @@ Errors use Problem Details with `application/problem+json`.
 - An uploaded file that is not valid torrent metainfo, or a magnet URI that
   cannot be parsed, is a `validation-failed` whose `pointer` names the field.
   `unsupported-torrent` is reserved for valid torrents the engine cannot
-  handle, such as v2-only torrents.
+  handle, such as v2-only torrents and torrents whose piece length exceeds
+  cache capacity.
 - Problems never include credentials, private tracker parameters, or
   internal paths.
 
@@ -248,7 +249,7 @@ The initial problem types, by name, each appended to the base above:
 | `unsupported-media-type` | 415 | The request's `Content-Type` is not accepted by the operation. |
 | `range-not-satisfiable` | 416 | No requested range overlaps the content. |
 | `validation-failed` | 422 | The body parses but violates its schema or a documented rule, including unknown and read-only members, invalid torrent metainfo, and an unparsable magnet URI. |
-| `unsupported-torrent` | 422 | A valid torrent's version or features are not supported, such as a v2-only torrent. |
+| `unsupported-torrent` | 422 | A valid torrent's version or features are not supported, such as a v2-only torrent, or its pieces are longer than cache capacity. |
 | `precondition-required` | 428 | A PATCH omits `If-Match`. |
 | `internal-error` | 500 | An unexpected failure. |
 | `engine-unavailable` | 503 | The torrent engine cannot serve the request right now; `Retry-After` is sent when a retry time is known. |

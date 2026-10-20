@@ -232,7 +232,8 @@ pub trait Engine: Send + Sync + 'static {
     /// metadata as the engine would report it, or
     /// [`EngineError::Rejected`]: [`SourceRejection::Invalid`] for input
     /// that is not valid metainfo or a parsable magnet URI, and
-    /// [`SourceRejection::Unsupported`] for a v2-only torrent. A hybrid
+    /// [`SourceRejection::Unsupported`] for a v2-only torrent or one whose
+    /// piece length exceeds cache capacity, as ADR 5 decides. A hybrid
     /// torrent is accepted as a v1 torrent.
     fn inspect(
         &self,
@@ -281,7 +282,9 @@ pub trait Engine: Send + Sync + 'static {
     /// ADR 5 requires.
     fn remove(&self, id: &TorrentId) -> impl Future<Output = Result<(), EngineError>> + Send;
 
-    /// Returns a torrent's metadata, once available, and failure.
+    /// Returns a torrent's metadata, once available, and failure. Retrieved
+    /// metadata whose piece length exceeds cache capacity fails the torrent,
+    /// with a detail naming both lengths.
     fn status(
         &self,
         id: &TorrentId,
