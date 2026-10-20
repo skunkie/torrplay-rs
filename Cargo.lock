@@ -3335,6 +3335,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "h2",
  "reqwest",
  "serde_json",
  "tempfile",
@@ -3395,6 +3396,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "torrplay-core",
+ "torrplay-engine",
  "torrplay-fixtures",
  "tracing",
 ]
@@ -3416,6 +3418,8 @@ dependencies = [
  "bytes",
  "chrono",
  "form_urlencoded",
+ "futures-util",
+ "h2",
  "http",
  "http-body-util",
  "memchr",

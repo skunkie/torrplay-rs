@@ -22,6 +22,8 @@ pub mod playback;
 mod reader;
 pub mod scheduler;
 pub mod storage;
+#[cfg(feature = "test-support")]
+pub mod test_support;
 
 pub use adapter::{
     DEFAULT_CACHE_CAPACITY_BYTES, DEFAULT_PEER_PORT, DEFAULT_PIECE_WAIT,

@@ -33,7 +33,7 @@ async fn a_failed_write_fails_the_torrent_and_cancels_its_streams() -> anyhow::R
     engine
         .add(&id(1), &upload(&spec), DesiredState::Started)
         .await?;
-    engine.fail_storage_writes(&id(1))?;
+    engine.fail_storage_writes(id(1).as_str())?;
 
     let mut reader = engine
         .open_reader(&id(1), FileIndex(0), range(0, 1000))

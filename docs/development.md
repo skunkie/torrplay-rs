@@ -130,7 +130,9 @@ The workspace has seven members:
 - `crates/torrplay` is the application: the `torrplay` executable, which
   serves `torrplay-server` over `LibrqbitEngine`, and the library that holds
   its configuration, startup, and shutdown sequence, so tests drive them
-  without signals.
+  without signals. Its tests run milestone 4's scenarios end to end over
+  HTTP/1.1 and HTTP/2 against local seeders, from the engine's
+  `test-support` feature, and check the milestone's exit criterion.
 - `crates/torrplay-api` holds the generated wire types described above.
 - `crates/torrplay-contract` is test support that checks HTTP requests and
   responses against `api/openapi.yaml`, as ADR 6 decides, and records which

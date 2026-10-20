@@ -234,19 +234,19 @@ impl Default for ShutdownTimings {
     }
 }
 
-/// Serves the API on `listener` over an engine with `engine_config` until
-/// `shutdown` completes, then shuts down in the lifecycle's order.
+/// Serves the API on `listener` over `engine`, which must not be started
+/// yet, until `shutdown` completes, then shuts down in the lifecycle's
+/// order.
 ///
 /// The listener serves before the engine starts. Fails if the engine
 /// cannot start, if the server fails, or if shutdown takes longer than
 /// `timings.limit`.
 pub async fn serve(
     listener: TcpListener,
-    engine_config: EngineConfig,
+    engine: Arc<LibrqbitEngine>,
     timings: ShutdownTimings,
     shutdown: impl Future<Output = ()>,
 ) -> anyhow::Result<()> {
-    let engine = LibrqbitEngine::new(engine_config);
     let app = Arc::new(App::new(engine.clone()));
     let (close_listener, listener_closed) = oneshot::channel::<()>();
     let mut server = tokio::spawn(

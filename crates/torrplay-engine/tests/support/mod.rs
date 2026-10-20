@@ -17,16 +17,12 @@
 #![allow(clippy::expect_used)]
 
 use std::future::Future;
-use std::net::{Ipv4Addr, SocketAddr};
-use std::path::{Path, PathBuf};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use librqbit::{
-    AddTorrent, AddTorrentOptions, ListenerMode, ListenerOptions, ManagedTorrent, Session,
-    SessionOptions,
-};
+use librqbit::{AddTorrent, AddTorrentOptions, ManagedTorrent, Session};
 use tempfile::TempDir;
 use tokio::io::AsyncReadExt;
 use torrplay_core::engine::{ByteRange, Engine, Source};
@@ -37,8 +33,9 @@ use torrplay_engine::evictor::Evictor;
 use torrplay_engine::playback::{Playback, PlaybackConfig};
 use torrplay_engine::scheduler::TorrentScheduler;
 use torrplay_engine::storage::{CachedTorrent, MemoryStorageFactory};
+pub use torrplay_engine::test_support::{Seeder, new_session};
 use torrplay_engine::{EngineConfig, LibrqbitEngine, NetworkConfig};
-use torrplay_fixtures::{FixtureSpec, Layout, generator};
+use torrplay_fixtures::{FixtureSpec, generator};
 
 /// The longest any single step of a test may take.
 pub const STEP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -68,109 +65,6 @@ pub async fn eventually<T>(
         }
     })
     .await
-}
-
-/// Returns options for a session that reaches peers only by address.
-pub fn session_options() -> SessionOptions {
-    SessionOptions {
-        dht: None,
-        disable_trackers: true,
-        disable_local_service_discovery: true,
-        fastresume: false,
-        persistence: None,
-        ipv4_only: true,
-        listen: Some(ListenerOptions {
-            mode: ListenerMode::TcpOnly,
-            listen_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-            enable_upnp_port_forwarding: false,
-            ipv4_only: true,
-            ..Default::default()
-        }),
-        ..Default::default()
-    }
-}
-
-/// Starts a session whose default output folder is `dir`.
-pub async fn new_session(dir: &Path) -> anyhow::Result<Arc<Session>> {
-    Session::new_with_opts(dir.to_path_buf(), session_options()).await
-}
-
-/// Returns the folder librqbit expects as `output_folder` for content that
-/// [`FixtureSpec::write_content`] wrote to `root`: the content directory of a
-/// multi-file torrent, or the parent of a single-file torrent's file.
-pub fn output_folder_for(spec: &FixtureSpec, root: &Path) -> anyhow::Result<String> {
-    let folder = match spec.layout {
-        Layout::MultiFile { .. } => root,
-        Layout::SingleFile { .. } => root.parent().context("content file has no parent")?,
-    };
-    folder
-        .to_str()
-        .map(str::to_owned)
-        .context("temporary paths are UTF-8")
-}
-
-/// A local peer that has every piece of one fixture.
-pub struct Seeder {
-    /// The seeding session.
-    pub session: Arc<Session>,
-    /// The seeded torrent.
-    pub handle: Arc<ManagedTorrent>,
-    /// The address peers connect to.
-    pub addr: SocketAddr,
-    /// The content on disk: the file of a single-file torrent, or the
-    /// directory of a multi-file one.
-    pub root: PathBuf,
-    _dir: TempDir,
-}
-
-impl Seeder {
-    /// Writes the fixture's content, adds `metainfo` over it, and waits until
-    /// the initial check confirms every piece.
-    pub async fn start(spec: &FixtureSpec, metainfo: &[u8]) -> anyhow::Result<Self> {
-        Self::start_with_peers(spec, metainfo, &[]).await
-    }
-
-    /// Like [`start`](Self::start), and also connects to `peers`, so a
-    /// leecher can gain this seeder after it started.
-    pub async fn start_with_peers(
-        spec: &FixtureSpec,
-        metainfo: &[u8],
-        peers: &[SocketAddr],
-    ) -> anyhow::Result<Self> {
-        let dir = tempfile::tempdir()?;
-        let root = spec.write_content(dir.path())?;
-        let session = new_session(dir.path()).await?;
-        let handle = bounded(
-            "adding the seeded torrent",
-            session.add_torrent(
-                AddTorrent::from_bytes(metainfo.to_vec()),
-                Some(AddTorrentOptions {
-                    output_folder: Some(output_folder_for(spec, &root)?),
-                    overwrite: true,
-                    initial_peers: (!peers.is_empty()).then(|| peers.to_vec()),
-                    ..Default::default()
-                }),
-            ),
-        )
-        .await?
-        .into_handle()
-        .context("the seeded torrent was not added")?;
-        bounded("the seeder's initial check", handle.wait_until_completed()).await?;
-        let addr = session
-            .listen_addr()
-            .context("the seeder session has no listen address")?;
-        Ok(Self {
-            session,
-            handle,
-            addr,
-            root,
-            _dir: dir,
-        })
-    }
-    /// Stops the seeding session.
-    pub async fn stop(self) {
-        self.session.stop().await;
-    }
 }
 
 /// A session that downloads into its own temporary folder.
