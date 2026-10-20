@@ -197,9 +197,10 @@ trace ten times round-robin, labels each run with the commit and profile,
 tears the network down, and summarizes the profile's runs. It writes
 `target/bench-results/<profile>/`, skips runs whose files exist so an
 interrupted matrix resumes, and keeps a failed run's log without its result.
-`PROFILES`, `RUNS`, `TRACES`, `DIR`, `OUT`, `BENCH`, and `COMMIT` override its
-defaults, and `DRY_RUN=1` prints its commands without root. The Go baseline
-takes several hours:
+Benchmark commands run as the user who invoked sudo, or under `su` as the
+checkout's owner. `PROFILES`, `RUNS`, `TRACES`, `DIR`, `OUT`, `BENCH`,
+`BENCH_USER`, and `COMMIT` override its defaults, and `DRY_RUN=1` prints its
+commands without root. The Go baseline takes several hours:
 
 ```bash
 sudo scripts/bench-matrix.sh go-torrplay target/go-torrplay

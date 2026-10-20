@@ -12,8 +12,8 @@
 #   sudo scripts/bench-matrix.sh go-torrplay <BINARY>
 #   sudo scripts/bench-matrix.sh torrplay <BINARY>
 #
-# Needs root for the namespaces; every benchmark command runs as the user
-# who invoked sudo. Build the release binaries and write the fixtures with
+# Needs root, through sudo or su, for the namespaces; every benchmark command
+# runs as the user who invoked sudo, or else as the checkout's owner. Build the release binaries and write the fixtures with
 # `--tracker http://127.0.0.1:6969/announce` first, as docs/development.md
 # describes.
 #
@@ -24,6 +24,7 @@
 #   DIR        fixture directory (default target/bench)
 #   OUT        result directory (default target/bench-results)
 #   BENCH      torrplay-bench binary (default target/release/torrplay-bench)
+#   BENCH_USER the user benchmark commands run as
 #   COMMIT     the commit label (default: the Go binary's vcs.revision, or
 #              this checkout's HEAD for torrplay)
 #   DRY_RUN=1  prints the commands instead of running them
@@ -69,7 +70,13 @@ if [[ $dry_run != 1 && $EUID != 0 ]]; then
     echo "$0 needs root for the network namespaces; run it with sudo" >&2
     exit 1
 fi
-user=${SUDO_USER:-$(id -un)}
+# Benchmark commands run as the user who invoked sudo, or under su, as the
+# checkout's owner; never as root, whose files the user could not manage.
+user=${BENCH_USER:-${SUDO_USER:-$(stat -c %U .)}}
+if [[ $user == root ]]; then
+    echo "benchmark commands must not run as root; set BENCH_USER" >&2
+    exit 1
+fi
 
 run() {
     if [[ $dry_run == 1 ]]; then
