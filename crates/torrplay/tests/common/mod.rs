@@ -85,6 +85,12 @@ impl Running {
         timings: ShutdownTimings,
         tune: impl FnOnce(&mut EngineConfig),
     ) -> anyhow::Result<Self> {
+        // Server logs go to the test's captured output, which libtest shows
+        // when the test fails.
+        let _ = tracing_subscriber::fmt()
+            .with_test_writer()
+            .with_max_level(tracing::Level::INFO)
+            .try_init();
         let folder = tempfile::tempdir()?;
         let mut config =
             EngineConfig::new(folder.path().to_path_buf(), NetworkConfig::isolated(peers));

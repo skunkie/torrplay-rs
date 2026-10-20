@@ -248,24 +248,27 @@ impl TorrentScheduler {
     /// ones included, with their pins and priorities. Readers cannot be
     /// opened until [`reopen`](Self::reopen).
     pub fn close(&self) -> anyhow::Result<()> {
-        let removed = {
+        let (removed, streams) = {
             let mut state = self.lock()?;
             state.closed = true;
-            state.streams.cancel();
-            state.streams = CancellationToken::new();
+            let streams = std::mem::take(&mut state.streams);
             let removed = state.readers.len() as u64;
             state.readers.clear();
-            removed
+            (removed, streams)
         };
         // Released idle readers find their entries gone, so they count
         // nothing again.
         self.playback.release_idle_of(self.id);
-        if removed > 0 {
+        let result = if removed > 0 {
             self.playback.readers_changed(0, removed);
             Ok(())
         } else {
             self.replan()
-        }
+        };
+        // Streams are canceled last, so whoever sees a stream end also sees
+        // its reader released in the playback counts.
+        streams.cancel();
+        result
     }
 
     /// Lets readers be opened again after [`close`](Self::close).
@@ -490,6 +493,52 @@ mod tests {
     use super::*;
 
     const PIECE: u64 = 100;
+
+    /// Wakes by recording how many readers playback counts at that moment.
+    struct CountOnWake {
+        playback: Arc<Playback>,
+        readers: Mutex<Option<u64>>,
+    }
+
+    impl std::task::Wake for CountOnWake {
+        fn wake(self: Arc<Self>) {
+            *self.readers.lock().unwrap() = Some(self.playback.stats().readers);
+        }
+    }
+
+    #[test]
+    fn a_stream_closing_cancels_sees_its_reader_released() {
+        let playback = Playback::new(crate::playback::PlaybackConfig::new(1000));
+        let scheduler = TorrentScheduler::new(&playback);
+        // Registers a reader as `open` does, without a librqbit stream.
+        let streams = {
+            let mut state = scheduler.lock().unwrap();
+            state
+                .readers
+                .insert(0, ReaderPosition { file: 0, offset: 0 });
+            state.streams.child_token()
+        };
+        playback.readers_changed(1, 0);
+        let mut canceled = Box::pin(streams.cancelled_owned());
+        let wake = Arc::new(CountOnWake {
+            playback: playback.clone(),
+            readers: Mutex::new(None),
+        });
+        let waker = std::task::Waker::from(wake.clone());
+        assert!(
+            canceled
+                .as_mut()
+                .poll(&mut Context::from_waker(&waker))
+                .is_pending()
+        );
+
+        scheduler.close().unwrap();
+        assert_eq!(
+            *wake.readers.lock().unwrap(),
+            Some(0),
+            "the reader is released before its stream is canceled"
+        );
+    }
 
     /// Two files: 0..1000 and 1000..2050, in pieces of 100 bytes.
     fn layout() -> Layout {
