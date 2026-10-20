@@ -285,7 +285,8 @@ the first eviction.
 ## Spike findings
 
 The milestone 2 spike built the piece cache in `crates/torrplay-engine`
-and tested it in `spikes/engine-spike`; ADR 2 records each experiment.
+and tested it in experiments that now live in `crates/torrplay-engine/tests`;
+ADR 2 records each experiment.
 These findings bear on this record, and the capability report decides
 which become part of the decision.
 
