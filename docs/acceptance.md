@@ -211,6 +211,20 @@ Seeders are three local peers. Network namespaces with `tc netem` shape each
 peer link: one profile at 50 Mbit/s with 20 ms delay, and one at 10 Mbit/s
 with 80 ms delay and 0.5 percent loss.
 
+### Target devices and baseline
+
+The benchmarks run on three Linux devices:
+
+- the developer's arm64 machine;
+- an x86_64 desktop;
+- a low-memory ARM device with at most 2 GiB of RAM.
+
+The baseline is Go TorrPlay at commit `84412a1`. Its cache size setting,
+`max_memory`, is set to the trace's cache capacity before each run; it
+accepts 32 MiB to 2 GiB, which covers every trace. Each device's baseline is
+captured, and its thresholds written, before any Rust result on that device
+is evaluated.
+
 ### Access traces
 
 A trace is a JSON Lines file. Each line is one event, ordered by time:
@@ -280,8 +294,7 @@ regardless of speed.
 
 ## Open decisions
 
-| Decision | Owner | Needed before |
-|---|---|---|
-| Target devices for benchmarks. Proposed: the developer's arm64 Linux machine, an x86_64 Linux desktop, and a low-memory ARM device with at most 2 GiB of RAM. | Project maintainer | Capturing the Go baseline |
-| The Go TorrPlay commit used as the baseline, and how its cache size setting maps to cache capacity. | Project maintainer | Capturing the Go baseline |
-| How a torrent whose piece length exceeds cache capacity is reported: rejected at creation, failed when metadata becomes available, or answered per content request. | [ADR 5](adr/0005-storage.md) | Milestone 4 memory storage |
+No decisions are open. The target devices and the baseline are recorded
+under [Target devices and baseline](#target-devices-and-baseline), and
+[ADR 5](adr/0005-storage.md) decides how a torrent whose piece length exceeds
+cache capacity is reported.
