@@ -20,6 +20,7 @@ use common::{BOUNDARY, Exchange, TestServer, form, form_request, json_request, r
 use http::{Method, StatusCode, header};
 use serde_json::{Value, json};
 use torrplay_core::engine::{CacheStatistics, Ratio, TorrentStatistics};
+use torrplay_core::id::FileId;
 use torrplay_core::lifecycle::Readiness;
 use torrplay_fixtures::{FixtureSpec, catalog, generator, hex};
 
@@ -192,6 +193,10 @@ mod scenario {
         let body = created.json();
         assert_eq!(body["observed_state"], "downloading");
         assert_eq!(body["size_bytes"], 1_048_576);
+        assert_eq!(
+            created.header(header::LOCATION),
+            body["links"]["self"].as_str()
+        );
         let paused = server
             .upload(&catalog::multi_boundary().metainfo().bytes, Some("paused"))
             .await;
@@ -226,6 +231,26 @@ mod scenario {
             "the upload's metadata is used"
         );
         assert_eq!(torrent["observed_state"], "downloading");
+
+        // A torrent created from an upload is a duplicate by either input,
+        // and duplicates leave it unchanged.
+        let other = catalog::multi_boundary();
+        let uploaded = server.upload(&other.metainfo().bytes, Some("paused")).await;
+        let uploaded_path = uploaded.json()["links"]["self"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        for duplicate in [
+            server.upload(&other.metainfo().bytes, None).await,
+            server.create_magnet(&magnet(&other)).await,
+        ] {
+            assert_problem(&duplicate, StatusCode::CONFLICT, "duplicate-torrent");
+            assert_eq!(duplicate.json()["torrent"], uploaded_path.as_str());
+        }
+        let unchanged = server.get(&uploaded_path).await.json();
+        assert_eq!(unchanged["observed_state"], "paused");
+        let listed = server.get("/api/v1/torrents").await.json();
+        assert_eq!(listed["items"].as_array().unwrap().len(), 2);
         server.stop().await;
     }
 
@@ -522,10 +547,16 @@ mod scenario {
         assert_eq!(torrent["failure"], Value::Null);
         let current = started.header(header::ETAG).unwrap().to_owned();
 
-        for (body, pointer) in [
-            (json!(null), ""),
-            (json!({}), ""),
-            (json!({ "observed_state": "paused" }), "/observed_state"),
+        // API-08: every unknown or read-only member is named.
+        let read_only = json!({
+            "desired_state": "paused",
+            "links": { "self": "/x" },
+            "observed_state": "paused",
+        });
+        for (body, pointers) in [
+            (json!(null), vec![""]),
+            (json!({}), vec![""]),
+            (read_only, vec!["/links", "/observed_state"]),
         ] {
             let invalid = server
                 .send_unchecked(merge_patch(&configuration_path, &current, &body))
@@ -535,8 +566,14 @@ mod scenario {
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "validation-failed",
             );
-            assert_eq!(errors(&invalid, "pointer"), [pointer], "{body}");
+            assert_eq!(errors(&invalid, "pointer"), pointers, "{body}");
         }
+        let kept = server.get(&configuration_path).await;
+        assert_eq!(
+            kept.json()["desired_state"],
+            "started",
+            "invalid patches change nothing"
+        );
         let as_json = server
             .send_unchecked(patch(
                 &configuration_path,
@@ -630,6 +667,17 @@ mod scenario {
             assert_eq!(file["size_bytes"], spec_file.size_bytes);
             assert_eq!(file["media_type"], "application/octet-stream");
         }
+        // File IDs derive from the paths, so they are stable across
+        // listings and match the manifest.
+        let again = server
+            .get(&format!("{path}/files?page_size=150"))
+            .await
+            .json();
+        assert_eq!(again["items"].as_array().unwrap(), &listed[..150]);
+        for (file, spec_file) in listed.iter().zip(&expected) {
+            let components = [spec.torrent_name.as_str(), spec_file.path[0].as_str()];
+            assert_eq!(file["id"], FileId::derive(&components).as_str());
+        }
         let link = listed[42]["links"]["self"].as_str().unwrap();
         assert_eq!(server.get(link).await.json(), listed[42]);
         let missing = server
@@ -679,9 +727,20 @@ mod scenario {
             .unwrap()
             .to_owned();
         let range = |value: &str| with_header(Method::GET, &content, header::RANGE, value);
+        // The file starts inside a piece, so its first bytes share a piece
+        // with the files before it; `boundary` is the offset, within the
+        // file, of the next piece boundary.
+        let piece = u64::from(spec.piece_length);
+        let file_start: u64 = spec.files()[..index]
+            .iter()
+            .map(|file| file.size_bytes)
+            .sum();
+        let boundary = file_start.div_ceil(piece) * piece - file_start;
+        assert!(boundary > 100 && boundary + 100 < size);
+        let across = format!("bytes={}-{}", boundary - 100, boundary + 99);
         let cases = [
             ("bytes=0-99", 0, 100),
-            ("bytes=262000-263000", 262_000, 263_001),
+            (across.as_str(), boundary - 100, boundary + 100),
             ("bytes=500000-", 500_000, size),
             ("bytes=-10", size - 10, size),
             ("bytes=0-0", 0, 1),
@@ -1043,7 +1102,8 @@ mod scenario {
         server.stop().await;
     }
 
-    /// API-21: a private tracker's passkey never appears in a response.
+    /// API-21: a private tracker's passkey never appears in a response,
+    /// across every operation and its errors. The server does not log.
     pub async fn passkey_redaction() {
         let server = TestServer::start().await;
         let secret = "s3cr3tpasskey";
@@ -1051,12 +1111,49 @@ mod scenario {
             "{}&tr=http%3A%2F%2Ftracker.test%2F{secret}%2Fannounce",
             magnet(&catalog::single_small())
         );
-        let exchanges = [
-            server.create_magnet(&uri).await,
+        let created = server.create_magnet(&uri).await;
+        let path = created.json()["links"]["self"].as_str().unwrap().to_owned();
+        let configuration = format!("{path}/configuration");
+        let tag = server
+            .get(&configuration)
+            .await
+            .header(header::ETAG)
+            .unwrap()
+            .to_owned();
+        let file = format!("{path}/files/fil_aaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let mut exchanges = vec![
+            created,
             server.create_magnet(&uri).await,
             server.create_magnet(&format!("{uri}&xt=urn:btih:zz")).await,
+            server.get("/api/v1").await,
             server.get("/api/v1/torrents").await,
+            server.get(&path).await,
+            server.get(&configuration).await,
+            server
+                .send(merge_patch(
+                    &configuration,
+                    "\"cfg-0\"",
+                    &json!({ "desired_state": "paused" }),
+                ))
+                .await,
+            server
+                .send(merge_patch(
+                    &configuration,
+                    &tag,
+                    &json!({ "desired_state": "paused" }),
+                ))
+                .await,
+            server.get(&format!("{path}/files")).await,
+            server.get(&file).await,
+            server.get(&format!("{file}/content")).await,
+            server
+                .send(empty(Method::HEAD, &format!("{file}/content")))
+                .await,
+            server.get(&format!("{path}/statistics")).await,
+            server.get("/api/v1/cache/statistics").await,
+            server.send(empty(Method::DELETE, &path)).await,
         ];
+        exchanges.push(server.get(&path).await);
         for exchange in exchanges {
             let text = String::from_utf8_lossy(&exchange.body);
             assert!(!text.contains(secret), "{text}");
@@ -1065,6 +1162,63 @@ mod scenario {
             }
         }
         server.stop().await;
+    }
+
+    /// API-07: oversized bodies are refused before they are fully sent.
+    pub async fn bodies_refused_while_streaming() {
+        let server = TestServer::start().await;
+        let chunk = |data: Vec<u8>| {
+            let mut chunk = format!("{:x}\r\n", data.len()).into_bytes();
+            chunk.extend_from_slice(&data);
+            chunk.extend_from_slice(b"\r\n");
+            chunk
+        };
+        let head = |media_type: &str, framing: &str| {
+            format!(
+                "POST /api/v1/torrents HTTP/1.1\r\nHost: test\r\n\
+Content-Type: {media_type}\r\n{framing}\r\n"
+            )
+        };
+        // Chunked bodies that cross their limit and never end.
+        let json_head = head("application/json", "Transfer-Encoding: chunked\r\n");
+        let status = server
+            .status_line_before_body_ends(&json_head, chunk(vec![b' '; 20 * 1024]))
+            .await;
+        assert_eq!(status, "HTTP/1.1 413 Payload Too Large");
+        let form_head = head(
+            &format!("multipart/form-data; boundary={BOUNDARY}"),
+            "Transfer-Encoding: chunked\r\n",
+        );
+        let mut form = format!(
+            "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"torrent_file\"\r\n\r\n"
+        )
+        .into_bytes();
+        form.resize(form.len() + 11 * 1024 * 1024, b'd');
+        let status = server
+            .status_line_before_body_ends(&form_head, chunk(form))
+            .await;
+        assert_eq!(status, "HTTP/1.1 413 Payload Too Large");
+        // A declared length over the limit is refused before any body.
+        let declared = head("application/json", "Content-Length: 20000\r\n");
+        let status = server
+            .status_line_before_body_ends(&declared, Vec::new())
+            .await;
+        assert_eq!(status, "HTTP/1.1 413 Payload Too Large");
+        server.stop().await;
+    }
+
+    /// LIF-11: a restarted server has no torrents, and new IDs differ.
+    pub async fn restart() {
+        let metainfo = catalog::single_small().metainfo().bytes;
+        let first = TestServer::start_with_random_ids().await;
+        let before = first.upload(&metainfo, None).await.json()["id"].clone();
+        first.stop().await;
+        let second = TestServer::start_with_random_ids().await;
+        let listed = second.get("/api/v1/torrents").await.json();
+        assert!(listed["items"].as_array().unwrap().is_empty());
+        let after = second.upload(&metainfo, None).await.json()["id"].clone();
+        assert_ne!(after, before, "IDs from before the restart do not reappear");
+        second.stop().await;
     }
 }
 
@@ -1127,4 +1281,6 @@ scenarios!(
     statistics,
     failures,
     passkey_redaction,
+    bodies_refused_while_streaming,
+    restart,
 );
