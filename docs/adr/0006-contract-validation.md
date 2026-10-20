@@ -48,6 +48,7 @@ violations against the torrent representation's response schema.
 | openapi-generator | 7.25.0 | server and client generators | Ruled out: it does not recognize OpenAPI 3.2, and from a 3.1 copy it generates code that does not compile; see below |
 | openapi-to-rust | 0.20.0 | types, client, and axum scaffolding | Types chosen: they round-trip every contract example unchanged; its server scaffolding is not usable; see [generated types](#generated-types) |
 | oas3-gen | 0.28.0 | types, client, and axum server module | Ruled out: its server types omit required members that are `null`, and type `failure` as untyped JSON |
+| openapi-nexus | 0.2.3 | clients in several languages, including Rust | Ruled out: its Rust models do not compile, and once fixed they reject a `null` `failure` and omit other required `null` members; see [generated types](#generated-types) |
 | oas3 | 0.22.0 | document model | Parses the document, though it claims OpenAPI 3.1 |
 | jsonschema | 0.59.0 | JSON Schema validator | Validates all 56 examples; catches every planted violation in strict mode, below |
 
@@ -88,16 +89,25 @@ utoipa, the code-first option, was rejected:
 
 ### Generated types
 
-openapi-to-rust and oas3-gen are the only candidates that read the 3.2.1
-document as it is; openapi-to-rust warns that its OpenAPI 3.2 support is
-experimental. Both ran from crates.io releases at least two weeks old,
-installed with `cargo install --locked`.
+openapi-to-rust, oas3-gen, and openapi-nexus are the only candidates that
+read the 3.2.1 document as it is; openapi-to-rust warns that its OpenAPI 3.2
+support is experimental. All three ran from crates.io releases at least two
+weeks old, installed with `cargo install --locked`.
 
 oas3-gen 0.28.0 generates its server types with `skip_serializing_none`.
 `name`, `size_bytes`, `file_count`, and `failure` are required members
 that are `null` until metadata is available or while there is no failure,
 so its torrents would leave them out and break the contract. It also turns
 `storage_mode` into a plain string and `failure` into untyped JSON.
+
+openapi-nexus 0.2.3 generates clients only, so only its model types could
+serve the server. Its `rust-reqwest` models do not compile: every `links`
+object has a `self` member, which becomes the field `r#self`, and `self`
+cannot be a raw identifier. With those fields renamed by hand, the
+retrieving-metadata example does not deserialize, because `failure` is a
+plain struct that rejects `null`. Like oas3-gen's, its types skip `name`,
+`size_bytes`, and `file_count` when they are `null`, and it turns
+`created_at` and `storage_mode` into plain strings.
 
 openapi-to-rust 0.20.0's types are faithful:
 - **Round trip.** A test program deserialized each of the 30 examples whose
