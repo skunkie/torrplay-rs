@@ -154,7 +154,7 @@ engine can pass them, and memory storage (M4) must pass them.
 | CAC-03 | Evict while the torrent is finished and while peers are connected | Re-download works; peers dropped as not needed reconnect |
 | CAC-04 | Evict pieces of a paused torrent, then start it | Evicted pieces count as missing after start |
 | CAC-05 | Pinned ranges exceed capacity | Cache usage never exceeds capacity; pins are reduced in the order [ADR 5](adr/0005-storage.md) defines, down to each reader's current piece; waiting pieces are readmitted in piece priority order, so no reader waits indefinitely behind others |
-| CAC-06 | `oversized-piece` with capacity below one piece | Cache usage never exceeds capacity, no write fails the torrent, and the torrent is reported as ADR 5's open question decides |
+| CAC-06 | `oversized-piece` with capacity below one piece, uploaded and from a magnet URI | Cache usage never exceeds capacity and no write fails the torrent; the upload is `422 unsupported-torrent`, and the magnet torrent becomes `failed` with a `failure` detail once metadata arrives |
 | CAC-07 | Partial pieces under eviction pressure | Stay resident until verified; count as pending allocations |
 | CAC-08 | Paused and started torrents share the cache | Unpinned pieces of paused and failed torrents are evicted first |
 | CAC-09 | Open and remove 100 torrents with streams in a loop | Cache usage, tasks, readers, and peer connections return to their starting levels |

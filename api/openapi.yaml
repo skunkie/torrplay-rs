@@ -1111,7 +1111,8 @@ components:
     UnprocessableTorrent:
       description: >-
         The torrent input is invalid, or it is a valid torrent the engine
-        cannot handle.
+        cannot handle: a v2-only torrent, or one whose piece length exceeds
+        cache capacity.
       content:
         application/problem+json:
           schema:
@@ -1134,6 +1135,13 @@ components:
                 title: Unsupported torrent
                 status: 422
                 detail: Only BitTorrent v1 and hybrid torrents are supported.
+            piece_too_large:
+              summary: A torrent whose pieces are longer than the cache
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/unsupported-torrent
+                title: Unsupported torrent
+                status: 422
+                detail: The torrent's 16777216-byte pieces exceed the 8388608-byte cache capacity.
     PreconditionRequired:
       description: The PATCH request omits If-Match.
       content:

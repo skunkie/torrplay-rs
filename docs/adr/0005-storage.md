@@ -7,8 +7,10 @@ SPDX-License-Identifier: MIT
 # 5. Storage
 
 - Status: proposed. The milestone 2 spike confirmed the engine behavior
-  this record depends on, as ADR 2's capability report records, and
-  milestone 4 finalizes it.
+  this record depends on, as ADR 2's capability report records. Before
+  implementing it, milestone 4 decided how torrents with pieces longer than
+  the cache are reported and fixed the defaults; milestone 4's tests
+  finalize the record, and milestone 5's benchmarks may tune the defaults.
 - Date: 2026-10-19
 
 ## Context
@@ -198,7 +200,44 @@ The cache never answers a write it cannot hold with a failure, because a
 failed write fails the whole torrent. Instead, capacity is reserved before
 the engine requests the piece, so the engine never receives blocks it cannot
 store. A torrent whose piece length exceeds cache capacity cannot stream any
-piece; how it is reported is an open question.
+piece, so it is refused, as [pieces longer than the
+cache](#pieces-longer-than-the-cache) describes.
+
+### Pieces longer than the cache
+
+A piece is the unit of verification and eviction, so a torrent whose piece
+length exceeds cache capacity can never hold even one of its pieces. Such
+a torrent is not accepted to wait forever:
+
+- **Uploaded torrent files** are rejected at creation as
+  `unsupported-torrent`, whose detail names the piece length and the cache
+  capacity. The torrent is never created.
+- **Magnet torrents** learn their piece length only from the retrieved
+  metadata. When it exceeds cache capacity, the torrent fails with a
+  `failure` detail naming both lengths, and retrieval is not retried, as for
+  other invalid retrieved metadata. Pausing and starting it does not help
+  until cache capacity grows; deleting it works as for any torrent.
+
+The check compares the piece length with cache capacity alone. A piece that
+fits the capacity but not the room left beside pinned pieces waits, as the
+bounded fallback describes. Once settings can change cache capacity
+(milestone 6), shrinking it below a torrent's piece length is a settings
+validation question that milestone decides.
+
+### Milestone 4 defaults
+
+Until settings exist, the following are fixed constants. Milestone 5's
+benchmarks may tune them, and milestone 6 makes them settings.
+
+| Parameter | Default | Notes |
+|---|---|---|
+| Cache capacity | 256 MiB | One global capacity for every torrent in memory storage |
+| Readahead budget | Half of cache capacity | Shared by every reader of every torrent; pins beyond each reader's current piece stay within it |
+| Retained reusable buffers | At most 4 | Counted in cache usage, released first when the cache needs room |
+| Piece wait bound | 60 seconds | A reader canceled after it; a partial piece of a started torrent discarded after it |
+| Idle timeout | 30 seconds | As the lifecycle defines |
+| Idle reader limits | 4 per torrent, 16 in total | As the lifecycle defines |
+| Request window | 32 blocks per peer | librqbit's default is 128 blocks; a smaller window shortens seeks |
 
 ### Storage modes
 
@@ -280,21 +319,21 @@ which become part of the decision.
   piece priority order across torrents is still to be built.
 - **A piece longer than the capacity is never requested** (CAC-06). Its
   reservation is refused outright, so the torrent stays healthy and its
-  readers wait. How to report such a torrent remains open below.
+  readers wait. [Pieces longer than the cache](#pieces-longer-than-the-cache)
+  now decides how such a torrent is reported.
 - **A torrent must be attached to the cache before it starts** (E3), or its
   first writes can fill the cache before any of its pieces are evictable.
 
 ## Open questions
+
+Milestone 5's benchmarks answer these, and may change the
+[milestone 4 defaults](#milestone-4-defaults):
+
 - How large should file-boundary ranges be for common containers, and does
   pinning the first and last piece suffice for Matroska and MP4 indexes?
 - What minimum readahead window keeps a single reader at playback rate with
-  controlled local peers, and how should the remaining capacity be shared
-  among concurrent readers?
-- How large should the pool of retained reusable buffers be, and does reuse
-  measurably reduce RSS growth or allocator time compared with freeing
-  buffers?
-- How should a torrent whose piece length exceeds cache capacity be
-  reported: rejected at creation, failed when metadata becomes available, or
-  answered per content request?
-- What default cache capacity suits the target devices in the acceptance
-  document?
+  controlled local peers, and does sharing half of cache capacity among
+  readers leave enough room for eviction?
+- Does a pool of retained reusable buffers measurably reduce RSS growth or
+  allocator time compared with freeing buffers, and how large should it be?
+- Does 256 MiB suit the target devices in the acceptance document?
