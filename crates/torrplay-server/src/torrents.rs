@@ -467,30 +467,37 @@ pub(crate) async fn update_configuration<E: Engine>(
     }
     app.require_engine()?;
 
+    // The engine takes the change before it is stored, so a change the
+    // engine refuses leaves the configuration and its ETag untouched.
     let previous = record.configuration.desired_state();
-    let update = app
-        .registry()
-        .update_desired_state(&id, desired_state, &record.configuration.etag())
-        .map_err(|error| match error {
-            ConfigurationError::NotFound => not_found(),
-            ConfigurationError::PreconditionFailed { .. } => stale(),
-        })?;
-    if update.changed {
-        if let Err(error) = app
-            .engine()
+    if desired_state != previous {
+        app.engine()
             .set_desired_state(&record.id, desired_state)
-            .await
+            .await?;
+    }
+    let update =
+        match app
+            .registry()
+            .update_desired_state(&id, desired_state, &record.configuration.etag())
         {
-            // Restores the stored value the engine did not take. A
-            // concurrent change in between wins instead.
-            let _ =
-                app.registry()
-                    .update_desired_state(&id, previous, &update.configuration.etag());
-            return Err(error.into());
-        }
-        if previous == DesiredState::Paused && desired_state == DesiredState::Started {
-            app.clear_metadata_failure(&record.id);
-        }
+            Ok(update) => update,
+            Err(error) => {
+                // A concurrent change won; the engine follows the stored value.
+                if let Some(current) = app.registry().get(&id) {
+                    let _ = app
+                        .engine()
+                        .set_desired_state(&record.id, current.configuration.desired_state())
+                        .await;
+                }
+                return Err(match error {
+                    ConfigurationError::NotFound => not_found(),
+                    ConfigurationError::PreconditionFailed { .. } => stale(),
+                });
+            }
+        };
+    if update.changed && previous == DesiredState::Paused && desired_state == DesiredState::Started
+    {
+        app.clear_metadata_failure(&record.id);
     }
     let body = representation::configuration(&record.id, &update.configuration);
     with_etag(

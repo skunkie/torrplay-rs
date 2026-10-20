@@ -1164,6 +1164,73 @@ mod scenario {
         server.stop().await;
     }
 
+    /// Unexpected engine failures are `internal-error`, and nothing they
+    /// interrupt is left half applied.
+    pub async fn engine_faults() {
+        let server = TestServer::start().await;
+        let created = server
+            .upload(&catalog::single_small().metainfo().bytes, None)
+            .await;
+        let path = created.json()["links"]["self"].as_str().unwrap().to_owned();
+        let file = files_of(&server, &path).await[0]["links"]["self"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let configuration = format!("{path}/configuration");
+        let tag = server
+            .get(&configuration)
+            .await
+            .header(header::ETAG)
+            .unwrap()
+            .to_owned();
+
+        server.engine.inject_fault(Some("the engine failed"));
+        let failed = [
+            server.create_magnet(&unknown_magnet(6)).await,
+            server.get("/api/v1/torrents").await,
+            server.get(&path).await,
+            server
+                .send(merge_patch(
+                    &configuration,
+                    &tag,
+                    &json!({ "desired_state": "paused" }),
+                ))
+                .await,
+            server.get(&format!("{path}/files")).await,
+            server.get(&file).await,
+            server.get(&format!("{file}/content")).await,
+            server
+                .send(empty(Method::HEAD, &format!("{file}/content")))
+                .await,
+            server.get(&format!("{path}/statistics")).await,
+            server.get("/api/v1/cache/statistics").await,
+            server.send(empty(Method::DELETE, &path)).await,
+        ];
+        for exchange in failed {
+            assert_eq!(exchange.status, StatusCode::INTERNAL_SERVER_ERROR);
+            if !exchange.body.is_empty() {
+                assert_eq!(exchange.problem(), "internal-error");
+                assert!(!String::from_utf8_lossy(&exchange.body).contains("the engine failed"));
+            }
+        }
+
+        server.engine.inject_fault(None);
+        let kept = server.get(&configuration).await;
+        assert_eq!(
+            kept.header(header::ETAG),
+            Some(tag.as_str()),
+            "the failed PATCH stored nothing"
+        );
+        assert_eq!(kept.json()["desired_state"], "started");
+        let listed = server.get("/api/v1/torrents").await.json();
+        assert_eq!(
+            listed["items"].as_array().unwrap().len(),
+            1,
+            "nothing was created or deleted"
+        );
+        server.stop().await;
+    }
+
     /// API-07: oversized bodies are refused before they are fully sent.
     pub async fn bodies_refused_while_streaming() {
         let server = TestServer::start().await;
@@ -1287,21 +1354,11 @@ mod scenario {
 
 /// Responses no test can produce with the fake engine, with reasons.
 const EXEMPT: &[(&str, u16)] = &[
-    // The fake engine has no unexpected failures to inject.
-    ("createTorrent", 500),
-    ("deleteTorrent", 500),
-    ("getCacheStatistics", 500),
+    // These answer from constants and the registry without the engine;
+    // only a failure to serialize their bodies could make them 500.
     ("getEntryPoint", 500),
     ("getOpenApiDocument", 500),
-    ("getTorrent", 500),
     ("getTorrentConfiguration", 500),
-    ("getTorrentFile", 500),
-    ("getTorrentFileContent", 500),
-    ("getTorrentStatistics", 500),
-    ("headTorrentFileContent", 500),
-    ("listTorrentFiles", 500),
-    ("listTorrents", 500),
-    ("updateTorrentConfiguration", 500),
     // A process that answers is live.
     ("getLiveness", 503),
 ];
@@ -1346,5 +1403,6 @@ scenarios!(
     passkey_redaction,
     bodies_refused_while_streaming,
     slow_bodies_time_out,
+    engine_faults,
     restart,
 );
