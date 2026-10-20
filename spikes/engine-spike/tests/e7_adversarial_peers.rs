@@ -5,7 +5,9 @@
 //! E7: peers that send bad data. A seeder whose content is corrupted after
 //! its initial check serves corrupt blocks, because librqbit does not hash
 //! what it uploads (CAC-11). A minimal BEP 9 peer serves metadata that does
-//! not match the info hash (LIF-12).
+//! not match the info hash (LIF-12). A peer that takes requests and never
+//! answers them is disconnected after the request stall timeout, which
+//! releases the pieces it held (P6).
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -14,7 +16,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use engine_spike::{Leecher, MemoryCache, Seeder, bounded};
-use librqbit::{AddTorrent, ManagedTorrent, TorrentStatsState};
+use librqbit::{AddTorrent, ManagedTorrent, PeerConnectionOptions, TorrentStatsState};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinSet;
@@ -112,6 +114,178 @@ async fn corrupt_blocks_fail_and_come_again_from_a_valid_peer() -> anyhow::Resul
     leecher.session.stop().await;
     corrupt.session.stop().await;
     valid.session.stop().await;
+    memory.shutdown().await?;
+    Ok(())
+}
+
+/// A peer that has every piece, unchokes, and takes requests, but never
+/// sends a block; it keeps the connection alive meanwhile.
+struct StallingPeer {
+    addr: SocketAddr,
+    requests: Arc<AtomicUsize>,
+    disconnects: Arc<AtomicUsize>,
+    tasks: JoinSet<anyhow::Result<()>>,
+}
+
+impl StallingPeer {
+    async fn start(piece_count: u64) -> anyhow::Result<Self> {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+        let addr = listener.local_addr()?;
+        let requests = Arc::new(AtomicUsize::new(0));
+        let disconnects = Arc::new(AtomicUsize::new(0));
+        let mut tasks = JoinSet::new();
+        let (request_count, disconnect_count) = (requests.clone(), disconnects.clone());
+        tasks.spawn(async move {
+            let mut connections = JoinSet::new();
+            loop {
+                let (stream, _) = listener.accept().await?;
+                let (requests, disconnects) = (request_count.clone(), disconnect_count.clone());
+                connections.spawn(async move {
+                    let result = stall(stream, piece_count, requests).await;
+                    disconnects.fetch_add(1, Ordering::Relaxed);
+                    result
+                });
+            }
+        });
+        Ok(Self {
+            addr,
+            requests,
+            disconnects,
+            tasks,
+        })
+    }
+
+    async fn shutdown(mut self) {
+        self.tasks.abort_all();
+        while self.tasks.join_next().await.is_some() {}
+    }
+}
+
+/// BEP 3 message IDs the stalling peer sends or counts.
+const UNCHOKE: u8 = 1;
+const BITFIELD: u8 = 5;
+const REQUEST: u8 = 6;
+
+async fn stall(
+    stream: TcpStream,
+    piece_count: u64,
+    requests: Arc<AtomicUsize>,
+) -> anyhow::Result<()> {
+    let mut stream = stream;
+    let mut handshake = [0; 68];
+    stream.read_exact(&mut handshake).await?;
+    let mut reply = handshake;
+    reply[20..28].fill(0);
+    reply[48..68].copy_from_slice(b"-TP0000-fake-stall-0");
+    stream.write_all(&reply).await?;
+    let mut bitfield = vec![0xff; usize::try_from(piece_count.div_ceil(8))?];
+    if let Some(last) = bitfield.last_mut() {
+        *last <<= (8 - piece_count % 8) % 8;
+    }
+    send(&mut stream, BITFIELD, &bitfield).await?;
+    send(&mut stream, UNCHOKE, &[]).await?;
+    let (mut reader, mut writer) = stream.into_split();
+    let keep_alive = async move {
+        loop {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            if writer.write_all(&[0; 4]).await.is_err() {
+                return;
+            }
+        }
+    };
+    let read = async move {
+        loop {
+            let mut length = [0; 4];
+            if reader.read_exact(&mut length).await.is_err() {
+                return;
+            }
+            let mut message = vec![0; u32::from_be_bytes(length) as usize];
+            if reader.read_exact(&mut message).await.is_err() {
+                return;
+            }
+            if message.first() == Some(&REQUEST) {
+                requests.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    };
+    // The connection ends when the leecher closes it.
+    tokio::select! {
+        () = keep_alive => {}
+        () = read => {}
+    }
+    Ok(())
+}
+
+/// ADR 5's stalled partial pieces: a peer that holds requests without
+/// delivering any is disconnected after the request stall timeout, which
+/// returns its pieces and their reservations, and the file then arrives
+/// whole from a valid peer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_peer_that_never_delivers_is_dropped_after_the_stall_timeout() -> anyhow::Result<()> {
+    let spec = catalog::single_small();
+    let metainfo = spec.metainfo();
+    let stalling = StallingPeer::start(metainfo.piece_count).await?;
+    let leecher = Leecher::start().await?;
+    let memory = MemoryCache::start(4 * MIB);
+    let torrent = memory
+        .add_scheduled_with(&leecher, &[stalling.addr], &spec, 256 * KIB, |options| {
+            options.peer_opts = Some(PeerConnectionOptions {
+                request_stall_timeout: Some(Duration::from_secs(2)),
+                ..Default::default()
+            });
+        })
+        .await?;
+    let mut reader = bounded(
+        "opening a reader",
+        torrent.scheduler.open(&torrent.handle, 0),
+    )
+    .await?;
+    let read = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        bounded("reading the file", async {
+            Ok(reader.read_to_end(&mut bytes).await?)
+        })
+        .await?;
+        anyhow::Ok(bytes)
+    });
+
+    bounded("requests reaching the stalling peer", async {
+        while stalling.requests.load(Ordering::Relaxed) == 0
+            || memory.cache.stats()?.pending_pieces == 0
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        Ok(())
+    })
+    .await?;
+    let asked = std::time::Instant::now();
+    bounded("the stalling peer being dropped", async {
+        while stalling.disconnects.load(Ordering::Relaxed) == 0 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        Ok(())
+    })
+    .await?;
+    assert!(
+        asked.elapsed() >= Duration::from_secs(1),
+        "the peer kept its requests for most of the timeout first"
+    );
+
+    let leecher_addr = leecher
+        .session
+        .listen_addr()
+        .context("the leecher has no listen address")?;
+    let valid = Seeder::start_with_peers(&spec, &metainfo.bytes, &[leecher_addr]).await?;
+    let bytes = read.await??;
+    assert_eq!(
+        generator::first_mismatch(spec.file_seed(0), 0, &bytes),
+        None
+    );
+    memory.cache.audit()?;
+
+    leecher.session.stop().await;
+    valid.session.stop().await;
+    stalling.shutdown().await;
     memory.shutdown().await?;
     Ok(())
 }
