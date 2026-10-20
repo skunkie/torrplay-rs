@@ -191,6 +191,20 @@ sudo ip netns exec tpb-client runuser -u "$USER" -- target/release/torrplay-benc
 sudo ip netns exec tpb-client runuser -u "$USER" -- target/release/torrplay-bench run --trace bench/traces/cold-start.jsonl --dir target/bench --torrplay target/release/torrplay --out cold-start-1.json --label profile=fast
 ```
 
+`scripts/bench-matrix.sh` runs a whole matrix this way: for each profile it
+builds the network, starts the three seeders and the tracker, runs every
+trace ten times round-robin, labels each run with the commit and profile,
+tears the network down, and summarizes the profile's runs. It writes
+`target/bench-results/<profile>/`, skips runs whose files exist so an
+interrupted matrix resumes, and keeps a failed run's log without its result.
+`PROFILES`, `RUNS`, `TRACES`, `DIR`, `OUT`, `BENCH`, and `COMMIT` override its
+defaults, and `DRY_RUN=1` prints its commands without root. The Go baseline
+takes several hours:
+
+```bash
+sudo scripts/bench-matrix.sh go-torrplay target/go-torrplay
+```
+
 ## Rust checks
 
 The root `Cargo.toml` defines the workspace and its shared lint policy;
