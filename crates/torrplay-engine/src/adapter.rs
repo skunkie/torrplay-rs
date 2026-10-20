@@ -856,15 +856,21 @@ impl Engine for LibrqbitEngine {
                     });
                     paused.map(|(handle, started, fetched)| {
                         state.downloaded_before += fetched;
-                        (handle, started)
+                        (handle, started, failed)
                     })
                 };
-                if let Some((handle, started)) = handle {
+                if let Some((handle, started, failed)) = handle {
                     started.map_err(internal)?;
-                    if !handle.is_paused()
+                    // librqbit stops a failed torrent itself, and a pause
+                    // racing that stop fails, so a torrent that failed, or
+                    // fails while it is paused, counts as paused.
+                    if !failed
+                        && !handle.is_paused()
                         && matches!(handle.stats().state, TorrentStatsState::Live)
+                        && let Err(error) = running.session.pause(&handle).await
+                        && Self::engine_failure(&mut torrent.state()).is_none()
                     {
-                        running.session.pause(&handle).await.map_err(internal)?;
+                        return Err(internal(error));
                     }
                 }
             }
