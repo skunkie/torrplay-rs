@@ -94,6 +94,29 @@ a deliberate change: update the version here and in `.github/workflows/ci.yml`,
 regenerate, and run the crate's tests, which round-trip every example in the
 document through its generated type.
 
+## Running TorrPlay
+
+```bash
+cargo run -p torrplay -- --help
+```
+
+`torrplay` serves the API on `127.0.0.1:8080` by default and refuses
+addresses that are not loopback, since the API has no authentication. Its
+options set the API address, the BitTorrent peer port (4240), the cache
+capacity in bytes (256 MiB), and the log level of TorrPlay's own logs, which
+go to standard error; other crates log warnings and errors only. The engine
+uses ADR 2's network configuration, so a running instance reaches the public
+swarm through DHT and trackers. Nothing is persisted: the session folder is
+temporary, and the torrents are gone after a restart.
+
+The listener serves HTTP/1.1 and cleartext HTTP/2 to clients with prior
+knowledge, and it opens before the engine is ready, so `/readyz` answers
+`503` until the engine has started. SIGTERM, SIGINT, or Ctrl+C starts the
+lifecycle's shutdown: `/readyz` answers `503` and state changes are refused
+while reads continue, streams in progress get a 10-second drain period and
+are then canceled with the idle readers, the listener closes, and the engine
+stops. The process exits with an error if that takes longer than 30 seconds.
+
 ## Rust checks
 
 The root `Cargo.toml` defines the workspace and its shared lint policy;
@@ -102,8 +125,12 @@ Rust 1.99.1 with rustfmt and Clippy, and rustup installs it on first use, so
 local and CI builds use the same version. `clippy.toml` lets tests use
 `unwrap` and `expect`, which the workspace lints flag in production code.
 
-The workspace has six members:
+The workspace has seven members:
 
+- `crates/torrplay` is the application: the `torrplay` executable, which
+  serves `torrplay-server` over `LibrqbitEngine`, and the library that holds
+  its configuration, startup, and shutdown sequence, so tests drive them
+  without signals.
 - `crates/torrplay-api` holds the generated wire types described above.
 - `crates/torrplay-contract` is test support that checks HTTP requests and
   responses against `api/openapi.yaml`, as ADR 6 decides, and records which

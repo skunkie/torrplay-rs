@@ -361,6 +361,27 @@ impl LibrqbitEngine {
         Ok(())
     }
 
+    /// Cancels every stream in progress and releases every reader, idle
+    /// ones included, as shutdown does once its drain period ends. Torrents
+    /// open no readers afterward.
+    pub fn cancel_streams(&self) -> anyhow::Result<()> {
+        let torrents: Vec<_> = self.lock_torrents().values().cloned().collect();
+        for torrent in torrents {
+            let scheduler = torrent
+                .state()
+                .live
+                .as_ref()
+                .map(|live| live.scheduler.clone());
+            if let Some(scheduler) = scheduler {
+                scheduler.close()?;
+            }
+        }
+        if let Ok(running) = self.running() {
+            running.playback.release_idle_readers();
+        }
+        Ok(())
+    }
+
     /// The readers across torrents, once started: their counts and the
     /// active playback signal background work waits on.
     pub fn playback(&self) -> Option<Arc<Playback>> {

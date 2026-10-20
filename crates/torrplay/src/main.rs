@@ -1,0 +1,99 @@
+// SPDX-FileCopyrightText: 2026 TorrPlay
+//
+// SPDX-License-Identifier: MIT
+
+//! The `torrplay` executable: parses the command line, starts logging and
+//! the runtime, binds the API's loopback listener, and serves until a
+//! termination signal.
+
+use std::process::ExitCode;
+use std::time::Duration;
+
+use anyhow::Context;
+use tokio::net::TcpListener;
+use torrplay::{Command, Config, ShutdownTimings, USAGE};
+
+/// How long exiting waits for blocking tasks still running after shutdown.
+const RUNTIME_SHUTDOWN: Duration = Duration::from_secs(1);
+
+fn main() -> ExitCode {
+    let config = match torrplay::parse_args(std::env::args().skip(1)) {
+        Ok(Command::Run(config)) => config,
+        Ok(Command::Help) => {
+            print!("{USAGE}");
+            return ExitCode::SUCCESS;
+        }
+        Ok(Command::Version) => {
+            println!("torrplay {}", env!("CARGO_PKG_VERSION"));
+            return ExitCode::SUCCESS;
+        }
+        Err(error) => {
+            eprintln!("torrplay: {error}\n\n{USAGE}");
+            return ExitCode::from(2);
+        }
+    };
+    torrplay::init_logging(config.log_level);
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            tracing::error!(%error, "the runtime did not start");
+            return ExitCode::FAILURE;
+        }
+    };
+    let result = runtime.block_on(run(&config));
+    // Shutdown has stopped the engine; blocking work still running must not
+    // hold the process.
+    runtime.shutdown_timeout(RUNTIME_SHUTDOWN);
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            tracing::error!(error = %format!("{error:#}"), "torrplay failed");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn run(config: &Config) -> anyhow::Result<()> {
+    // Memory storage writes nothing to the session folder, and the
+    // prototype persists nothing, so it lives only as long as the process.
+    let folder = tempfile::tempdir().context("creating the session folder")?;
+    let listener = TcpListener::bind(config.listen)
+        .await
+        .with_context(|| format!("binding the API listener on {}", config.listen))?;
+    tracing::info!(address = %listener.local_addr()?, "the API is listening");
+    torrplay::serve(
+        listener,
+        config.engine_config(folder.path()),
+        ShutdownTimings::default(),
+        termination(),
+    )
+    .await
+}
+
+/// Completes on the first termination signal: SIGTERM or SIGINT on Unix,
+/// Ctrl+C elsewhere.
+async fn termination() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        match signal(SignalKind::terminate()) {
+            Ok(mut terminate) => {
+                tokio::select! {
+                    _ = terminate.recv() => {}
+                    _ = tokio::signal::ctrl_c() => {}
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "SIGTERM cannot be handled; waiting for SIGINT");
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
