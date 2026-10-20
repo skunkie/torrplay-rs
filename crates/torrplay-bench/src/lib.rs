@@ -9,8 +9,10 @@
 //! the local [`tracker`], [`seed`] serves them from local peers, and
 //! [`runner`] replays an access [`trace`] against an implementation behind a
 //! [`target::Target`], measuring each request with [`player`] and the server
-//! process with [`sampler`]. [`summary`] reports distributions across runs.
+//! process with [`sampler`], recording its [`environment`]. [`summary`]
+//! reports distributions across runs.
 
+pub mod environment;
 pub mod fixtures;
 pub mod player;
 pub mod runner;

@@ -150,7 +150,12 @@ target/release/torrplay-bench run --trace bench/traces/cold-start.jsonl --dir ta
 trace's cache capacity and without DHT, replays the trace once, stops the
 server with SIGTERM, and writes the run's requests, torrents, process and
 cache samples, and summary as JSON. Sampling reads `/proc`, so runs need
-Linux.
+Linux. Each run also records its environment as the protocol lists it,
+detected rather than given: the OS, kernel, CPU, memory, frequency governor,
+and virtualization; the workspace's Rust toolchain and librqbit revision;
+the Go toolchain and commit a Go TorrPlay binary embeds; the seeder count,
+asked of the tracker that `fixtures` recorded; and the namespace's queueing
+disciplines, which show the shaping.
 
 The baseline runs the same way with `--go-torrplay` and a Go TorrPlay binary,
 built from its repository with `go build -o go-torrplay ./cmd/torrplay`. Each

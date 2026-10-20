@@ -49,6 +49,34 @@ pub async fn serve(listener: TcpListener, peers: Vec<SocketAddrV4>) -> anyhow::R
     Ok(())
 }
 
+/// The number of peers in a compact announce response, as
+/// [`announce_response`] writes it.
+pub fn compact_peer_count(body: &[u8]) -> Option<usize> {
+    let marker = b"5:peers";
+    let start = body
+        .windows(marker.len())
+        .position(|window| window == marker)?
+        + marker.len();
+    let rest = &body[start..];
+    let colon = rest.iter().position(|&byte| byte == b':')?;
+    let length: usize = std::str::from_utf8(&rest[..colon]).ok()?.parse().ok()?;
+    length.is_multiple_of(6).then_some(length / 6)
+}
+
+/// Asks the tracker at `announce` how many seeders it hands out.
+pub async fn seeder_count(client: &reqwest::Client, announce: &str) -> anyhow::Result<usize> {
+    let body = client
+        .get(announce)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await?
+        .error_for_status()?
+        .bytes()
+        .await?;
+    compact_peer_count(&body)
+        .ok_or_else(|| anyhow::anyhow!("the tracker's response lists no peers"))
+}
+
 /// Parses a seeder address, which compact responses limit to IPv4.
 pub fn parse_peer(text: &str) -> anyhow::Result<SocketAddrV4> {
     match text.parse::<SocketAddr>()? {
@@ -72,6 +100,8 @@ mod tests {
             b"d8:completei2e10:incompletei0e8:intervali60e5:peers12:\
               \x0a\x00\x00\x02\x1a\xe1\x7f\x00\x00\x01\x01\x00e"
         );
+        assert_eq!(compact_peer_count(&announce_response(&peers)), Some(2));
+        assert_eq!(compact_peer_count(b"d8:intervali60ee"), None);
         assert!(parse_peer("[::1]:6881").is_err());
     }
 }
