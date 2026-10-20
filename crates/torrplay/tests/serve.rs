@@ -10,7 +10,7 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use common::{Running, bounded, upload, upload_form};
+use common::{Running, alive_tasks, bounded, magnet, upload, upload_form};
 use reqwest::{Client, StatusCode, Version};
 use tokio::net::TcpListener;
 use torrplay::ShutdownTimings;
@@ -83,6 +83,37 @@ async fn shutdown_drains_streams_then_closes_the_listener() -> anyhow::Result<()
         tokio::net::TcpStream::connect(address).await.is_err(),
         "the listener is closed"
     );
+    Ok(())
+}
+
+/// LIF-10's task cleanup: once `serve` returns, every task the application
+/// started has ended, those of librqbit's session included, though a stream
+/// and a metadata retrieval were in progress when shutdown began.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn shutdown_joins_every_task() -> anyhow::Result<()> {
+    let before = alive_tasks();
+    let timings = ShutdownTimings {
+        drain: Duration::from_millis(500),
+        limit: Duration::from_secs(20),
+    };
+    let running = Running::start(Vec::new(), timings, patient).await?;
+    let client = Client::new();
+    let created = upload(&running, &client, &catalog::single_small()).await?;
+    magnet(&running, &client, &catalog::multi_boundary()).await?;
+    let stream = client.get(running.url(&created.content[0])).send().await?;
+    assert_eq!(stream.status(), StatusCode::OK);
+    assert!(alive_tasks() > before);
+
+    running.stop().await?;
+    // The client's own connection tasks end once it is dropped.
+    drop((stream, client));
+    bounded("the client's tasks ending", async {
+        while alive_tasks() > before {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .map_err(|error| anyhow::anyhow!("{error}: {} tasks alive, {before} before", alive_tasks()))?;
     Ok(())
 }
 

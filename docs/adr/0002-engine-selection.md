@@ -624,7 +624,7 @@ outside the prototype's scope.
 
 ### Patch set
 
-The fork's `torrplay/patches` branch holds seven commits on upstream
+The fork's `torrplay/patches` branch holds eight commits on upstream
 `57e95d16`, each small enough to propose on its own:
 
 | Commit | Patch | Purpose |
@@ -636,6 +636,7 @@ The fork's `torrplay/patches` branch holds seven commits on upstream
 | `6c8c975d` | P3 | Stop streams from holding a blocking permit while they wait |
 | `161632fc` | P4 | Let the embedder choose and reserve pieces to request |
 | `e724f259` | P6 | Disconnect a peer that holds requests without delivering for a stall timeout, releasing its pieces (milestone 4) |
+| `c7f6938a` | P7 | Track the session's tasks, including those its tasks spawn, so `Session::stop` waits for all of them instead of sleeping a second (milestone 4) |
 
 Two more patches remain candidates. Setting `TCP_NODELAY` on peer sockets
 cut the time to first byte after a reconnect from about 43 ms to about
@@ -682,11 +683,14 @@ scheduler's unit tests already cover them.
   failed by adding it again, since starting it in place would create
   storage the cache has not attached. The scheduler and storage types stay
   public for the engine's own tests.
-- **Task cleanup.** Done for removal in milestone 4: CAC-09 and the
-  exit-criterion test count the runtime's live tasks, which return to their
-  starting level once torrents are deleted and their peers disconnect.
-  `Session::stop` still joins nothing, so shutdown cannot wait for
-  librqbit's own session tasks; they end with the runtime.
+- **Task cleanup.** Done in milestone 4. CAC-09 and the exit-criterion
+  test count the runtime's live tasks, which return to their starting level
+  once torrents are deleted and their peers disconnect. With P7,
+  `Session::stop` waits for every task the session and its torrents
+  spawned, so the application's shutdown joins all of its tasks, as LIF-10
+  requires. Only connections of librqbit's HTTP client, which TorrPlay uses
+  for trackers, run outside the tracker; they end when the session is
+  dropped.
 - **Verified pieces of failed torrents.** librqbit drops a torrent's
   storage when it stops the torrent with an error, so the torrent's verified
   pieces leave the cache, while the lifecycle keeps them as for a paused
