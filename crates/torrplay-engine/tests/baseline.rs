@@ -2,18 +2,20 @@
 //
 // SPDX-License-Identifier: MIT
 
-//! E1: the baseline on unpatched librqbit with its default disk storage.
+//! E1: the baseline on librqbit with its default disk storage.
 //! Each test names the `docs/acceptance.md` scenario it covers, or the
 //! engine behavior it records for the capability report.
+
+mod support;
 
 use std::io::SeekFrom;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use engine_spike::{Leecher, Seeder, bounded};
 use librqbit::api::TorrentIdOrHash;
 use librqbit::{AddTorrent, AddTorrentOptions, ManagedTorrent};
+use support::{Leecher, Seeder, bounded};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use torrplay_fixtures::{FixtureSpec, catalog, generator};
 
@@ -283,8 +285,7 @@ async fn deleting_a_torrent_ends_its_stream() -> anyhow::Result<()> {
     )
     .await?;
     let mut rest = Vec::new();
-    let after =
-        tokio::time::timeout(engine_spike::STEP_TIMEOUT, stream.read_to_end(&mut rest)).await;
+    let after = tokio::time::timeout(support::STEP_TIMEOUT, stream.read_to_end(&mut rest)).await;
     assert!(
         after.is_ok(),
         "a stream must not hang after its torrent is deleted"

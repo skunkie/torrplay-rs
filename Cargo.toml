@@ -11,7 +11,6 @@ members = [
     "crates/torrplay-engine",
     "crates/torrplay-fixtures",
     "crates/torrplay-server",
-    "spikes/engine-spike",
 ]
 
 [workspace.package]

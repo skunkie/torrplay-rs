@@ -9,14 +9,16 @@
 //! answers them is disconnected after the request stall timeout, which
 //! releases the pieces it held (P6).
 
+mod support;
+
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use anyhow::Context;
-use engine_spike::{Leecher, MemoryCache, Seeder, bounded};
 use librqbit::{AddTorrent, ManagedTorrent, PeerConnectionOptions, TorrentStatsState};
+use support::{Leecher, MemoryCache, Seeder, bounded};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinSet;

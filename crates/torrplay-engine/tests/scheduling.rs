@@ -7,12 +7,14 @@
 //! reserve each piece's room before requesting it. The scheduler's own unit
 //! tests cover highest-wins priorities (RDR-05) and pin tiers.
 
+mod support;
+
 use std::io::SeekFrom;
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 
-use engine_spike::{Leecher, MemoryCache, ScheduledTorrent, Seeder, bounded};
 use librqbit::{PeerConnectionOptions, TorrentStatsState};
+use support::{Leecher, MemoryCache, ScheduledTorrent, Seeder, bounded};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use torrplay_engine::scheduler::Reader;
 use torrplay_fixtures::{FixtureSpec, catalog, generator};

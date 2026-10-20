@@ -6,13 +6,15 @@
 //! memory storage downloads from a local seeder with disk storage; the cache
 //! accountant is audited after each phase.
 
+mod support;
+
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use engine_spike::{Leecher, Seeder, bounded};
 use librqbit::api::TorrentIdOrHash;
 use librqbit::{AddTorrent, AddTorrentOptions, ManagedTorrent, TorrentStatsState};
+use support::{Leecher, Seeder, bounded};
 use tokio::io::AsyncReadExt;
 use torrplay_engine::cache::{CacheStats, PieceCache};
 use torrplay_engine::storage::MemoryStorageFactory;

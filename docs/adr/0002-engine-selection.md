@@ -321,7 +321,9 @@ alongside its consumer and tests.
 
 The milestone 2 spike records what it observes here, experiment by
 experiment, and the capability report at its end turns these findings into
-final verdicts. Tests live in `spikes/engine-spike/tests`.
+final verdicts. The experiments' tests now live in
+`crates/torrplay-engine/tests`, one file per experiment named without its
+number, such as `baseline.rs` for E1, and keep guarding these findings.
 
 ### E1: baseline on unpatched librqbit
 
@@ -500,7 +502,7 @@ so the patch to keep peers while idle (P5) is not needed; without
 
 ### E5: readers without blocking permits
 
-The test in `spikes/engine-spike/tests/e5_readers.rs` opens streams on a
+The test in `crates/torrplay-engine/tests/readers.rs` opens streams on a
 memory torrent's missing pieces before the torrent starts, then starts it.
 
 - **Waiting streams stop the torrent.** On the unpatched pin, with the
@@ -544,7 +546,7 @@ reservations then fit. Each torrent's scheduler is its piece selector: it
 requests only what its readers need, most urgent first, and pins pieces in
 the tiers ADR 5's spike findings describe. A `Reader` wraps `FileStream`
 and reports its position. The tests are in
-`spikes/engine-spike/tests/e6_scheduling.rs`.
+`crates/torrplay-engine/tests/scheduling.rs`.
 
 - **A torrent downloads only what its readers need.** A reader streamed a
   file four times the cache capacity byte for byte, and every piece was
@@ -576,7 +578,7 @@ and reports its position. The tests are in
 
 ### E7: adversarial peers
 
-The tests in `spikes/engine-spike/tests/e7_adversarial_peers.rs` need no
+The tests in `crates/torrplay-engine/tests/adversarial_peers.rs` need no
 engine patch.
 
 - **Corrupt blocks never reach a reader** (CAC-11). A memory torrent whose
@@ -644,30 +646,30 @@ in the adapter. The patch to keep peers while idle (P5) is not needed.
 ### Milestone 2 scenarios
 
 Every scenario `docs/acceptance.md` assigns to milestone 2, with the cache
-and eviction gate, and the test that checks it in `spikes/engine-spike`:
+and eviction gate, and the test that checks it in `crates/torrplay-engine/tests`:
 
 | Scenario | Result | Test |
 |---|---|---|
-| API-20 | Pass: recorded which v2-only and hybrid torrents load | `e1_baseline::records_which_v2_and_hybrid_torrents_load` |
-| LIF-02 | Pass | `e1_baseline::magnet_metadata_is_retrieved_from_a_local_seeder` |
-| LIF-03 | Pass for the engine: canceling retrieval leaves no torrent and closes connections; starting runs retrieval again | `e1_baseline::canceling_metadata_retrieval_leaves_no_torrent` |
-| LIF-12 | Pass | `e7_adversarial_peers::mismatched_metadata_is_discarded_for_a_valid_peer` |
-| STR-01 | Pass, engine part | `e1_baseline::streams_every_file_byte_for_byte` |
-| STR-02 | Pass, engine part | `e1_baseline::streams_ranges_across_piece_and_file_boundaries` |
-| RDR-04 | Pass with P3 | `e5_readers::twelve_waiting_readers_do_not_block_piece_writes` |
-| PEER-01 | Pass with P2 | `e4_peer_policy::a_memory_torrent_announces_nothing_and_refuses_requests` |
-| PEER-02 | Pass; measured in ADR 3 | `e4_peer_policy::a_stream_after_an_idle_period_reconnects_and_succeeds` |
-| CAC-01 | Pass | `e3_eviction::streaming_four_times_the_capacity_evicts_and_downloads_again`, `e6_scheduling::a_scheduled_torrent_downloads_only_what_its_reader_needs` |
-| CAC-02 | Pass | `e3_eviction::an_evicted_piece_is_marked_missing_and_downloaded_again` |
+| API-20 | Pass: recorded which v2-only and hybrid torrents load | `baseline::records_which_v2_and_hybrid_torrents_load` |
+| LIF-02 | Pass | `baseline::magnet_metadata_is_retrieved_from_a_local_seeder` |
+| LIF-03 | Pass for the engine: canceling retrieval leaves no torrent and closes connections; starting runs retrieval again | `baseline::canceling_metadata_retrieval_leaves_no_torrent` |
+| LIF-12 | Pass | `adversarial_peers::mismatched_metadata_is_discarded_for_a_valid_peer` |
+| STR-01 | Pass, engine part | `baseline::streams_every_file_byte_for_byte` |
+| STR-02 | Pass, engine part | `baseline::streams_ranges_across_piece_and_file_boundaries` |
+| RDR-04 | Pass with P3 | `readers::twelve_waiting_readers_do_not_block_piece_writes` |
+| PEER-01 | Pass with P2 | `peer_policy::a_memory_torrent_announces_nothing_and_refuses_requests` |
+| PEER-02 | Pass; measured in ADR 3 | `peer_policy::a_stream_after_an_idle_period_reconnects_and_succeeds` |
+| CAC-01 | Pass | `eviction::streaming_four_times_the_capacity_evicts_and_downloads_again`, `scheduling::a_scheduled_torrent_downloads_only_what_its_reader_needs` |
+| CAC-02 | Pass | `eviction::an_evicted_piece_is_marked_missing_and_downloaded_again` |
 | CAC-03 | Pass | the same test, after the seeder was dropped as not needed |
-| CAC-04 | Pass | `e3_eviction::pieces_evicted_while_paused_are_missing_after_starting` |
-| CAC-05 | Partial: usage stays within capacity and every reader finishes, with pins in the tiers ADR 5 now defines; waiting reservations are readmitted as room appears, not yet in piece priority order across torrents | `e6_scheduling::readers_whose_windows_exceed_capacity_all_progress` |
-| CAC-06 | Pass for the engine: the piece is never requested and the torrent stays healthy; how to report it stays open in ADR 5 | `e6_scheduling::a_piece_longer_than_the_capacity_is_never_requested` |
+| CAC-04 | Pass | `eviction::pieces_evicted_while_paused_are_missing_after_starting` |
+| CAC-05 | Partial: usage stays within capacity and every reader finishes, with pins in the tiers ADR 5 now defines; waiting reservations are readmitted as room appears, not yet in piece priority order across torrents | `scheduling::readers_whose_windows_exceed_capacity_all_progress` |
+| CAC-06 | Pass for the engine: the piece is never requested and the torrent stays healthy; how to report it stays open in ADR 5 | `scheduling::a_piece_longer_than_the_capacity_is_never_requested` |
 | CAC-07 | Pass: partial pieces are never evicted, and reservations count as pending allocations | `cache` unit tests; every E3 and E6 audit |
-| CAC-08 | Pass | `e3_eviction::a_paused_torrent_is_evicted_before_a_started_one` |
-| CAC-09 | Partial: cache usage, torrents, readers, and peer connections return to zero; task counts are not measured | `e3_eviction::opening_and_deleting_torrents_in_a_loop_leaves_nothing_behind` |
-| CAC-10 | Pass | `e6_scheduling::file_boundary_pieces_stay_resident_while_read` |
-| CAC-11 | Pass | `e7_adversarial_peers::corrupt_blocks_fail_and_come_again_from_a_valid_peer` |
+| CAC-08 | Pass | `eviction::a_paused_torrent_is_evicted_before_a_started_one` |
+| CAC-09 | Partial: cache usage, torrents, readers, and peer connections return to zero; task counts are not measured | `eviction::opening_and_deleting_torrents_in_a_loop_leaves_nothing_behind` |
+| CAC-10 | Pass | `scheduling::file_boundary_pieces_stay_resident_while_read` |
+| CAC-11 | Pass | `adversarial_peers::corrupt_blocks_fail_and_come_again_from_a_valid_peer` |
 
 RDR-05 and the readahead rebalancing of RDR-06 belong to milestone 4; the
 scheduler's unit tests already cover them.
@@ -692,7 +694,7 @@ scheduler's unit tests already cover them.
   indefinitely; librqbit's read timeout counts keep-alives. With P6's
   request stall timeout set to the piece wait bound, the peer is
   disconnected and its pieces return to the queue and leave the cache.
-  `e7_adversarial_peers::a_peer_that_never_delivers_is_dropped_after_the_stall_timeout`
+  `adversarial_peers::a_peer_that_never_delivers_is_dropped_after_the_stall_timeout`
   checks it, and fails without the timeout.
 - **Request window.** Seek latency depends on outstanding requests; the
   adapter should configure a small `max_request_window` for memory

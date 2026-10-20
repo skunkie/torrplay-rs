@@ -8,8 +8,8 @@ SPDX-License-Identifier: MIT
 
 Start with the [implementation plan](implementation-plan.md). The repository
 holds the milestone 1 contract and design documents, development
-infrastructure, and the Cargo workspace that milestone 2's engine spike
-builds on. Update the contract and lifecycle semantics before implementing
+infrastructure, and the Cargo workspace with the engine, contract tooling,
+and server crates. Update the contract and lifecycle semantics before implementing
 public HTTP behavior.
 
 ## Checks available now
@@ -102,7 +102,7 @@ Rust 1.99.1 with rustfmt and Clippy, and rustup installs it on first use, so
 local and CI builds use the same version. `clippy.toml` lets tests use
 `unwrap` and `expect`, which the workspace lints flag in production code.
 
-The workspace has seven members:
+The workspace has six members:
 
 - `crates/torrplay-api` holds the generated wire types described above.
 - `crates/torrplay-contract` is test support that checks HTTP requests and
@@ -117,7 +117,8 @@ The workspace has seven members:
   `Engine` trait over librqbit, and beneath it the piece cache, its evictor
   task, the librqbit storage over it, and the scheduler that turns readers
   into piece priorities. Its tests run the engine against local seeders on
-  isolated loopback sessions.
+  isolated loopback sessions, and keep milestone 2's experiments against
+  librqbit, one file per experiment, as ADR 2's capability report records.
 - `crates/torrplay-server` is the HTTP server: an axum router serving every
   operation of `api/openapi.yaml` over the `Engine` trait. Its tests start it
   on a loopback port with `FakeEngine`, check every exchange against the
@@ -127,9 +128,6 @@ The workspace has seven members:
   logs engine errors with URLs and magnet URIs redacted.
 - `crates/torrplay-fixtures` generates the deterministic payloads and the
   v1, v2-only, and hybrid metainfo that `docs/acceptance.md` defines.
-- `spikes/engine-spike` holds the milestone 2 experiments against librqbit,
-  one test file per experiment. It is disposable; the capability report in
-  `docs/adr/0002-engine-selection.md` keeps its findings.
 
 librqbit is a git dependency on a commit of the `torrplay/patches` branch of
 the [skunkie/rqbit](https://github.com/skunkie/rqbit) fork, which ADR 2

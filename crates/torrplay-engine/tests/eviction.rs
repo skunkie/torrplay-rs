@@ -8,14 +8,16 @@
 //! a reader's next pieces are ordinary eviction candidates, so these tests
 //! check correctness under eviction rather than how much is re-downloaded.
 
+mod support;
+
 use std::io::SeekFrom;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use engine_spike::{Leecher, MemoryCache, Seeder, bounded};
 use librqbit::api::{LiveStats, TorrentIdOrHash};
 use librqbit::{AddTorrent, AddTorrentOptions, ManagedTorrent, TorrentStats, TorrentStatsState};
+use support::{Leecher, MemoryCache, Seeder, bounded};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use torrplay_engine::cache::{CacheStats, PieceCache};
 use torrplay_engine::storage::{CachedTorrent, MemoryStorageFactory};

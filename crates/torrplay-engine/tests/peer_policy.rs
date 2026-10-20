@@ -7,14 +7,16 @@
 //! cache may evict. A minimal raw peer connects to the torrent and records
 //! the messages it receives, which librqbit's own peers do not expose.
 
+mod support;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use engine_spike::{Leecher, MemoryCache, Seeder, bounded};
 use librqbit::api::LiveStats;
 use librqbit::{AddTorrent, AddTorrentOptions, ManagedTorrent};
+use support::{Leecher, MemoryCache, Seeder, bounded};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use torrplay_engine::storage::{CachedTorrent, MemoryStorageFactory};

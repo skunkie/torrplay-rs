@@ -141,7 +141,7 @@ peers without the Fast Extension.
 
 ## Spike findings
 
-E4 tests the policy in `spikes/engine-spike/tests/e4_peer_policy.rs`. A
+E4 tests the policy in `crates/torrplay-engine/tests/peer_policy.rs`. A
 minimal raw BEP 3 peer connects to the torrent and records the messages it
 receives, because librqbit's peers do not expose them. Against a torrent
 that uploads, the same probe receives a bitfield and an unchoke and is

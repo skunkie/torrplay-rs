@@ -7,12 +7,14 @@
 //! piece writes need one; a stream that holds one while it waits for a
 //! missing piece takes it from the writes that would deliver the piece.
 
+mod support;
+
 use std::io::SeekFrom;
 use std::sync::Arc;
 
 use anyhow::Context;
-use engine_spike::{Leecher, MemoryCache, Seeder, bounded};
 use librqbit::{AddTorrent, AddTorrentOptions, ManagedTorrent};
+use support::{Leecher, MemoryCache, Seeder, bounded};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use torrplay_engine::storage::{CachedTorrent, MemoryStorageFactory};
 use torrplay_fixtures::{FixtureSpec, catalog, generator};
