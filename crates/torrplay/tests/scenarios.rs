@@ -239,7 +239,8 @@ async fn a_slow_client_streams_with_backpressure() -> anyhow::Result<()> {
         bytes.extend_from_slice(&stream.chunk().await?.expect("more content"));
         let due = Duration::from_secs_f64(bytes.len() as f64 / rate as f64);
         tokio::time::sleep(due.saturating_sub(started.elapsed())).await;
-        // Once socket buffers have filled, downloads follow the client.
+        // Once socket buffers and the first window have filled, downloads
+        // follow the client.
         if early.is_none() && bytes.len() as u64 >= 128 * KIB {
             early = Some((bytes.len() as u64, downloaded().await?));
         }
@@ -253,8 +254,10 @@ async fn a_slow_client_streams_with_backpressure() -> anyhow::Result<()> {
     let (early_received, early_downloaded) = early.expect("an early sample");
     let late_downloaded = downloaded().await?;
     let piece = u64::from(spec.piece_length);
+    // The first readahead window may still be filling at the early sample;
+    // without backpressure the whole rest of the file would follow.
     assert!(
-        late_downloaded - early_downloaded <= received - early_received + 2 * piece,
+        late_downloaded - early_downloaded <= received - early_received + CAPACITY / 2 + 2 * piece,
         "downloads grew by {} bytes while the client read {}",
         late_downloaded - early_downloaded,
         received - early_received
