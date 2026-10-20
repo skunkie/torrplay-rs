@@ -102,7 +102,7 @@ Rust 1.99.1 with rustfmt and Clippy, and rustup installs it on first use, so
 local and CI builds use the same version. `clippy.toml` lets tests use
 `unwrap` and `expect`, which the workspace lints flag in production code.
 
-The workspace has six members:
+The workspace has seven members:
 
 - `crates/torrplay-api` holds the generated wire types described above.
 - `crates/torrplay-contract` is test support that checks HTTP requests and
@@ -116,6 +116,11 @@ The workspace has six members:
 - `crates/torrplay-engine` holds the piece cache, its evictor task, the
   librqbit storage over it, and the scheduler that turns readers into piece
   priorities, and grows into the engine adapter.
+- `crates/torrplay-server` is the HTTP server: an axum router serving every
+  operation of `api/openapi.yaml` over the `Engine` trait. Its tests start it
+  on a loopback port with `FakeEngine`, check every exchange against the
+  contract with `torrplay-contract`, and require every documented response
+  to be produced, apart from a listed few the fake engine cannot cause.
 - `crates/torrplay-fixtures` generates the deterministic payloads and the
   v1, v2-only, and hybrid metainfo that `docs/acceptance.md` defines.
 - `spikes/engine-spike` holds the milestone 2 experiments against librqbit,
