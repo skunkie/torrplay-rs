@@ -17,6 +17,8 @@ use serde::Serialize;
 use torrplay_api as api;
 use torrplay_core::engine::{EngineError, SourceRejection};
 
+use crate::redact::redact;
+
 /// The tag URI every problem type lies under.
 const PROBLEM_TYPE_BASE: &str = "tag:skunkie.github.io,2026:torrplay/problems/";
 
@@ -30,6 +32,7 @@ pub(crate) enum ProblemType {
     NotFound,
     MethodNotAllowed,
     NotAcceptable,
+    RequestTimeout,
     LifecycleConflict,
     DuplicateTorrent,
     PreconditionFailed,
@@ -50,6 +53,7 @@ impl ProblemType {
             Self::NotFound => "not-found",
             Self::MethodNotAllowed => "method-not-allowed",
             Self::NotAcceptable => "not-acceptable",
+            Self::RequestTimeout => "request-timeout",
             Self::LifecycleConflict => "lifecycle-conflict",
             Self::DuplicateTorrent => "duplicate-torrent",
             Self::PreconditionFailed => "precondition-failed",
@@ -70,6 +74,7 @@ impl ProblemType {
             Self::NotFound => "Not found",
             Self::MethodNotAllowed => "Method not allowed",
             Self::NotAcceptable => "Not acceptable",
+            Self::RequestTimeout => "Request timeout",
             Self::LifecycleConflict => "Lifecycle conflict",
             Self::DuplicateTorrent => "Duplicate torrent",
             Self::PreconditionFailed => "Precondition failed",
@@ -90,6 +95,7 @@ impl ProblemType {
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             Self::NotAcceptable => StatusCode::NOT_ACCEPTABLE,
+            Self::RequestTimeout => StatusCode::REQUEST_TIMEOUT,
             Self::LifecycleConflict | Self::DuplicateTorrent => StatusCode::CONFLICT,
             Self::PreconditionFailed => StatusCode::PRECONDITION_FAILED,
             Self::ContentTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
@@ -349,11 +355,23 @@ impl From<EngineError> for Problem {
             // Callers map an invalid source with the pointer of the member
             // that carried it; reaching here means an engine contradicted
             // its own inspection.
-            EngineError::Rejected(SourceRejection::Invalid { .. })
+            EngineError::Internal(source) => {
+                tracing::error!(
+                    error = %redact(&source.to_string()),
+                    "the torrent engine failed"
+                );
+                Self::internal()
+            }
+            error @ (EngineError::Rejected(SourceRejection::Invalid { .. })
             | EngineError::DuplicateTorrent
             | EngineError::MetadataMismatch
-            | EngineError::RangeOutOfBounds
-            | EngineError::Internal(_) => Self::internal(),
+            | EngineError::RangeOutOfBounds) => {
+                tracing::error!(
+                    error = %redact(&error.to_string()),
+                    "the torrent engine contradicted itself"
+                );
+                Self::internal()
+            }
         }
     }
 }
@@ -362,11 +380,12 @@ impl From<EngineError> for Problem {
 mod tests {
     use super::*;
 
-    const ALL: [ProblemType; 15] = [
+    const ALL: [ProblemType; 16] = [
         ProblemType::MalformedRequest,
         ProblemType::NotFound,
         ProblemType::MethodNotAllowed,
         ProblemType::NotAcceptable,
+        ProblemType::RequestTimeout,
         ProblemType::LifecycleConflict,
         ProblemType::DuplicateTorrent,
         ProblemType::PreconditionFailed,

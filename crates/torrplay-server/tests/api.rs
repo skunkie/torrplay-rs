@@ -16,7 +16,9 @@ mod common;
 use std::collections::HashSet;
 use std::time::Duration;
 
-use common::{BOUNDARY, Exchange, TestServer, form, form_request, json_request, request};
+use common::{
+    BOUNDARY, Exchange, LogCapture, TestServer, form, form_request, json_request, request,
+};
 use http::{Method, StatusCode, header};
 use serde_json::{Value, json};
 use torrplay_core::engine::{CacheStatistics, Ratio, TorrentStatistics};
@@ -1105,6 +1107,7 @@ mod scenario {
     /// API-21: a private tracker's passkey never appears in a response,
     /// across every operation and its errors. The server does not log.
     pub async fn passkey_redaction() {
+        let logs = LogCapture::start();
         let server = TestServer::start().await;
         let secret = "s3cr3tpasskey";
         let uri = format!(
@@ -1154,6 +1157,13 @@ mod scenario {
             server.send(empty(Method::DELETE, &path)).await,
         ];
         exchanges.push(server.get(&path).await);
+        // An engine failure that quotes the tracker URL is logged redacted.
+        server.engine.inject_fault(Some(&format!(
+            "announce to http://tracker.test/{secret}/announce failed"
+        )));
+        exchanges.push(server.get(&format!("{path}/statistics")).await);
+        exchanges.push(server.get("/api/v1/cache/statistics").await);
+        server.engine.inject_fault(None);
         for exchange in exchanges {
             let text = String::from_utf8_lossy(&exchange.body);
             assert!(!text.contains(secret), "{text}");
@@ -1161,6 +1171,81 @@ mod scenario {
                 assert!(!value.to_str().unwrap_or("").contains(secret));
             }
         }
+        server.stop().await;
+        let logged = logs.text();
+        assert!(logged.contains("the torrent engine failed"), "{logged}");
+        assert!(logged.contains("http://tracker.test/…"), "{logged}");
+        assert!(
+            logged.contains("route=\"/api/v1/torrents/{torrent_id}\""),
+            "{logged}"
+        );
+        assert!(!logged.contains(secret), "{logged}");
+    }
+
+    /// Unexpected engine failures are `internal-error`, and nothing they
+    /// interrupt is left half applied.
+    pub async fn engine_faults() {
+        let server = TestServer::start().await;
+        let created = server
+            .upload(&catalog::single_small().metainfo().bytes, None)
+            .await;
+        let path = created.json()["links"]["self"].as_str().unwrap().to_owned();
+        let file = files_of(&server, &path).await[0]["links"]["self"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let configuration = format!("{path}/configuration");
+        let tag = server
+            .get(&configuration)
+            .await
+            .header(header::ETAG)
+            .unwrap()
+            .to_owned();
+
+        server.engine.inject_fault(Some("the engine failed"));
+        let failed = [
+            server.create_magnet(&unknown_magnet(6)).await,
+            server.get("/api/v1/torrents").await,
+            server.get(&path).await,
+            server
+                .send(merge_patch(
+                    &configuration,
+                    &tag,
+                    &json!({ "desired_state": "paused" }),
+                ))
+                .await,
+            server.get(&format!("{path}/files")).await,
+            server.get(&file).await,
+            server.get(&format!("{file}/content")).await,
+            server
+                .send(empty(Method::HEAD, &format!("{file}/content")))
+                .await,
+            server.get(&format!("{path}/statistics")).await,
+            server.get("/api/v1/cache/statistics").await,
+            server.send(empty(Method::DELETE, &path)).await,
+        ];
+        for exchange in failed {
+            assert_eq!(exchange.status, StatusCode::INTERNAL_SERVER_ERROR);
+            if !exchange.body.is_empty() {
+                assert_eq!(exchange.problem(), "internal-error");
+                assert!(!String::from_utf8_lossy(&exchange.body).contains("the engine failed"));
+            }
+        }
+
+        server.engine.inject_fault(None);
+        let kept = server.get(&configuration).await;
+        assert_eq!(
+            kept.header(header::ETAG),
+            Some(tag.as_str()),
+            "the failed PATCH stored nothing"
+        );
+        assert_eq!(kept.json()["desired_state"], "started");
+        let listed = server.get("/api/v1/torrents").await.json();
+        assert_eq!(
+            listed["items"].as_array().unwrap().len(),
+            1,
+            "nothing was created or deleted"
+        );
         server.stop().await;
     }
 
@@ -1173,37 +1258,100 @@ mod scenario {
             chunk.extend_from_slice(b"\r\n");
             chunk
         };
-        let head = |media_type: &str, framing: &str| {
-            format!(
-                "POST /api/v1/torrents HTTP/1.1\r\nHost: test\r\n\
-Content-Type: {media_type}\r\n{framing}\r\n"
-            )
-        };
+        let chunked = ("Transfer-Encoding", "chunked");
+        let torrents = "/api/v1/torrents";
         // Chunked bodies that cross their limit and never end.
-        let json_head = head("application/json", "Transfer-Encoding: chunked\r\n");
-        let status = server
-            .status_line_before_body_ends(&json_head, chunk(vec![b' '; 20 * 1024]))
+        let json = server
+            .send_before_body_ends(
+                Method::POST,
+                torrents,
+                &[("Content-Type", "application/json"), chunked],
+                chunk(vec![b' '; 20 * 1024]),
+            )
             .await;
-        assert_eq!(status, "HTTP/1.1 413 Payload Too Large");
-        let form_head = head(
-            &format!("multipart/form-data; boundary={BOUNDARY}"),
-            "Transfer-Encoding: chunked\r\n",
-        );
+        assert_problem(&json, StatusCode::PAYLOAD_TOO_LARGE, "content-too-large");
+        let form_type = format!("multipart/form-data; boundary={BOUNDARY}");
         let mut form = format!(
             "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"torrent_file\"\r\n\r\n"
         )
         .into_bytes();
         form.resize(form.len() + 11 * 1024 * 1024, b'd');
-        let status = server
-            .status_line_before_body_ends(&form_head, chunk(form))
+        let upload = server
+            .send_before_body_ends(
+                Method::POST,
+                torrents,
+                &[("Content-Type", &form_type), chunked],
+                chunk(form),
+            )
             .await;
-        assert_eq!(status, "HTTP/1.1 413 Payload Too Large");
+        assert_problem(&upload, StatusCode::PAYLOAD_TOO_LARGE, "content-too-large");
         // A declared length over the limit is refused before any body.
-        let declared = head("application/json", "Content-Length: 20000\r\n");
-        let status = server
-            .status_line_before_body_ends(&declared, Vec::new())
+        let declared = server
+            .send_before_body_ends(
+                Method::POST,
+                torrents,
+                &[
+                    ("Content-Type", "application/json"),
+                    ("Content-Length", "20000"),
+                ],
+                Vec::new(),
+            )
             .await;
-        assert_eq!(status, "HTTP/1.1 413 Payload Too Large");
+        assert_problem(
+            &declared,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "content-too-large",
+        );
+        server.stop().await;
+    }
+
+    /// A body that stops arriving is `request-timeout`, and the server
+    /// closes the connection.
+    pub async fn slow_bodies_time_out() {
+        let server = TestServer::start_with_body_timeout(Duration::from_millis(200)).await;
+        let created = server.create_magnet(&unknown_magnet(5)).await;
+        let configuration = format!(
+            "{}/configuration",
+            created.json()["links"]["self"].as_str().unwrap()
+        );
+        let tag = server
+            .get(&configuration)
+            .await
+            .header(header::ETAG)
+            .unwrap()
+            .to_owned();
+        let partial = br#"{"desired_state":"#.to_vec();
+        let length = (partial.len() + 10).to_string();
+        let requests = [
+            (
+                Method::POST,
+                "/api/v1/torrents".to_owned(),
+                "application/json",
+                None,
+            ),
+            (
+                Method::PATCH,
+                configuration.clone(),
+                "application/merge-patch+json",
+                Some(tag.as_str()),
+            ),
+        ];
+        for (method, path, media_type, if_match) in requests {
+            let mut headers = vec![
+                ("Content-Type", media_type),
+                ("Content-Length", length.as_str()),
+            ];
+            if let Some(tag) = if_match {
+                headers.push(("If-Match", tag));
+            }
+            let timed_out = server
+                .send_before_body_ends(method, &path, &headers, partial.clone())
+                .await;
+            assert_problem(&timed_out, StatusCode::REQUEST_TIMEOUT, "request-timeout");
+            assert_eq!(timed_out.header(header::CONNECTION), Some("close"));
+        }
+        let kept = server.get(&configuration).await;
+        assert_eq!(kept.header(header::ETAG), Some(tag.as_str()));
         server.stop().await;
     }
 
@@ -1224,21 +1372,11 @@ Content-Type: {media_type}\r\n{framing}\r\n"
 
 /// Responses no test can produce with the fake engine, with reasons.
 const EXEMPT: &[(&str, u16)] = &[
-    // The fake engine has no unexpected failures to inject.
-    ("createTorrent", 500),
-    ("deleteTorrent", 500),
-    ("getCacheStatistics", 500),
+    // These answer from constants and the registry without the engine;
+    // only a failure to serialize their bodies could make them 500.
     ("getEntryPoint", 500),
     ("getOpenApiDocument", 500),
-    ("getTorrent", 500),
     ("getTorrentConfiguration", 500),
-    ("getTorrentFile", 500),
-    ("getTorrentFileContent", 500),
-    ("getTorrentStatistics", 500),
-    ("headTorrentFileContent", 500),
-    ("listTorrentFiles", 500),
-    ("listTorrents", 500),
-    ("updateTorrentConfiguration", 500),
     // A process that answers is live.
     ("getLiveness", 503),
 ];
@@ -1282,5 +1420,7 @@ scenarios!(
     failures,
     passkey_redaction,
     bodies_refused_while_streaming,
+    slow_bodies_time_out,
+    engine_faults,
     restart,
 );

@@ -120,7 +120,9 @@ The workspace has seven members:
   operation of `api/openapi.yaml` over the `Engine` trait. Its tests start it
   on a loopback port with `FakeEngine`, check every exchange against the
   contract with `torrplay-contract`, and require every documented response
-  to be produced, apart from a listed few the fake engine cannot cause.
+  to be produced, apart from the few no engine state can cause. The server
+  logs each response with `tracing` by route template and status, and
+  logs engine errors with URLs and magnet URIs redacted.
 - `crates/torrplay-fixtures` generates the deterministic payloads and the
   v1, v2-only, and hybrid metainfo that `docs/acceptance.md` defines.
 - `spikes/engine-spike` holds the milestone 2 experiments against librqbit,

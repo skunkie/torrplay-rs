@@ -147,7 +147,8 @@ paths:
         description: >-
           A magnet URI in a JSON body of at most 16384 bytes, or a torrent file
           of at most 10485760 bytes in a multipart form. Larger bodies are
-          content-too-large.
+          content-too-large, and a body that does not arrive within 30
+          seconds is request-timeout.
         required: true
         content:
           application/json:
@@ -202,6 +203,8 @@ paths:
                       statistics: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/statistics
         '400':
           $ref: '#/components/responses/MalformedRequest'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
         '409':
           $ref: '#/components/responses/DuplicateTorrent'
         '413':
@@ -335,7 +338,8 @@ paths:
       requestBody:
         description: >-
           The configuration members to change, in a body of at most 16384
-          bytes. Larger bodies are content-too-large.
+          bytes. Larger bodies are content-too-large, and a body that does
+          not arrive within 30 seconds is request-timeout.
         required: true
         content:
           application/merge-patch+json:
@@ -368,6 +372,8 @@ paths:
           $ref: '#/components/responses/MalformedRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
         '412':
           $ref: '#/components/responses/PreconditionFailed'
         '413':
@@ -963,6 +969,22 @@ components:
                 title: Not found
                 status: 404
                 detail: No torrent has the ID trr_wjrvmrmv2x4p77h4gzl5twylli.
+    RequestTimeout:
+      description: >-
+        The request body did not arrive in time. The server closes the
+        connection after this response.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            slow_body:
+              summary: A body that stopped arriving
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/request-timeout
+                title: Request timeout
+                status: 408
+                detail: The request body did not arrive within 30 seconds.
     LifecycleConflict:
       description: The resource's current state does not allow the request.
       content:

@@ -50,6 +50,9 @@ struct State {
     torrents: HashMap<TorrentId, Torrent>,
     retrievable: HashSet<InfoHashV1>,
     readiness: Readiness,
+    /// The detail of an unexpected failure every operation reports, while
+    /// one is injected.
+    fault: Option<String>,
     cache_statistics: CacheStatistics,
 }
 
@@ -91,6 +94,7 @@ impl FakeEngine {
                 torrents: HashMap::new(),
                 retrievable: HashSet::new(),
                 readiness: Readiness::Ready,
+                fault: None,
                 cache_statistics: CacheStatistics::default(),
             }),
         }
@@ -233,6 +237,13 @@ impl FakeEngine {
         Ok(())
     }
 
+    /// Makes every asynchronous operation fail with
+    /// [`EngineError::Internal`] carrying `detail`, or stops doing so for
+    /// `None`. Readiness is unaffected: the engine is ready but failing.
+    pub fn inject_fault(&self, detail: Option<&str>) {
+        self.lock().fault = detail.map(str::to_owned);
+    }
+
     /// Sets the engine's readiness.
     pub fn set_readiness(&self, readiness: Readiness) {
         self.lock().readiness = readiness;
@@ -273,9 +284,14 @@ impl FakeEngine {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Locks the state if the engine is ready.
+    /// Locks the state if the engine is ready and no fault is injected.
     fn ready(&self) -> Result<MutexGuard<'_, State>, EngineError> {
         let state = self.lock();
+        if let Some(detail) = &state.fault {
+            return Err(EngineError::Internal(
+                io::Error::other(detail.clone()).into(),
+            ));
+        }
         match state.readiness {
             Readiness::Ready => Ok(state),
             Readiness::Unavailable { retry_after } => Err(EngineError::Unavailable { retry_after }),
@@ -948,6 +964,35 @@ mod tests {
             Err(EngineError::UnknownTorrent)
         ));
         assert_eq!(engine.desired_state(&id(1)), None);
+    }
+
+    #[tokio::test]
+    async fn injected_faults_fail_every_operation() {
+        let engine = FakeEngine::with_catalog();
+        let spec = catalog::single_small();
+        engine
+            .add(&id(1), &file(&spec), DesiredState::Started)
+            .await
+            .unwrap();
+        engine.inject_fault(Some("disk on fire"));
+        assert!(engine.readiness().is_ready(), "a failing engine is ready");
+        let internal = |result: Result<(), EngineError>| match result {
+            Err(EngineError::Internal(source)) => source.to_string() == "disk on fire",
+            _ => false,
+        };
+        assert!(internal(engine.inspect(&file(&spec)).await.map(drop)));
+        assert!(internal(engine.status(&id(1)).await.map(drop)));
+        assert!(internal(engine.cache_statistics().await.map(drop)));
+        assert!(internal(
+            engine
+                .open_reader(&id(1), FileIndex(0), ByteRange::new(0, 1).unwrap())
+                .await
+                .map(drop)
+        ));
+        assert!(internal(engine.remove(&id(1)).await));
+
+        engine.inject_fault(None);
+        engine.remove(&id(1)).await.unwrap();
     }
 
     #[tokio::test]

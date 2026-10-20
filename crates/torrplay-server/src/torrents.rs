@@ -121,8 +121,14 @@ pub(crate) async fn create<E: Engine>(
     let media_type = MediaType::of_request(&headers);
     let (source, desired_state) = match media_type.as_ref().map(|media| media.essence.as_str()) {
         Some(JSON) => {
-            let bytes =
-                read_limited(&headers, body, JSON_LIMIT_BYTES, JSON_LIMIT_BYTES as u64).await?;
+            let bytes = read_limited(
+                &headers,
+                body,
+                JSON_LIMIT_BYTES,
+                JSON_LIMIT_BYTES as u64,
+                app.body_timeout(),
+            )
+            .await?;
             creation_from_json(&bytes)?
         }
         Some(FORM_DATA) => {
@@ -138,6 +144,7 @@ pub(crate) async fn create<E: Engine>(
                 body,
                 FORM_LIMIT_BYTES,
                 TORRENT_FILE_LIMIT_BYTES as u64,
+                app.body_timeout(),
             )
             .await?;
             creation_from_form(&bytes, &boundary)?
@@ -181,7 +188,10 @@ pub(crate) async fn create<E: Engine>(
             desired_state,
             created_at: SystemTime::now(),
         })
-        .map_err(|_| Problem::internal())?;
+        .map_err(|error| {
+            tracing::error!(%error, "a torrent could not be registered");
+            Problem::internal()
+        })?;
     let record = match registration {
         Registration::Duplicate {
             existing,
@@ -439,7 +449,14 @@ pub(crate) async fn update_configuration<E: Engine>(
             "Send If-Match with the configuration's current ETag.",
         ));
     };
-    let bytes = read_limited(&headers, body, JSON_LIMIT_BYTES, JSON_LIMIT_BYTES as u64).await?;
+    let bytes = read_limited(
+        &headers,
+        body,
+        JSON_LIMIT_BYTES,
+        JSON_LIMIT_BYTES as u64,
+        app.body_timeout(),
+    )
+    .await?;
     let desired_state = desired_state_from_patch(parse_json(&bytes)?)?;
     let stale = || {
         Problem::new(
@@ -453,30 +470,37 @@ pub(crate) async fn update_configuration<E: Engine>(
     }
     app.require_engine()?;
 
+    // The engine takes the change before it is stored, so a change the
+    // engine refuses leaves the configuration and its ETag untouched.
     let previous = record.configuration.desired_state();
-    let update = app
-        .registry()
-        .update_desired_state(&id, desired_state, &record.configuration.etag())
-        .map_err(|error| match error {
-            ConfigurationError::NotFound => not_found(),
-            ConfigurationError::PreconditionFailed { .. } => stale(),
-        })?;
-    if update.changed {
-        if let Err(error) = app
-            .engine()
+    if desired_state != previous {
+        app.engine()
             .set_desired_state(&record.id, desired_state)
-            .await
+            .await?;
+    }
+    let update =
+        match app
+            .registry()
+            .update_desired_state(&id, desired_state, &record.configuration.etag())
         {
-            // Restores the stored value the engine did not take. A
-            // concurrent change in between wins instead.
-            let _ =
-                app.registry()
-                    .update_desired_state(&id, previous, &update.configuration.etag());
-            return Err(error.into());
-        }
-        if previous == DesiredState::Paused && desired_state == DesiredState::Started {
-            app.clear_metadata_failure(&record.id);
-        }
+            Ok(update) => update,
+            Err(error) => {
+                // A concurrent change won; the engine follows the stored value.
+                if let Some(current) = app.registry().get(&id) {
+                    let _ = app
+                        .engine()
+                        .set_desired_state(&record.id, current.configuration.desired_state())
+                        .await;
+                }
+                return Err(match error {
+                    ConfigurationError::NotFound => not_found(),
+                    ConfigurationError::PreconditionFailed { .. } => stale(),
+                });
+            }
+        };
+    if update.changed && previous == DesiredState::Paused && desired_state == DesiredState::Started
+    {
+        app.clear_metadata_failure(&record.id);
     }
     let body = representation::configuration(&record.id, &update.configuration);
     with_etag(
