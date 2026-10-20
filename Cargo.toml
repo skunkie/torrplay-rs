@@ -5,6 +5,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/torrplay",
     "crates/torrplay-api",
     "crates/torrplay-contract",
     "crates/torrplay-core",
@@ -29,7 +30,7 @@ unwrap_used = "warn"
 
 [workspace.dependencies]
 anyhow = "1"
-axum = { version = "0.8", default-features = false, features = ["http1", "matched-path", "tokio"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "http2", "matched-path", "tokio"] }
 # librqbit's bencode, from the same fork commit, to recognize v2-only
 # torrents librqbit cannot parse.
 bencode = { package = "librqbit-bencode", git = "https://github.com/skunkie/rqbit", rev = "e724f259a39784a4d287e07382e04f626ea3f998" }
@@ -58,12 +59,14 @@ serde_json = "1"
 sha2 = "0.11.1"
 tempfile = "3"
 thiserror = "2"
-tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["io"] }
 torrplay-api = { path = "crates/torrplay-api" }
 torrplay-contract = { path = "crates/torrplay-contract" }
 torrplay-core = { path = "crates/torrplay-core" }
+torrplay-engine = { path = "crates/torrplay-engine" }
 torrplay-fixtures = { path = "crates/torrplay-fixtures" }
+torrplay-server = { path = "crates/torrplay-server" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
 url = { version = "2", features = ["serde"] }
