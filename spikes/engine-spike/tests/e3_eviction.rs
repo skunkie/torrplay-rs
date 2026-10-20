@@ -188,7 +188,10 @@ async fn streaming_four_times_the_capacity_evicts_and_downloads_again() -> anyho
     assert_eq!(live_stats(&handle)?.snapshot.peer_stats.dead, 0);
 
     delete(&leecher, handle, cached).await?;
-    cache_reaches(cache, "the cache emptied", |stats| stats.usage_bytes == 0).await?;
+    cache_reaches(cache, "the cache emptied", |stats| {
+        stats.usage_bytes == stats.retained_bytes
+    })
+    .await?;
     leecher.session.stop().await;
     seeder.session.stop().await;
     memory.shutdown().await?;
@@ -383,7 +386,7 @@ async fn opening_and_deleting_torrents_in_a_loop_leaves_nothing_behind() -> anyh
     }
 
     cache_reaches(cache, "the cache emptied", |stats| {
-        stats.usage_bytes == 0 && stats.resident_pieces == 0
+        stats.usage_bytes == stats.retained_bytes && stats.resident_pieces == 0
     })
     .await?;
     let torrents = leecher.session.with_torrents(|torrents| torrents.count());

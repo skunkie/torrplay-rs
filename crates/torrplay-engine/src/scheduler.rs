@@ -227,7 +227,9 @@ impl TorrentScheduler {
                 .iter()
                 .filter_map(|&piece| binding.layout.lengths.validate_piece_index(piece))
                 .collect();
-            binding.cache.set_pins(binding.key, plan.pins)?;
+            binding
+                .cache
+                .set_plan(binding.key, plan.pins, &plan.priorities)?;
             binding.torrent.clone()
         };
         if let Some(torrent) = torrent.upgrade() {

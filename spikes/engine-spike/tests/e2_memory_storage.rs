@@ -172,7 +172,7 @@ async fn deleting_a_torrent_releases_only_its_cache_usage() -> anyhow::Result<()
     .await?;
     drop(small_handle);
     let stats = cache_reaches(&cache, "the first torrent's bytes released", |stats| {
-        stats.usage_bytes == multi.total_size_bytes()
+        stats.usage_bytes - stats.retained_bytes == multi.total_size_bytes()
     })
     .await?;
     assert_eq!(stats.verified_pieces, multi.metainfo().piece_count);
@@ -190,7 +190,10 @@ async fn deleting_a_torrent_releases_only_its_cache_usage() -> anyhow::Result<()
     )
     .await?;
     drop(multi_handle);
-    cache_reaches(&cache, "the cache emptied", |stats| stats.usage_bytes == 0).await?;
+    cache_reaches(&cache, "the cache emptied", |stats| {
+        stats.usage_bytes == stats.retained_bytes
+    })
+    .await?;
 
     leecher.session.stop().await;
     small_seeder.session.stop().await;

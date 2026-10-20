@@ -216,7 +216,13 @@ async fn a_piece_longer_than_the_capacity_is_never_requested() -> anyhow::Result
     let read = tokio::time::timeout(Duration::from_secs(3), reader.read_exact(&mut byte)).await;
     assert!(read.is_err(), "the reader waits");
     let stats = memory.cache.audit()?;
-    assert_eq!((stats.usage_bytes, stats.waiting_pieces), (0, 0));
+    assert_eq!(
+        (
+            stats.usage_bytes - stats.retained_bytes,
+            stats.waiting_pieces
+        ),
+        (0, 0)
+    );
     assert!(!matches!(
         torrent.handle.stats().state,
         TorrentStatsState::Error
