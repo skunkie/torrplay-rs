@@ -11,7 +11,7 @@
 //! registering a new torrent happen under the same lock, so concurrent
 //! creations of one info hash register exactly one torrent.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::SystemTime;
 
@@ -82,7 +82,7 @@ pub enum RegistryError {
     /// The random source failed.
     #[error(transparent)]
     Randomness(#[from] RandomnessError),
-    /// Every drawn ID had been issued before.
+    /// Every drawn ID belonged to a registered torrent.
     #[error("no unused torrent ID was drawn in {ID_DRAWS} attempts")]
     NoUnusedId,
 }
@@ -124,8 +124,6 @@ struct State {
     torrents: HashMap<TorrentId, Entry>,
     creation_order: BTreeMap<u64, TorrentId>,
     by_info_hash: HashMap<InfoHashV1, TorrentId>,
-    /// Every ID issued, including deleted torrents', so none is reused.
-    issued: HashSet<TorrentId>,
     next_sequence: u64,
     id_source: IdSource,
 }
@@ -159,7 +157,6 @@ impl Registry {
                 torrents: HashMap::new(),
                 creation_order: BTreeMap::new(),
                 by_info_hash: HashMap::new(),
-                issued: HashSet::new(),
                 next_sequence: 0,
                 id_source: Box::new(id_source),
             }),
@@ -194,7 +191,6 @@ impl Registry {
         };
         let sequence = state.next_sequence;
         state.next_sequence += 1;
-        state.issued.insert(id.clone());
         state.creation_order.insert(sequence, id.clone());
         state.by_info_hash.insert(new.info_hash, id.clone());
         state.torrents.insert(
@@ -236,8 +232,8 @@ impl Registry {
         self.len() == 0
     }
 
-    /// Unregisters a torrent and returns its last record. Its ID is never
-    /// issued again, and its info hash may be registered anew.
+    /// Unregisters a torrent and returns its last record. Its info hash may
+    /// be registered anew, under a new random ID.
     pub fn remove(&self, id: &str) -> Option<TorrentRecord> {
         let mut state = self.lock();
         let entry = state.torrents.remove(id)?;
@@ -300,7 +296,11 @@ impl State {
     fn draw_unused_id(&mut self) -> Result<TorrentId, RegistryError> {
         for _ in 0..ID_DRAWS {
             let id = TorrentId::from_random_bytes((self.id_source)()?);
-            if !self.issued.contains(&id) {
+            // Checked against registered torrents only, as ADR 4 says:
+            // 128 random bits make reissuing a deleted torrent's ID as
+            // unlikely as any collision, and remembering every ID ever
+            // issued would grow without bound.
+            if !self.torrents.contains_key(&id) {
                 return Ok(id);
             }
         }
@@ -488,19 +488,12 @@ mod tests {
     }
 
     #[test]
-    fn colliding_ids_are_drawn_again_including_deleted_ones() {
-        let registry = Registry::with_id_source(scripted_ids(vec![1, 1, 2, 2, 1, 3]));
+    fn an_id_colliding_with_a_registered_torrent_is_drawn_again() {
+        let registry = Registry::with_id_source(scripted_ids(vec![1, 1, 2]));
         let first = created(registry.register(new_torrent(1, None)).unwrap());
         let second = created(registry.register(new_torrent(2, None)).unwrap());
         assert_eq!(first.id, TorrentId::from_random_bytes([1; 16]));
         assert_eq!(second.id, TorrentId::from_random_bytes([2; 16]));
-        registry.remove(first.id.as_str());
-        let third = created(registry.register(new_torrent(3, None)).unwrap());
-        assert_eq!(
-            third.id,
-            TorrentId::from_random_bytes([3; 16]),
-            "IDs of deleted torrents are never reissued"
-        );
     }
 
     #[test]

@@ -275,8 +275,10 @@ pub trait Engine: Send + Sync + 'static {
     ) -> impl Future<Output = Result<(), EngineError>> + Send;
 
     /// Removes a torrent: cancels its readers, stops metadata retrieval,
-    /// closes its peer connections, discards partial pieces, and releases
-    /// verified pieces in the background without counting evictions.
+    /// closes its peer connections, and releases its cache usage, partial
+    /// and verified pieces alike, without counting evictions. The release
+    /// happens before this returns, not when the engine's own tasks end, as
+    /// ADR 5 requires.
     fn remove(&self, id: &TorrentId) -> impl Future<Output = Result<(), EngineError>> + Send;
 
     /// Returns a torrent's metadata, once available, and failure.
