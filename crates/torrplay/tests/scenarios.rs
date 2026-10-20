@@ -412,9 +412,15 @@ async fn a_storage_failure_fails_the_torrent_until_restarted() -> anyhow::Result
     running.engine.fail_storage_writes(&created.id)?;
     let content = running.url(&created.content[0]);
 
-    let stream = client.get(&content).send().await?;
-    let (bytes, error) = bounded("the failed stream", read_body(stream)).await?;
-    assert!(error.is_some() && bytes.is_empty(), "{error:?}");
+    // The failure may end the stream before its headers are flushed, which
+    // closes the connection without a response.
+    match bounded("the failed stream", client.get(&content).send()).await? {
+        Ok(stream) => {
+            let (bytes, error) = bounded("the failed stream", read_body(stream)).await?;
+            assert!(error.is_some() && bytes.is_empty(), "{error:?}");
+        }
+        Err(error) => assert!(!error.is_timeout(), "{error:?}"),
+    }
     let torrent = statistics(&running, &client, &created.path).await?;
     assert_eq!(torrent["observed_state"], "failed");
     assert!(torrent["failure"]["detail"].is_string(), "{torrent}");
