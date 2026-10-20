@@ -113,9 +113,11 @@ The workspace has seven members:
   file IDs, the registry, lifecycle state, pagination cursors, and the
   `Engine` trait the server talks to. Its `fake` feature adds `FakeEngine`, a
   scripted engine over the fixtures for tests that run without librqbit.
-- `crates/torrplay-engine` holds the piece cache, its evictor task, the
-  librqbit storage over it, and the scheduler that turns readers into piece
-  priorities, and grows into the engine adapter.
+- `crates/torrplay-engine` holds `LibrqbitEngine`, which implements the
+  `Engine` trait over librqbit, and beneath it the piece cache, its evictor
+  task, the librqbit storage over it, and the scheduler that turns readers
+  into piece priorities. Its tests run the engine against local seeders on
+  isolated loopback sessions.
 - `crates/torrplay-server` is the HTTP server: an axum router serving every
   operation of `api/openapi.yaml` over the `Engine` trait. Its tests start it
   on a loopback port with `FakeEngine`, check every exchange against the

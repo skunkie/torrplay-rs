@@ -3341,9 +3341,15 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "librqbit",
+ "librqbit-bencode",
  "librqbit-core",
+ "serde",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "torrplay-core",
+ "torrplay-fixtures",
+ "tracing",
 ]
 
 [[package]]

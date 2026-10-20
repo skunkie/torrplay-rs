@@ -5,7 +5,7 @@
 [package]
 name = "torrplay-engine"
 version = "0.1.0"
-description = "The TorrPlay piece cache and its librqbit integration."
+description = "The TorrPlay engine: the piece cache and the librqbit adapter behind the engine facade."
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
@@ -17,7 +17,15 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
+bencode.workspace = true
 librqbit.workspace = true
 librqbit-core.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+torrplay-core.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+torrplay-fixtures.workspace = true

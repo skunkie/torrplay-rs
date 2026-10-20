@@ -253,8 +253,9 @@ pub trait Engine: Send + Sync + 'static {
     ) -> impl Future<Output = Result<(), EngineError>> + Send;
 
     /// Gives a torrent without metadata the metadata of an uploaded torrent
-    /// file with the same info hash, ending metadata retrieval without
-    /// dropping its peers. Does nothing if the torrent already has metadata.
+    /// file with the same info hash, ending metadata retrieval. The torrent
+    /// keeps its desired state; peers found during retrieval may have to
+    /// connect again. Does nothing if the torrent already has metadata.
     /// Returns [`EngineError::MetadataMismatch`] for another info hash and
     /// [`EngineError::Rejected`] for bytes `inspect` would reject.
     fn supply_metadata(

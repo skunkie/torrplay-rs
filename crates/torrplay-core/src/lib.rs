@@ -16,6 +16,7 @@
 //!   defines them.
 //! - [`registry`]: the registered torrents, with atomic duplicate detection.
 //! - [`pagination`]: page sizes and opaque cursors for collections.
+//! - [`redact`]: redaction of URLs and magnet URIs in text bound for logs.
 //! - [`engine`]: the [`Engine`](engine::Engine) trait, the torrent engine
 //!   facade, with its inputs, observations, and statistics.
 //! - `fake`, behind the `fake` feature: a scripted engine over the
@@ -31,6 +32,7 @@ pub mod id;
 pub mod lifecycle;
 pub mod metadata;
 pub mod pagination;
+pub mod redact;
 pub mod registry;
 
 mod base32;
