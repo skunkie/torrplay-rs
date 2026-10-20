@@ -3338,6 +3338,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "torrplay-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "bytes",
+ "chrono",
+ "form_urlencoded",
+ "http",
+ "http-body-util",
+ "memchr",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-util",
+ "torrplay-api",
+ "torrplay-contract",
+ "torrplay-core",
+ "torrplay-fixtures",
+ "url",
+]
+
+[[package]]
 name = "tower"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
