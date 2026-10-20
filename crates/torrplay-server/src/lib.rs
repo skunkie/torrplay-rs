@@ -28,7 +28,6 @@ mod files;
 mod headers;
 mod problem;
 mod query;
-mod redact;
 mod representation;
 mod service;
 mod torrents;

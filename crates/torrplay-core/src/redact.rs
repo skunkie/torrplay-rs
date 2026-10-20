@@ -16,7 +16,7 @@ fn ends_uri(character: char) -> bool {
 
 /// Returns `text` with every URL reduced to its scheme and host, and every
 /// magnet URI reduced to its `xt` parameters.
-pub(crate) fn redact(text: &str) -> String {
+pub fn redact(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(start) = next_uri(rest) {

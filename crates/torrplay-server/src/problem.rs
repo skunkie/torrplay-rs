@@ -17,7 +17,7 @@ use serde::Serialize;
 use torrplay_api as api;
 use torrplay_core::engine::{EngineError, SourceRejection};
 
-use crate::redact::redact;
+use torrplay_core::redact::redact;
 
 /// The tag URI every problem type lies under.
 const PROBLEM_TYPE_BASE: &str = "tag:skunkie.github.io,2026:torrplay/problems/";

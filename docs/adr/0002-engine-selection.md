@@ -674,11 +674,12 @@ scheduler's unit tests already cover them.
 
 ### Gaps for later milestones
 
-- **The adapter does not yet hide librqbit.** `crates/torrplay-engine`'s
-  public API still takes `ManagedTorrent` and returns `FileStream`-backed
-  readers. Milestone 4 builds the facade the plan describes, with the add
-  sequence E3 found necessary: add paused with the scheduler, attach,
-  wait for the initial check, then start.
+- **The adapter hides librqbit.** Done in milestone 4: `LibrqbitEngine`
+  implements the `Engine` facade with the add sequence E3 found necessary,
+  owns metadata retrieval for magnet URIs, and restarts a torrent librqbit
+  failed by adding it again, since starting it in place would create
+  storage the cache has not attached. The scheduler and storage types stay
+  public for the engine's own tests.
 - **Task cleanup.** `Session::stop` joins nothing, so CAC-09 cannot count
   tasks. The adapter must track the session's tasks, or a patch must join
   them, before the lifecycle's shutdown order can be tested.

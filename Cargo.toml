@@ -31,6 +31,9 @@ unwrap_used = "warn"
 [workspace.dependencies]
 anyhow = "1"
 axum = { version = "0.8", default-features = false, features = ["http1", "matched-path", "tokio"] }
+# librqbit's bencode, from the same fork commit, to recognize v2-only
+# torrents librqbit cannot parse.
+bencode = { package = "librqbit-bencode", git = "https://github.com/skunkie/rqbit", rev = "e724f259a39784a4d287e07382e04f626ea3f998" }
 bytes = "1"
 # Without default features it does not read the system clock or time zone.
 chrono = { version = "0.4", default-features = false, features = ["serde", "std"] }
