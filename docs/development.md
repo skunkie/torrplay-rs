@@ -69,13 +69,30 @@ planted violation there; and documents with a single warning or info finding
 must fail the minimum score. It needs jq. Run it after changing the ruleset,
 the fixtures, or the vacuum version.
 
-Evaluate generators against the actual schema in milestone 3, including
-multipart input, binary responses, merge patches, and Problem Details. When
-generation is introduced, commit the intended artifacts and make regeneration
-followed by a zero-diff check part of CI.
-
 Keep HTTP behavior tests separate from engine tests so lifecycle and protocol
 semantics can be verified with a fake engine and controlled payloads.
+
+## Generated wire types
+
+`crates/torrplay-api/src/generated/` holds the API's wire types, which
+[openapi-to-rust](https://openapi-to-rust.dev/) generates from
+`api/openapi.yaml`; the
+[contract validation decision](adr/0006-contract-validation.md) records why.
+Never edit them by hand. After changing the document, regenerate them and
+commit the result with the change:
+
+```sh
+cargo install --locked --version 0.20.0 openapi-to-rust
+cd crates/torrplay-api
+openapi-to-rust generate
+```
+
+CI installs the same version and runs `openapi-to-rust generate --check` in
+`crates/torrplay-api`, which fails when the committed files differ from what
+the document produces, even for a changed description. Upgrading the tool is
+a deliberate change: update the version here and in `.github/workflows/ci.yml`,
+regenerate, and run the crate's tests, which round-trip every example in the
+document through its generated type.
 
 ## Rust checks
 
@@ -85,8 +102,9 @@ Rust 1.99.1 with rustfmt and Clippy, and rustup installs it on first use, so
 local and CI builds use the same version. `clippy.toml` lets tests use
 `unwrap` and `expect`, which the workspace lints flag in production code.
 
-The workspace has five members:
+The workspace has six members:
 
+- `crates/torrplay-api` holds the generated wire types described above.
 - `crates/torrplay-contract` is test support that checks HTTP requests and
   responses against `api/openapi.yaml`, as ADR 6 decides, and records which
   documented responses tests produce. Crates use it only as a

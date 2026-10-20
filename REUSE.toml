@@ -9,3 +9,10 @@ version = 1
 path = "Cargo.lock"
 SPDX-FileCopyrightText = "2026 TorrPlay"
 SPDX-License-Identifier = "MIT"
+
+# openapi-to-rust generates these files from api/openapi.yaml, and CI fails
+# when they differ from its output, so they cannot carry a header of ours.
+[[annotations]]
+path = "crates/torrplay-api/src/generated/**"
+SPDX-FileCopyrightText = "2026 TorrPlay"
+SPDX-License-Identifier = "MIT"
