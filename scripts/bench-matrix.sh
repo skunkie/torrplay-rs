@@ -134,10 +134,26 @@ fi
 
 services=()
 
+# Stops the seeders and tracker. runuser ignores SIGINT while its command
+# runs, so each command and its runuser get SIGTERM, and SIGKILL if they
+# outlast the bound.
 stop_services() {
     if ((${#services[@]})); then
-        run kill -INT "${services[@]}" 2>/dev/null || true
-        [[ $dry_run == 1 ]] || wait "${services[@]}" 2>/dev/null || true
+        for pid in "${services[@]}"; do
+            run pkill -TERM -P "$pid" || true
+        done
+        run kill -TERM "${services[@]}" 2>/dev/null || true
+        if [[ $dry_run != 1 ]]; then
+            local deadline=$((SECONDS + 10))
+            while kill -0 "${services[@]}" 2>/dev/null && ((SECONDS < deadline)); do
+                sleep 0.2
+            done
+            for pid in "${services[@]}"; do
+                pkill -KILL -P "$pid" || true
+            done
+            kill -KILL "${services[@]}" 2>/dev/null || true
+            wait "${services[@]}" 2>/dev/null || true
+        fi
     fi
     services=()
     run scripts/bench-netns.sh down >/dev/null 2>&1 || true
@@ -217,6 +233,8 @@ for profile in $PROFILES; do
     done
 
     stop_services
+    # Logs were written by this root shell; hand them to the user.
+    run chown -R "$user:" "$results"
     if [[ $dry_run == 1 ]]; then
         in_netns "$CLIENT" "$BENCH" summarize --out "$results/summary.json" "$results/*-$implementation-*.json"
     else
