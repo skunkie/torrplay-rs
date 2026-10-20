@@ -24,15 +24,21 @@ serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+tempfile = { workspace = true, optional = true }
 torrplay-core.workspace = true
+torrplay-fixtures = { workspace = true, optional = true }
 tracing.workspace = true
 
 [features]
 # Lets tests make a torrent's storage fail, as LIF-06 needs.
 faults = []
+# Local seeders for tests in this and other crates.
+test-support = ["dep:tempfile", "dep:torrplay-fixtures"]
 
 [dev-dependencies]
 tempfile.workspace = true
+# The crate itself with its test support, for its integration tests.
+torrplay-engine = { path = ".", features = ["test-support"] }
 torrplay-fixtures.workspace = true
 
 [[test]]

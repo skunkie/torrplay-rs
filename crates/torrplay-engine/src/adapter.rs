@@ -391,11 +391,16 @@ impl LibrqbitEngine {
         }
     }
 
-    /// Makes every later storage write of a torrent fail, as LIF-06's
-    /// injected storage failure does.
+    /// Makes every later storage write of the torrent with ID `id` fail, as
+    /// LIF-06's injected storage failure does. It takes the ID as text, as
+    /// tests read it from API responses.
     #[cfg(feature = "faults")]
-    pub fn fail_storage_writes(&self, id: &TorrentId) -> Result<(), EngineError> {
-        let torrent = self.torrent(id)?;
+    pub fn fail_storage_writes(&self, id: &str) -> Result<(), EngineError> {
+        let torrent = self
+            .lock_torrents()
+            .get(id)
+            .cloned()
+            .ok_or(EngineError::UnknownTorrent)?;
         let state = torrent.state();
         let live = state
             .live

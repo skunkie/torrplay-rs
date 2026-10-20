@@ -12,6 +12,7 @@ use std::time::Duration;
 use anyhow::Context;
 use tokio::net::TcpListener;
 use torrplay::{Command, Config, ShutdownTimings, USAGE};
+use torrplay_engine::LibrqbitEngine;
 
 /// How long exiting waits for blocking tasks still running after shutdown.
 const RUNTIME_SHUTDOWN: Duration = Duration::from_secs(1);
@@ -66,7 +67,7 @@ async fn run(config: &Config) -> anyhow::Result<()> {
     tracing::info!(address = %listener.local_addr()?, "the API is listening");
     torrplay::serve(
         listener,
-        config.engine_config(folder.path()),
+        LibrqbitEngine::new(config.engine_config(folder.path())),
         ShutdownTimings::default(),
         termination(),
     )

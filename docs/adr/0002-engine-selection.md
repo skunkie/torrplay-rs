@@ -682,9 +682,11 @@ scheduler's unit tests already cover them.
   failed by adding it again, since starting it in place would create
   storage the cache has not attached. The scheduler and storage types stay
   public for the engine's own tests.
-- **Task cleanup.** `Session::stop` joins nothing, so CAC-09 cannot count
-  tasks. The adapter must track the session's tasks, or a patch must join
-  them, before the lifecycle's shutdown order can be tested.
+- **Task cleanup.** Done for removal in milestone 4: CAC-09 and the
+  exit-criterion test count the runtime's live tasks, which return to their
+  starting level once torrents are deleted and their peers disconnect.
+  `Session::stop` still joins nothing, so shutdown cannot wait for
+  librqbit's own session tasks; they end with the runtime.
 - **Verified pieces of failed torrents.** librqbit drops a torrent's
   storage when it stops the torrent with an error, so the torrent's verified
   pieces leave the cache, while the lifecycle keeps them as for a paused

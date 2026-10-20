@@ -10,6 +10,7 @@ use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
+use futures_util::TryStreamExt;
 use tokio_util::io::ReaderStream;
 use torrplay_api as api;
 use torrplay_core::engine::{ByteRange, Engine};
@@ -193,7 +194,9 @@ async fn content<E: Engine>(
             .await?;
         // A read failure after the headers ends the stream; it never
         // becomes a second response.
-        Body::from_stream(ReaderStream::with_capacity(reader, STREAM_CHUNK_BYTES))
+        Body::from_stream(
+            ReaderStream::with_capacity(reader, STREAM_CHUNK_BYTES).map_err(StreamEnded::from),
+        )
     } else {
         Body::empty()
     };
@@ -227,4 +230,43 @@ async fn content<E: Engine>(
         HeaderValue::from_static("sandbox"),
     );
     Ok(response)
+}
+
+/// Why a content stream ended early. Over HTTP/2, hyper resets the stream
+/// with the `h2` reason it finds among an error's sources, so a stream the
+/// engine canceled or whose piece did not arrive is reset with `CANCEL`;
+/// other failures keep hyper's `INTERNAL_ERROR`. Over HTTP/1.1 the
+/// connection closes either way.
+#[derive(Debug)]
+struct StreamEnded {
+    error: std::io::Error,
+    reason: Option<h2::Error>,
+}
+
+impl From<std::io::Error> for StreamEnded {
+    fn from(error: std::io::Error) -> Self {
+        let canceled = matches!(
+            error.kind(),
+            std::io::ErrorKind::ConnectionAborted | std::io::ErrorKind::TimedOut
+        );
+        Self {
+            reason: canceled.then(|| h2::Reason::CANCEL.into()),
+            error,
+        }
+    }
+}
+
+impl std::fmt::Display for StreamEnded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the content stream ended early: {}", self.error)
+    }
+}
+
+impl std::error::Error for StreamEnded {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match &self.reason {
+            Some(reason) => Some(reason),
+            None => Some(&self.error),
+        }
+    }
 }

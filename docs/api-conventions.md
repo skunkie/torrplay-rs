@@ -202,7 +202,10 @@ File content is served by the `content` subresource of a file.
   representation with `200 OK`, as RFC 9110 permits.
 - Once headers are sent, a failure ends the stream as described in the
   [implementation plan](implementation-plan.md); it never becomes a second
-  response.
+  response. Over HTTP/1.1 the connection closes. Over HTTP/2 only that
+  stream is reset: with `CANCEL` when the stream was canceled, by pausing,
+  failure, deletion, or shutdown, or when its piece wait bound expired, and
+  with `INTERNAL_ERROR` otherwise.
 
 ## Errors
 
