@@ -1,0 +1,2 @@
+{"t_ms": 0, "event": "configure", "cache_capacity_bytes": 67108864}
+{"t_ms": 0, "reader": "r1", "fixture": "bench-video", "file": "bench-video.mkv", "event": "request", "range_start": 0, "range_end": null, "consume_bytes": 2147483648, "consume_rate_bytes_per_second": 8000000}

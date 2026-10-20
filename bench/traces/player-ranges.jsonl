@@ -1,0 +1,7 @@
+{"t_ms": 0, "reader": "r1", "fixture": "bench-video", "file": "bench-video.mkv", "event": "request", "range_start": 0, "range_end": null, "consume_bytes": 65536, "consume_rate_bytes_per_second": null}
+{"t_ms": 100, "reader": "r1", "fixture": "bench-video", "file": "bench-video.mkv", "event": "request", "range_start": 2147418112, "range_end": null, "consume_bytes": 65536, "consume_rate_bytes_per_second": null}
+{"t_ms": 200, "reader": "r1", "fixture": "bench-video", "file": "bench-video.mkv", "event": "head"}
+{"t_ms": 300, "reader": "r1", "fixture": "bench-video", "file": "bench-video.mkv", "event": "request", "range_start": 0, "range_end": null, "consume_bytes": 8000000, "consume_rate_bytes_per_second": 1000000}
+{"t_ms": 8300, "reader": "r1", "fixture": "bench-video", "file": "bench-video.mkv", "event": "request", "range_start": 8000000, "range_end": null, "consume_bytes": 8000000, "consume_rate_bytes_per_second": 1000000}
+{"t_ms": 16300, "reader": "r1", "fixture": "bench-video", "file": "bench-video.mkv", "event": "request", "range_start": 16000000, "range_end": null, "consume_bytes": 8000000, "consume_rate_bytes_per_second": 1000000}
+{"t_ms": 24300, "reader": "r1", "fixture": "bench-video", "file": "bench-video.mkv", "event": "request", "range_start": 24000000, "range_end": null, "consume_bytes": 8000000, "consume_rate_bytes_per_second": 1000000}

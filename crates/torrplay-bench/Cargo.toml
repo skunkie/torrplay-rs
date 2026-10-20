@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "torrplay-bench"
+version = "0.1.0"
+description = "The milestone 5 benchmark harness: fixtures, local seeders and tracker, and the access trace runner."
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+librqbit.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["process", "signal"] }
+torrplay-fixtures.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+futures-util.workspace = true
+tempfile.workspace = true
+torrplay = { path = "../torrplay" }
+torrplay-engine.workspace = true

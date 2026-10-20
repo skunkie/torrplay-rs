@@ -1,0 +1,2 @@
+{"t_ms": 0, "reader": "r1", "fixture": "bench-video", "file": "bench-video.mkv", "event": "request", "range_start": 0, "range_end": null, "consume_bytes": 20000000, "consume_rate_bytes_per_second": 1000000}
+{"t_ms": 80000, "reader": "r1", "fixture": "bench-video", "file": "bench-video.mkv", "event": "request", "range_start": 20000000, "range_end": null, "consume_bytes": 20000000, "consume_rate_bytes_per_second": 1000000}

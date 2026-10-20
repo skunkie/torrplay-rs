@@ -225,22 +225,29 @@ A trace is a JSON Lines file. Each line is one event, ordered by time:
   player, and `fixture` and `file` name the content.
 - A `request` event sends a GET with the given range, `range_end` `null`
   meaning open-ended, reads `consume_bytes` at
-  `consume_rate_bytes_per_second`, then closes the response. A `null` rate
-  reads as fast as the response arrives.
+  `consume_rate_bytes_per_second`, then closes the response. Like a real
+  player, it buffers the first 2 MiB as fast as they arrive and paces only
+  the rest, playing what it read before closing. A `null` rate reads as fast
+  as the response arrives.
 - A `head` event sends a HEAD request.
+- A reader's events run in order: each starts at its `t_ms` or once the
+  reader's previous event has ended, whichever is later, so a request that
+  follows another is a seek.
+- A `configure` event, before every other event, sets the trace's cache
+  capacity with `cache_capacity_bytes`; without one a trace uses the default.
 - Each fixture a trace names becomes a torrent when the trace starts. The
   first event naming a fixture may carry `"source": "magnet"` to create it
   from a magnet URI; otherwise, or with `"source": "upload"`, it is created
   from the torrent file.
 
-The trace set:
+The trace set, in `bench/traces`:
 
 | Trace | Description |
 |---|---|
 | `cold-start` | One reader plays `bench-video` from the start for 120 seconds at 1 MB/s after creation by magnet. |
 | `far-seeks` | One reader plays `bench-video` for 10 seconds, then seeks to 75, 25, 90, and 10 percent of the file, playing 10 seconds after each. |
 | `concurrent` | Three readers on different `bench-episodes` files and one on `bench-video`, overlapping for 60 seconds. |
-| `sustained-eviction` | One reader plays all of `bench-video` with a 64 MiB cache capacity. |
+| `sustained-eviction` | One reader plays all of `bench-video` at 8 MB/s, so a run takes under five minutes, with a 64 MiB cache capacity. |
 | `idle-resume` | One reader plays `bench-video` for 20 seconds, idles 60 seconds, then resumes at the same position. |
 | `player-ranges` | A browser-like pattern on `bench-video`: short ranges, a request for the file's end, and frequent reconnects. |
 | `max-throughput` | With a 1 GiB cache capacity, one reader reads one `bench-episodes` file with no consumption limit, once cold and once again when every piece is cached. |

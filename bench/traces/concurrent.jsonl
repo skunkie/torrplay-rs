@@ -1,0 +1,4 @@
+{"t_ms": 0, "reader": "r1", "fixture": "bench-episodes", "file": "episode-1.mkv", "event": "request", "range_start": 0, "range_end": null, "consume_bytes": 60000000, "consume_rate_bytes_per_second": 1000000}
+{"t_ms": 5000, "reader": "r2", "fixture": "bench-episodes", "file": "episode-2.mkv", "event": "request", "range_start": 0, "range_end": null, "consume_bytes": 60000000, "consume_rate_bytes_per_second": 1000000}
+{"t_ms": 10000, "reader": "r3", "fixture": "bench-episodes", "file": "episode-3.mkv", "event": "request", "range_start": 0, "range_end": null, "consume_bytes": 60000000, "consume_rate_bytes_per_second": 1000000}
+{"t_ms": 15000, "reader": "r4", "fixture": "bench-video", "file": "bench-video.mkv", "event": "request", "range_start": 0, "range_end": null, "consume_bytes": 60000000, "consume_rate_bytes_per_second": 1000000}

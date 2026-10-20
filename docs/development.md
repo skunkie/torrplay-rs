@@ -117,6 +117,41 @@ while reads continue, streams in progress get a 10-second drain period and
 are then canceled with the idle readers, the listener closes, and the engine
 stops. The process exits with an error if that takes longer than 30 seconds.
 
+## Benchmarks
+
+`crates/torrplay-bench` is the milestone 5 harness for the benchmark
+protocol in `docs/acceptance.md`, and `bench/traces` holds its access traces.
+Peers reach the seeders only through a local tracker named in the
+benchmark's torrent files and magnet URIs, so both implementations find them
+the same way. On one machine, without network shaping:
+
+```bash
+cargo build --release -p torrplay -p torrplay-bench
+```
+
+```bash
+target/release/torrplay-bench fixtures --dir target/bench --tracker http://127.0.0.1:6969/announce
+```
+
+```bash
+target/release/torrplay-bench seed --dir target/bench --listen 127.0.0.1:7001
+```
+
+```bash
+target/release/torrplay-bench tracker --listen 127.0.0.1:6969 --peer 127.0.0.1:7001
+```
+
+```bash
+target/release/torrplay-bench run --trace bench/traces/cold-start.jsonl --dir target/bench --torrplay target/release/torrplay --out cold-start-1.json --label commit=$(git rev-parse --short HEAD)
+```
+
+`fixtures` writes about 4 GiB of generated content once; `seed` and
+`tracker` run until interrupted. Each `run` starts a fresh `torrplay` with
+the trace's cache capacity and without DHT, replays the trace once, stops the
+server with SIGTERM, and writes the run's requests, torrents, process and
+cache samples, and summary as JSON. Sampling reads `/proc`, so runs need
+Linux.
+
 ## Rust checks
 
 The root `Cargo.toml` defines the workspace and its shared lint policy;
@@ -125,7 +160,7 @@ Rust 1.99.1 with rustfmt and Clippy, and rustup installs it on first use, so
 local and CI builds use the same version. `clippy.toml` lets tests use
 `unwrap` and `expect`, which the workspace lints flag in production code.
 
-The workspace has seven members:
+The workspace has eight members:
 
 - `crates/torrplay` is the application: the `torrplay` executable, which
   serves `torrplay-server` over `LibrqbitEngine`, and the library that holds
@@ -134,6 +169,8 @@ The workspace has seven members:
   HTTP/1.1 and HTTP/2 against local seeders, from the engine's
   `test-support` feature, and check the milestone's exit criterion.
 - `crates/torrplay-api` holds the generated wire types described above.
+- `crates/torrplay-bench` is the benchmark harness described under
+  [Benchmarks](#benchmarks).
 - `crates/torrplay-contract` is test support that checks HTTP requests and
   responses against `api/openapi.yaml`, as ADR 6 decides, and records which
   documented responses tests produce. Crates use it only as a

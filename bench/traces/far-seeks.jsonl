@@ -1,0 +1,5 @@
+{"t_ms": 0, "reader": "r1", "fixture": "bench-video", "file": "bench-video.mkv", "event": "request", "range_start": 0, "range_end": null, "consume_bytes": 10000000, "consume_rate_bytes_per_second": 1000000}
+{"t_ms": 10000, "reader": "r1", "fixture": "bench-video", "file": "bench-video.mkv", "event": "request", "range_start": 1610612736, "range_end": null, "consume_bytes": 10000000, "consume_rate_bytes_per_second": 1000000}
+{"t_ms": 20000, "reader": "r1", "fixture": "bench-video", "file": "bench-video.mkv", "event": "request", "range_start": 536870912, "range_end": null, "consume_bytes": 10000000, "consume_rate_bytes_per_second": 1000000}
+{"t_ms": 30000, "reader": "r1", "fixture": "bench-video", "file": "bench-video.mkv", "event": "request", "range_start": 1932735283, "range_end": null, "consume_bytes": 10000000, "consume_rate_bytes_per_second": 1000000}
+{"t_ms": 40000, "reader": "r1", "fixture": "bench-video", "file": "bench-video.mkv", "event": "request", "range_start": 214748364, "range_end": null, "consume_bytes": 10000000, "consume_rate_bytes_per_second": 1000000}

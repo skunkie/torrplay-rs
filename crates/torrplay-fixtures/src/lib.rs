@@ -119,6 +119,17 @@ impl FixtureSpec {
 
     /// Builds the bencoded v1 torrent file and its info hash.
     pub fn metainfo(&self) -> Metainfo {
+        self.build_metainfo(None)
+    }
+
+    /// Like [`metainfo`](Self::metainfo), announcing to the tracker at
+    /// `announce`. The announce URL lies outside the info dictionary, so the
+    /// info hash is the same.
+    pub fn metainfo_announcing(&self, announce: &str) -> Metainfo {
+        self.build_metainfo(Some(announce))
+    }
+
+    fn build_metainfo(&self, announce: Option<&str>) -> Metainfo {
         let hashes = self.piece_hashes();
         let mut info = vec![
             ("name", Value::text(&self.torrent_name)),
@@ -153,7 +164,13 @@ impl FixtureSpec {
                 .collect(),
         );
         let info_hash = Sha1::digest(info.encode()).into();
-        let bytes = Value::dictionary([("info", info)]).encode();
+        let bytes = match announce {
+            Some(announce) => {
+                Value::dictionary([("announce", Value::text(announce)), ("info", info)])
+            }
+            None => Value::dictionary([("info", info)]),
+        }
+        .encode();
         Metainfo {
             bytes,
             info_hash,
@@ -199,6 +216,16 @@ impl FixtureSpec {
             "magnet:?xt=urn:btih:{}&dn={}",
             hex(info_hash),
             percent_encode(&self.torrent_name)
+        )
+    }
+
+    /// Like [`magnet_uri`](Self::magnet_uri), naming the tracker at
+    /// `announce`.
+    pub fn magnet_uri_announcing(&self, info_hash: &[u8; 20], announce: &str) -> String {
+        format!(
+            "{}&tr={}",
+            self.magnet_uri(info_hash),
+            percent_encode(announce)
         )
     }
 }
@@ -275,6 +302,26 @@ fn percent_encode(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_announce_url_leaves_the_info_hash_alone() {
+        let spec = catalog::single_small();
+        let plain = spec.metainfo();
+        let announcing = spec.metainfo_announcing("http://127.0.0.1:6969/announce");
+        assert_eq!(announcing.info_hash, plain.info_hash);
+        assert!(
+            announcing
+                .bytes
+                .starts_with(b"d8:announce30:http://127.0.0.1:6969/announce4:info")
+        );
+        assert_eq!(
+            spec.magnet_uri_announcing(&plain.info_hash, "http://t/a"),
+            format!(
+                "magnet:?xt=urn:btih:{}&dn=single-small.bin&tr=http%3A%2F%2Ft%2Fa",
+                hex(&plain.info_hash)
+            )
+        );
+    }
 
     fn read_concatenated(spec: &FixtureSpec, root: &Path) -> Vec<u8> {
         spec.files()

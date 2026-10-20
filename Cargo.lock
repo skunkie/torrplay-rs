@@ -3361,6 +3361,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "torrplay-bench"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "futures-util",
+ "librqbit",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "torrplay",
+ "torrplay-engine",
+ "torrplay-fixtures",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "torrplay-contract"
 version = "0.1.0"
 dependencies = [
