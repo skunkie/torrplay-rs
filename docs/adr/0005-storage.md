@@ -6,11 +6,15 @@ SPDX-License-Identifier: MIT
 
 # 5. Storage
 
-- Status: proposed. The milestone 2 spike confirmed the engine behavior
-  this record depends on, as ADR 2's capability report records. Before
-  implementing it, milestone 4 decided how torrents with pieces longer than
-  the cache are reported and fixed the defaults; milestone 4's tests
-  finalize the record, and milestone 5's benchmarks may tune the defaults.
+- Status: accepted on 2026-10-20. The milestone 2 spike confirmed the
+  engine behavior this record depends on, as ADR 2's capability report
+  records. Milestone 4 decided how torrents with pieces longer than the
+  cache are reported, fixed the defaults, and implemented the record; its
+  end-to-end scenarios and exit-criterion test pass the memory streaming
+  gate. Milestone 5's benchmarks answer the [open questions](#open-questions)
+  and may tune the defaults. One deviation remains, as ADR 2's gaps record:
+  librqbit drops a failed torrent's storage, so its verified pieces leave
+  the cache instead of staying as eviction candidates.
 - Date: 2026-10-19
 
 ## Context
