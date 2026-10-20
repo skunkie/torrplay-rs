@@ -5,11 +5,14 @@
 //! A server on an ephemeral loopback port over the fake engine, and a
 //! client whose every exchange is checked against the contract.
 
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use http::{HeaderMap, Method, Request, Response, StatusCode, header};
 use serde_json::Value;
-use tokio::net::TcpListener;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use torrplay_core::fake::FakeEngine;
@@ -23,6 +26,7 @@ pub struct TestServer {
     pub app: Arc<App<FakeEngine>>,
     /// Every torrent ID the registry drew, in order.
     issued: Arc<Mutex<Vec<TorrentId>>>,
+    addr: SocketAddr,
     base: String,
     client: reqwest::Client,
     shutdown: oneshot::Sender<()>,
@@ -75,6 +79,16 @@ enum RequestCheck {
 impl TestServer {
     /// Starts a server over an engine with the catalog's small fixtures.
     pub async fn start() -> Self {
+        Self::start_with(true).await
+    }
+
+    /// Starts a server that draws torrent IDs from the operating system's
+    /// random number generator, as a production server does.
+    pub async fn start_with_random_ids() -> Self {
+        Self::start_with(false).await
+    }
+
+    async fn start_with(sequential_ids: bool) -> Self {
         let engine = Arc::new(FakeEngine::with_catalog());
         // Sequential IDs, recorded so tests can address the engine's
         // torrents by the IDs the API reports.
@@ -90,11 +104,16 @@ impl TestServer {
                 .push(TorrentId::from_random_bytes(bytes));
             Ok(bytes)
         });
-        let app = Arc::new(App::with_registry(Arc::clone(&engine), registry));
+        let app = if sequential_ids {
+            Arc::new(App::with_registry(Arc::clone(&engine), registry))
+        } else {
+            Arc::new(App::new(Arc::clone(&engine)))
+        };
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("a loopback port");
-        let base = format!("http://{}", listener.local_addr().expect("an address"));
+        let addr = listener.local_addr().expect("an address");
+        let base = format!("http://{addr}");
         let (shutdown, signal) = oneshot::channel();
         let task = tokio::spawn(
             axum::serve(listener, router(Arc::clone(&app)))
@@ -111,6 +130,7 @@ impl TestServer {
             engine,
             app,
             issued,
+            addr,
             base,
             client,
             shutdown,
@@ -126,6 +146,47 @@ impl TestServer {
             .await
             .expect("the server task does not panic")
             .expect("the server stops cleanly");
+    }
+
+    /// Writes `head` and then `body` to a new connection, without ending
+    /// the body, and returns the response's status line. A server that
+    /// waits for the whole body never answers, and the read times out.
+    pub async fn status_line_before_body_ends(&self, head: &str, body: Vec<u8>) -> String {
+        let stream = TcpStream::connect(self.addr).await.expect("a connection");
+        let (mut reader, mut writer) = stream.into_split();
+        let head = head.to_owned();
+        // The server may answer and close before every byte is written,
+        // so a failed write is expected; the response decides the test.
+        let writing = tokio::spawn(async move {
+            writer.write_all(head.as_bytes()).await?;
+            writer.write_all(&body).await?;
+            writer.flush().await?;
+            // Holds the connection open until the test has its response.
+            std::future::pending::<()>().await;
+            Ok::<_, std::io::Error>(())
+        });
+        let mut received = Vec::new();
+        let mut buffer = [0; 1024];
+        let read = tokio::time::timeout(Duration::from_secs(10), async {
+            while !received.windows(2).any(|window| window == b"\r\n") {
+                let count = reader.read(&mut buffer).await.expect("the response");
+                assert_ne!(count, 0, "the server closed without answering");
+                received.extend_from_slice(&buffer[..count]);
+            }
+        })
+        .await;
+        assert!(read.is_ok(), "no response before the body ended");
+        // The writer may still be blocked on a body the server stopped
+        // reading; it is stopped, and only a panic in it fails the test.
+        writing.abort();
+        if let Err(error) = writing.await {
+            assert!(!error.is_panic(), "the writer panicked");
+        }
+        let line_end = received
+            .windows(2)
+            .position(|window| window == b"\r\n")
+            .expect("a status line");
+        String::from_utf8_lossy(&received[..line_end]).into_owned()
     }
 
     /// Sends a request and checks it and its response against the contract.
