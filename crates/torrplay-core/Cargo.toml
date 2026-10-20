@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "torrplay-core"
+version = "0.1.0"
+description = "The engine-independent TorrPlay domain: identifiers, registry, lifecycle, pagination, and the engine facade."
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# A scripted engine over the torrplay-fixtures catalog, for tests that run
+# without a torrent engine.
+fake = ["dep:torrplay-fixtures"]
+
+[dependencies]
+getrandom.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+torrplay-fixtures = { workspace = true, optional = true }
+
+[dev-dependencies]
+torrplay-fixtures.workspace = true
