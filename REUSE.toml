@@ -16,3 +16,9 @@ SPDX-License-Identifier = "MIT"
 path = "crates/torrplay-api/src/generated/**"
 SPDX-FileCopyrightText = "2026 TorrPlay"
 SPDX-License-Identifier = "MIT"
+
+# JSON Lines has no comment syntax for a header.
+[[annotations]]
+path = "bench/traces/*.jsonl"
+SPDX-FileCopyrightText = "2026 TorrPlay"
+SPDX-License-Identifier = "MIT"

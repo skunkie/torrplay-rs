@@ -53,6 +53,7 @@ Options:
   --peer-port <PORT>         The BitTorrent peer port on every interface [default: 4240]
   --cache-capacity <BYTES>   The piece cache capacity [default: 268435456]
   --log-level <LEVEL>        error, warn, info, debug, or trace [default: info]
+  --no-dht                   Find peers through trackers only, as benchmarks do
   -h, --help                 Print this help
   -V, --version              Print the version
 ";
@@ -69,6 +70,8 @@ pub struct Config {
     /// The most verbose level TorrPlay's own logs record; other crates log
     /// warnings and errors only.
     pub log_level: Level,
+    /// Whether DHT finds peers.
+    pub dht: bool,
 }
 
 impl Default for Config {
@@ -78,6 +81,7 @@ impl Default for Config {
             peer_port: DEFAULT_PEER_PORT,
             cache_capacity_bytes: DEFAULT_CACHE_CAPACITY_BYTES,
             log_level: Level::INFO,
+            dht: true,
         }
     }
 }
@@ -88,6 +92,7 @@ impl Config {
     pub fn engine_config(&self, folder: &Path) -> EngineConfig {
         let mut network = NetworkConfig::public();
         network.listen.set_port(self.peer_port);
+        network.dht = self.dht;
         EngineConfig::new(folder.to_path_buf(), network)
             .with_cache_capacity(self.cache_capacity_bytes)
     }
@@ -150,6 +155,7 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, Arg
         match option.as_str() {
             "-h" | "--help" => return Ok(Command::Help),
             "-V" | "--version" => return Ok(Command::Version),
+            "--no-dht" if inline.is_none() => config.dht = false,
             "--listen" => {
                 let value = value()?;
                 let listen: SocketAddr = value
@@ -356,6 +362,7 @@ mod tests {
             "--cache-capacity",
             "1048576",
             "--log-level=debug",
+            "--no-dht",
         ]) else {
             panic!("the options parse");
         };
@@ -366,6 +373,7 @@ mod tests {
                 peer_port: 6881,
                 cache_capacity_bytes: 1_048_576,
                 log_level: Level::DEBUG,
+                dht: false,
             }
         );
         assert_eq!(parse(&["--version"]), Ok(Command::Version));
@@ -422,5 +430,6 @@ mod tests {
         assert!(engine.network.listen.ip().is_unspecified());
         assert_eq!(engine.cache_capacity_bytes, 1024);
         assert_eq!(engine.readahead_bytes, 512);
+        assert!(engine.network.dht);
     }
 }
