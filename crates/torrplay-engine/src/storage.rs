@@ -16,15 +16,22 @@
 //! the torrent's state lock; the piece leaves the cache there, so a reader
 //! that finds it gone also finds it marked missing. A write to a piece
 //! nobody reserved evicts from the write path.
+//!
+//! A failed write fails the torrent in librqbit. The storage records the
+//! failure and reports the torrent's key to the factory's failure channel,
+//! so the engine can cancel the torrent's streams at once rather than when
+//! it next looks at the torrent.
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use anyhow::Context;
 use librqbit::storage::{BoxStorageFactory, StorageFactory, StorageFactoryExt, TorrentStorage};
 use librqbit::{ManagedTorrent, ManagedTorrentShared, TorrentMetadata};
 use librqbit_core::lengths::{Lengths, ValidPieceIndex};
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::cache::{CacheError, EngineTorrent, PieceCache, Reservation, TorrentKey};
 
@@ -36,7 +43,26 @@ const EVICTION_ROUNDS: usize = 4;
 pub struct MemoryStorageFactory {
     cache: Arc<PieceCache>,
     // Torrents created but not attached yet, by librqbit torrent ID.
-    unattached: Arc<Mutex<HashMap<usize, (TorrentKey, Layout)>>>,
+    unattached: Arc<Mutex<HashMap<usize, Unattached>>>,
+    // Where torrents whose storage failed a write are reported.
+    failures: Option<UnboundedSender<TorrentKey>>,
+}
+
+/// A torrent's storage that is not attached yet.
+struct Unattached {
+    key: TorrentKey,
+    layout: Layout,
+    health: Arc<Health>,
+}
+
+/// Whether a torrent's storage failed, shared by its storage and its
+/// [`CachedTorrent`].
+#[derive(Default)]
+struct Health {
+    failed: AtomicBool,
+    // Makes every later write fail, for tests of storage failure.
+    #[cfg(feature = "faults")]
+    fail_writes: AtomicBool,
 }
 
 /// Where a torrent's pieces and files lie.
@@ -53,7 +79,15 @@ impl MemoryStorageFactory {
         Self {
             cache,
             unattached: Arc::default(),
+            failures: None,
         }
+    }
+
+    /// Reports the key of each torrent whose storage fails a write to
+    /// `failures`, once per torrent.
+    pub fn with_failure_reports(mut self, failures: UnboundedSender<TorrentKey>) -> Self {
+        self.failures = Some(failures);
+        self
     }
 
     /// Returns the factory in the boxed form librqbit's options take.
@@ -64,7 +98,11 @@ impl MemoryStorageFactory {
     /// Lets the cache evict the pieces of `torrent`, which was added with
     /// this factory, by invalidating their completion in the engine.
     pub fn attach(&self, torrent: &Arc<ManagedTorrent>) -> anyhow::Result<CachedTorrent> {
-        let (key, layout) = self
+        let Unattached {
+            key,
+            layout,
+            health,
+        } = self
             .unattached
             .lock()
             .map_err(|_| anyhow::anyhow!("the factory was poisoned"))?
@@ -80,6 +118,7 @@ impl MemoryStorageFactory {
             key,
             layout,
             engine,
+            health,
         })
     }
 }
@@ -90,6 +129,7 @@ pub struct CachedTorrent {
     pub(crate) key: TorrentKey,
     pub(crate) layout: Layout,
     engine: Arc<EngineHandle>,
+    health: Arc<Health>,
 }
 
 impl CachedTorrent {
@@ -112,6 +152,18 @@ impl CachedTorrent {
     /// returns how many the engine marked missing.
     pub fn evict(&self, pieces: &[u32]) -> anyhow::Result<usize> {
         self.engine.invalidate(pieces)
+    }
+
+    /// Whether the torrent's storage failed a write, which fails the torrent.
+    pub fn has_failed(&self) -> bool {
+        self.health.failed.load(Ordering::Acquire)
+    }
+
+    /// Makes every later write of the torrent fail, as a storage failure
+    /// would.
+    #[cfg(feature = "faults")]
+    pub fn fail_writes(&self) {
+        self.health.fail_writes.store(true, Ordering::Release);
     }
 
     /// Whether a piece of the torrent has a buffer in the cache.
@@ -152,14 +204,15 @@ impl StorageFactory for MemoryStorageFactory {
         metadata: &TorrentMetadata,
     ) -> anyhow::Result<MemoryStorage> {
         let key = self.cache.register_torrent()?;
+        let health = Arc::new(Health::default());
         self.unattached
             .lock()
             .map_err(|_| anyhow::anyhow!("the factory was poisoned"))?
             .insert(
                 shared.id,
-                (
+                Unattached {
                     key,
-                    Layout {
+                    layout: Layout {
                         lengths: *metadata.lengths(),
                         files: metadata
                             .file_infos
@@ -167,7 +220,8 @@ impl StorageFactory for MemoryStorageFactory {
                             .map(|file| (file.offset_in_torrent, file.len))
                             .collect(),
                     },
-                ),
+                    health: health.clone(),
+                },
             );
         let pieces = TorrentPieces {
             cache: self.cache.clone(),
@@ -178,6 +232,8 @@ impl StorageFactory for MemoryStorageFactory {
                 .iter()
                 .map(|file| file.offset_in_torrent)
                 .collect(),
+            health,
+            failures: self.failures.clone(),
         };
         Ok(MemoryStorage {
             pieces: Mutex::new(Some(Arc::new(pieces))),
@@ -196,6 +252,8 @@ struct TorrentPieces {
     key: TorrentKey,
     lengths: Lengths,
     file_offsets: Vec<u64>,
+    health: Arc<Health>,
+    failures: Option<UnboundedSender<TorrentKey>>,
 }
 
 impl TorrentPieces {
@@ -237,6 +295,16 @@ impl TorrentPieces {
 }
 
 impl TorrentPieces {
+    /// Records a failed write, reporting the torrent the first time.
+    fn failed(&self) {
+        if !self.health.failed.swap(true, Ordering::AcqRel)
+            && let Some(failures) = &self.failures
+        {
+            // A closed channel means the engine is stopping.
+            let _ = failures.send(self.key);
+        }
+    }
+
     fn write(
         &self,
         piece: u32,
@@ -244,6 +312,10 @@ impl TorrentPieces {
         offset: usize,
         data: &[u8],
     ) -> anyhow::Result<()> {
+        #[cfg(feature = "faults")]
+        if self.health.fail_writes.load(Ordering::Acquire) {
+            anyhow::bail!("an injected storage failure");
+        }
         for _ in 0..EVICTION_ROUNDS {
             match self
                 .cache
@@ -316,12 +388,16 @@ impl TorrentStorage for MemoryStorage {
 
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
         let pieces = self.pieces()?;
-        pieces.for_each_piece(
+        let result = pieces.for_each_piece(
             file_id,
             offset,
             buf.len(),
             |piece, length, in_piece, range| pieces.write(piece, length, in_piece, &buf[range]),
-        )
+        );
+        if result.is_err() {
+            pieces.failed();
+        }
+        result
     }
 
     fn remove_file(&self, _file_id: usize, _filename: &Path) -> anyhow::Result<()> {

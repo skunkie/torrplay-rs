@@ -63,10 +63,9 @@ async fn a_scheduled_torrent_downloads_only_what_its_reader_needs() -> anyhow::R
         .add_scheduled(&leecher, &[seeder.addr], &spec, capacity / 2)
         .await?;
 
-    let mut reader = bounded(
-        "opening a reader",
-        torrent.scheduler.open(&torrent.handle, 0),
-    )
+    let mut reader = bounded("opening a reader", async {
+        Ok(torrent.scheduler.open(&torrent.handle, 0).await?)
+    })
     .await?;
     let mut bytes = Vec::new();
     bounded("reading the file", async {
@@ -110,7 +109,10 @@ async fn file_boundary_pieces_stay_resident_while_read() -> anyhow::Result<()> {
     // part-4.bin starts in piece 3 and ends in piece 6; stop the reader in
     // piece 5, past piece 4.
     let file = 3;
-    let mut reader = bounded("opening a reader", held.scheduler.open(&held.handle, file)).await?;
+    let mut reader = bounded("opening a reader", async {
+        Ok(held.scheduler.open(&held.handle, file).await?)
+    })
+    .await?;
     let bytes = read_at(&mut reader, 0, 500_000).await?;
     check(&multi, file, 0, &bytes);
     bounded("the last piece arriving", async {
@@ -121,10 +123,9 @@ async fn file_boundary_pieces_stay_resident_while_read() -> anyhow::Result<()> {
     })
     .await?;
 
-    let mut other_reader = bounded(
-        "opening another reader",
-        pressing.scheduler.open(&pressing.handle, 0),
-    )
+    let mut other_reader = bounded("opening another reader", async {
+        Ok(pressing.scheduler.open(&pressing.handle, 0).await?)
+    })
     .await?;
     for _ in 0..3 {
         let bytes = read_at(&mut other_reader, 0, other.total_size_bytes()).await?;
@@ -174,7 +175,10 @@ async fn readers_whose_windows_exceed_capacity_all_progress() -> anyhow::Result<
             let handle = torrent.handle.clone();
             let spec = spec.clone();
             tokio::spawn(async move {
-                let mut reader = bounded("opening a reader", scheduler.open(&handle, 0)).await?;
+                let mut reader = bounded("opening a reader", async {
+                    Ok(scheduler.open(&handle, 0).await?)
+                })
+                .await?;
                 let offset = index * 2 * MIB + 1000;
                 let bytes = read_at(&mut reader, offset, 2 * MIB).await?;
                 anyhow::ensure!(
@@ -209,10 +213,9 @@ async fn a_piece_longer_than_the_capacity_is_never_requested() -> anyhow::Result
         .add_scheduled(&leecher, &[seeder.addr], &spec, 4 * MIB)
         .await?;
 
-    let mut reader = bounded(
-        "opening a reader",
-        torrent.scheduler.open(&torrent.handle, 0),
-    )
+    let mut reader = bounded("opening a reader", async {
+        Ok(torrent.scheduler.open(&torrent.handle, 0).await?)
+    })
     .await?;
     let mut byte = [0];
     let read = tokio::time::timeout(Duration::from_secs(3), reader.read_exact(&mut byte)).await;
@@ -258,10 +261,9 @@ async fn records_seek_latency_by_request_window() -> anyhow::Result<()> {
                 options.ratelimits.download_bps = NonZeroU32::new(16 * MIB as u32);
             })
             .await?;
-        let mut reader = bounded(
-            "opening a reader",
-            torrent.scheduler.open(&torrent.handle, 0),
-        )
+        let mut reader = bounded("opening a reader", async {
+            Ok(torrent.scheduler.open(&torrent.handle, 0).await?)
+        })
         .await?;
         let mut latencies = Vec::new();
         for seek in 0..4u64 {

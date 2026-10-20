@@ -182,8 +182,10 @@ no evictable piece, the cache reduces other pins in this order:
 
 1. Release the oldest idle readers, with their pins, as the idle reader
    limits already do. This is a third release condition beside the idle
-   timeout and the idle reader limits; the lifecycle document must add it
-   before milestone 4 implements the fallback.
+   timeout and the idle reader limits, as the lifecycle states. The evictor
+   releases one idle reader at a time whenever a waiting reservation finds
+   no evictable piece, including when the reservation is for the idle
+   reader's own readahead.
 2. Once preloads exist, shrink each preload's pinned range to its first
    piece. The preload contract in milestone 6 may refine this.
 

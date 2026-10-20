@@ -360,10 +360,9 @@ async fn opening_and_deleting_torrents_in_a_loop_leaves_nothing_behind() -> anyh
             .add_scheduled(&leecher, &[seeder.addr], &spec, 256 * KIB)
             .await?;
         let offset = (round * 37 * KIB) % (spec.total_size_bytes() - 64 * KIB);
-        let mut reader = bounded(
-            "opening a reader",
-            torrent.scheduler.open(&torrent.handle, 0),
-        )
+        let mut reader = bounded("opening a reader", async {
+            Ok(torrent.scheduler.open(&torrent.handle, 0).await?)
+        })
         .await?;
         let mut bytes = vec![0; 64 * KIB as usize];
         bounded("reading a range", async {

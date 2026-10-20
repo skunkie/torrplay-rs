@@ -12,6 +12,9 @@
 
 // Each test crate uses a different subset of the helpers.
 #![allow(dead_code)]
+// Helpers assert as tests do; clippy's test exemption covers only test
+// functions.
+#![allow(clippy::expect_used)]
 
 use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -25,11 +28,17 @@ use librqbit::{
     SessionOptions,
 };
 use tempfile::TempDir;
+use tokio::io::AsyncReadExt;
+use torrplay_core::engine::{ByteRange, Engine, Source};
+use torrplay_core::id::TorrentId;
+use torrplay_core::metadata::FileIndex;
 use torrplay_engine::cache::PieceCache;
 use torrplay_engine::evictor::Evictor;
+use torrplay_engine::playback::{Playback, PlaybackConfig};
 use torrplay_engine::scheduler::TorrentScheduler;
 use torrplay_engine::storage::{CachedTorrent, MemoryStorageFactory};
-use torrplay_fixtures::{FixtureSpec, Layout};
+use torrplay_engine::{EngineConfig, LibrqbitEngine, NetworkConfig};
+use torrplay_fixtures::{FixtureSpec, Layout, generator};
 
 /// The longest any single step of a test may take.
 pub const STEP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -236,9 +245,9 @@ pub struct ScheduledTorrent {
 
 impl MemoryCache {
     /// Adds `spec` to `leecher` with `peers` as its only peers, as the
-    /// adapter will: without upload and with a scheduler sharing
-    /// `readahead_bytes`, paused until it is attached to the cache and its
-    /// initial check has ended, and then started.
+    /// adapter does: without upload and with a scheduler that shares
+    /// `readahead_bytes` with no other torrent, paused until it is attached
+    /// to the cache and its initial check has ended, and then started.
     pub async fn add_scheduled(
         &self,
         leecher: &Leecher,
@@ -260,7 +269,22 @@ impl MemoryCache {
         readahead_bytes: u64,
         tune: impl FnOnce(&mut AddTorrentOptions),
     ) -> anyhow::Result<ScheduledTorrent> {
-        let scheduler = TorrentScheduler::new(readahead_bytes);
+        let playback = Playback::new(PlaybackConfig::new(readahead_bytes));
+        self.add_scheduled_in(leecher, peers, spec, &playback, tune)
+            .await
+    }
+
+    /// Like [`add_scheduled_with`](Self::add_scheduled_with), with readers
+    /// sharing `playback`'s readahead budget with other torrents.
+    pub async fn add_scheduled_in(
+        &self,
+        leecher: &Leecher,
+        peers: &[SocketAddr],
+        spec: &FixtureSpec,
+        playback: &Arc<Playback>,
+        tune: impl FnOnce(&mut AddTorrentOptions),
+    ) -> anyhow::Result<ScheduledTorrent> {
+        let scheduler = TorrentScheduler::new(playback);
         let mut options = AddTorrentOptions {
             storage_factory: Some(self.factory.clone().into_boxed()),
             piece_selector: Some(scheduler.clone()),
@@ -287,5 +311,102 @@ impl MemoryCache {
             cached,
             scheduler,
         })
+    }
+}
+
+pub const KIB: u64 = 1024;
+pub const MIB: u64 = 1024 * KIB;
+
+/// A started engine with its session folder.
+pub struct Started {
+    pub engine: Arc<LibrqbitEngine>,
+    _folder: TempDir,
+}
+
+/// Starts an engine reaching only `peers`, with `capacity` of cache and
+/// `piece_wait` as its piece wait bound.
+pub async fn start(
+    peers: Vec<SocketAddr>,
+    capacity: u64,
+    piece_wait: Duration,
+) -> anyhow::Result<Started> {
+    start_with(peers, |config| {
+        *config = config.clone().with_cache_capacity(capacity);
+        config.piece_wait = piece_wait;
+    })
+    .await
+}
+
+/// Starts an engine reaching only `peers`, with the defaults `tune`
+/// adjusts.
+pub async fn start_with(
+    peers: Vec<SocketAddr>,
+    tune: impl FnOnce(&mut EngineConfig),
+) -> anyhow::Result<Started> {
+    let folder = tempfile::tempdir()?;
+    let mut config = EngineConfig::new(folder.path().to_path_buf(), NetworkConfig::isolated(peers));
+    tune(&mut config);
+    let engine = LibrqbitEngine::new(config);
+    bounded("starting the engine", engine.start()).await?;
+    Ok(Started {
+        engine,
+        _folder: folder,
+    })
+}
+
+pub fn id(n: u8) -> TorrentId {
+    TorrentId::from_random_bytes([n; 16])
+}
+
+pub fn upload(spec: &FixtureSpec) -> Source {
+    Source::TorrentFile(spec.metainfo().bytes)
+}
+
+pub fn magnet(spec: &FixtureSpec) -> Source {
+    Source::MagnetUri(spec.magnet_uri(&spec.metainfo().info_hash))
+}
+
+pub fn range(start: u64, end: u64) -> ByteRange {
+    ByteRange::new(start, end).expect("a range")
+}
+
+/// Reads bytes `start..end` of `file` through the engine.
+pub async fn read(
+    engine: &LibrqbitEngine,
+    id: &TorrentId,
+    file: usize,
+    start: u64,
+    end: u64,
+) -> anyhow::Result<Vec<u8>> {
+    let mut reader = engine
+        .open_reader(id, FileIndex(file), range(start, end))
+        .await?;
+    let mut bytes = Vec::new();
+    bounded("reading a range", async {
+        Ok(reader.read_to_end(&mut bytes).await?)
+    })
+    .await?;
+    Ok(bytes)
+}
+
+/// The content of bytes `start..end` of `file`.
+pub fn expected(spec: &FixtureSpec, file: usize, start: u64, end: u64) -> Vec<u8> {
+    let mut bytes = vec![0; usize::try_from(end - start).expect("a small range")];
+    generator::fill(spec.file_seed(file), start, &mut bytes);
+    bytes
+}
+
+/// Polls a future that the adapter completes without waiting.
+pub fn futures_now<T>(
+    future: impl std::future::Future<Output = Result<T, torrplay_core::engine::EngineError>>,
+) -> anyhow::Result<T> {
+    let mut future = std::pin::pin!(future);
+    let waker = std::task::Waker::noop();
+    match future
+        .as_mut()
+        .poll(&mut std::task::Context::from_waker(waker))
+    {
+        std::task::Poll::Ready(result) => Ok(result?),
+        std::task::Poll::Pending => anyhow::bail!("the status was not immediate"),
     }
 }

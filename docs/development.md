@@ -119,6 +119,8 @@ The workspace has six members:
   into piece priorities. Its tests run the engine against local seeders on
   isolated loopback sessions, and keep milestone 2's experiments against
   librqbit, one file per experiment, as ADR 2's capability report records.
+  Its `faults` feature lets tests make a torrent's storage fail; the
+  storage failure test needs it, so it runs only with `--all-features`.
 - `crates/torrplay-server` is the HTTP server: an axum router serving every
   operation of `api/openapi.yaml` over the `Engine` trait. Its tests start it
   on a loopback port with `FakeEngine`, check every exchange against the

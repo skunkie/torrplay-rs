@@ -5,90 +5,19 @@
 //! `LibrqbitEngine` through the engine facade, against local seeders on
 //! loopback sessions that reach no public swarm.
 
-// Helpers assert as tests do; clippy's test exemption covers only test
-// functions.
-#![allow(clippy::expect_used)]
-
 mod support;
 
-use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::Duration;
 
-use support::{Seeder, bounded, eventually};
-use tempfile::TempDir;
+use support::{
+    MIB, Seeder, bounded, eventually, expected, futures_now, id, magnet, read, start, upload,
+};
 use tokio::io::AsyncReadExt;
-use torrplay_core::engine::{ByteRange, Engine, EngineError, Source, SourceRejection};
-use torrplay_core::id::TorrentId;
+use torrplay_core::engine::{ByteRange, Engine, EngineError, SourceRejection};
 use torrplay_core::lifecycle::{DesiredState, Readiness};
 use torrplay_core::metadata::FileIndex;
 use torrplay_engine::{EngineConfig, LibrqbitEngine, NetworkConfig};
-use torrplay_fixtures::{FixtureSpec, catalog, generator};
-
-const MIB: u64 = 1024 * 1024;
-
-/// A started engine with its session folder.
-struct Started {
-    engine: Arc<LibrqbitEngine>,
-    _folder: TempDir,
-}
-
-async fn start(
-    peers: Vec<SocketAddr>,
-    capacity: u64,
-    piece_wait: Duration,
-) -> anyhow::Result<Started> {
-    let folder = tempfile::tempdir()?;
-    let mut config = EngineConfig::new(folder.path().to_path_buf(), NetworkConfig::isolated(peers))
-        .with_cache_capacity(capacity);
-    config.piece_wait = piece_wait;
-    let engine = LibrqbitEngine::new(config);
-    bounded("starting the engine", engine.start()).await?;
-    Ok(Started {
-        engine,
-        _folder: folder,
-    })
-}
-
-fn id(n: u8) -> TorrentId {
-    TorrentId::from_random_bytes([n; 16])
-}
-
-fn upload(spec: &FixtureSpec) -> Source {
-    Source::TorrentFile(spec.metainfo().bytes)
-}
-
-fn magnet(spec: &FixtureSpec) -> Source {
-    Source::MagnetUri(spec.magnet_uri(&spec.metainfo().info_hash))
-}
-
-async fn read(
-    engine: &LibrqbitEngine,
-    id: &TorrentId,
-    file: usize,
-    start: u64,
-    end: u64,
-) -> anyhow::Result<Vec<u8>> {
-    let mut reader = engine
-        .open_reader(
-            id,
-            FileIndex(file),
-            ByteRange::new(start, end).expect("a range"),
-        )
-        .await?;
-    let mut bytes = Vec::new();
-    bounded("reading a range", async {
-        Ok(reader.read_to_end(&mut bytes).await?)
-    })
-    .await?;
-    Ok(bytes)
-}
-
-fn expected(spec: &FixtureSpec, file: usize, start: u64, end: u64) -> Vec<u8> {
-    let mut bytes = vec![0; usize::try_from(end - start).expect("a small range")];
-    generator::fill(spec.file_seed(file), start, &mut bytes);
-    bytes
-}
+use torrplay_fixtures::catalog;
 
 /// STR-01 and STR-02 through the facade: every file of `multi-boundary`
 /// whole, and ranges across piece boundaries, byte for byte.
@@ -171,21 +100,6 @@ async fn magnet_metadata_arrives_from_a_seeder() -> anyhow::Result<()> {
     engine.shutdown().await?;
     seeder.stop().await;
     Ok(())
-}
-
-/// Polls a future that the adapter completes without waiting.
-fn futures_now<T>(
-    future: impl std::future::Future<Output = Result<T, EngineError>>,
-) -> anyhow::Result<T> {
-    let mut future = std::pin::pin!(future);
-    let waker = std::task::Waker::noop();
-    match future
-        .as_mut()
-        .poll(&mut std::task::Context::from_waker(waker))
-    {
-        std::task::Poll::Ready(result) => Ok(result?),
-        std::task::Poll::Pending => anyhow::bail!("the status was not immediate"),
-    }
 }
 
 /// LIF-01 and LIF-03 through the facade: without peers, retrieval keeps

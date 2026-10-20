@@ -292,9 +292,13 @@ pub trait Engine: Send + Sync + 'static {
     ) -> impl Future<Output = Result<TorrentStatus, EngineError>> + Send;
 
     /// Opens a reader for `range` of the file at `file` in the engine's file
-    /// list. The reader yields exactly the range's bytes, waiting for each
-    /// missing piece for at most the piece wait bound and then failing with
-    /// an I/O error; dropping it releases its pins and piece priorities.
+    /// list, continuing an idle reader of the file where one exists. The
+    /// reader yields exactly the range's bytes, waiting for each missing
+    /// piece for at most the piece wait bound and then failing with an I/O
+    /// error. Pausing, failure, and removal cancel it, and it fails with an
+    /// I/O error too. Dropping a reader that has not failed keeps it idle for
+    /// the idle timeout, with its pins and piece priorities, so the next
+    /// range of the file can continue it.
     /// Returns [`EngineError::MetadataUnavailable`] without metadata,
     /// [`EngineError::NotStarted`] for a paused or failed torrent,
     /// [`EngineError::UnknownFile`] for an index outside the file list, and

@@ -10,12 +10,15 @@
 //! [`cache::PieceCache`], the [`evictor::Evictor`] that makes room in it, the
 //! memory storage that librqbit uses through it, and the
 //! [`scheduler::TorrentScheduler`] that decides what a torrent downloads
-//! from its readers' positions.
+//! from its readers' positions, and the [`playback::Playback`] that shares
+//! readahead across torrents, keeps idle readers, and signals active
+//! playback.
 
 mod adapter;
 pub mod cache;
 pub mod evictor;
 mod inspect;
+pub mod playback;
 mod reader;
 pub mod scheduler;
 pub mod storage;

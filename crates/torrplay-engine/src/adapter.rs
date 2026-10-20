@@ -20,6 +20,15 @@
 //! longer than the cache capacity fails the torrent instead, as ADR 5
 //! decides.
 //!
+//! Readers share one [`Playback`]: readahead is split across every torrent's
+//! readers, a stream that ends leaves its reader idle for the next stream of
+//! the file, and active playback is published as readers come and go.
+//! Pausing, failing, or deleting a torrent closes its scheduler, which
+//! cancels its streams and releases its readers at once. A storage write
+//! failure reaches the engine through a channel the storage reports to, so
+//! the streams of a failed torrent end without waiting for the piece wait
+//! bound.
+//!
 //! librqbit's error text can quote tracker URLs or internal state, so it is
 //! logged redacted and never becomes a failure detail.
 
@@ -36,6 +45,7 @@ use librqbit::{
     PeerConnectionOptions, Session, SessionOptions, TorrentStatsState,
 };
 use tokio::io::AsyncSeekExt;
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use torrplay_core::engine::{
     ByteRange, CacheStatistics, Engine, EngineError, Inspection, Ratio, Source, SourceRejection,
@@ -47,10 +57,15 @@ use torrplay_core::metadata::{FileIndex, ReportedMetadata};
 use torrplay_core::redact::redact;
 
 use crate::cache::PieceCache;
+use crate::cache::TorrentKey;
 use crate::evictor::Evictor;
 use crate::inspect;
+use crate::playback::{
+    DEFAULT_IDLE_READERS_PER_TORRENT, DEFAULT_IDLE_READERS_TOTAL, DEFAULT_IDLE_TIMEOUT, Playback,
+    PlaybackConfig, Reaper,
+};
 use crate::reader::RangeReader;
-use crate::scheduler::TorrentScheduler;
+use crate::scheduler::{OpenError, TorrentScheduler};
 use crate::storage::{CachedTorrent, MemoryStorageFactory};
 
 const MIB: u64 = 1024 * 1024;
@@ -120,11 +135,17 @@ impl NetworkConfig {
 pub struct EngineConfig {
     /// The global cache capacity.
     pub cache_capacity_bytes: u64,
-    /// The readahead budget shared by every reader of a torrent.
+    /// The readahead budget shared by every reader of every torrent.
     pub readahead_bytes: u64,
     /// How long a read waits for missing piece data, and how long a peer
     /// may hold requests without delivering.
     pub piece_wait: Duration,
+    /// How long a reader stays idle after its stream ends.
+    pub idle_timeout: Duration,
+    /// The most idle readers one torrent keeps.
+    pub idle_readers_per_torrent: usize,
+    /// The most idle readers all torrents keep together.
+    pub idle_readers_total: usize,
     /// The most chunk requests outstanding to one peer.
     pub request_window_blocks: usize,
     /// The session's folder. Memory storage writes nothing there.
@@ -141,6 +162,9 @@ impl EngineConfig {
             cache_capacity_bytes: DEFAULT_CACHE_CAPACITY_BYTES,
             readahead_bytes: DEFAULT_CACHE_CAPACITY_BYTES / 2,
             piece_wait: DEFAULT_PIECE_WAIT,
+            idle_timeout: DEFAULT_IDLE_TIMEOUT,
+            idle_readers_per_torrent: DEFAULT_IDLE_READERS_PER_TORRENT,
+            idle_readers_total: DEFAULT_IDLE_READERS_TOTAL,
             request_window_blocks: DEFAULT_REQUEST_WINDOW_BLOCKS,
             folder,
             network,
@@ -160,7 +184,11 @@ struct Running {
     session: Arc<Session>,
     cache: Arc<PieceCache>,
     factory: MemoryStorageFactory,
+    playback: Arc<Playback>,
     evictor: Mutex<Option<Evictor>>,
+    reaper: Mutex<Option<Reaper>>,
+    // Cancels the streams of torrents whose storage failed.
+    failure_monitor: Mutex<Option<JoinHandle<()>>>,
 }
 
 enum Phase {
@@ -262,9 +290,25 @@ impl LibrqbitEngine {
         };
         let session = Session::new_with_opts(self.config.folder.clone(), options).await?;
         let cache = PieceCache::new(self.config.cache_capacity_bytes);
+        let playback = Playback::new(PlaybackConfig {
+            readahead_bytes: self.config.readahead_bytes,
+            idle_timeout: self.config.idle_timeout,
+            idle_readers_per_torrent: self.config.idle_readers_per_torrent,
+            idle_readers_total: self.config.idle_readers_total,
+        });
+        let (failures, failed) = mpsc::unbounded_channel();
         let running = Arc::new(Running {
-            factory: MemoryStorageFactory::new(cache.clone()),
-            evictor: Mutex::new(Some(Evictor::spawn(cache.clone()))),
+            factory: MemoryStorageFactory::new(cache.clone()).with_failure_reports(failures),
+            evictor: Mutex::new(Some(Evictor::spawn_with_fallback(
+                cache.clone(),
+                playback.clone(),
+            ))),
+            reaper: Mutex::new(Some(playback.spawn_reaper())),
+            failure_monitor: Mutex::new(Some(tokio::spawn(monitor_failures(
+                self.this.clone(),
+                failed,
+            )))),
+            playback,
             cache,
             session,
         });
@@ -272,9 +316,11 @@ impl LibrqbitEngine {
         Ok(())
     }
 
-    /// Stops the engine: it reports itself unavailable, cancels metadata
-    /// retrieval, stops the session, which closes every peer connection, and
-    /// stops the evictor, returning its failure.
+    /// Stops the engine: it reports itself unavailable, cancels the streams
+    /// still running and releases every reader, idle ones included, cancels
+    /// metadata retrieval, stops the session, which closes every peer
+    /// connection, and stops the engine's tasks, returning the first
+    /// failure.
     pub async fn shutdown(&self) -> anyhow::Result<()> {
         let running = match std::mem::replace(&mut *self.lock_phase(), Phase::Stopped) {
             Phase::Ready(running) => running,
@@ -282,21 +328,59 @@ impl LibrqbitEngine {
         };
         let torrents: Vec<_> = self.lock_torrents().values().cloned().collect();
         for torrent in torrents {
-            let retrieval = torrent.state().retrieval.take();
+            let (retrieval, scheduler) = {
+                let mut state = torrent.state();
+                (
+                    state.retrieval.take(),
+                    state.live.as_ref().map(|live| live.scheduler.clone()),
+                )
+            };
+            if let Some(scheduler) = scheduler {
+                scheduler.close()?;
+            }
             if let Some(retrieval) = retrieval {
                 retrieval.abort();
                 let _ = retrieval.await;
             }
         }
-        running.session.stop().await;
-        let evictor = running
-            .evictor
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
-        if let Some(evictor) = evictor {
-            evictor.shutdown().await?;
+        running.playback.release_idle_readers();
+        let monitor = take(&running.failure_monitor);
+        if let Some(monitor) = monitor {
+            monitor.abort();
+            let _ = monitor.await;
         }
+        running.session.stop().await;
+        let reaper = take(&running.reaper).map(Reaper::shutdown);
+        let evictor = take(&running.evictor).map(Evictor::shutdown);
+        if let Some(reaper) = reaper {
+            reaper.await?;
+        }
+        if let Some(evictor) = evictor {
+            evictor.await?;
+        }
+        Ok(())
+    }
+
+    /// The readers across torrents, once started: their counts and the
+    /// active playback signal background work waits on.
+    pub fn playback(&self) -> Option<Arc<Playback>> {
+        match &*self.lock_phase() {
+            Phase::Ready(running) => Some(running.playback.clone()),
+            Phase::Starting | Phase::Stopped => None,
+        }
+    }
+
+    /// Makes every later storage write of a torrent fail, as LIF-06's
+    /// injected storage failure does.
+    #[cfg(feature = "faults")]
+    pub fn fail_storage_writes(&self, id: &TorrentId) -> Result<(), EngineError> {
+        let torrent = self.torrent(id)?;
+        let state = torrent.state();
+        let live = state
+            .live
+            .as_ref()
+            .ok_or(EngineError::MetadataUnavailable)?;
+        live.cached.fail_writes();
         Ok(())
     }
 
@@ -385,7 +469,7 @@ impl LibrqbitEngine {
         add: AddTorrent<'_>,
         desired: DesiredState,
     ) -> anyhow::Result<Live> {
-        let scheduler = TorrentScheduler::new(self.config.readahead_bytes);
+        let scheduler = TorrentScheduler::new(&running.playback);
         let handle = running
             .session
             .add_torrent(add, Some(self.add_options(running, &scheduler)))
@@ -402,7 +486,10 @@ impl LibrqbitEngine {
         };
         match desired {
             DesiredState::Started => running.session.unpause(&live.handle).await?,
-            DesiredState::Paused => live.cached.set_started(false)?,
+            DesiredState::Paused => {
+                live.scheduler.close()?;
+                live.cached.set_started(false)?;
+            }
         }
         Ok(live)
     }
@@ -478,6 +565,7 @@ impl LibrqbitEngine {
     }
 
     async fn delete_live(&self, running: &Running, live: Live) -> anyhow::Result<()> {
+        live.scheduler.close()?;
         let result = running
             .session
             .delete(TorrentIdOrHash::Id(live.handle.id()), false)
@@ -510,9 +598,16 @@ impl LibrqbitEngine {
         }
     }
 
-    /// Reports librqbit's error for a live torrent, logged once.
+    /// Reports a live torrent's storage failure or librqbit's error, which
+    /// is logged once.
     fn engine_failure(state: &mut TorrentState) -> Option<Failure> {
         let live = state.live.as_ref()?;
+        let failure = Failure {
+            detail: ENGINE_FAILURE.to_owned(),
+        };
+        if live.cached.has_failed() {
+            return Some(failure);
+        }
         let stats = live.handle.stats();
         if !matches!(stats.state, TorrentStatsState::Error) {
             return None;
@@ -524,9 +619,24 @@ impl LibrqbitEngine {
                 "the torrent engine stopped a torrent"
             );
         }
-        Some(Failure {
-            detail: ENGINE_FAILURE.to_owned(),
-        })
+        Some(failure)
+    }
+
+    /// Cancels the streams of the torrent whose storage, cache key `key`,
+    /// failed a write.
+    fn storage_failed(&self, key: TorrentKey) {
+        let torrents: Vec<_> = self.lock_torrents().values().cloned().collect();
+        let scheduler = torrents.iter().find_map(|torrent| {
+            let state = torrent.state();
+            let live = state.live.as_ref()?;
+            (live.cached.key == key).then(|| live.scheduler.clone())
+        });
+        if let Some(scheduler) = scheduler {
+            tracing::error!("a torrent's storage failed a write; its streams are canceled");
+            if let Err(error) = scheduler.close() {
+                tracing::error!(error = %redact(&format!("{error:#}")), "canceling the streams failed");
+            }
+        }
     }
 
     /// Restarts a live torrent that librqbit stopped with an error by adding
@@ -703,13 +813,20 @@ impl Engine for LibrqbitEngine {
                 let handle = {
                     let mut state = torrent.state();
                     state.desired = DesiredState::Paused;
+                    // librqbit drops a failed torrent's storage, which
+                    // leaves the cache, so there is nothing to mark paused.
+                    let failed = Self::engine_failure(&mut state).is_some();
                     let paused = state.live.as_ref().map(|live| {
                         let fetched = live
                             .handle
                             .stats()
                             .live
                             .map_or(0, |stats| stats.snapshot.fetched_bytes);
-                        (live.handle.clone(), live.cached.set_started(false), fetched)
+                        let mut closed = live.scheduler.close();
+                        if !failed {
+                            closed = closed.and(live.cached.set_started(false).map_err(Into::into));
+                        }
+                        (live.handle.clone(), closed, fetched)
                     });
                     paused.map(|(handle, started, fetched)| {
                         state.downloaded_before += fetched;
@@ -736,11 +853,13 @@ impl Engine for LibrqbitEngine {
                     self.restart_failed(&running, &torrent).await?;
                     return Ok(());
                 }
-                let live = torrent
-                    .state()
-                    .live
-                    .as_ref()
-                    .map(|live| (live.handle.clone(), live.cached.set_started(true)));
+                let live = torrent.state().live.as_ref().map(|live| {
+                    let reopened = live.scheduler.reopen();
+                    (
+                        live.handle.clone(),
+                        reopened.and(live.cached.set_started(true).map_err(Into::into)),
+                    )
+                });
                 match live {
                     Some((handle, started)) => {
                         started.map_err(internal)?;
@@ -811,7 +930,16 @@ impl Engine for LibrqbitEngine {
             let live = state.live.as_ref().ok_or(EngineError::NotStarted)?;
             (live.handle.clone(), live.scheduler.clone())
         };
-        let mut reader = scheduler.open(&handle, file.0).await.map_err(internal)?;
+        let mut reader = match scheduler.take_idle(file.0, range.start()) {
+            Some(reader) => reader,
+            None => scheduler
+                .open(&handle, file.0)
+                .await
+                .map_err(|error| match error {
+                    OpenError::Closed => EngineError::NotStarted,
+                    OpenError::Engine(error) => internal(error),
+                })?,
+        };
         reader
             .seek(SeekFrom::Start(range.start()))
             .await
@@ -855,5 +983,22 @@ impl Engine for LibrqbitEngine {
             pinned_bytes: stats.pinned_bytes,
             eviction_count: stats.eviction_count,
         })
+    }
+}
+
+fn take<T>(slot: &Mutex<Option<T>>) -> Option<T> {
+    slot.lock().unwrap_or_else(PoisonError::into_inner).take()
+}
+
+/// Cancels the streams of each torrent the storage reports failed.
+async fn monitor_failures(
+    engine: Weak<LibrqbitEngine>,
+    mut failed: mpsc::UnboundedReceiver<TorrentKey>,
+) {
+    while let Some(key) = failed.recv().await {
+        let Some(engine) = engine.upgrade() else {
+            return;
+        };
+        engine.storage_failed(key);
     }
 }
