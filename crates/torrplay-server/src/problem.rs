@@ -30,6 +30,7 @@ pub(crate) enum ProblemType {
     NotFound,
     MethodNotAllowed,
     NotAcceptable,
+    RequestTimeout,
     LifecycleConflict,
     DuplicateTorrent,
     PreconditionFailed,
@@ -50,6 +51,7 @@ impl ProblemType {
             Self::NotFound => "not-found",
             Self::MethodNotAllowed => "method-not-allowed",
             Self::NotAcceptable => "not-acceptable",
+            Self::RequestTimeout => "request-timeout",
             Self::LifecycleConflict => "lifecycle-conflict",
             Self::DuplicateTorrent => "duplicate-torrent",
             Self::PreconditionFailed => "precondition-failed",
@@ -70,6 +72,7 @@ impl ProblemType {
             Self::NotFound => "Not found",
             Self::MethodNotAllowed => "Method not allowed",
             Self::NotAcceptable => "Not acceptable",
+            Self::RequestTimeout => "Request timeout",
             Self::LifecycleConflict => "Lifecycle conflict",
             Self::DuplicateTorrent => "Duplicate torrent",
             Self::PreconditionFailed => "Precondition failed",
@@ -90,6 +93,7 @@ impl ProblemType {
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             Self::NotAcceptable => StatusCode::NOT_ACCEPTABLE,
+            Self::RequestTimeout => StatusCode::REQUEST_TIMEOUT,
             Self::LifecycleConflict | Self::DuplicateTorrent => StatusCode::CONFLICT,
             Self::PreconditionFailed => StatusCode::PRECONDITION_FAILED,
             Self::ContentTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
@@ -362,11 +366,12 @@ impl From<EngineError> for Problem {
 mod tests {
     use super::*;
 
-    const ALL: [ProblemType; 15] = [
+    const ALL: [ProblemType; 16] = [
         ProblemType::MalformedRequest,
         ProblemType::NotFound,
         ProblemType::MethodNotAllowed,
         ProblemType::NotAcceptable,
+        ProblemType::RequestTimeout,
         ProblemType::LifecycleConflict,
         ProblemType::DuplicateTorrent,
         ProblemType::PreconditionFailed,

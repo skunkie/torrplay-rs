@@ -121,8 +121,14 @@ pub(crate) async fn create<E: Engine>(
     let media_type = MediaType::of_request(&headers);
     let (source, desired_state) = match media_type.as_ref().map(|media| media.essence.as_str()) {
         Some(JSON) => {
-            let bytes =
-                read_limited(&headers, body, JSON_LIMIT_BYTES, JSON_LIMIT_BYTES as u64).await?;
+            let bytes = read_limited(
+                &headers,
+                body,
+                JSON_LIMIT_BYTES,
+                JSON_LIMIT_BYTES as u64,
+                app.body_timeout(),
+            )
+            .await?;
             creation_from_json(&bytes)?
         }
         Some(FORM_DATA) => {
@@ -138,6 +144,7 @@ pub(crate) async fn create<E: Engine>(
                 body,
                 FORM_LIMIT_BYTES,
                 TORRENT_FILE_LIMIT_BYTES as u64,
+                app.body_timeout(),
             )
             .await?;
             creation_from_form(&bytes, &boundary)?
@@ -439,7 +446,14 @@ pub(crate) async fn update_configuration<E: Engine>(
             "Send If-Match with the configuration's current ETag.",
         ));
     };
-    let bytes = read_limited(&headers, body, JSON_LIMIT_BYTES, JSON_LIMIT_BYTES as u64).await?;
+    let bytes = read_limited(
+        &headers,
+        body,
+        JSON_LIMIT_BYTES,
+        JSON_LIMIT_BYTES as u64,
+        app.body_timeout(),
+    )
+    .await?;
     let desired_state = desired_state_from_patch(parse_json(&bytes)?)?;
     let stale = || {
         Problem::new(

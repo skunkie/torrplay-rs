@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 use torrplay_core::engine::{CacheStatistics, Engine, EngineError};
 use torrplay_core::id::TorrentId;
@@ -17,10 +18,15 @@ use torrplay_core::registry::{Registry, TorrentRecord};
 
 use crate::problem::Problem;
 
+/// How long a request body may take to arrive by default, as the contract
+/// documents.
+const DEFAULT_BODY_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// The state of a TorrPlay server over the engine `E`.
 pub struct App<E> {
     engine: Arc<E>,
     registry: Registry,
+    body_timeout: Duration,
     observations: Mutex<Observations>,
     shutting_down: AtomicBool,
 }
@@ -72,9 +78,21 @@ impl<E: Engine> App<E> {
         Self {
             engine,
             registry,
+            body_timeout: DEFAULT_BODY_TIMEOUT,
             observations: Mutex::new(Observations::default()),
             shutting_down: AtomicBool::new(false),
         }
+    }
+
+    /// Sets how long a request body may take to arrive, 30 seconds by
+    /// default. Streamed responses have no such deadline.
+    pub fn with_body_timeout(mut self, timeout: Duration) -> Self {
+        self.body_timeout = timeout;
+        self
+    }
+
+    pub(crate) fn body_timeout(&self) -> Duration {
+        self.body_timeout
     }
 
     /// Starts shutting down: `/readyz` answers `503`, and requests that

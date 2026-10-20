@@ -1173,37 +1173,100 @@ mod scenario {
             chunk.extend_from_slice(b"\r\n");
             chunk
         };
-        let head = |media_type: &str, framing: &str| {
-            format!(
-                "POST /api/v1/torrents HTTP/1.1\r\nHost: test\r\n\
-Content-Type: {media_type}\r\n{framing}\r\n"
-            )
-        };
+        let chunked = ("Transfer-Encoding", "chunked");
+        let torrents = "/api/v1/torrents";
         // Chunked bodies that cross their limit and never end.
-        let json_head = head("application/json", "Transfer-Encoding: chunked\r\n");
-        let status = server
-            .status_line_before_body_ends(&json_head, chunk(vec![b' '; 20 * 1024]))
+        let json = server
+            .send_before_body_ends(
+                Method::POST,
+                torrents,
+                &[("Content-Type", "application/json"), chunked],
+                chunk(vec![b' '; 20 * 1024]),
+            )
             .await;
-        assert_eq!(status, "HTTP/1.1 413 Payload Too Large");
-        let form_head = head(
-            &format!("multipart/form-data; boundary={BOUNDARY}"),
-            "Transfer-Encoding: chunked\r\n",
-        );
+        assert_problem(&json, StatusCode::PAYLOAD_TOO_LARGE, "content-too-large");
+        let form_type = format!("multipart/form-data; boundary={BOUNDARY}");
         let mut form = format!(
             "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"torrent_file\"\r\n\r\n"
         )
         .into_bytes();
         form.resize(form.len() + 11 * 1024 * 1024, b'd');
-        let status = server
-            .status_line_before_body_ends(&form_head, chunk(form))
+        let upload = server
+            .send_before_body_ends(
+                Method::POST,
+                torrents,
+                &[("Content-Type", &form_type), chunked],
+                chunk(form),
+            )
             .await;
-        assert_eq!(status, "HTTP/1.1 413 Payload Too Large");
+        assert_problem(&upload, StatusCode::PAYLOAD_TOO_LARGE, "content-too-large");
         // A declared length over the limit is refused before any body.
-        let declared = head("application/json", "Content-Length: 20000\r\n");
-        let status = server
-            .status_line_before_body_ends(&declared, Vec::new())
+        let declared = server
+            .send_before_body_ends(
+                Method::POST,
+                torrents,
+                &[
+                    ("Content-Type", "application/json"),
+                    ("Content-Length", "20000"),
+                ],
+                Vec::new(),
+            )
             .await;
-        assert_eq!(status, "HTTP/1.1 413 Payload Too Large");
+        assert_problem(
+            &declared,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "content-too-large",
+        );
+        server.stop().await;
+    }
+
+    /// A body that stops arriving is `request-timeout`, and the server
+    /// closes the connection.
+    pub async fn slow_bodies_time_out() {
+        let server = TestServer::start_with_body_timeout(Duration::from_millis(200)).await;
+        let created = server.create_magnet(&unknown_magnet(5)).await;
+        let configuration = format!(
+            "{}/configuration",
+            created.json()["links"]["self"].as_str().unwrap()
+        );
+        let tag = server
+            .get(&configuration)
+            .await
+            .header(header::ETAG)
+            .unwrap()
+            .to_owned();
+        let partial = br#"{"desired_state":"#.to_vec();
+        let length = (partial.len() + 10).to_string();
+        let requests = [
+            (
+                Method::POST,
+                "/api/v1/torrents".to_owned(),
+                "application/json",
+                None,
+            ),
+            (
+                Method::PATCH,
+                configuration.clone(),
+                "application/merge-patch+json",
+                Some(tag.as_str()),
+            ),
+        ];
+        for (method, path, media_type, if_match) in requests {
+            let mut headers = vec![
+                ("Content-Type", media_type),
+                ("Content-Length", length.as_str()),
+            ];
+            if let Some(tag) = if_match {
+                headers.push(("If-Match", tag));
+            }
+            let timed_out = server
+                .send_before_body_ends(method, &path, &headers, partial.clone())
+                .await;
+            assert_problem(&timed_out, StatusCode::REQUEST_TIMEOUT, "request-timeout");
+            assert_eq!(timed_out.header(header::CONNECTION), Some("close"));
+        }
+        let kept = server.get(&configuration).await;
+        assert_eq!(kept.header(header::ETAG), Some(tag.as_str()));
         server.stop().await;
     }
 
@@ -1282,5 +1345,6 @@ scenarios!(
     failures,
     passkey_redaction,
     bodies_refused_while_streaming,
+    slow_bodies_time_out,
     restart,
 );

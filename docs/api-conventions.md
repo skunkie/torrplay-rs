@@ -240,6 +240,7 @@ The initial problem types, by name, each appended to the base above:
 | `not-found` | 404 | The target resource does not exist. |
 | `method-not-allowed` | 405 | The resource does not support the method. |
 | `not-acceptable` | 406 | No supported media type matches `Accept`. |
+| `request-timeout` | 408 | The request body did not arrive within the request body timeout, 30 seconds by default. |
 | `lifecycle-conflict` | 409 | The resource's current state does not allow the request, such as reading files before metadata is available. |
 | `duplicate-torrent` | 409 | A torrent with the same info hash already exists; the `torrent` extension member holds its URI. |
 | `precondition-failed` | 412 | `If-Match` does not match the current ETag. |
@@ -276,5 +277,8 @@ status is not.
   remote access is enabled.
 - Request bodies, uploaded torrent files, and magnet URIs have documented
   size limits, and oversized input is rejected before it is fully buffered.
+  A request body must arrive within the request body timeout, so a client
+  that stops sending cannot hold a request open; streamed responses are
+  exempt from fixed deadlines.
 - Private tracker parameters and other credentials are redacted from logs,
   problems, and examples.

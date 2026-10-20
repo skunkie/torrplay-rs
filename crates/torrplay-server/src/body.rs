@@ -5,8 +5,10 @@
 //! Request bodies: reading them within their documented limits, and the
 //! `multipart/form-data` forms (RFC 7578) that upload torrent files.
 
+use std::time::Duration;
+
 use axum::body::Body;
-use axum::http::{HeaderMap, header};
+use axum::http::{HeaderMap, HeaderValue, header};
 use bytes::{Bytes, BytesMut};
 use http_body_util::BodyExt;
 
@@ -25,14 +27,18 @@ const FORM_OVERHEAD_BYTES: usize = 64 * 1024;
 /// The largest form body.
 pub(crate) const FORM_LIMIT_BYTES: usize = TORRENT_FILE_LIMIT_BYTES + FORM_OVERHEAD_BYTES;
 
-/// Reads a body of at most `limit` bytes. A declared `Content-Length` over
-/// the limit is refused before reading, and a body that grows past it stops
-/// being read at the frame that crosses it, so it is never fully buffered.
+/// Reads a body of at most `limit` bytes that arrives within `timeout`. A
+/// declared `Content-Length` over the limit is refused before reading, and a
+/// body that grows past it stops being read at the frame that crosses it, so
+/// it is never fully buffered. A body still arriving at the deadline is
+/// `request-timeout`, and the connection closes after the response, since
+/// the rest of the body would otherwise be read as the next request.
 pub(crate) async fn read_limited(
     headers: &HeaderMap,
     body: Body,
     limit: usize,
     limit_text: u64,
+    timeout: Duration,
 ) -> Result<Bytes, Problem> {
     let too_large = || {
         Problem::new(
@@ -47,6 +53,25 @@ pub(crate) async fn read_limited(
     if declared.is_some_and(|length| length > limit as u64) {
         return Err(too_large());
     }
+    tokio::time::timeout(timeout, read_frames(body, limit, too_large))
+        .await
+        .unwrap_or_else(|_| {
+            Err(Problem::new(
+                ProblemType::RequestTimeout,
+                format!(
+                    "The request body did not arrive within {} seconds.",
+                    timeout.as_secs()
+                ),
+            )
+            .with_header(header::CONNECTION, HeaderValue::from_static("close")))
+        })
+}
+
+async fn read_frames(
+    body: Body,
+    limit: usize,
+    too_large: impl Fn() -> Problem,
+) -> Result<Bytes, Problem> {
     let mut body = body;
     let mut collected = BytesMut::new();
     while let Some(frame) = body.frame().await {
@@ -178,8 +203,6 @@ fn parameter_value(text: &str) -> Option<(String, &str)> {
 
 #[cfg(test)]
 mod tests {
-    use axum::http::HeaderValue;
-
     use super::*;
 
     fn form(text: &'static str) -> Bytes {
@@ -249,7 +272,7 @@ Content-Disposition: form-data; name=desired_state\r\n\r\npaused\r\n--b--\r\n",
             if let Some(declared) = declared {
                 headers.insert(header::CONTENT_LENGTH, HeaderValue::from_static(declared));
             }
-            read_limited(&headers, Body::from(body), 4, 4).await
+            read_limited(&headers, Body::from(body), 4, 4, Duration::from_secs(1)).await
         };
         assert_eq!(&read(None, b"1234").await.unwrap()[..], b"1234");
         let too_large = |result: Result<Bytes, Problem>| {

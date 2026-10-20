@@ -79,16 +79,21 @@ enum RequestCheck {
 impl TestServer {
     /// Starts a server over an engine with the catalog's small fixtures.
     pub async fn start() -> Self {
-        Self::start_with(true).await
+        Self::start_with(true, None).await
+    }
+
+    /// Starts a server whose request bodies must arrive within `timeout`.
+    pub async fn start_with_body_timeout(timeout: Duration) -> Self {
+        Self::start_with(true, Some(timeout)).await
     }
 
     /// Starts a server that draws torrent IDs from the operating system's
     /// random number generator, as a production server does.
     pub async fn start_with_random_ids() -> Self {
-        Self::start_with(false).await
+        Self::start_with(false, None).await
     }
 
-    async fn start_with(sequential_ids: bool) -> Self {
+    async fn start_with(sequential_ids: bool, body_timeout: Option<Duration>) -> Self {
         let engine = Arc::new(FakeEngine::with_catalog());
         // Sequential IDs, recorded so tests can address the engine's
         // torrents by the IDs the API reports.
@@ -104,11 +109,15 @@ impl TestServer {
                 .push(TorrentId::from_random_bytes(bytes));
             Ok(bytes)
         });
-        let app = if sequential_ids {
-            Arc::new(App::with_registry(Arc::clone(&engine), registry))
+        let mut app = if sequential_ids {
+            App::with_registry(Arc::clone(&engine), registry)
         } else {
-            Arc::new(App::new(Arc::clone(&engine)))
+            App::new(Arc::clone(&engine))
         };
+        if let Some(timeout) = body_timeout {
+            app = app.with_body_timeout(timeout);
+        }
+        let app = Arc::new(app);
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("a loopback port");
@@ -148,13 +157,24 @@ impl TestServer {
             .expect("the server stops cleanly");
     }
 
-    /// Writes `head` and then `body` to a new connection, without ending
-    /// the body, and returns the response's status line. A server that
-    /// waits for the whole body never answers, and the read times out.
-    pub async fn status_line_before_body_ends(&self, head: &str, body: Vec<u8>) -> String {
+    /// Writes a request with `headers` and then `body` to a new connection,
+    /// without ending the body, and returns the response, checked against
+    /// the contract. A server that waits for the whole body never answers,
+    /// and the read times out.
+    pub async fn send_before_body_ends(
+        &self,
+        method: Method,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: Vec<u8>,
+    ) -> Exchange {
+        let mut head = format!("{method} {path} HTTP/1.1\r\nHost: test\r\n");
+        for (name, value) in headers {
+            head.push_str(&format!("{name}: {value}\r\n"));
+        }
+        head.push_str("\r\n");
         let stream = TcpStream::connect(self.addr).await.expect("a connection");
         let (mut reader, mut writer) = stream.into_split();
-        let head = head.to_owned();
         // The server may answer and close before every byte is written,
         // so a failed write is expected; the response decides the test.
         let writing = tokio::spawn(async move {
@@ -165,28 +185,33 @@ impl TestServer {
             std::future::pending::<()>().await;
             Ok::<_, std::io::Error>(())
         });
-        let mut received = Vec::new();
-        let mut buffer = [0; 1024];
-        let read = tokio::time::timeout(Duration::from_secs(10), async {
-            while !received.windows(2).any(|window| window == b"\r\n") {
-                let count = reader.read(&mut buffer).await.expect("the response");
-                assert_ne!(count, 0, "the server closed without answering");
-                received.extend_from_slice(&buffer[..count]);
-            }
-        })
-        .await;
-        assert!(read.is_ok(), "no response before the body ended");
+        let read = tokio::time::timeout(Duration::from_secs(10), read_response(&mut reader)).await;
         // The writer may still be blocked on a body the server stopped
         // reading; it is stopped, and only a panic in it fails the test.
         writing.abort();
         if let Err(error) = writing.await {
             assert!(!error.is_panic(), "the writer panicked");
         }
-        let line_end = received
-            .windows(2)
-            .position(|window| window == b"\r\n")
-            .expect("a status line");
-        String::from_utf8_lossy(&received[..line_end]).into_owned()
+        let response = read.expect("a response before the body ended");
+
+        let mut request = request(method, path);
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        let request = request.body(Vec::<u8>::new()).expect("a request");
+        let contract = torrplay_contract::contract().expect("the contract parses");
+        if let Err(violations) = contract.check_response(&request, &response) {
+            panic!(
+                "{path} answered {} against the contract: {violations}",
+                response.status()
+            );
+        }
+        let (parts, body) = response.into_parts();
+        Exchange {
+            status: parts.status,
+            headers: parts.headers,
+            body,
+        }
     }
 
     /// Sends a request and checks it and its response against the contract.
@@ -285,6 +310,43 @@ impl TestServer {
             .cloned()
             .expect("the registry issued the ID")
     }
+}
+
+/// Reads one HTTP/1.1 response whose body has a `Content-Length`.
+async fn read_response(reader: &mut (impl AsyncReadExt + Unpin)) -> Response<Vec<u8>> {
+    let mut received = Vec::new();
+    let mut buffer = [0; 4096];
+    let head_end = loop {
+        if let Some(end) = received.windows(4).position(|window| window == b"\r\n\r\n") {
+            break end;
+        }
+        let count = reader.read(&mut buffer).await.expect("the response");
+        assert_ne!(count, 0, "the server closed without answering");
+        received.extend_from_slice(&buffer[..count]);
+    };
+    let head = String::from_utf8(received[..head_end].to_vec()).expect("a text head");
+    let mut lines = head.split("\r\n");
+    let status: u16 = lines
+        .next()
+        .and_then(|line| line.split(' ').nth(1))
+        .and_then(|code| code.parse().ok())
+        .expect("a status line");
+    let mut response = Response::builder().status(status);
+    let mut length = 0;
+    for line in lines {
+        let (name, value) = line.split_once(':').expect("a header line");
+        if name.eq_ignore_ascii_case("content-length") {
+            length = value.trim().parse().expect("a length");
+        }
+        response = response.header(name.trim(), value.trim());
+    }
+    let mut body = received[head_end + 4..].to_vec();
+    while body.len() < length {
+        let count = reader.read(&mut buffer).await.expect("the body");
+        assert_ne!(count, 0, "the body ended early");
+        body.extend_from_slice(&buffer[..count]);
+    }
+    response.body(body).expect("a response")
 }
 
 /// A request builder for `path`.
