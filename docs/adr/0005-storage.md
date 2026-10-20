@@ -233,8 +233,8 @@ benchmarks may tune them, and milestone 6 makes them settings.
 |---|---|---|
 | Cache capacity | 256 MiB | One global capacity for every torrent in memory storage |
 | Readahead budget | Half of cache capacity | Shared by every reader of every torrent; pins beyond each reader's current piece stay within it |
-| Retained reusable buffers | At most 4 | Counted in cache usage, released first when the cache needs room |
-| Piece wait bound | 60 seconds | A reader canceled after it; a partial piece of a started torrent discarded after it |
+| Retained reusable buffers | At most 4 | Retained only while no reservation waits; counted in cache usage and released before anything is evicted |
+| Piece wait bound | 60 seconds | A reader canceled after it; a peer that delivers none of its requested chunks for this long disconnected, which discards its partial pieces |
 | Idle timeout | 30 seconds | As the lifecycle defines |
 | Idle reader limits | 4 per torrent, 16 in total | As the lifecycle defines |
 | Request window | 32 blocks per peer | librqbit's default is 128 blocks; a smaller window shortens seeks |
@@ -302,9 +302,10 @@ which become part of the decision.
 - **Discarded partial pieces are cleared.** When librqbit requeues a piece
   whose peer died, whose hash check failed, or whose torrent paused, it
   already marks the piece's blocks missing, and the storage's new release
-  hook drops the partial buffer and its reservation. Partial pieces of
-  started torrents that stall are not yet discarded after the piece wait
-  bound.
+  hook drops the partial buffer and its reservation. A partial piece whose
+  peer stops delivering is discarded the same way once the peer is
+  disconnected after the request stall timeout, the piece wait bound,
+  which fork patch P6 adds (ADR 2).
 - **Readers do not retry; the engine does** (E3). A stream that loses its
   piece between its completion check and its read polls again, so pinning
   is not needed for correctness, only to avoid downloading a piece twice.
@@ -315,8 +316,8 @@ which become part of the decision.
   keeps pinned bytes within the budget, apart from current pieces, which
   their readers can always read and leave, so pins cannot deadlock the
   cache. The capability report adopts the tiers, which [pinning](#pinning)
-  and [bounded fallback](#bounded-fallback) now describe; readmission in
-  piece priority order across torrents is still to be built.
+  and [bounded fallback](#bounded-fallback) now describe. Milestone 4
+  readmits waiting pieces in piece priority order across torrents.
 - **A piece longer than the capacity is never requested** (CAC-06). Its
   reservation is refused outright, so the torrent stays healthy and its
   readers wait. [Pieces longer than the cache](#pieces-longer-than-the-cache)

@@ -622,7 +622,7 @@ outside the prototype's scope.
 
 ### Patch set
 
-The fork's `torrplay/patches` branch holds six commits on upstream
+The fork's `torrplay/patches` branch holds seven commits on upstream
 `57e95d16`, each small enough to propose on its own:
 
 | Commit | Patch | Purpose |
@@ -633,6 +633,7 @@ The fork's `torrplay/patches` branch holds six commits on upstream
 | `b5de742f` | P2 | Let a torrent opt out of uploading, keeping its peers choked |
 | `6c8c975d` | P3 | Stop streams from holding a blocking permit while they wait |
 | `161632fc` | P4 | Let the embedder choose and reserve pieces to request |
+| `e724f259` | P6 | Disconnect a peer that holds requests without delivering for a stall timeout, releasing its pieces (milestone 4) |
 
 Two more patches remain candidates. Setting `TCP_NODELAY` on peer sockets
 cut the time to first byte after a reconnect from about 43 ms to about
@@ -681,11 +682,17 @@ scheduler's unit tests already cover them.
 - **Task cleanup.** `Session::stop` joins nothing, so CAC-09 cannot count
   tasks. The adapter must track the session's tasks, or a patch must join
   them, before the lifecycle's shutdown order can be tested.
-- **Readmission order.** The evictor wakes every torrent whose waiting
-  reservation fits; milestone 4 orders readmission by piece priority across
-  torrents to complete CAC-05.
-- **Discarding stalled partial pieces** after the piece wait bound, as ADR 5
-  requires, is not implemented.
+- **Readmission order.** Done in milestone 4: the cache readmits waiting
+  reservations in piece priority order across torrents, then in waiting
+  order, and new reservations queue behind waiting ones, completing CAC-05.
+- **Discarding stalled partial pieces.** Done in milestone 4 with P6. A
+  peer that keeps the connection alive, or keeps the torrent choked, while
+  it delivers none of its requested chunks would hold its partial pieces
+  indefinitely; librqbit's read timeout counts keep-alives. With P6's
+  request stall timeout set to the piece wait bound, the peer is
+  disconnected and its pieces return to the queue and leave the cache.
+  `e7_adversarial_peers::a_peer_that_never_delivers_is_dropped_after_the_stall_timeout`
+  checks it, and fails without the timeout.
 - **Request window.** Seek latency depends on outstanding requests; the
   adapter should configure a small `max_request_window` for memory
   torrents, tuned by the milestone 5 benchmarks.

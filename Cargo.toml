@@ -41,12 +41,12 @@ http-body-util = "0.1"
 # Without default features it never fetches remote references.
 jsonschema = { version = "0.59", default-features = false }
 # librqbit from the torrplay/patches branch of the skunkie/rqbit fork: the
-# unreleased upstream revision 57e95d16 plus the spike's patches, one commit
+# unreleased upstream revision 57e95d16 plus TorrPlay's patches, one commit
 # each. docs/adr/0002-engine-selection.md records why, and
 # docs/development.md how to update it. TLS uses rustls so builds do not
 # depend on a system OpenSSL.
-librqbit = { git = "https://github.com/skunkie/rqbit", rev = "161632fc3d92a3f0a1a63afe4932eab4b73c57ae", default-features = false, features = ["rust-tls"] }
-librqbit-core = { git = "https://github.com/skunkie/rqbit", rev = "161632fc3d92a3f0a1a63afe4932eab4b73c57ae", default-features = false }
+librqbit = { git = "https://github.com/skunkie/rqbit", rev = "e724f259a39784a4d287e07382e04f626ea3f998", default-features = false, features = ["rust-tls"] }
+librqbit-core = { git = "https://github.com/skunkie/rqbit", rev = "e724f259a39784a4d287e07382e04f626ea3f998", default-features = false }
 memchr = "2"
 # Tests reach the server over loopback HTTP only, so they need no TLS.
 reqwest = { version = "0.13", default-features = false }
