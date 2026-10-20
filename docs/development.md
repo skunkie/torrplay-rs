@@ -146,11 +146,50 @@ target/release/torrplay-bench run --trace bench/traces/cold-start.jsonl --dir ta
 ```
 
 `fixtures` writes about 4 GiB of generated content once; `seed` and
-`tracker` run until interrupted. Each `run` starts a fresh `torrplay` with
-the trace's cache capacity and without DHT, replays the trace once, stops the
+`tracker` run until interrupted. Each `run` starts a fresh server with the
+trace's cache capacity and without DHT, replays the trace once, stops the
 server with SIGTERM, and writes the run's requests, torrents, process and
 cache samples, and summary as JSON. Sampling reads `/proc`, so runs need
 Linux.
+
+The baseline runs the same way with `--go-torrplay` and a Go TorrPlay binary,
+built from its repository with `go build -o go-torrplay ./cmd/torrplay`. Each
+run gives it a fresh data directory and then sets its cache size, which Go
+TorrPlay calls `max_memory`, to the trace's cache capacity, and turns its DHT
+off; it seeds nothing by default. Its creation request answers once metadata
+has arrived, and it reports no eviction count. Label each run with what
+distinguishes it, such as the commit and the network profile:
+
+```bash
+target/release/torrplay-bench run --trace bench/traces/far-seeks.jsonl --dir target/bench --go-torrplay go-torrplay --out far-seeks-go-1.json --label commit=84412a1 --label profile=fast
+```
+
+`summarize` groups runs by trace, implementation, and labels, and reports
+each measurement's median, 90th percentile, minimum, and maximum, as JSON
+and as Markdown:
+
+```bash
+target/release/torrplay-bench summarize --out summary.json far-seeks-*.json
+```
+
+The protocol's shaped network needs root. `scripts/bench-netns.sh up fast`
+or `up slow` creates a client namespace and three seeder namespaces, seeder
+N at `10.77.N.2`, with each link shaped both ways; `down` removes them, and
+`DRY_RUN=1` prints the commands instead. Write the fixtures with
+`--tracker http://127.0.0.1:6969/announce`, then run each seeder, the
+tracker, and the runs inside the namespaces as a normal user:
+
+```bash
+sudo ip netns exec tpb-seed1 runuser -u "$USER" -- target/release/torrplay-bench seed --dir target/bench --listen 10.77.1.2:7001
+```
+
+```bash
+sudo ip netns exec tpb-client runuser -u "$USER" -- target/release/torrplay-bench tracker --listen 127.0.0.1:6969 --peer 10.77.1.2:7001 --peer 10.77.2.2:7001 --peer 10.77.3.2:7001
+```
+
+```bash
+sudo ip netns exec tpb-client runuser -u "$USER" -- target/release/torrplay-bench run --trace bench/traces/cold-start.jsonl --dir target/bench --torrplay target/release/torrplay --out cold-start-1.json --label profile=fast
+```
 
 ## Rust checks
 

@@ -54,7 +54,8 @@ pub trait Target: Send + Sync {
 #[derive(Clone, Copy, Debug, Default, serde::Serialize, PartialEq, Eq)]
 pub struct CacheSample {
     pub usage_bytes: u64,
-    pub eviction_count: u64,
+    /// Evictions so far, when the target reports them.
+    pub eviction_count: Option<u64>,
 }
 
 /// TorrPlay's native API.
@@ -167,9 +168,171 @@ impl Target for TorrPlay {
         let cache = self.json("/api/v1/cache/statistics").await?;
         Ok(CacheSample {
             usage_bytes: cache["usage_bytes"].as_u64().context("no usage_bytes")?,
-            eviction_count: cache["eviction_count"]
-                .as_u64()
-                .context("no eviction_count")?,
+            eviction_count: Some(
+                cache["eviction_count"]
+                    .as_u64()
+                    .context("no eviction_count")?,
+            ),
+        })
+    }
+}
+
+/// Go TorrPlay's API, the baseline.
+///
+/// Creating a torrent waits for its metadata, so the creation time is the
+/// time to metadata. Go TorrPlay reports no eviction count.
+pub struct GoTorrPlay {
+    client: Client,
+    base: String,
+}
+
+/// A torrent Go TorrPlay created.
+#[derive(Clone, Debug)]
+pub struct GoTorrent {
+    hash: String,
+    /// Each file's name and full path within the torrent.
+    files: Vec<(String, String)>,
+}
+
+impl GoTorrPlay {
+    /// Talks to the API at `base`, such as `http://127.0.0.1:8090`.
+    pub fn new(client: Client, base: String) -> Self {
+        Self { client, base }
+    }
+
+    /// Sets the cache capacity and turns DHT off, so peers come only from
+    /// the tracker, and checks that the cache took the capacity.
+    pub async fn configure(&self, cache_capacity_bytes: u64) -> anyhow::Result<()> {
+        let response = self
+            .client
+            .patch(format!("{}/api/v1/settings", self.base))
+            .header("content-type", "application/json")
+            .body(
+                serde_json::json!({
+                    "max_memory": cache_capacity_bytes,
+                    "torrent_client": { "disable_dht": true, "seed": false },
+                })
+                .to_string(),
+            )
+            .send()
+            .await?;
+        let status = response.status();
+        anyhow::ensure!(
+            status.is_success(),
+            "updating settings: {status}: {}",
+            response.text().await?
+        );
+        let memory = self.json("/api/stats/memory").await?;
+        anyhow::ensure!(
+            memory["max_memory"].as_u64() == Some(cache_capacity_bytes),
+            "the cache capacity is {} rather than {cache_capacity_bytes}",
+            memory["max_memory"]
+        );
+        Ok(())
+    }
+
+    async fn json(&self, path: &str) -> anyhow::Result<Value> {
+        let response = self
+            .client
+            .get(format!("{}{path}", self.base))
+            .send()
+            .await?;
+        let status = response.status();
+        let body = response.bytes().await?;
+        anyhow::ensure!(status == StatusCode::OK, "GET {path}: {status}");
+        Ok(serde_json::from_slice(&body)?)
+    }
+}
+
+impl Target for GoTorrPlay {
+    type Torrent = GoTorrent;
+
+    async fn create(
+        &self,
+        source: Source,
+        torrent_file: &[u8],
+        magnet_uri: &str,
+    ) -> anyhow::Result<GoTorrent> {
+        let request = self.client.post(format!("{}/api/v1/torrents", self.base));
+        let request = match source {
+            Source::Upload => {
+                const BOUNDARY: &str = "torrplay-bench-boundary";
+                let mut body = format!(
+                    "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"storage\"\r\n\r\n\
+                     memory\r\n--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"file\"; \
+                     filename=\"bench.torrent\"\r\nContent-Type: application/x-bittorrent\r\n\r\n"
+                )
+                .into_bytes();
+                body.extend_from_slice(torrent_file);
+                body.extend_from_slice(format!("\r\n--{BOUNDARY}--\r\n").as_bytes());
+                request
+                    .header(
+                        "content-type",
+                        format!("multipart/form-data; boundary={BOUNDARY}"),
+                    )
+                    .body(body)
+            }
+            Source::Magnet => request
+                .header("content-type", "application/json")
+                .body(serde_json::json!({ "magnet": magnet_uri, "storage": "memory" }).to_string()),
+        };
+        let response = request.send().await?;
+        let status = response.status();
+        let body: Value = serde_json::from_slice(&response.bytes().await?)?;
+        anyhow::ensure!(
+            status == StatusCode::CREATED,
+            "creating a torrent: {status}: {body}"
+        );
+        let files = body["files"]
+            .as_array()
+            .context("the created torrent has no files")?
+            .iter()
+            .filter_map(|file| {
+                Some((
+                    file["name"].as_str()?.to_owned(),
+                    file["path"].as_str()?.to_owned(),
+                ))
+            })
+            .collect();
+        Ok(GoTorrent {
+            hash: body["hash"]
+                .as_str()
+                .context("the created torrent has no hash")?
+                .to_owned(),
+            files,
+        })
+    }
+
+    async fn has_metadata(&self, _torrent: &GoTorrent) -> anyhow::Result<bool> {
+        // Creation answered only once metadata had arrived.
+        Ok(true)
+    }
+
+    async fn content_url(&self, torrent: &GoTorrent, file: &str) -> anyhow::Result<String> {
+        let (_, path) = torrent
+            .files
+            .iter()
+            .find(|(name, _)| name == file)
+            .with_context(|| format!("the torrent has no file named {file}"))?;
+        Ok(reqwest::Url::parse_with_params(
+            &format!("{}/api/v1/stream/{}", self.base, torrent.hash),
+            [("path", path)],
+        )?
+        .into())
+    }
+
+    async fn downloaded_bytes(&self, torrent: &GoTorrent) -> anyhow::Result<u64> {
+        self.json(&format!("/api/stats/torrents/{}", torrent.hash))
+            .await?["bytes_read_data"]
+            .as_u64()
+            .context("the statistics have no bytes_read_data")
+    }
+
+    async fn cache(&self) -> anyhow::Result<CacheSample> {
+        let memory = self.json("/api/stats/memory").await?;
+        Ok(CacheSample {
+            usage_bytes: memory["used_memory"].as_u64().context("no used_memory")?,
+            eviction_count: None,
         })
     }
 }
