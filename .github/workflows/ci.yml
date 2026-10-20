@@ -148,6 +148,32 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --locked --workspace --all-features --no-deps
 
+  generated:
+    name: Generated wire types
+    needs: stage
+    if: needs.stage.outputs.rust == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    env:
+      # A release at least two weeks old. Cargo verifies the crate against
+      # the registry's checksum, and --locked builds its own lockfile.
+      OPENAPI_TO_RUST_VERSION: 0.20.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          build-warnings: warn
+      - name: Install openapi-to-rust
+        shell: bash
+        run: |
+          cargo install --locked --version "${OPENAPI_TO_RUST_VERSION}" --root "${RUNNER_TEMP}/openapi-to-rust" openapi-to-rust
+          echo "${RUNNER_TEMP}/openapi-to-rust/bin" >> "$GITHUB_PATH"
+      - name: Check the generated files against the contract
+        working-directory: crates/torrplay-api
+        run: openapi-to-rust generate --check
+
   dependencies:
     name: Dependency policy
     needs: stage

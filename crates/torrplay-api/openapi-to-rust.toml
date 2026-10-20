@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# Generates the API's wire types from the contract, as ADR 6 decides. Paths
+# are relative to this file, so the output names the same source from any
+# checkout and `generate --check` stays reproducible.
+
+[generator]
+spec_path = "../../api/openapi.yaml"
+output_dir = "src/generated"
+module_name = "torrplay_api"
+
+[features]
+enable_async_client = false
