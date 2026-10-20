@@ -9,6 +9,9 @@
 //! reservation that finds no room waits instead, and this task, which holds
 //! no lock, evicts verified and unpinned pieces through completion
 //! invalidation and then wakes the torrents whose reservations now fit.
+//!
+//! When nothing is evictable, the task takes ADR 5's bounded fallback:
+//! it releases the oldest idle reader, whose pins then let pieces go.
 
 use std::sync::Arc;
 
@@ -17,6 +20,7 @@ use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 use crate::cache::{CacheError, PieceCache};
+use crate::playback::Playback;
 
 /// A running evictor for one [`PieceCache`].
 pub struct Evictor {
@@ -27,8 +31,18 @@ pub struct Evictor {
 impl Evictor {
     /// Starts the evictor on the current Tokio runtime.
     pub fn spawn(cache: Arc<PieceCache>) -> Self {
+        Self::start(cache, None)
+    }
+
+    /// Starts the evictor with the bounded fallback of releasing
+    /// `playback`'s oldest idle readers when nothing is evictable.
+    pub fn spawn_with_fallback(cache: Arc<PieceCache>, playback: Arc<Playback>) -> Self {
+        Self::start(cache, Some(playback))
+    }
+
+    fn start(cache: Arc<PieceCache>, playback: Option<Arc<Playback>>) -> Self {
         let stop = Arc::new(Notify::new());
-        let task = tokio::spawn(run(cache, stop.clone()));
+        let task = tokio::spawn(run(cache, playback, stop.clone()));
         Self { stop, task }
     }
 
@@ -40,11 +54,24 @@ impl Evictor {
     }
 }
 
-async fn run(cache: Arc<PieceCache>, stop: Arc<Notify>) -> Result<(), CacheError> {
+async fn run(
+    cache: Arc<PieceCache>,
+    playback: Option<Arc<Playback>>,
+    stop: Arc<Notify>,
+) -> Result<(), CacheError> {
     loop {
         let shortfall = cache.waiting_shortfall()?;
         if shortfall > 0 {
-            for batch in cache.eviction_candidates(shortfall)? {
+            let batches = cache.eviction_candidates(shortfall)?;
+            if batches.is_empty()
+                && playback
+                    .as_ref()
+                    .is_some_and(|playback| playback.release_oldest_idle_reader())
+            {
+                // The released pins may have made pieces evictable.
+                continue;
+            }
+            for batch in batches {
                 // A torrent that cannot invalidate, for example because it
                 // is being deleted, frees nothing, and the reservation keeps
                 // waiting for the next change.

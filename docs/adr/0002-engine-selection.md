@@ -685,6 +685,11 @@ scheduler's unit tests already cover them.
 - **Task cleanup.** `Session::stop` joins nothing, so CAC-09 cannot count
   tasks. The adapter must track the session's tasks, or a patch must join
   them, before the lifecycle's shutdown order can be tested.
+- **Verified pieces of failed torrents.** librqbit drops a torrent's
+  storage when it stops the torrent with an error, so the torrent's verified
+  pieces leave the cache, while the lifecycle keeps them as for a paused
+  torrent. Keeping them needs the storage to outlive librqbit's error state,
+  and the cache to evict them without completion invalidation.
 - **Readmission order.** Done in milestone 4: the cache readmits waiting
   reservations in piece priority order across torrents, then in waiting
   order, and new reservations queue behind waiting ones, completing CAC-05.

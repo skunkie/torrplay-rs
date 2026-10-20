@@ -57,10 +57,9 @@ async fn corrupt_blocks_fail_and_come_again_from_a_valid_peer() -> anyhow::Resul
     let torrent = memory
         .add_scheduled(&leecher, &[corrupt.addr], &spec, 256 * KIB)
         .await?;
-    let mut reader = bounded(
-        "opening a reader",
-        torrent.scheduler.open(&torrent.handle, 0),
-    )
+    let mut reader = bounded("opening a reader", async {
+        Ok(torrent.scheduler.open(&torrent.handle, 0).await?)
+    })
     .await?;
     let read = tokio::spawn(async move {
         let mut bytes = Vec::new();
@@ -237,10 +236,9 @@ async fn a_peer_that_never_delivers_is_dropped_after_the_stall_timeout() -> anyh
             });
         })
         .await?;
-    let mut reader = bounded(
-        "opening a reader",
-        torrent.scheduler.open(&torrent.handle, 0),
-    )
+    let mut reader = bounded("opening a reader", async {
+        Ok(torrent.scheduler.open(&torrent.handle, 0).await?)
+    })
     .await?;
     let read = tokio::spawn(async move {
         let mut bytes = Vec::new();

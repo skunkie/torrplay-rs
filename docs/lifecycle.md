@@ -122,7 +122,9 @@ peers never fails a torrent.
 
 - Each content GET that returns a body creates a reader, or continues an
   idle reader for the same file, which owns a readahead window, pinned
-  ranges, and piece priorities. HEAD never creates a reader.
+  ranges, and piece priorities. Of several idle readers for the file, the
+  stream continues the one nearest to its first byte. HEAD never creates a
+  reader.
 - Response headers are sent without waiting for piece data. The stream then
   waits for each missing piece for at most the piece wait bound, 60 seconds
   by default. A stream whose next piece does not arrive in time is canceled.
