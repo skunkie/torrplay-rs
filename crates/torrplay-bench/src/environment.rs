@@ -140,9 +140,11 @@ fn toolchain_channel(toolchain: &'static str) -> Option<&'static str> {
 
 /// The git revision `Cargo.lock` locks package `name` to.
 fn locked_revision(lock: &'static str, name: &str) -> Option<&'static str> {
-    let package = lock
-        .split("[[package]]")
-        .find(|package| package.contains(&format!("\nname = \"{name}\"\n")))?;
+    let package = lock.split("[[package]]").find(|package| {
+        package
+            .lines()
+            .any(|line| line == format!("name = \"{name}\""))
+    })?;
     let source = package
         .lines()
         .find_map(|line| line.strip_prefix("source = \"git+"))?;
@@ -204,6 +206,12 @@ mod tests {
                     [[package]]\nname = \"librqbit\"\nversion = \"9.0.1\"\n\
                     source = \"git+https://x?rev=a#aaa\"\n";
         assert_eq!(locked_revision(lock, "librqbit"), Some("aaa"));
+        let crlf = "[[package]]\r\nname = \"librqbit\"\r\nsource = \"git+https://x?rev=a#aaa\"\r\n";
+        assert_eq!(
+            locked_revision(crlf, "librqbit"),
+            Some("aaa"),
+            "Windows checkouts may end lines with CRLF"
+        );
         assert!(
             Environment::detect(None, None).librqbit_revision.is_some(),
             "the workspace locks librqbit to a fork revision"
