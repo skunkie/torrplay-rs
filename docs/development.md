@@ -85,8 +85,12 @@ Rust 1.99.1 with rustfmt and Clippy, and rustup installs it on first use, so
 local and CI builds use the same version. `clippy.toml` lets tests use
 `unwrap` and `expect`, which the workspace lints flag in production code.
 
-The workspace has three members:
+The workspace has four members:
 
+- `crates/torrplay-contract` is test support that checks HTTP requests and
+  responses against `api/openapi.yaml`, as ADR 6 decides, and records which
+  documented responses tests produce. Crates use it only as a
+  dev-dependency.
 - `crates/torrplay-engine` holds the piece cache, its evictor task, the
   librqbit storage over it, and the scheduler that turns readers into piece
   priorities, and grows into the engine adapter.

@@ -4,7 +4,12 @@
 
 [workspace]
 resolver = "3"
-members = ["crates/torrplay-engine", "crates/torrplay-fixtures", "spikes/engine-spike"]
+members = [
+    "crates/torrplay-contract",
+    "crates/torrplay-engine",
+    "crates/torrplay-fixtures",
+    "spikes/engine-spike",
+]
 
 [workspace.package]
 edition = "2024"
@@ -22,6 +27,10 @@ unwrap_used = "warn"
 
 [workspace.dependencies]
 anyhow = "1"
+form_urlencoded = "1"
+http = "1"
+# Without default features it never fetches remote references.
+jsonschema = { version = "0.59", default-features = false }
 # librqbit from the torrplay/patches branch of the skunkie/rqbit fork: the
 # unreleased upstream revision 57e95d16 plus the spike's patches, one commit
 # each. docs/adr/0002-engine-selection.md records why, and
@@ -29,6 +38,8 @@ anyhow = "1"
 # depend on a system OpenSSL.
 librqbit = { git = "https://github.com/skunkie/rqbit", rev = "161632fc3d92a3f0a1a63afe4932eab4b73c57ae", default-features = false, features = ["rust-tls"] }
 librqbit-core = { git = "https://github.com/skunkie/rqbit", rev = "161632fc3d92a3f0a1a63afe4932eab4b73c57ae", default-features = false }
+serde-saphyr = "2"
+serde_json = "1"
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
