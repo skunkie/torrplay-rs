@@ -74,3 +74,10 @@ torrplay-server = { path = "crates/torrplay-server" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
 url = { version = "2", features = ["serde"] }
+
+# Dependencies are optimized in dev builds. Unoptimized, librqbit's session
+# setup alone needs over 1 MiB of stack, most of a 2 MiB test thread, and
+# overflowed it on macOS; optimized, it needs under 256 KiB. TorrPlay's own
+# crates stay unoptimized for debugging.
+[profile.dev.package."*"]
+opt-level = 1
