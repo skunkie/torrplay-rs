@@ -34,6 +34,13 @@ fn main() -> ExitCode {
         }
     };
     torrplay::init_logging(config.log_level);
+    match torrplay_engine::raise_open_file_limit() {
+        Ok(limit) => tracing::info!(limit, "open file limit"),
+        Err(error) => tracing::warn!(
+            error = %format!("{error:#}"),
+            "the open file limit could not be raised; busy torrents may exhaust it"
+        ),
+    }
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

@@ -30,3 +30,12 @@ pub use adapter::{
     DEFAULT_REQUEST_WINDOW_BLOCKS, EngineConfig, LibrqbitEngine, NetworkConfig,
 };
 pub use reader::RangeReader;
+
+/// Raises the process's soft limit on open files as far as the system
+/// allows and returns the new limit. Every peer connection holds a socket,
+/// and librqbit keeps up to 128 peers per torrent, so the 256 that a macOS
+/// terminal starts processes with runs out within a few busy torrents, and
+/// then the API cannot accept connections either.
+pub fn raise_open_file_limit() -> anyhow::Result<u64> {
+    librqbit::try_increase_nofile_limit()
+}
