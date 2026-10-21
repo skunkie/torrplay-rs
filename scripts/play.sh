@@ -14,8 +14,11 @@
 #   --file <TEXT>      play the first file whose path contains TEXT; by
 #                      default, the largest video file, or the largest file
 #   --player <COMMAND> the player to open the URL with (default mpv, else
-#                      vlc); "none" only prints the URL
+#                      VLC, as a new instance on macOS); "none" only prints
+#                      the URL
 #   --list             lists the files and exits
+#   --timeout <SECONDS> how long to wait for a magnet's metadata (default
+#                      180)
 #
 # A torrent TorrPlay already has is reused. Needs curl and jq.
 
@@ -26,7 +29,9 @@ file_filter=
 player=
 list=0
 # How long metadata retrieval may take, in seconds.
-readonly METADATA_TIMEOUT_SECONDS=180
+metadata_timeout=180
+# How often to report that metadata is still being retrieved, in seconds.
+readonly PROGRESS_INTERVAL_SECONDS=5
 
 usage() {
     sed -n '/^#   scripts/,/^# A torrent/p' "$0" | sed 's/^# \{0,1\}//' >&2
@@ -39,6 +44,7 @@ while (($#)); do
         --file) file_filter=${2:?--file needs text}; shift 2 ;;
         --player) player=${2:?--player needs a command}; shift 2 ;;
         --list) list=1; shift ;;
+        --timeout) metadata_timeout=${2:?--timeout needs seconds}; shift 2 ;;
         -h | --help) usage ;;
         -*) echo "unknown option $1" >&2; usage ;;
         *) break ;;
@@ -68,6 +74,10 @@ fail_with() {
 }
 
 if [[ $source == magnet:* ]]; then
+    # Without trackers, peers come only from DHT, which can take minutes.
+    if [[ $source != *'&tr='* && $source != *'?tr='* ]]; then
+        echo "the magnet URI lists no trackers; finding peers through DHT alone can take minutes" >&2
+    fi
     response=$(request -X POST "$api/api/v1/torrents" \
         -H 'Content-Type: application/json' \
         --data "$(jq -n --arg uri "$source" '{magnet_uri: $uri}')")
@@ -86,7 +96,9 @@ case $status in
     *) fail_with "$body" "$status" "adding the torrent" ;;
 esac
 
-deadline=$((SECONDS + METADATA_TIMEOUT_SECONDS))
+started=$SECONDS
+deadline=$((started + metadata_timeout))
+reported=$started
 while :; do
     response=$(request "$api$torrent")
     status=${response##*$'\n'}
@@ -102,8 +114,13 @@ while :; do
         *) break ;;
     esac
     if ((SECONDS >= deadline)); then
-        echo "no metadata within ${METADATA_TIMEOUT_SECONDS}s; peers may be unreachable" >&2
+        echo "no metadata within ${metadata_timeout}s: no peer has answered yet." >&2
+        echo "TorrPlay keeps trying; run this again to keep waiting, or use --timeout." >&2
         exit 1
+    fi
+    if ((SECONDS - reported >= PROGRESS_INTERVAL_SECONDS)); then
+        echo "retrieving metadata from peers... $((SECONDS - started))s" >&2
+        reported=$SECONDS
     fi
     sleep 1
 done
@@ -140,12 +157,15 @@ echo "playing $(jq -r '.path | join("/")' <<<"$chosen")" >&2
 echo "$url"
 
 if [[ -z $player ]]; then
-    for candidate in mpv vlc; do
-        if command -v "$candidate" >/dev/null; then
-            player=$candidate
-            break
-        fi
-    done
+    if command -v mpv >/dev/null; then
+        player=mpv
+    elif [[ $(uname -s) == Darwin ]] && open -Ra VLC >/dev/null 2>&1; then
+        # VLC on macOS runs one instance, which would take this URL over
+        # from a stream already playing; -n opens another.
+        player="open -na VLC --args"
+    elif command -v vlc >/dev/null; then
+        player=vlc
+    fi
 fi
 if [[ -z $player || $player == none ]]; then
     echo "no player found; open the URL above in one" >&2
