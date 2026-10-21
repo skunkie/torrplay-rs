@@ -624,7 +624,7 @@ outside the prototype's scope.
 
 ### Patch set
 
-The fork's `torrplay/patches` branch holds eight commits on upstream
+The fork's `torrplay/patches` branch holds nine commits on upstream
 `57e95d16`, each small enough to propose on its own:
 
 | Commit | Patch | Purpose |
@@ -637,12 +637,16 @@ The fork's `torrplay/patches` branch holds eight commits on upstream
 | `161632fc` | P4 | Let the embedder choose and reserve pieces to request |
 | `e724f259` | P6 | Disconnect a peer that holds requests without delivering for a stall timeout, releasing its pieces (milestone 4) |
 | `c7f6938a` | P7 | Track the session's tasks, including those its tasks spawn, so `Session::stop` waits for all of them instead of sleeping a second (milestone 4) |
+| `06d6fe52` | P8 | Apply a torrent's keep-alive interval to its peer connections, and let the embedder reconnect dead and not-needed peers at once when a stream needs data (milestone 5) |
 
 Two more patches remain candidates. Setting `TCP_NODELAY` on peer sockets
 cut the time to first byte after a reconnect from about 43 ms to about
 1 ms on loopback (ADR 3). Keeping a check-running flag until the state lock
 switches the torrent would fix the start-during-check race that E3 avoids
-in the adapter. The patch to keep peers while idle (P5) is not needed.
+in the adapter. Keeping peers while idle, once thought unneeded as P5,
+became P8: the milestone 5 benchmark found a torrent without streams losing
+its peers to their idle timeouts, and its first stream waiting seconds for
+librqbit's reconnect backoff.
 
 ### Milestone 2 scenarios
 
