@@ -35,6 +35,9 @@ use crate::scheduler::{Reader, TorrentScheduler};
 /// The default idle timeout, as the lifecycle defines it.
 pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The default least readahead of a ramping reader, as Go TorrPlay's.
+pub const DEFAULT_READAHEAD_RAMP_BYTES: u64 = 1024 * 1024;
+
 /// The default limit of idle readers per torrent.
 pub const DEFAULT_IDLE_READERS_PER_TORRENT: usize = 4;
 
@@ -46,6 +49,10 @@ pub const DEFAULT_IDLE_READERS_TOTAL: usize = 16;
 pub struct PlaybackConfig {
     /// The readahead budget every reader of every torrent shares.
     pub readahead_bytes: u64,
+    /// The least a new reader, or one after a seek, reads ahead while its
+    /// window ramps up to its share; zero gives every reader its share at
+    /// once.
+    pub readahead_ramp_bytes: u64,
     /// How long a reader stays idle after its stream ends.
     pub idle_timeout: Duration,
     /// The most idle readers one torrent keeps.
@@ -59,6 +66,7 @@ impl PlaybackConfig {
     pub fn new(readahead_bytes: u64) -> Self {
         Self {
             readahead_bytes,
+            readahead_ramp_bytes: DEFAULT_READAHEAD_RAMP_BYTES,
             idle_timeout: DEFAULT_IDLE_TIMEOUT,
             idle_readers_per_torrent: DEFAULT_IDLE_READERS_PER_TORRENT,
             idle_readers_total: DEFAULT_IDLE_READERS_TOTAL,
@@ -117,6 +125,11 @@ impl Playback {
     /// The readahead budget all readers share.
     pub fn readahead_bytes(&self) -> u64 {
         self.config.readahead_bytes
+    }
+
+    /// The least a ramping reader reads ahead, or zero for no ramp.
+    pub fn readahead_ramp_bytes(&self) -> u64 {
+        self.config.readahead_ramp_bytes
     }
 
     /// Returns a receiver of active playback: `true` while any active or
