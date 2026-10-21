@@ -61,8 +61,8 @@ use crate::cache::TorrentKey;
 use crate::evictor::Evictor;
 use crate::inspect;
 use crate::playback::{
-    DEFAULT_IDLE_READERS_PER_TORRENT, DEFAULT_IDLE_READERS_TOTAL, DEFAULT_IDLE_TIMEOUT, Playback,
-    PlaybackConfig, Reaper,
+    DEFAULT_IDLE_READERS_PER_TORRENT, DEFAULT_IDLE_READERS_TOTAL, DEFAULT_IDLE_TIMEOUT,
+    DEFAULT_READAHEAD_RAMP_BYTES, Playback, PlaybackConfig, Reaper,
 };
 use crate::reader::RangeReader;
 use crate::scheduler::{OpenError, TorrentScheduler};
@@ -137,6 +137,9 @@ pub struct EngineConfig {
     pub cache_capacity_bytes: u64,
     /// The readahead budget shared by every reader of every torrent.
     pub readahead_bytes: u64,
+    /// The least a new reader, or one after a seek, reads ahead while it
+    /// ramps up; zero gives every reader its share at once.
+    pub readahead_ramp_bytes: u64,
     /// How long a read waits for missing piece data, and how long a peer
     /// may hold requests without delivering.
     pub piece_wait: Duration,
@@ -161,6 +164,7 @@ impl EngineConfig {
         Self {
             cache_capacity_bytes: DEFAULT_CACHE_CAPACITY_BYTES,
             readahead_bytes: DEFAULT_CACHE_CAPACITY_BYTES / 2,
+            readahead_ramp_bytes: DEFAULT_READAHEAD_RAMP_BYTES,
             piece_wait: DEFAULT_PIECE_WAIT,
             idle_timeout: DEFAULT_IDLE_TIMEOUT,
             idle_readers_per_torrent: DEFAULT_IDLE_READERS_PER_TORRENT,
@@ -292,6 +296,7 @@ impl LibrqbitEngine {
         let cache = PieceCache::new(self.config.cache_capacity_bytes);
         let playback = Playback::new(PlaybackConfig {
             readahead_bytes: self.config.readahead_bytes,
+            readahead_ramp_bytes: self.config.readahead_ramp_bytes,
             idle_timeout: self.config.idle_timeout,
             idle_readers_per_torrent: self.config.idle_readers_per_torrent,
             idle_readers_total: self.config.idle_readers_total,

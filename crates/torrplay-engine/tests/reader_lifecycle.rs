@@ -13,14 +13,14 @@
 
 mod support;
 
-use std::io::ErrorKind;
+use std::io::{ErrorKind, SeekFrom};
 use std::time::Duration;
 
 use support::{
     Leecher, MIB, MemoryCache, Seeder, bounded, eventually, expected, id, range, read, start,
     start_with, upload,
 };
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::task::JoinHandle;
 use torrplay_core::engine::{Engine, EngineError};
 use torrplay_core::lifecycle::DesiredState;
@@ -200,11 +200,74 @@ async fn idle_reader_limits_release_the_oldest_in_their_scope() -> anyhow::Resul
 
 /// RDR-06: readahead windows shrink as readers of another torrent are
 /// added and grow back as they are released.
+/// A reader's window ramps up as it reads, and starts over after a seek.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn readahead_ramps_up_and_restarts_after_a_seek() -> anyhow::Result<()> {
+    // 1 MiB pieces in a 32 MiB file; the reader's share is 8 pieces.
+    let spec = catalog::large(8 * MIB);
+    let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
+    let memory = MemoryCache::start(16 * MIB);
+    let leecher = Leecher::start().await?;
+    let playback = Playback::new(PlaybackConfig::new(8 * MIB));
+    let torrent = memory
+        .add_scheduled_in(&leecher, &[seeder.addr], &spec, &playback, |_| {})
+        .await?;
+    let mut reader = bounded("opening a reader", async {
+        Ok(torrent.scheduler.open(&torrent.handle, 0).await?)
+    })
+    .await?;
+    let first_and_last = [0, 31];
+    let window = |priorities: Vec<u32>| -> Vec<u32> {
+        priorities
+            .into_iter()
+            .filter(|piece| !first_and_last.contains(piece))
+            .collect()
+    };
+    assert_eq!(
+        window(torrent.scheduler.priorities()?),
+        [1],
+        "a new reader reads ahead its minimum"
+    );
+
+    let mut read = vec![0; 4 * MIB as usize];
+    bounded("reading 4 pieces", async {
+        Ok(reader.read_exact(&mut read).await?)
+    })
+    .await?;
+    assert_eq!(
+        window(torrent.scheduler.priorities()?),
+        (4..12).collect::<Vec<_>>(),
+        "after 4 pieces, its whole 8-piece share"
+    );
+
+    reader.seek(SeekFrom::Start(16 * MIB)).await?;
+    assert_eq!(
+        window(torrent.scheduler.priorities()?),
+        [16, 17],
+        "a seek starts the ramp again"
+    );
+    reader.seek(SeekFrom::Start(16 * MIB)).await?;
+    assert_eq!(
+        window(torrent.scheduler.priorities()?),
+        [16, 17],
+        "seeking to where it is keeps the run"
+    );
+
+    drop(reader);
+    leecher.session.stop().await;
+    seeder.stop().await;
+    memory.shutdown().await
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn readahead_is_shared_across_torrents() -> anyhow::Result<()> {
     let spec = catalog::large(8 * MIB);
     let memory = MemoryCache::start(8 * MIB);
-    let playback = Playback::new(PlaybackConfig::new(8 * MIB));
+    // Without a ramp, so new readers take their share at once.
+    let playback = Playback::new(PlaybackConfig {
+        readahead_ramp_bytes: 0,
+        ..PlaybackConfig::new(8 * MIB)
+    });
     let (first_leecher, second_leecher) = (Leecher::start().await?, Leecher::start().await?);
     let first = memory
         .add_scheduled_in(&first_leecher, &[], &spec, &playback, |_| {})
