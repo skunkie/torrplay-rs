@@ -120,7 +120,9 @@ stops. The process exits with an error if that takes longer than 30 seconds.
 `scripts/play.sh` plays a torrent through a running instance with curl and
 jq: it adds a magnet URI or torrent file, reusing a torrent TorrPlay already
 has, waits for metadata, picks the largest video file or the first whose
-path contains `--file`'s text, and opens its content URL in mpv or VLC.
+path contains `--file`'s text, and opens its content URL in mpv or VLC,
+starting a new VLC instance on macOS, where VLC otherwise hands a second
+stream's URL to the window playing the first.
 `--list` lists the files instead, `--player none` only prints the URL, and
 `--api` names another address. While a magnet URI's metadata is retrieved,
 it reports progress every 5 seconds and gives up after `--timeout` seconds,

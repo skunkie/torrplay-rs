@@ -14,7 +14,8 @@
 #   --file <TEXT>      play the first file whose path contains TEXT; by
 #                      default, the largest video file, or the largest file
 #   --player <COMMAND> the player to open the URL with (default mpv, else
-#                      vlc); "none" only prints the URL
+#                      VLC, as a new instance on macOS); "none" only prints
+#                      the URL
 #   --list             lists the files and exits
 #   --timeout <SECONDS> how long to wait for a magnet's metadata (default
 #                      180)
@@ -156,12 +157,15 @@ echo "playing $(jq -r '.path | join("/")' <<<"$chosen")" >&2
 echo "$url"
 
 if [[ -z $player ]]; then
-    for candidate in mpv vlc; do
-        if command -v "$candidate" >/dev/null; then
-            player=$candidate
-            break
-        fi
-    done
+    if command -v mpv >/dev/null; then
+        player=mpv
+    elif [[ $(uname -s) == Darwin ]] && open -Ra VLC >/dev/null 2>&1; then
+        # VLC on macOS runs one instance, which would take this URL over
+        # from a stream already playing; -n opens another.
+        player="open -na VLC --args"
+    elif command -v vlc >/dev/null; then
+        player=vlc
+    fi
 fi
 if [[ -z $player || $player == none ]]; then
     echo "no player found; open the URL above in one" >&2
