@@ -79,6 +79,14 @@ pub const DEFAULT_PIECE_WAIT: Duration = Duration::from_secs(60);
 /// The default request window, in blocks per peer.
 pub const DEFAULT_REQUEST_WINDOW_BLOCKS: usize = 32;
 
+/// The default number of peers one torrent connects to at a time, connecting
+/// ones included, as Go TorrPlay's engine keeps about 50 established
+/// connections per torrent. Each peer holds a socket and some memory, and a
+/// stream rarely needs more than a few dozen good peers; librqbit's default
+/// of 128 let a few busy torrents exhaust the 256 open files a macOS
+/// terminal allows.
+pub const DEFAULT_PEER_LIMIT: usize = 50;
+
 /// The default interval between keep-alive messages to an idle peer. It is
 /// shorter than any peer's idle timeout we know of: librqbit drops a peer
 /// that sends nothing for 10 seconds, so a torrent without readers would
@@ -162,6 +170,8 @@ pub struct EngineConfig {
     pub idle_readers_total: usize,
     /// The most chunk requests outstanding to one peer.
     pub request_window_blocks: usize,
+    /// The most peers one torrent connects to at a time.
+    pub peer_limit: usize,
     /// How often an idle peer is sent a keep-alive message.
     pub peer_keep_alive_interval: Duration,
     /// How long a peer may send nothing before it is dropped.
@@ -185,6 +195,7 @@ impl EngineConfig {
             idle_readers_per_torrent: DEFAULT_IDLE_READERS_PER_TORRENT,
             idle_readers_total: DEFAULT_IDLE_READERS_TOTAL,
             request_window_blocks: DEFAULT_REQUEST_WINDOW_BLOCKS,
+            peer_limit: DEFAULT_PEER_LIMIT,
             peer_keep_alive_interval: DEFAULT_PEER_KEEP_ALIVE_INTERVAL,
             peer_read_timeout: DEFAULT_PEER_READ_TIMEOUT,
             folder,
@@ -499,6 +510,7 @@ impl LibrqbitEngine {
             paused: true,
             overwrite: true,
             initial_peers: Some(self.config.network.initial_peers.clone()),
+            peer_limit: Some(self.config.peer_limit),
             peer_opts: Some(PeerConnectionOptions {
                 max_request_window: Some(self.config.request_window_blocks),
                 request_stall_timeout: Some(self.config.piece_wait),
