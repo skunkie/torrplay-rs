@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{ExitCode, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -15,6 +15,7 @@ use anyhow::Context;
 use serde::Serialize;
 use tokio::net::TcpListener;
 use tokio::process::{Child, Command};
+use torrplay_bench::environment::Environment;
 use torrplay_bench::fixtures::{self, FixtureDir};
 use torrplay_bench::runner::{self, RunRecord};
 use torrplay_bench::target::{GoTorrPlay, TorrPlay};
@@ -196,34 +197,6 @@ struct ServerRecord {
     exit_success: bool,
 }
 
-#[derive(Serialize)]
-struct Environment {
-    kernel: Option<String>,
-    cpu_model: Option<String>,
-    cores: Option<usize>,
-    memory_bytes: Option<u64>,
-}
-
-fn environment() -> Environment {
-    let read = |path| std::fs::read_to_string(path).ok();
-    let field = |text: &Option<String>, name: &str| {
-        text.as_deref()?.lines().find_map(|line| {
-            let (key, value) = line.split_once(':')?;
-            (key.trim() == name).then(|| value.trim().to_owned())
-        })
-    };
-    let cpuinfo = read("/proc/cpuinfo");
-    let meminfo = read("/proc/meminfo");
-    Environment {
-        kernel: read("/proc/sys/kernel/osrelease").map(|text| text.trim().to_owned()),
-        cpu_model: field(&cpuinfo, "model name").or_else(|| field(&cpuinfo, "CPU part")),
-        cores: std::thread::available_parallelism().ok().map(usize::from),
-        memory_bytes: field(&meminfo, "MemTotal")
-            .and_then(|value| value.split_whitespace().next()?.parse::<u64>().ok())
-            .map(|kib| kib * 1024),
-    }
-}
-
 /// A free port on loopback, found by binding it; another process could
 /// take it before the server binds it.
 async fn free_port() -> anyhow::Result<u16> {
@@ -340,18 +313,27 @@ async fn run(options: &Options) -> anyhow::Result<()> {
     let record = match implementation {
         Implementation::TorrPlay => {
             let target = Arc::new(TorrPlay::new(client.clone(), base));
-            runner::run(target, client, pid, &trace, &fixtures).await
+            runner::run(target, client.clone(), pid, &trace, &fixtures).await
         }
         Implementation::GoTorrPlay => {
             let target = Arc::new(GoTorrPlay::new(client.clone(), base));
             match target.configure(trace.cache_capacity_bytes).await {
-                Ok(()) => runner::run(target, client, pid, &trace, &fixtures).await,
+                Ok(()) => runner::run(target, client.clone(), pid, &trace, &fixtures).await,
                 Err(error) => Err(error),
             }
         }
     };
     let stopping = Instant::now();
     let exit_success = stop(&mut child, pid).await?;
+    let seeders = match fixtures.read_announce() {
+        Ok(announce) => tracker::seeder_count(&client, &announce).await,
+        Err(error) => Err(error),
+    };
+    let seeders = seeders
+        .inspect_err(|error| tracing::warn!("counting seeders failed: {error:#}"))
+        .ok();
+    let go_binary = (implementation == Implementation::GoTorrPlay).then(|| Path::new(&binary));
+    let environment = Environment::detect(go_binary, seeders);
     let record = record?;
 
     let file = RunFile {
@@ -362,7 +344,7 @@ async fn run(options: &Options) -> anyhow::Result<()> {
         implementation,
         labels,
         started_unix_ms,
-        environment: environment(),
+        environment,
         server: ServerRecord {
             binary,
             args,

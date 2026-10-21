@@ -52,11 +52,17 @@ impl FixtureDir {
         self.root.join(format!("{name}.magnet"))
     }
 
+    /// The tracker URL every torrent announces to.
+    pub fn announce_file(&self) -> PathBuf {
+        self.root.join("announce")
+    }
+
     /// Writes each of `specs`' content, torrent file, and magnet URI, all
     /// announcing to `announce`. Content that already has the right size is
     /// kept, as generating it again would only reproduce it.
     pub fn write(&self, specs: &[FixtureSpec], announce: &str) -> anyhow::Result<()> {
         fs::create_dir_all(self.content())?;
+        fs::write(self.announce_file(), announce)?;
         for spec in specs {
             if !content_complete(spec, &self.content()) {
                 tracing::info!(fixture = spec.id, "writing content");
@@ -75,6 +81,14 @@ impl FixtureDir {
     pub fn read_torrent(&self, name: &str) -> anyhow::Result<Vec<u8>> {
         let path = self.torrent_file(name);
         fs::read(&path).with_context(|| format!("reading {}", path.display()))
+    }
+
+    pub fn read_announce(&self) -> anyhow::Result<String> {
+        let path = self.announce_file();
+        Ok(fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?
+            .trim()
+            .to_owned())
     }
 
     pub fn read_magnet(&self, name: &str) -> anyhow::Result<String> {
