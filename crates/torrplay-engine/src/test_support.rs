@@ -16,8 +16,8 @@ use std::time::Duration;
 
 use anyhow::Context;
 use librqbit::{
-    AddTorrent, AddTorrentOptions, ListenerMode, ListenerOptions, ManagedTorrent, Session,
-    SessionOptions,
+    AddTorrent, AddTorrentOptions, ListenerMode, ListenerOptions, ManagedTorrent,
+    PeerConnectionOptions, Session, SessionOptions,
 };
 use tempfile::TempDir;
 use torrplay_fixtures::{FixtureSpec, Layout};
@@ -101,6 +101,25 @@ impl Seeder {
         metainfo: &[u8],
         peers: &[SocketAddr],
     ) -> anyhow::Result<Self> {
+        Self::start_with_options(spec, metainfo, peers, None).await
+    }
+
+    /// Like [`start`](Self::start), with `peer_opts` for every connection,
+    /// such as a shorter idle timeout than librqbit's default.
+    pub async fn start_with_peer_options(
+        spec: &FixtureSpec,
+        metainfo: &[u8],
+        peer_opts: PeerConnectionOptions,
+    ) -> anyhow::Result<Self> {
+        Self::start_with_options(spec, metainfo, &[], Some(peer_opts)).await
+    }
+
+    async fn start_with_options(
+        spec: &FixtureSpec,
+        metainfo: &[u8],
+        peers: &[SocketAddr],
+        peer_opts: Option<PeerConnectionOptions>,
+    ) -> anyhow::Result<Self> {
         let dir = tempfile::tempdir()?;
         let root = spec.write_content(dir.path())?;
         let session = new_session(dir.path()).await?;
@@ -112,6 +131,7 @@ impl Seeder {
                     output_folder: Some(output_folder_for(spec, &root)?),
                     overwrite: true,
                     initial_peers: (!peers.is_empty()).then(|| peers.to_vec()),
+                    peer_opts,
                     ..Default::default()
                 }),
             ),
