@@ -297,7 +297,10 @@ percentile, minimum, and maximum, and keep raw per-run data.
 
 The thresholds below come from Go TorrPlay `84412a1`'s baseline on the
 developer's arm64 machine and were written before any Rust result on it was
-evaluated. Correctness scenarios and the cache
+evaluated. Three Go runs, the first after the seeders started in each matrix
+run, were captured again after the harness was found starting them before
+the seeders had checked their content; the new runs tightened the limits of
+`cold-start` slightly, and no other limit changed. Correctness scenarios and the cache
 capacity invariant are mandatory regardless of speed.
 
 Every run of the Rust prototype must:
@@ -331,7 +334,7 @@ percentile:
 
 | Trace | First byte | Seek | Metadata | Stall total | CPU | Peak RSS | Excess download |
 |---|---|---|---|---|---|---|---|
-| `cold-start` | 970 ms | — | 394 ms | 1.00 s | 7.4 s | 337 MiB | 218 MiB |
+| `cold-start` | 970 ms | — | 394 ms | 1.00 s | 7.4 s | 336 MiB | 217 MiB |
 | `concurrent` | 703 ms / 1.30 s | — | — | 1.00 s | 11.5 s | 503 MiB | 215 MiB |
 | `far-seeks` | 1.10 s | 674 ms / 933 ms | — | 1.00 s | 6.4 s | 339 MiB | 360 MiB |
 | `idle-resume` | 1.06 s | 53 ms | — | 1.00 s | 3.2 s | 155 MiB | 94 MiB |
@@ -343,7 +346,7 @@ percentile:
 
 | Trace | First byte | Seek | Metadata | Stall total | CPU | Peak RSS | Excess download |
 |---|---|---|---|---|---|---|---|
-| `cold-start` | 4.99 s | — | 1.33 s | 226.93 s | 9.7 s | 199 MiB | 50 MiB |
+| `cold-start` | 4.79 s | — | 1.33 s | 192.92 s | 9.7 s | 195 MiB | 50 MiB |
 | `concurrent` | 3.96 s / 14.03 s | — | — | 941.80 s | 18.8 s | 349 MiB | 66 MiB |
 | `far-seeks` | 4.84 s | 13.04 s / 19.92 s | — | 80.16 s | 6.1 s | 136 MiB | 69 MiB |
 | `idle-resume` | 4.58 s | 53 ms | — | 7.77 s | 4.2 s | 113 MiB | 51 MiB |
