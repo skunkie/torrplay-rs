@@ -342,16 +342,21 @@ async fn a_full_cache_releases_idle_readers() -> anyhow::Result<()> {
     assert_eq!(stats(engine).idle_readers, 1);
     assert_eq!(engine.cache_statistics().await?.pinned_bytes, piece);
 
+    // The read finishing at all shows the held reader was released: its
+    // pinned piece filled the cache.
     let bytes = read(engine, &id(2), 0, 0, 100).await?;
     assert_eq!(bytes, expected(&pressing, 0, 0, 100));
-    assert_eq!(
-        stats(engine),
-        PlaybackStats {
-            readers: 1,
-            idle_readers: 1,
-            opened_readers: 2,
-        },
-        "only the second torrent's reader is left, idle"
+    // The second reader, idle, still wants its two-piece minimum window,
+    // which the cache cannot hold either, so the fallback may release it
+    // too; wait until no reader is mid-release.
+    let settled = eventually("the readers to settle", || {
+        let stats = stats(engine);
+        Ok((stats.readers == stats.idle_readers).then_some(stats))
+    })
+    .await?;
+    assert!(
+        settled.readers <= 1 && settled.opened_readers == 2,
+        "the held reader was released: {settled:?}"
     );
     engine.cache().expect("a started cache").audit()?;
 

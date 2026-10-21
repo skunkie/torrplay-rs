@@ -469,7 +469,6 @@ impl Reader {
         )
     }
 
-    // Reports the position when it reaches another piece.
     /// Starts a new run at the reader's position, ramping its window up
     /// again.
     fn seeked(&mut self) {
@@ -480,6 +479,7 @@ impl Reader {
         self.moved();
     }
 
+    // Reports the position when it reaches another piece.
     fn moved(&mut self) {
         let position = self.stream.position();
         let piece = {
