@@ -281,9 +281,16 @@ The trace set, in `bench/traces`:
 | RSS | Peak and steady-state resident set size, sampled every 100 ms |
 | Cache usage | Cache usage and eviction count, sampled every 100 ms |
 
-Each trace runs at least 10 times per implementation and network profile,
-with a fresh process and empty cache each time. Results report the median,
-90th percentile, minimum, and maximum, and keep raw per-run data.
+On the fast profile, every trace runs at least 10 times per implementation.
+On the slow profile, `cold-start`, `far-seeks`, `concurrent`, `idle-resume`,
+and `player-ranges` run at least 5 times each. `sustained-eviction` and
+`max-throughput` are left out there: the lossy link holds TCP well below its
+rate, so they would measure the link more than the implementation, and
+would take most of the slow profile's time. Its five runs make the 90th
+percentile close to the maximum, so slow-profile thresholds come from the
+pooled per-request values rather than from per-run ones alone. Each run uses
+a fresh process and empty cache. Results report the median, 90th
+percentile, minimum, and maximum, and keep raw per-run data.
 
 ### Thresholds
 
