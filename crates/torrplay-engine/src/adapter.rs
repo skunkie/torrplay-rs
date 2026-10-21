@@ -79,6 +79,17 @@ pub const DEFAULT_PIECE_WAIT: Duration = Duration::from_secs(60);
 /// The default request window, in blocks per peer.
 pub const DEFAULT_REQUEST_WINDOW_BLOCKS: usize = 32;
 
+/// The default interval between keep-alive messages to an idle peer. It is
+/// shorter than any peer's idle timeout we know of: librqbit drops a peer
+/// that sends nothing for 10 seconds, so a torrent without readers would
+/// otherwise lose its peers and make its next stream wait for a reconnect.
+pub const DEFAULT_PEER_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(5);
+
+/// The default time a peer may send nothing before it is dropped. It is
+/// longer than the two-minute keep-alive interval BEP 3 suggests, which
+/// librqbit and other clients use, so idle peers are kept.
+pub const DEFAULT_PEER_READ_TIMEOUT: Duration = Duration::from_secs(150);
+
 /// The default peer listen port, as ADR 2's network configuration fixes it.
 pub const DEFAULT_PEER_PORT: u16 = 4240;
 
@@ -148,6 +159,10 @@ pub struct EngineConfig {
     pub idle_readers_total: usize,
     /// The most chunk requests outstanding to one peer.
     pub request_window_blocks: usize,
+    /// How often an idle peer is sent a keep-alive message.
+    pub peer_keep_alive_interval: Duration,
+    /// How long a peer may send nothing before it is dropped.
+    pub peer_read_timeout: Duration,
     /// The session's folder. Memory storage writes nothing there.
     pub folder: PathBuf,
     /// How the engine reaches peers.
@@ -166,6 +181,8 @@ impl EngineConfig {
             idle_readers_per_torrent: DEFAULT_IDLE_READERS_PER_TORRENT,
             idle_readers_total: DEFAULT_IDLE_READERS_TOTAL,
             request_window_blocks: DEFAULT_REQUEST_WINDOW_BLOCKS,
+            peer_keep_alive_interval: DEFAULT_PEER_KEEP_ALIVE_INTERVAL,
+            peer_read_timeout: DEFAULT_PEER_READ_TIMEOUT,
             folder,
             network,
         }
@@ -480,6 +497,8 @@ impl LibrqbitEngine {
             peer_opts: Some(PeerConnectionOptions {
                 max_request_window: Some(self.config.request_window_blocks),
                 request_stall_timeout: Some(self.config.piece_wait),
+                keep_alive_interval: Some(self.config.peer_keep_alive_interval),
+                read_write_timeout: Some(self.config.peer_read_timeout),
                 ..Default::default()
             }),
             ..Default::default()
@@ -962,6 +981,10 @@ impl Engine for LibrqbitEngine {
             let live = state.live.as_ref().ok_or(EngineError::NotStarted)?;
             (live.handle.clone(), live.scheduler.clone())
         };
+        // A torrent without streams may have lost its peers, and librqbit
+        // would reconnect them only after a backoff; this stream needs data
+        // now.
+        handle.reconnect_peers();
         let mut reader = match scheduler.take_idle(file.0, range.start()) {
             Some(reader) => reader,
             None => scheduler
