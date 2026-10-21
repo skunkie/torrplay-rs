@@ -200,7 +200,7 @@ interrupted matrix resumes, and keeps a failed run's log without its result.
 Benchmark commands run as the user who invoked sudo, or under `su` as the
 checkout's owner. `PROFILES`, `RUNS`, `TRACES`, `DIR`, `OUT`, `BENCH`,
 `BENCH_USER`, and `COMMIT` override its defaults, and `DRY_RUN=1` prints its
-commands without root. The Go baseline takes several hours:
+commands without root. The Go baseline takes about three hours:
 
 ```bash
 sudo scripts/bench-matrix.sh go-torrplay target/go-torrplay
