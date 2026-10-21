@@ -117,6 +117,17 @@ while reads continue, streams in progress get a 10-second drain period and
 are then canceled with the idle readers, the listener closes, and the engine
 stops. The process exits with an error if that takes longer than 30 seconds.
 
+`scripts/play.sh` plays a torrent through a running instance with curl and
+jq: it adds a magnet URI or torrent file, reusing a torrent TorrPlay already
+has, waits for metadata, picks the largest video file or the first whose
+path contains `--file`'s text, and opens its content URL in mpv or VLC.
+`--list` lists the files instead, `--player none` only prints the URL, and
+`--api` names another address. With TorrPlay running in another terminal:
+
+```bash
+scripts/play.sh 'magnet:?xt=urn:btih:...'
+```
+
 ## Benchmarks
 
 `crates/torrplay-bench` is the milestone 5 harness for the benchmark
