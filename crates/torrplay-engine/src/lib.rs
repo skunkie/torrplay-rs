@@ -26,7 +26,7 @@ pub mod storage;
 pub mod test_support;
 
 pub use adapter::{
-    DEFAULT_CACHE_CAPACITY_BYTES, DEFAULT_PEER_PORT, DEFAULT_PIECE_WAIT,
+    DEFAULT_CACHE_CAPACITY_BYTES, DEFAULT_PEER_LIMIT, DEFAULT_PEER_PORT, DEFAULT_PIECE_WAIT,
     DEFAULT_REQUEST_WINDOW_BLOCKS, EngineConfig, LibrqbitEngine, NetworkConfig,
 };
 pub use reader::RangeReader;
