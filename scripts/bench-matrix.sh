@@ -179,6 +179,22 @@ stop_services() {
 }
 trap stop_services EXIT
 
+# Waits until the seeder logging to $1 has checked its content and seeds.
+# Its listener accepts connections before that, so a run started then would
+# wait for the check, as the first run of every matrix did.
+wait_seeding() {
+    local log=$1
+    [[ $dry_run == 1 ]] && return 0
+    local deadline=$((SECONDS + START_TIMEOUT_SECONDS))
+    until grep -q 'torrplay_bench::seed: seeding' "$log" 2>/dev/null; do
+        if ((SECONDS >= deadline)); then
+            echo "the seeder logging to $log never started seeding" >&2
+            return 1
+        fi
+        sleep 1
+    done
+}
+
 # Waits until $2:$3 accepts connections from namespace $1.
 wait_listening() {
     local netns=$1 host=$2 port=$3
@@ -224,6 +240,7 @@ for profile in $PROFILES; do
         "$BENCH" tracker --listen "$TRACKER" "${peers[@]}"
     for n in $(seq 1 "$SEEDERS"); do
         wait_listening "$CLIENT" "10.77.$n.2" "$SEED_PORT"
+        wait_seeding "$results/seed$n.log"
     done
     wait_listening "$CLIENT" "${TRACKER%:*}" "${TRACKER#*:}"
 
