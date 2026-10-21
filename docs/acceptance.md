@@ -213,11 +213,12 @@ with 80 ms delay and 0.5 percent loss.
 
 ### Target devices and baseline
 
-The benchmarks run on three Linux devices:
-
-- the developer's arm64 machine;
-- an x86_64 desktop;
-- a low-memory ARM device with at most 2 GiB of RAM.
+The milestone 5 decision rests on one device: the developer's arm64
+machine, a QEMU virtual machine with 6 cores and 6 GiB of RAM, whose
+hypervisor exposes no CPU frequency scaling. An x86_64 machine and a
+low-memory ARM device with at most 2 GiB of RAM were considered and
+deferred; without them, the benchmark does not show behavior under tight
+memory or on x86_64, and ADR 7 records that limit.
 
 The baseline is Go TorrPlay at commit `84412a1`. Its cache size setting,
 `max_memory`, is set to the trace's cache capacity before each run; it
@@ -294,10 +295,64 @@ percentile, minimum, and maximum, and keep raw per-run data.
 
 ### Thresholds
 
-Numerical thresholds are written here after the Go baseline is captured on
-the target devices, and before any Rust result is evaluated against them.
-Correctness scenarios and the cache capacity invariant are mandatory
-regardless of speed.
+The thresholds below come from Go TorrPlay `84412a1`'s baseline on the
+developer's arm64 machine and were written before any Rust result on it was
+evaluated. Correctness scenarios and the cache
+capacity invariant are mandatory regardless of speed.
+
+Every run of the Rust prototype must:
+
+- end every request without an error;
+- keep sampled cache usage at or below the trace's cache capacity;
+- stop cleanly on SIGTERM.
+
+Against Go's distribution of the same measurement, trace, and profile, the
+Rust prototype must stay within these limits:
+
+| Measurement | Limit |
+|---|---|
+| Time to first byte, time to first playable data, seek latency, time to metadata | Median at most 110 percent of Go's median plus 50 ms; with 20 or more pooled values, 90th percentile at most 125 percent of Go's plus 100 ms |
+| Total stall duration per run | Median at most 110 percent of Go's median plus 1 s |
+| CPU seconds, peak RSS | Median at most 110 percent of Go's median |
+| Excess downloaded bytes | Median at most 125 percent of Go's median plus 16 MiB |
+| Throughput | Cold and uncached reads at least 90 percent of Go's median; cached reads at least 75 percent |
+
+The additive terms keep small values, such as a 3 ms cached seek, from
+turning noise into failures. Stalls of `max-throughput` are not compared:
+its reads have no consumption limit, so every wait for the network counts
+as a stall, and its throughput limits cover it instead. A limit the
+prototype misses fails acceptance unless ADR 7 records why the difference
+is intentional, such as more readahead traded for fewer stalls.
+
+On this machine, the rules give these limits, as median, or median / 90th
+percentile:
+
+#### Fast profile on the arm64 machine
+
+| Trace | First byte | Seek | Metadata | Stall total | CPU | Peak RSS | Excess download |
+|---|---|---|---|---|---|---|---|
+| `cold-start` | 970 ms | — | 394 ms | 1.00 s | 7.4 s | 337 MiB | 218 MiB |
+| `concurrent` | 703 ms / 1.30 s | — | — | 1.00 s | 11.5 s | 503 MiB | 215 MiB |
+| `far-seeks` | 1.10 s | 674 ms / 933 ms | — | 1.00 s | 6.4 s | 339 MiB | 360 MiB |
+| `idle-resume` | 1.06 s | 53 ms | — | 1.00 s | 3.2 s | 155 MiB | 94 MiB |
+| `max-throughput` | 865 ms | 53 ms | — | — | 9.4 s | 629 MiB | 47 MiB |
+| `player-ranges` | 958 ms | 55 ms / 502 ms | — | 1.00 s | 3.1 s | 185 MiB | 143 MiB |
+| `sustained-eviction` | 988 ms | — | — | 1.00 s | 39.1 s | 192 MiB | 378 MiB |
+
+#### Slow profile on the arm64 machine
+
+| Trace | First byte | Seek | Metadata | Stall total | CPU | Peak RSS | Excess download |
+|---|---|---|---|---|---|---|---|
+| `cold-start` | 4.99 s | — | 1.33 s | 226.93 s | 9.7 s | 199 MiB | 50 MiB |
+| `concurrent` | 3.96 s / 14.03 s | — | — | 941.80 s | 18.8 s | 349 MiB | 66 MiB |
+| `far-seeks` | 4.84 s | 13.04 s / 19.92 s | — | 80.16 s | 6.1 s | 136 MiB | 69 MiB |
+| `idle-resume` | 4.58 s | 53 ms | — | 7.77 s | 4.2 s | 113 MiB | 51 MiB |
+| `player-ranges` | 3.88 s | 55 ms / 2.72 s | — | 38.04 s | 2.7 s | 90 MiB | 30 MiB |
+
+Time to first playable data has the same limits as time to first byte to
+within a few milliseconds. Throughput must reach 14.5 MB/s for the cold read
+of `max-throughput` and 225 MB/s for its cached read, and 13.5 MB/s for
+`player-ranges` on the fast profile and 13.0 MB/s on the slow one.
 
 ## Open decisions
 
