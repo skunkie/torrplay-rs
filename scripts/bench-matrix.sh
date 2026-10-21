@@ -3,8 +3,10 @@
 #
 # SPDX-License-Identifier: MIT
 
-# Runs the benchmark protocol's matrix for one implementation: every trace in
-# bench/traces, RUNS times, under each network profile. For each profile it
+# Runs the benchmark protocol's matrix for one implementation under each
+# network profile: every trace in bench/traces ten times on the fast
+# profile, and on the slow one the five traces that are not bound by its
+# link, five times each, as docs/acceptance.md defines. For each profile it
 # builds the shaped network with bench-netns.sh, starts a seeder in each
 # seeder namespace and the tracker in the client namespace, runs the traces
 # round-robin so slow drift spreads across them, and tears it all down.
@@ -13,14 +15,14 @@
 #   sudo scripts/bench-matrix.sh torrplay <BINARY>
 #
 # Needs root, through sudo or su, for the namespaces; every benchmark command
-# runs as the user who invoked sudo, or else as the checkout's owner. Build the release binaries and write the fixtures with
-# `--tracker http://127.0.0.1:6969/announce` first, as docs/development.md
+# runs as the user who invoked sudo, or else as the checkout's owner. Build
+# the release binaries and write the fixtures with `--tracker http://127.0.0.1:6969/announce` first, as docs/development.md
 # describes.
 #
 # Environment:
 #   PROFILES   profiles to run, in order (default "fast slow")
-#   RUNS       runs per trace and profile (default 10)
-#   TRACES     trace names to run (default every file in bench/traces)
+#   RUNS       runs per trace, overriding each profile's
+#   TRACES     trace names to run, overriding each profile's
 #   DIR        fixture directory (default target/bench)
 #   OUT        result directory (default target/bench-results)
 #   BENCH      torrplay-bench binary (default target/release/torrplay-bench)
@@ -60,7 +62,6 @@ esac
 
 cd "$(dirname "$0")/.."
 readonly PROFILES=${PROFILES:-fast slow}
-readonly RUNS=${RUNS:-10}
 readonly DIR=${DIR:-target/bench}
 readonly OUT=${OUT:-target/bench-results}
 readonly BENCH=${BENCH:-target/release/torrplay-bench}
@@ -113,14 +114,32 @@ if [[ $(cat "$DIR/announce" 2>/dev/null) != "$announce" ]]; then
     exit 1
 fi
 
-if [[ -n ${TRACES:-} ]]; then
-    read -r -a traces <<<"$TRACES"
-else
-    traces=()
-    for file in bench/traces/*.jsonl; do
-        traces+=("$(basename "$file" .jsonl)")
-    done
-fi
+# Sets runs and traces to profile $1's part of the matrix. On the slow
+# profile, sustained-eviction and max-throughput measure the lossy link more
+# than the implementation and would take most of its time.
+profile_matrix() {
+    case $1 in
+        fast)
+            runs=10
+            traces=()
+            for file in bench/traces/*.jsonl; do
+                traces+=("$(basename "$file" .jsonl)")
+            done
+            ;;
+        slow)
+            runs=5
+            traces=(cold-start concurrent far-seeks idle-resume player-ranges)
+            ;;
+        *)
+            echo "unknown profile $1; use fast or slow" >&2
+            exit 2
+            ;;
+    esac
+    runs=${RUNS:-$runs}
+    if [[ -n ${TRACES:-} ]]; then
+        read -r -a traces <<<"$TRACES"
+    fi
+}
 
 if [[ -z ${COMMIT:-} ]]; then
     if [[ $implementation == go-torrplay ]]; then
@@ -192,6 +211,7 @@ for profile in $PROFILES; do
     results=$OUT/$profile
     run as_user mkdir -p "$results"
     run scripts/bench-netns.sh down >/dev/null 2>&1 || true
+    profile_matrix "$profile"
     run scripts/bench-netns.sh up "$profile"
 
     peers=()
@@ -207,10 +227,12 @@ for profile in $PROFILES; do
     done
     wait_listening "$CLIENT" "${TRACKER%:*}" "${TRACKER#*:}"
 
-    for n in $(seq 1 "$RUNS"); do
+    matrix=()
+    for n in $(seq 1 "$runs"); do
         for trace in "${traces[@]}"; do
             name=$trace-$implementation-$n
             file=$results/$name.json
+            matrix+=("$file")
             if [[ -e $file ]]; then
                 continue
             fi
@@ -235,12 +257,15 @@ for profile in $PROFILES; do
     stop_services
     # Logs were written by this root shell; hand them to the user.
     run chown -R "$user:" "$results"
+    # Only this matrix's runs are summarized; files of runs outside it, such
+    # as those of a larger earlier matrix, are kept but left out.
     if [[ $dry_run == 1 ]]; then
-        in_netns "$CLIENT" "$BENCH" summarize --out "$results/summary.json" "$results/*-$implementation-*.json"
+        in_netns "$CLIENT" "$BENCH" summarize --out "$results/summary.json" "${matrix[@]}"
     else
-        shopt -s nullglob
-        files=("$results"/*-"$implementation"-*.json)
-        shopt -u nullglob
+        files=()
+        for file in "${matrix[@]}"; do
+            [[ -e $file ]] && files+=("$file")
+        done
         if ((${#files[@]})); then
             as_user "$BENCH" summarize --out "$results/summary.json" "${files[@]}" \
                 >"$results/summary.md"

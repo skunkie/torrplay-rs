@@ -192,8 +192,8 @@ sudo ip netns exec tpb-client runuser -u "$USER" -- target/release/torrplay-benc
 ```
 
 `scripts/bench-matrix.sh` runs a whole matrix this way: for each profile it
-builds the network, starts the three seeders and the tracker, runs every
-trace ten times round-robin, labels each run with the commit and profile,
+builds the network, starts the three seeders and the tracker, runs the
+profile's part of the protocol's matrix round-robin, labels each run with the commit and profile,
 tears the network down, and summarizes the profile's runs. It writes
 `target/bench-results/<profile>/`, skips runs whose files exist so an
 interrupted matrix resumes, and keeps a failed run's log without its result.
