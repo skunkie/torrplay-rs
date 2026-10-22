@@ -9,9 +9,11 @@ mod support;
 
 use std::time::Duration;
 
-use support::{MIB, Seeder, bounded, expected, id, read, start_with, upload};
+use support::{MIB, Seeder, bounded, expected, id, range, start_with, upload};
+use tokio::io::AsyncReadExt;
 use torrplay_core::engine::Engine;
 use torrplay_core::lifecycle::DesiredState;
+use torrplay_core::metadata::FileIndex;
 use torrplay_engine::LibrqbitEngine;
 use torrplay_fixtures::catalog;
 
@@ -35,7 +37,17 @@ async fn a_torrent_connects_to_at_most_its_peer_limit() -> anyhow::Result<()> {
     engine
         .add(&id(1), &upload(&spec), DesiredState::Started)
         .await?;
-    let bytes = read(engine, &id(1), 0, 0, 1000).await?;
+    // A reader kept open keeps the torrent wanting pieces, and so peers;
+    // without one, it selects nothing and has no reason to connect more.
+    let size = spec.total_size_bytes();
+    let mut reader = engine
+        .open_reader(&id(1), FileIndex(0), range(0, size))
+        .await?;
+    let mut bytes = vec![0; 1000];
+    bounded("reading the first bytes", async {
+        Ok(reader.read_exact(&mut bytes).await?)
+    })
+    .await?;
     assert_eq!(bytes, expected(&spec, 0, 0, 1000));
 
     bounded("peers connecting", async {
@@ -52,6 +64,7 @@ async fn a_torrent_connects_to_at_most_its_peer_limit() -> anyhow::Result<()> {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
+    drop(reader);
     engine.shutdown().await?;
     for seeder in seeders {
         seeder.stop().await;
