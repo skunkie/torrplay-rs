@@ -208,7 +208,11 @@ async fn readahead_ramps_up_and_restarts_after_a_seek() -> anyhow::Result<()> {
     let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
     let memory = MemoryCache::start(16 * MIB);
     let leecher = Leecher::start().await?;
-    let playback = Playback::new(PlaybackConfig::new(8 * MIB));
+    // A 1 MiB ramp, below the share, so the ramp shows.
+    let playback = Playback::new(PlaybackConfig {
+        readahead_ramp_bytes: MIB,
+        ..PlaybackConfig::new(8 * MIB)
+    });
     let torrent = memory
         .add_scheduled_in(&leecher, &[seeder.addr], &spec, &playback, |_| {})
         .await?;
@@ -252,62 +256,6 @@ async fn readahead_ramps_up_and_restarts_after_a_seek() -> anyhow::Result<()> {
         [16, 17],
         "seeking to where it is keeps the run"
     );
-
-    drop(reader);
-    leecher.session.stop().await;
-    seeder.stop().await;
-    memory.shutdown().await
-}
-
-/// An idle reader that played reads ahead its whole share while it waits,
-/// and ramps again once taken for the next request.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn an_idle_reader_that_played_reads_ahead_its_share() -> anyhow::Result<()> {
-    // 1 MiB pieces in a 64 MiB file; the reader's share is 16 pieces.
-    let spec = catalog::large(16 * MIB);
-    let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
-    let memory = MemoryCache::start(32 * MIB);
-    let leecher = Leecher::start().await?;
-    let playback = Playback::new(PlaybackConfig::new(16 * MIB));
-    let torrent = memory
-        .add_scheduled_in(&leecher, &[seeder.addr], &spec, &playback, |_| {})
-        .await?;
-    let last = (spec.total_size_bytes() / MIB - 1) as u32;
-    let window = |torrent: &support::ScheduledTorrent| -> anyhow::Result<usize> {
-        Ok(torrent
-            .scheduler
-            .priorities()?
-            .into_iter()
-            .filter(|&piece| piece > 4 && piece != last)
-            .count())
-    };
-    let mut reader = bounded("opening a reader", async {
-        Ok(torrent.scheduler.open(&torrent.handle, 0).await?)
-    })
-    .await?;
-    let mut read = vec![0; 4 * MIB as usize];
-    bounded("reading 4 pieces", async {
-        Ok(reader.read_exact(&mut read).await?)
-    })
-    .await?;
-    // At most one live peer here, so the peer floor stays below the ramp.
-    assert_eq!(
-        window(&torrent)?,
-        7,
-        "twice the 4 pieces read, the current one included"
-    );
-
-    reader.park();
-    assert_eq!(
-        window(&torrent)?,
-        15,
-        "idle after playing, its whole 16-piece share"
-    );
-    let reader = torrent
-        .scheduler
-        .take_idle(0, 4 * MIB)
-        .expect("the parked reader");
-    assert_eq!(window(&torrent)?, 7, "taken again, it ramps as before");
 
     drop(reader);
     leecher.session.stop().await;

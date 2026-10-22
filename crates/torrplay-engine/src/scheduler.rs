@@ -14,18 +14,17 @@
 //!
 //! A new reader, and one after a seek, ramps its window up: it reads ahead
 //! at most twice what it has read since, and at least the playback's ramp
-//! bytes, until its share allows no more, as Go
-//! TorrPlay's readers do. A player that reads a container header and seeks,
-//! or plays a few seconds at each of several positions, then downloads
-//! little it never plays. A reader that continues where it stopped, as an
-//! idle reader taken for the next range request does, keeps its ramp.
+//! bytes, until its share allows no more, as Go TorrPlay's readers do. A
+//! player that reads a container header and seeks, or plays a few seconds
+//! at each of several positions, then downloads little it never plays. A
+//! reader that continues where it stopped, as an idle reader taken for the
+//! next range request does, keeps its ramp.
 //!
-//! Two floors keep the ramp from starving slow links. librqbit downloads
-//! each piece from one peer, so a window spans at least one piece more than
-//! the torrent has live peers, keeping every peer busy after a seek. And an
-//! idle reader whose run was playback, at least four times the ramp bytes,
-//! reads ahead its whole share while it waits, as a paused player resumes
-//! where it stopped; one that only read a header stays ramped.
+//! librqbit downloads each piece from one peer, unlike Go TorrPlay's engine,
+//! which spreads a piece's blocks over several, so a small window leaves
+//! peers idle between pieces, which slow, lossy links cannot afford. A
+//! window therefore spans at least one piece more than the torrent has live
+//! peers, and the default ramp starts at 16 MiB rather than Go's 1 MiB.
 //!
 //! Closing the scheduler, when its torrent pauses, fails, or is deleted,
 //! cancels its streams and releases its readers, idle ones included, at
@@ -67,8 +66,6 @@ pub(crate) struct ReaderPosition {
     /// Where the reader's current run of sequential reading started: where
     /// it opened or last seeked to.
     pub(crate) run_start: u64,
-    /// Whether the reader is idle, kept for the next range request.
-    pub(crate) idle: bool,
 }
 
 impl ReaderPosition {
@@ -78,24 +75,18 @@ impl ReaderPosition {
             file,
             offset,
             run_start: offset,
-            idle: false,
         }
     }
 
     /// The most this reader reads ahead while it ramps up from at least
     /// `ramp_bytes`; zero means no ramp.
     fn ramp_limit(&self, ramp_bytes: u64) -> u64 {
-        let read = self.offset.saturating_sub(self.run_start);
-        if ramp_bytes == 0 || (self.idle && read >= IDLE_PLAYBACK_RAMPS * ramp_bytes) {
+        if ramp_bytes == 0 {
             return u64::MAX;
         }
-        (2 * read).max(ramp_bytes)
+        (2 * self.offset.saturating_sub(self.run_start)).max(ramp_bytes)
     }
 }
-
-/// How many ramps' worth of reading make an idle reader's run playback,
-/// whose next range request continues it, rather than a header probe.
-const IDLE_PLAYBACK_RAMPS: u64 = 4;
 
 /// The pieces a torrent's readers need.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -304,10 +295,7 @@ impl TorrentScheduler {
 
     /// Takes an idle reader of `file` nearest to `offset`, if one exists.
     pub fn take_idle(&self, file: usize, offset: u64) -> Option<Reader> {
-        let reader = self.playback.take_idle(self.id, file, offset)?;
-        // A failure leaves the old plan in place; the reader still reads.
-        let _ = self.set_idle(reader.id, false);
-        Some(reader)
+        self.playback.take_idle(self.id, file, offset)
     }
 
     /// Cancels every stream of the torrent and releases its readers, idle
@@ -360,14 +348,6 @@ impl TorrentScheduler {
 
     /// Moves reader `id` to `offset`, starting a new run there if
     /// `restart`.
-    /// Marks reader `id` idle or active again.
-    pub(crate) fn set_idle(&self, id: u64, idle: bool) -> anyhow::Result<()> {
-        if let Some(reader) = self.lock()?.readers.get_mut(&id) {
-            reader.idle = idle;
-        }
-        self.replan()
-    }
-
     fn move_reader(&self, id: u64, offset: u64, restart: bool) -> anyhow::Result<()> {
         if let Some(reader) = self.lock()?.readers.get_mut(&id) {
             reader.offset = offset;
@@ -498,8 +478,6 @@ impl Reader {
     /// released instead.
     pub fn park(self) {
         if !self.is_canceled() {
-            // A failure leaves the old plan in place.
-            let _ = self.scheduler.set_idle(self.id, true);
             self.scheduler.playback.clone().park(self);
         }
     }
@@ -723,39 +701,28 @@ mod tests {
     }
 
     #[test]
-    fn floors_keep_peers_busy_and_idle_playback_ahead() {
+    fn windows_keep_every_live_peer_busy() {
         let piece = RAMP;
-        let ahead = |position: ReaderPosition, live_peers: u64| -> usize {
-            let current = (position.offset / piece) as u32;
-            plan(&ramp_layout(), &[position], 32 * piece, RAMP, live_peers)
-                .priorities
-                .into_iter()
-                .filter(|&p| p > current && p != 63)
-                .count()
+        let ahead = |live_peers: u64| -> usize {
+            plan(
+                &ramp_layout(),
+                &[ReaderPosition::new(0, 0)],
+                32 * piece,
+                RAMP,
+                live_peers,
+            )
+            .priorities
+            .into_iter()
+            .filter(|&p| p > 0 && p != 63)
+            .count()
         };
-        let new = ReaderPosition::new(0, 0);
+        assert_eq!(ahead(0), 1, "the two-piece minimum");
         assert_eq!(
-            ahead(new, 5),
+            ahead(5),
             5,
             "six pieces, one more than five live peers, the current one included"
         );
-        assert_eq!(ahead(new, 40), 31, "the share still caps the floor");
-        let played = ReaderPosition {
-            run_start: 0,
-            idle: true,
-            ..ReaderPosition::new(0, 4 * piece)
-        };
-        assert_eq!(
-            ahead(played, 0),
-            31,
-            "an idle reader that played reads ahead its share"
-        );
-        let probed = ReaderPosition {
-            run_start: 0,
-            idle: true,
-            ..ReaderPosition::new(0, piece)
-        };
-        assert_eq!(ahead(probed, 0), 1, "one that read a header stays ramped");
+        assert_eq!(ahead(40), 31, "the share still caps the floor");
     }
 
     #[test]
