@@ -35,11 +35,11 @@ use crate::scheduler::{Reader, TorrentScheduler};
 /// The default idle timeout, as the lifecycle defines it.
 pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The default least readahead of a ramping reader. Go TorrPlay starts at
-/// 1 MiB, but its engine spreads a piece over several peers; with one peer
-/// per piece, a window that small stalled streams on the benchmark's slow
-/// links, where 16 MiB keeps the pieces flowing.
-pub const DEFAULT_READAHEAD_RAMP_BYTES: u64 = 16 * 1024 * 1024;
+/// The default least readahead of a ramping reader, as Go TorrPlay's. A
+/// 16 MiB start, tried against the benchmark's slow-profile stalls, delayed
+/// the first byte there instead: the urgent piece then shared the links with
+/// more of the window's pieces.
+pub const DEFAULT_READAHEAD_RAMP_BYTES: u64 = 1024 * 1024;
 
 /// The default limit of idle readers per torrent.
 pub const DEFAULT_IDLE_READERS_PER_TORRENT: usize = 4;

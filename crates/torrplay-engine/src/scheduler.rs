@@ -22,9 +22,11 @@
 //!
 //! librqbit downloads each piece from one peer, unlike Go TorrPlay's engine,
 //! which spreads a piece's blocks over several, so a small window leaves
-//! peers idle between pieces, which slow, lossy links cannot afford. A
-//! window therefore spans at least one piece more than the torrent has live
-//! peers, and the default ramp starts at 16 MiB rather than Go's 1 MiB.
+//! peers idle between pieces. A window therefore spans at least one piece
+//! more than the torrent has live peers. On slow, lossy links that is not
+//! enough to keep pieces flowing after each restart of the ramp, and a
+//! larger window delays the piece a reader needs first; spreading that
+//! piece over several peers would resolve both.
 //!
 //! Closing the scheduler, when its torrent pauses, fails, or is deleted,
 //! cancels its streams and releases its readers, idle ones included, at
