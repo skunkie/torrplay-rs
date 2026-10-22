@@ -26,9 +26,11 @@
 //! reader's current and next pieces are shared: free peers join them,
 //! fetching their chunks from the other end, before starting later pieces,
 //! so the piece a reader needs now arrives at several peers' rate. Every
-//! reader's current piece is listed before any next piece, and librqbit
-//! gives each shared piece a peer before helping any, so one reader's
-//! pieces cannot keep every peer from another's.
+//! reader's current piece is in the first tier and every next piece in the
+//! second: librqbit gives each piece of a tier a peer, then helps them,
+//! before turning to the next tier, so one reader's pieces cannot keep every
+//! peer from another's, and a lone reader's next piece waits for the one it
+//! reads.
 //!
 //! Closing the scheduler, when its torrent pauses, fails, or is deleted,
 //! cancels its streams and releases its readers, idle ones included, at
@@ -100,8 +102,9 @@ pub(crate) struct Plan {
     /// The pieces eviction must skip.
     pub(crate) pins: HashSet<u32>,
     /// Each reader's current and next pieces, which several peers may
-    /// fetch at once: every current piece first, then the next ones.
-    pub(crate) shared: Vec<u32>,
+    /// fetch at once, with their tiers: every current piece first, in tier
+    /// 0, then the next ones, in tier 1.
+    pub(crate) shared: Vec<(u32, u8)>,
 }
 
 /// Returns a torrent's share of the global readahead budget: its readers'
@@ -177,13 +180,13 @@ pub(crate) fn plan(
     }
     // Every reader's current piece comes before any next piece, so peers
     // help the reader that waits now before the one reading ahead.
-    for ahead in [0, 1] {
+    for tier in [0, 1] {
         for span in &spans {
-            if let Ok(piece) = u32::try_from(span.current + ahead)
+            if let Ok(piece) = u32::try_from(span.current + u64::from(tier))
                 && piece as u64 <= span.last
-                && !plan.shared.contains(&piece)
+                && !plan.shared.iter().any(|&(shared, _)| shared == piece)
             {
-                plan.shared.push(piece);
+                plan.shared.push((piece, tier));
             }
         }
     }
@@ -214,8 +217,8 @@ struct State {
     readers: BTreeMap<u64, ReaderPosition>,
     next_reader: u64,
     priorities: Vec<ValidPieceIndex>,
-    // The plan's shared pieces.
-    shared: Vec<ValidPieceIndex>,
+    // The plan's shared pieces, with their tiers.
+    shared: Vec<(ValidPieceIndex, u8)>,
     closed: bool,
     // Canceled when the scheduler closes; readers hold its child tokens.
     streams: CancellationToken,
@@ -430,7 +433,9 @@ impl TorrentScheduler {
             state.shared = plan
                 .shared
                 .iter()
-                .filter_map(|&piece| binding.layout.lengths.validate_piece_index(piece))
+                .filter_map(|&(piece, tier)| {
+                    Some((binding.layout.lengths.validate_piece_index(piece)?, tier))
+                })
                 .collect();
             tracing::debug!(
                 readers = ?readers,
@@ -479,12 +484,12 @@ impl PieceSelector for TorrentScheduler {
 
     // librqbit fetches a piece from one peer unless it is shared; sharing
     // the pieces readers need now keeps every peer busy on them.
-    fn shared_pieces(&self, f: &mut dyn FnMut(ValidPieceIndex) -> bool) {
+    fn shared_pieces(&self, f: &mut dyn FnMut(ValidPieceIndex, u8) -> bool) {
         let Ok(state) = self.state.lock() else {
             return;
         };
-        for &piece in &state.shared {
-            if !f(piece) {
+        for &(piece, tier) in &state.shared {
+            if !f(piece, tier) {
                 break;
             }
         }
@@ -778,7 +783,7 @@ mod tests {
     fn readers_share_their_current_and_next_pieces() {
         // Pieces 3 and 4 for the first reader, 8 and 9 for the second, whose
         // file ends at piece 9; the third shares the first one's. Current
-        // pieces come first.
+        // pieces are the first tier, next pieces the second.
         let plan = plan(
             &layout(),
             &[at(0, 350), at(0, 850), at(0, 399)],
@@ -786,9 +791,19 @@ mod tests {
             0,
             0,
         );
-        assert_eq!(plan.shared, [3, 8, 4, 9]);
+        assert_eq!(plan.shared, [(3, 0), (8, 0), (4, 1), (9, 1)]);
         let at_end = super::plan(&layout(), &[at(0, 950)], 8 * PIECE, 0, 0);
-        assert_eq!(at_end.shared, [9], "nothing past the file's last piece");
+        assert_eq!(
+            at_end.shared,
+            [(9, 0)],
+            "nothing past the file's last piece"
+        );
+        let behind = super::plan(&layout(), &[at(0, 350), at(0, 250)], 8 * PIECE, 0, 0);
+        assert_eq!(
+            behind.shared,
+            [(3, 0), (2, 0), (4, 1)],
+            "a piece one reader needs now stays in the first tier"
+        );
     }
 
     #[test]

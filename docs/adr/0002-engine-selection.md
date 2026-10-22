@@ -624,7 +624,7 @@ outside the prototype's scope.
 
 ### Patch set
 
-The fork's `torrplay/patches` branch holds fifteen commits on upstream
+The fork's `torrplay/patches` branch holds sixteen commits on upstream
 `57e95d16`, each small enough to propose on its own:
 
 | Commit | Patch | Purpose |
@@ -638,7 +638,7 @@ The fork's `torrplay/patches` branch holds fifteen commits on upstream
 | `e724f259` | P6 | Disconnect a peer that holds requests without delivering for a stall timeout, releasing its pieces (milestone 4) |
 | `c7f6938a` | P7 | Track the session's tasks, including those its tasks spawn, so `Session::stop` waits for all of them instead of sleeping a second (milestone 4) |
 | `06d6fe52` | P8 | Apply a torrent's keep-alive interval to its peer connections, and let the embedder reconnect dead and not-needed peers at once when a stream needs data (milestone 5) |
-| `eef3ab1f`, `7acabb26`, `17ae1298`, `5769c2fb`, `4655811a`, `d4bc0b25` | P9 | Let several peers fetch the embedder's shared, urgent pieces: free peers give each an owner, then join them before reserving later pieces and request their chunks from the other end, each peer holding at most 16 of a piece's requests at once, a peer out of chunks duplicates the others' latest requests, at most two copies per chunk, a peer that chokes us leaves them, completion cancels the rest, and a shared piece that fails its check is fetched again from one peer (milestone 6) |
+| `eef3ab1f`, `7acabb26`, `17ae1298`, `5769c2fb`, `4655811a`, `d4bc0b25`, `a36c2022` | P9 | Let several peers fetch the embedder's shared, urgent pieces, tier by tier: free peers give each piece of a tier an owner, then join them before reserving later pieces and request their chunks from the other end, each peer holding at most 16 of a piece's requests at once, a peer out of chunks duplicates the others' latest requests, at most two copies per chunk, a peer that chokes us leaves them, completion cancels the rest, and a shared piece that fails its check is fetched again from one peer (milestone 6) |
 
 Two more patches remain candidates. Setting `TCP_NODELAY` on peer sockets
 cut the time to first byte after a reconnect from about 43 ms to about
