@@ -218,7 +218,8 @@ machine, a QEMU virtual machine with 6 cores and 6 GiB of RAM, whose
 hypervisor exposes no CPU frequency scaling. An x86_64 machine and a
 low-memory ARM device with at most 2 GiB of RAM were considered and
 deferred; without them, the benchmark does not show behavior under tight
-memory or on x86_64, and ADR 7 records that limit.
+memory or on x86_64, and [ADR 7](adr/0007-feasibility-decision.md) records
+that limit.
 
 The baseline is Go TorrPlay at commit `84412a1`. Its cache size setting,
 `max_memory`, is set to the trace's cache capacity before each run; it
@@ -324,7 +325,8 @@ The additive terms keep small values, such as a 3 ms cached seek, from
 turning noise into failures. Stalls of `max-throughput` are not compared:
 its reads have no consumption limit, so every wait for the network counts
 as a stall, and its throughput limits cover it instead. A limit the
-prototype misses fails acceptance unless ADR 7 records why the difference
+prototype misses fails acceptance unless
+[ADR 7](adr/0007-feasibility-decision.md) records why the difference
 is intentional, such as more readahead traded for fewer stalls.
 
 On this machine, the rules give these limits, as median, or median / 90th
