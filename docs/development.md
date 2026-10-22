@@ -227,6 +227,12 @@ commands without root. The Go baseline takes about three hours:
 sudo scripts/bench-matrix.sh go-torrplay target/go-torrplay
 ```
 
+To pause a matrix, run `sudo scripts/bench-matrix.sh stop`: it stops the
+run in progress, which is redone on resume, and waits while the matrix
+tears down its seeders, tracker, and namespaces. Signal neither sudo nor su
+instead, since su kills its command two seconds after a SIGTERM, cutting the
+teardown short. Running the same matrix command again resumes it.
+
 ## Rust checks
 
 The root `Cargo.toml` defines the workspace and its shared lint policy;

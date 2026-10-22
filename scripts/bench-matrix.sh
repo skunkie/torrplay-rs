@@ -13,10 +13,15 @@
 #
 #   sudo scripts/bench-matrix.sh go-torrplay <BINARY>
 #   sudo scripts/bench-matrix.sh torrplay <BINARY>
+#   sudo scripts/bench-matrix.sh stop
 #
+# stop ends a running matrix: it stops the run in progress, whose result is
+# then missing and is run again on resume, and lets the matrix tear down its
+# seeders, tracker, and namespaces.
 # Needs root, through sudo or su, for the namespaces; every benchmark command
 # runs as the user who invoked sudo, or else as the checkout's owner. Build
-# the release binaries and write the fixtures with `--tracker http://127.0.0.1:6969/announce` first, as docs/development.md
+# the release binaries and write the fixtures with
+# `--tracker http://127.0.0.1:6969/announce` first, as docs/development.md
 # describes.
 #
 # Environment:
@@ -47,10 +52,50 @@ readonly SEED_PORT=7001
 readonly START_TIMEOUT_SECONDS=600
 
 usage() {
-    echo "usage: $0 go-torrplay|torrplay <BINARY>" >&2
+    echo "usage: $0 go-torrplay|torrplay <BINARY> | stop" >&2
     exit 2
 }
 
+cd "$(dirname "$0")/.."
+# Where a running matrix records its process, for stop.
+readonly PID_FILE=target/bench-matrix.pid
+# How long stop waits for the matrix to tear down.
+readonly STOP_TIMEOUT_SECONDS=60
+
+# Signals the matrix and its run in progress, never the sudo or su that
+# started it: su answers SIGTERM by killing its command two seconds later,
+# which would cut the teardown short.
+stop_matrix() {
+    [[ $EUID == 0 ]] || { echo "$0 stop needs root, as the matrix runs as root" >&2; exit 1; }
+    local matrix
+    matrix=$(cat "$PID_FILE" 2>/dev/null || true)
+    if [[ -z $matrix ]] || ! kill -0 "$matrix" 2>/dev/null; then
+        echo "no matrix is running" >&2
+        exit 0
+    fi
+    # The matrix waits for its current command; stop that command's
+    # processes from the innermost out, servers before their runner.
+    local child grandchild
+    for child in $(pgrep -P "$matrix" || true); do
+        for grandchild in $(pgrep -P "$child" || true); do
+            pkill -TERM -P "$grandchild" || true
+            kill -TERM "$grandchild" 2>/dev/null || true
+        done
+    done
+    kill -TERM "$matrix"
+    local deadline=$((SECONDS + STOP_TIMEOUT_SECONDS))
+    while kill -0 "$matrix" 2>/dev/null; do
+        if ((SECONDS >= deadline)); then
+            echo "the matrix did not stop within ${STOP_TIMEOUT_SECONDS}s" >&2
+            exit 1
+        fi
+        sleep 0.5
+    done
+    echo "stopped; run the same command again to resume" >&2
+    exit 0
+}
+
+[[ ${1:-} == stop && $# == 1 ]] && stop_matrix
 [[ $# == 2 ]] || usage
 implementation=$1
 binary=$2
@@ -59,8 +104,6 @@ case $implementation in
     torrplay) flag=--torrplay ;;
     *) usage ;;
 esac
-
-cd "$(dirname "$0")/.."
 readonly PROFILES=${PROFILES:-fast slow}
 readonly DIR=${DIR:-target/bench}
 readonly OUT=${OUT:-target/bench-results}
@@ -177,7 +220,14 @@ stop_services() {
     services=()
     run scripts/bench-netns.sh down >/dev/null 2>&1 || true
 }
-trap stop_services EXIT
+if [[ $dry_run != 1 ]]; then
+    if running=$(cat "$PID_FILE" 2>/dev/null) && kill -0 "$running" 2>/dev/null; then
+        echo "a matrix is already running as process $running" >&2
+        exit 1
+    fi
+    echo $$ >"$PID_FILE"
+fi
+trap 'stop_services; [[ $dry_run == 1 ]] || rm -f "$PID_FILE"' EXIT
 
 # Waits until the seeder logging to $1 has checked its content and seeds.
 # Its listener accepts connections before that, so a run started then would
