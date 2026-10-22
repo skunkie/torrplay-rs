@@ -208,7 +208,11 @@ async fn readahead_ramps_up_and_restarts_after_a_seek() -> anyhow::Result<()> {
     let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
     let memory = MemoryCache::start(16 * MIB);
     let leecher = Leecher::start().await?;
-    let playback = Playback::new(PlaybackConfig::new(8 * MIB));
+    // A 1 MiB ramp, below the share, so the ramp shows.
+    let playback = Playback::new(PlaybackConfig {
+        readahead_ramp_bytes: MIB,
+        ..PlaybackConfig::new(8 * MIB)
+    });
     let torrent = memory
         .add_scheduled_in(&leecher, &[seeder.addr], &spec, &playback, |_| {})
         .await?;

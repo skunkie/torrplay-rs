@@ -14,11 +14,19 @@
 //!
 //! A new reader, and one after a seek, ramps its window up: it reads ahead
 //! at most twice what it has read since, and at least the playback's ramp
-//! bytes, until its share allows no more, as Go
-//! TorrPlay's readers do. A player that reads a container header and seeks,
-//! or plays a few seconds at each of several positions, then downloads
-//! little it never plays. A reader that continues where it stopped, as an
-//! idle reader taken for the next range request does, keeps its ramp.
+//! bytes, until its share allows no more, as Go TorrPlay's readers do. A
+//! player that reads a container header and seeks, or plays a few seconds
+//! at each of several positions, then downloads little it never plays. A
+//! reader that continues where it stopped, as an idle reader taken for the
+//! next range request does, keeps its ramp.
+//!
+//! librqbit downloads each piece from one peer, unlike Go TorrPlay's engine,
+//! which spreads a piece's blocks over several, so a small window leaves
+//! peers idle between pieces. A window therefore spans at least one piece
+//! more than the torrent has live peers. On slow, lossy links that is not
+//! enough to keep pieces flowing after each restart of the ramp, and a
+//! larger window delays the piece a reader needs first; spreading that
+//! piece over several peers would resolve both.
 //!
 //! Closing the scheduler, when its torrent pauses, fails, or is deleted,
 //! cancels its streams and releases its readers, idle ones included, at
@@ -102,12 +110,14 @@ pub(crate) fn torrent_budget(readahead_bytes: u64, readers: u64, all_readers: u6
 }
 
 /// Plans the pieces for `readers`, whose readahead windows share
-/// `readahead_bytes` and ramp up from `ramp_bytes`.
+/// `readahead_bytes`, ramp up from `ramp_bytes`, and span at least one piece
+/// more than the torrent's `live_peers` while their shares allow.
 pub(crate) fn plan(
     layout: &Layout,
     readers: &[ReaderPosition],
     readahead_bytes: u64,
     ramp_bytes: u64,
+    live_peers: u64,
 ) -> Plan {
     struct Span {
         current: u64,
@@ -131,7 +141,12 @@ pub(crate) fn plan(
                 first: file_offset / piece_length,
                 last: last_byte / piece_length,
                 window: (share / piece_length)
-                    .min(reader.ramp_limit(ramp_bytes).div_ceil(piece_length))
+                    .min(
+                        reader
+                            .ramp_limit(ramp_bytes)
+                            .div_ceil(piece_length)
+                            .max(live_peers + 1),
+                    )
                     .max(2),
             })
         })
@@ -358,6 +373,16 @@ impl TorrentScheduler {
     // nothing takes the other way round; the torrent is called with neither
     // held, because it calls priority_pieces() under its own lock.
     pub(crate) fn replan(&self) -> anyhow::Result<()> {
+        // The torrent's live state is read before the scheduler's lock is
+        // taken: the torrent calls priority_pieces() under its own lock.
+        let bound = self
+            .lock()?
+            .binding
+            .as_ref()
+            .map(|binding| binding.torrent.clone());
+        let live_peers = bound
+            .and_then(|torrent| torrent.upgrade()?.live())
+            .map_or(0, |live| live.stats_snapshot().peer_stats.live as u64);
         let torrent = {
             let mut state = self.lock()?;
             let state = &mut *state;
@@ -375,6 +400,7 @@ impl TorrentScheduler {
                 &readers,
                 budget,
                 self.playback.readahead_ramp_bytes(),
+                live_peers,
             );
             state.priorities = plan
                 .priorities
@@ -636,7 +662,7 @@ mod tests {
     fn readahead(position: ReaderPosition) -> Vec<u32> {
         let piece = RAMP;
         let current = (position.offset / piece) as u32;
-        plan(&ramp_layout(), &[position], 32 * piece, RAMP)
+        plan(&ramp_layout(), &[position], 32 * piece, RAMP, 0)
             .priorities
             .into_iter()
             .filter(|&p| p > current && p != 63)
@@ -677,21 +703,46 @@ mod tests {
     }
 
     #[test]
+    fn windows_keep_every_live_peer_busy() {
+        let piece = RAMP;
+        let ahead = |live_peers: u64| -> usize {
+            plan(
+                &ramp_layout(),
+                &[ReaderPosition::new(0, 0)],
+                32 * piece,
+                RAMP,
+                live_peers,
+            )
+            .priorities
+            .into_iter()
+            .filter(|&p| p > 0 && p != 63)
+            .count()
+        };
+        assert_eq!(ahead(0), 1, "the two-piece minimum");
+        assert_eq!(
+            ahead(5),
+            5,
+            "six pieces, one more than five live peers, the current one included"
+        );
+        assert_eq!(ahead(40), 31, "the share still caps the floor");
+    }
+
+    #[test]
     fn a_reader_pins_its_minimum_window_and_file_boundaries() {
-        let plan = plan(&layout(), &[at(0, 350)], 5 * PIECE, 0);
+        let plan = plan(&layout(), &[at(0, 350)], 5 * PIECE, 0, 0);
         assert_eq!(plan.priorities, [3, 0, 9, 4, 5, 6, 7]);
         assert_eq!(plan.pins, HashSet::from([3, 4, 0, 9]));
     }
 
     #[test]
     fn windows_share_the_budget_and_stop_at_the_file_end() {
-        let plan = plan(&layout(), &[at(0, 850), at(1, 0)], 8 * PIECE, 0);
+        let plan = plan(&layout(), &[at(0, 850), at(1, 0)], 8 * PIECE, 0, 0);
         assert_eq!(
             plan.priorities,
             [8, 10, 0, 9, 20, 11, 12, 13],
             "four pieces each; the first reader's file ends at piece 9"
         );
-        let crowded = super::plan(&layout(), &[at(0, 0), at(0, 300), at(1, 0)], PIECE, 0);
+        let crowded = super::plan(&layout(), &[at(0, 0), at(0, 300), at(1, 0)], PIECE, 0, 0);
         assert_eq!(
             crowded.priorities.len(),
             8,
@@ -704,9 +755,9 @@ mod tests {
     #[test]
     fn overlapping_windows_take_the_most_urgent_place() {
         let readers = [at(0, 0), at(0, 200)];
-        let before = plan(&layout(), &readers, 8 * PIECE, 0);
+        let before = plan(&layout(), &readers, 8 * PIECE, 0, 0);
         assert_eq!(before.priorities, [0, 2, 9, 1, 3, 4, 5]);
-        let after = plan(&layout(), &[at(0, 0), at(0, 0)], 8 * PIECE, 0);
+        let after = plan(&layout(), &[at(0, 0), at(0, 0)], 8 * PIECE, 0, 0);
         assert_eq!(
             after.priorities,
             [0, 9, 1, 2, 3],
@@ -719,14 +770,14 @@ mod tests {
     #[test]
     fn pins_beyond_the_budget_shrink_to_current_pieces() {
         let readers = [at(0, 0), at(0, 300), at(0, 600), at(1, 0)];
-        let plan = plan(&layout(), &readers, 2 * PIECE, 0);
+        let plan = plan(&layout(), &readers, 2 * PIECE, 0, 0);
         assert_eq!(plan.pins, HashSet::from([0, 3, 6, 10]));
         assert_eq!(
             &plan.priorities[..4],
             [0, 3, 6, 10],
             "current pieces still come first"
         );
-        let roomy = super::plan(&layout(), &readers, 12 * PIECE, 0);
+        let roomy = super::plan(&layout(), &readers, 12 * PIECE, 0, 0);
         assert_eq!(
             roomy.pins,
             HashSet::from([0, 3, 6, 10, 9, 20, 1, 4, 7, 11]),
@@ -752,6 +803,6 @@ mod tests {
 
     #[test]
     fn no_readers_need_nothing() {
-        assert_eq!(plan(&layout(), &[], 8 * PIECE, 0), Plan::default());
+        assert_eq!(plan(&layout(), &[], 8 * PIECE, 0, 0), Plan::default());
     }
 }
