@@ -6,8 +6,8 @@ SPDX-License-Identifier: MIT
 
 # 7. Feasibility decision: proceed with the Rust prototype
 
-- Status: proposed. To be accepted once `torrplay-bench compare`
-  reproduces the results below from the run files; see
+- Status: accepted on 2026-10-22, once `torrplay-bench compare` reproduced
+  the results below from the run files; see
   [Reproducing the results](#reproducing-the-results).
 - Date: 2026-10-22
 
@@ -41,7 +41,7 @@ the traces, measurements, network profiles, and thresholds:
 **Proceed.** The Rust prototype continues to milestone 6, persistence and
 the remaining streaming lifecycle.
 
-The final run passed 112 of the 114 threshold checks, every mandatory one
+The final run passed 124 of its 126 threshold checks, every per-run one
 included: no request failed, sampled cache usage never exceeded capacity,
 and every server stopped cleanly. It met every fast-profile limit, and its
 medians beat Go TorrPlay's on most measurements on the same device and
@@ -171,14 +171,19 @@ slightly (PR 53); and stopping a matrix through su cut its teardown short.
 
 ## Reproducing the results
 
-The results above were computed from the run files in
-`target/bench-results/` by an evaluation outside the repository, because
-`torrplay-bench summarize` pools `max-throughput`'s cold and cached reads.
-Before this ADR is accepted, a `torrplay-bench compare` command must
-compute every number here, and each threshold check, from those files by
-the rules in `docs/acceptance.md`. The run files are not committed: they
-are about 25 MB of JSON, and their summaries, with the environment, belong
-in the benchmark artifacts the protocol asks for.
+`torrplay-bench compare` computes every check here from the run files in
+`target/bench-results/`, by the rules in `docs/acceptance.md`:
+
+```bash
+target/release/torrplay-bench compare --baseline go-torrplay --candidate torrplay --out compare.json target/bench-results/*/*.json
+```
+
+It reports 124 of 126 checks passed: the 90 measurement checks, whose
+values, limits, and results match an independent evaluation this ADR was
+first drafted from, and 36 per-run checks of request errors, cache
+capacity, and clean stops. The tables above are medians from the same run
+files. The run files are not committed: they are about 25 MB of JSON, and
+the protocol's raw per-run data stays with the benchmark runs.
 
 ## Consequences
 
