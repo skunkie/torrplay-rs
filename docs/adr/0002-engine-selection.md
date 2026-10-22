@@ -624,7 +624,7 @@ outside the prototype's scope.
 
 ### Patch set
 
-The fork's `torrplay/patches` branch holds nine commits on upstream
+The fork's `torrplay/patches` branch holds eleven commits on upstream
 `57e95d16`, each small enough to propose on its own:
 
 | Commit | Patch | Purpose |
@@ -638,6 +638,7 @@ The fork's `torrplay/patches` branch holds nine commits on upstream
 | `e724f259` | P6 | Disconnect a peer that holds requests without delivering for a stall timeout, releasing its pieces (milestone 4) |
 | `c7f6938a` | P7 | Track the session's tasks, including those its tasks spawn, so `Session::stop` waits for all of them instead of sleeping a second (milestone 4) |
 | `06d6fe52` | P8 | Apply a torrent's keep-alive interval to its peer connections, and let the embedder reconnect dead and not-needed peers at once when a stream needs data (milestone 5) |
+| `eef3ab1f`, `7acabb26` | P9 | Let several peers fetch the embedder's shared, urgent pieces: free peers join them before reserving later pieces and request their chunks from the other end, a joiner takes over the owner's last requests, completion cancels the rest, and a shared piece that fails its check is fetched again from one peer (milestone 6) |
 
 Two more patches remain candidates. Setting `TCP_NODELAY` on peer sockets
 cut the time to first byte after a reconnect from about 43 ms to about

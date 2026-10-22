@@ -284,3 +284,76 @@ async fn records_seek_latency_by_request_window() -> anyhow::Result<()> {
     seeder.session.stop().await;
     Ok(())
 }
+
+/// The piece a reader needs now arrives from several peers at once: the
+/// scheduler shares it, so peers join it instead of each fetching a piece of
+/// their own. With three upload-limited seeders, the reader's first piece
+/// then arrives well before one seeder alone could send it; unshared, it
+/// came from a single peer however many there were.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_readers_current_piece_comes_from_several_peers() -> anyhow::Result<()> {
+    let upload = NonZeroU32::new(512 * KIB as u32).unwrap();
+    let alone = first_piece_time(1, upload).await?;
+    let shared = first_piece_time(3, upload).await?;
+    assert!(
+        shared.as_secs_f64() < 0.7 * alone.as_secs_f64(),
+        "the first piece took {shared:?} from three seeders and {alone:?} from one"
+    );
+    Ok(())
+}
+
+/// How long a new reader waits for its first 1 MiB piece from `seeders`
+/// seeders that each upload at most `upload`.
+async fn first_piece_time(seeders: usize, upload: NonZeroU32) -> anyhow::Result<Duration> {
+    let capacity = 16 * MIB;
+    let spec = catalog::large(capacity);
+    let mut started = Vec::new();
+    for _ in 0..seeders {
+        started.push(Seeder::start_with_upload_limit(&spec, &spec.metainfo().bytes, upload).await?);
+    }
+    let peers: Vec<_> = started.iter().map(|seeder| seeder.addr).collect();
+    let leecher = Leecher::start().await?;
+    let memory = MemoryCache::start(capacity);
+    let torrent = memory
+        .add_scheduled_with(&leecher, &peers, &spec, 8 * MIB, |_| {})
+        .await?;
+    // Every seeder connects before the clock starts.
+    bounded("the seeders connecting", async {
+        while torrent
+            .handle
+            .live()
+            .map_or(0, |live| live.stats_snapshot().peer_stats.live)
+            < seeders as u32
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        Ok(())
+    })
+    .await?;
+    let requested = Instant::now();
+    let mut reader = bounded("opening a reader", async {
+        Ok(torrent.scheduler.open(&torrent.handle, 0).await?)
+    })
+    .await?;
+    let mut piece = vec![0; spec.piece_length as usize];
+    bounded("reading the first piece", async {
+        Ok(reader.read_exact(&mut piece).await?)
+    })
+    .await?;
+    let elapsed = requested.elapsed();
+    assert_eq!(piece, expected_piece(&spec));
+
+    drop(reader);
+    leecher.session.stop().await;
+    for seeder in started {
+        seeder.stop().await;
+    }
+    memory.shutdown().await?;
+    Ok(elapsed)
+}
+
+fn expected_piece(spec: &FixtureSpec) -> Vec<u8> {
+    let mut bytes = vec![0; spec.piece_length as usize];
+    generator::fill(spec.file_seed(0), 0, &mut bytes);
+    bytes
+}

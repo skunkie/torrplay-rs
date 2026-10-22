@@ -10,6 +10,7 @@
 
 use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -101,7 +102,7 @@ impl Seeder {
         metainfo: &[u8],
         peers: &[SocketAddr],
     ) -> anyhow::Result<Self> {
-        Self::start_with_options(spec, metainfo, peers, None).await
+        Self::start_tuned(spec, metainfo, peers, |_| {}).await
     }
 
     /// Like [`start`](Self::start), with `peer_opts` for every connection,
@@ -111,30 +112,43 @@ impl Seeder {
         metainfo: &[u8],
         peer_opts: PeerConnectionOptions,
     ) -> anyhow::Result<Self> {
-        Self::start_with_options(spec, metainfo, &[], Some(peer_opts)).await
+        Self::start_tuned(spec, metainfo, &[], |options| {
+            options.peer_opts = Some(peer_opts);
+        })
+        .await
     }
 
-    async fn start_with_options(
+    /// Like [`start`](Self::start), uploading at most `bytes_per_second`.
+    pub async fn start_with_upload_limit(
+        spec: &FixtureSpec,
+        metainfo: &[u8],
+        bytes_per_second: NonZeroU32,
+    ) -> anyhow::Result<Self> {
+        Self::start_tuned(spec, metainfo, &[], |options| {
+            options.ratelimits.upload_bps = Some(bytes_per_second);
+        })
+        .await
+    }
+
+    async fn start_tuned(
         spec: &FixtureSpec,
         metainfo: &[u8],
         peers: &[SocketAddr],
-        peer_opts: Option<PeerConnectionOptions>,
+        tune: impl FnOnce(&mut AddTorrentOptions),
     ) -> anyhow::Result<Self> {
         let dir = tempfile::tempdir()?;
         let root = spec.write_content(dir.path())?;
         let session = new_session(dir.path()).await?;
+        let mut options = AddTorrentOptions {
+            output_folder: Some(output_folder_for(spec, &root)?),
+            overwrite: true,
+            initial_peers: (!peers.is_empty()).then(|| peers.to_vec()),
+            ..Default::default()
+        };
+        tune(&mut options);
         let handle = within(
             "adding the seeded torrent",
-            session.add_torrent(
-                AddTorrent::from_bytes(metainfo.to_vec()),
-                Some(AddTorrentOptions {
-                    output_folder: Some(output_folder_for(spec, &root)?),
-                    overwrite: true,
-                    initial_peers: (!peers.is_empty()).then(|| peers.to_vec()),
-                    peer_opts,
-                    ..Default::default()
-                }),
-            ),
+            session.add_torrent(AddTorrent::from_bytes(metainfo.to_vec()), Some(options)),
         )
         .await?
         .into_handle()
