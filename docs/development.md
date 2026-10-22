@@ -193,6 +193,16 @@ and as Markdown:
 target/release/torrplay-bench summarize --out summary.json far-seeks-*.json
 ```
 
+`compare` checks a candidate implementation's runs against a baseline's by
+the thresholds in `docs/acceptance.md`, by network profile and trace, and
+prints every check, misses first. It tells cached reads by whether earlier
+requests of the run covered their range, and reads the traces from
+`bench/traces` to skip stall checks of traces with no consumption limit:
+
+```bash
+target/release/torrplay-bench compare --baseline go-torrplay --candidate torrplay --out compare.json target/bench-results/*/*.json
+```
+
 The protocol's shaped network needs root. `scripts/bench-netns.sh up fast`
 or `up slow` creates a client namespace and three seeder namespaces, seeder
 N at `10.77.N.2`, with each link shaped both ways; `down` removes them, and

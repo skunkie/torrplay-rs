@@ -12,6 +12,7 @@
 //! process with [`sampler`], recording its [`environment`]. [`summary`]
 //! reports distributions across runs.
 
+pub mod compare;
 pub mod environment;
 pub mod fixtures;
 pub mod player;

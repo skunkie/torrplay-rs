@@ -33,6 +33,12 @@ Usage:
                      (--torrplay <BINARY> | --go-torrplay <BINARY>) [--label <KEY=VALUE>]...
       Starts a fresh server of either implementation, replays the trace
       once, stops it, and writes the run's measurements as JSON.
+  torrplay-bench compare --baseline <IMPLEMENTATION> --candidate <IMPLEMENTATION>
+                         --out <FILE> [--traces <DIR>] <RUN>...
+      Checks the candidate's runs against the baseline's, by network profile
+      and trace, with the thresholds of docs/acceptance.md, writes every
+      check as JSON, and prints them as Markdown, misses first. Traces come
+      from <DIR>, bench/traces by default.
   torrplay-bench summarize --out <FILE> <RUN>...
       Groups runs by trace, implementation, and labels, writes each
       measurement's median, 90th percentile, minimum, and maximum as JSON,
@@ -105,6 +111,9 @@ fn main() -> ExitCode {
         if command == "summarize" {
             return summarize(args.collect());
         }
+        if command == "compare" {
+            return compare(args.collect());
+        }
         let options = Options::parse(args)?;
         match command.as_str() {
             "fixtures" => fixtures(&options),
@@ -127,18 +136,73 @@ fn main() -> ExitCode {
     }
 }
 
-fn summarize(args: Vec<String>) -> anyhow::Result<()> {
-    let (out, runs) = match args.as_slice() {
-        [flag, out, runs @ ..] if flag == "--out" && !runs.is_empty() => (out, runs),
-        _ => anyhow::bail!("summarize needs --out <FILE> and at least one run file"),
-    };
-    let runs = runs
+/// Reads run files as `run` writes them.
+fn read_runs(paths: &[String]) -> anyhow::Result<Vec<serde_json::Value>> {
+    paths
         .iter()
         .map(|path| {
             let text = std::fs::read_to_string(path).with_context(|| format!("reading {path}"))?;
             serde_json::from_str(&text).with_context(|| format!("parsing {path}"))
         })
-        .collect::<anyhow::Result<Vec<serde_json::Value>>>()?;
+        .collect()
+}
+
+fn compare(args: Vec<String>) -> anyhow::Result<()> {
+    let mut options: BTreeMap<String, String> = BTreeMap::new();
+    let mut args = args.into_iter().peekable();
+    while let Some(name) = args.next_if(|arg| arg.starts_with("--")) {
+        let value = args
+            .next()
+            .with_context(|| format!("{name} needs a value"))?;
+        options.insert(name.trim_start_matches("--").to_owned(), value);
+    }
+    let runs: Vec<String> = args.collect();
+    let option = |name: &str| {
+        options
+            .get(name)
+            .with_context(|| format!("compare needs --{name}"))
+    };
+    if let Some(unknown) = options
+        .keys()
+        .find(|name| !["baseline", "candidate", "out", "traces"].contains(&name.as_str()))
+    {
+        anyhow::bail!("unknown option --{unknown}");
+    }
+    anyhow::ensure!(!runs.is_empty(), "compare needs at least one run file");
+    let (baseline, candidate, out) = (option("baseline")?, option("candidate")?, option("out")?);
+    let dir = options.get("traces").map_or("bench/traces", String::as_str);
+    let mut traces = BTreeMap::new();
+    for entry in std::fs::read_dir(dir).with_context(|| format!("reading {dir}"))? {
+        let path = entry?.path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "jsonl")
+        {
+            let name = path
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let text = std::fs::read_to_string(&path)?;
+            let parsed =
+                trace::parse(&text).with_context(|| format!("parsing {}", path.display()))?;
+            traces.insert(name, parsed);
+        }
+    }
+    let checks = torrplay_bench::compare::compare(&read_runs(&runs)?, baseline, candidate, &traces);
+    std::fs::write(out, serde_json::to_vec_pretty(&checks)?)?;
+    print!(
+        "{}",
+        torrplay_bench::compare::markdown(&checks, baseline, candidate)
+    );
+    Ok(())
+}
+
+fn summarize(args: Vec<String>) -> anyhow::Result<()> {
+    let (out, runs) = match args.as_slice() {
+        [flag, out, runs @ ..] if flag == "--out" && !runs.is_empty() => (out, runs),
+        _ => anyhow::bail!("summarize needs --out <FILE> and at least one run file"),
+    };
+    let runs = read_runs(runs)?;
     let groups = summary::summarize(&runs);
     std::fs::write(out, serde_json::to_vec_pretty(&groups)?)?;
     print!("{}", summary::markdown(&groups));
