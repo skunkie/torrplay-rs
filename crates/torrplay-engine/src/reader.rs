@@ -25,6 +25,9 @@ use tokio::time::{Instant, Sleep};
 
 use crate::scheduler::Reader;
 
+/// Waits at least this long are logged at debug level, for diagnosing stalls.
+const LOGGED_WAIT: Duration = Duration::from_millis(500);
+
 /// A reader of one byte range of a file.
 pub struct RangeReader {
     // Taken by `drop` to park the reader.
@@ -62,7 +65,24 @@ impl AsyncRead for RangeReader {
             return Poll::Ready(Ok(()));
         }
         let before = buf.filled().len();
+        let waiting_since = this
+            .deadline
+            .as_ref()
+            .map(|deadline| deadline.deadline() - this.piece_wait);
         let result = Self::poll_inner(inner, &mut this.deadline, this.piece_wait, cx, buf, before);
+        if let (Poll::Ready(outcome), Some(since)) = (&result, waiting_since) {
+            let waited = since.elapsed();
+            if waited >= LOGGED_WAIT {
+                let reader = inner.get_ref();
+                tracing::debug!(
+                    file = reader.file(),
+                    position = reader.position(),
+                    waited_ms = waited.as_millis() as u64,
+                    failed = outcome.is_err(),
+                    "read waited for data"
+                );
+            }
+        }
         if let Poll::Ready(Err(_)) = &result {
             this.failed = true;
         }

@@ -243,6 +243,16 @@ tears down its seeders, tracker, and namespaces. Signal neither sudo nor su
 instead, since su kills its command two seconds after a SIGTERM, cutting the
 teardown short. Running the same matrix command again resumes it.
 
+To diagnose a stall, `SERVER_LOG_FILTER` passes TorrPlay's `--log-filter` to
+every run, and each run's log then holds the server's logs: the engine's
+plans and long reads at debug level, and at trace level librqbit's requests,
+chunk claims, and received chunks per peer. Tracing slows the server, so
+such runs diagnose rather than measure; keep them in their own `OUT`:
+
+```bash
+sudo env SERVER_LOG_FILTER=torrplay_engine=debug,librqbit::torrent_state::live=trace OUT=target/bench-debug PROFILES=slow RUNS=1 TRACES=concurrent scripts/bench-matrix.sh torrplay target/release/torrplay
+```
+
 ## Rust checks
 
 The root `Cargo.toml` defines the workspace and its shared lint policy;

@@ -31,8 +31,11 @@ Usage:
       Seeds every fixture from <DIR>'s content.
   torrplay-bench run --trace <FILE> --dir <DIR> --out <FILE>
                      (--torrplay <BINARY> | --go-torrplay <BINARY>) [--label <KEY=VALUE>]...
+                     [--server-log-filter <TARGETS>]
       Starts a fresh server of either implementation, replays the trace
-      once, stops it, and writes the run's measurements as JSON.
+      once, stops it, and writes the run's measurements as JSON. The
+      server's logs go to standard error; --server-log-filter passes
+      TorrPlay's --log-filter, as in librqbit=debug, for diagnosis.
   torrplay-bench compare --baseline <IMPLEMENTATION> --candidate <IMPLEMENTATION>
                          --out <FILE> [--traces <DIR>] <RUN>...
       Checks the candidate's runs against the baseline's, by network profile
@@ -307,7 +310,15 @@ enum Implementation {
 }
 
 async fn run(options: &Options) -> anyhow::Result<()> {
-    options.only(&["trace", "dir", "torrplay", "go-torrplay", "out", "label"])?;
+    options.only(&[
+        "trace",
+        "dir",
+        "torrplay",
+        "go-torrplay",
+        "out",
+        "label",
+        "server-log-filter",
+    ])?;
     let trace_path = PathBuf::from(options.one("trace")?);
     let trace = trace::parse(&std::fs::read_to_string(&trace_path)?)
         .with_context(|| format!("reading {}", trace_path.display()))?;
@@ -327,6 +338,10 @@ async fn run(options: &Options) -> anyhow::Result<()> {
         (Err(_), Ok(binary)) => (Implementation::GoTorrPlay, binary.to_owned()),
         _ => anyhow::bail!("give exactly one of --torrplay and --go-torrplay"),
     };
+    let log_filter = options.one("server-log-filter").ok();
+    if log_filter.is_some() && implementation == Implementation::GoTorrPlay {
+        anyhow::bail!("--server-log-filter applies to TorrPlay only");
+    }
 
     let api = SocketAddr::from(([127, 0, 0, 1], free_port().await?));
     // Go TorrPlay keeps its settings in its data directory; each run gets a
@@ -343,7 +358,14 @@ async fn run(options: &Options) -> anyhow::Result<()> {
             "--no-dht".to_owned(),
             "--log-level".to_owned(),
             "warn".to_owned(),
-        ],
+        ]
+        .into_iter()
+        .chain(
+            log_filter
+                .into_iter()
+                .flat_map(|filter| ["--log-filter".to_owned(), filter.to_owned()]),
+        )
+        .collect(),
         Implementation::GoTorrPlay => vec![
             "--data-dir".to_owned(),
             data.path()
