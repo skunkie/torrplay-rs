@@ -302,6 +302,78 @@ async fn a_readers_current_piece_comes_from_several_peers() -> anyhow::Result<()
     Ok(())
 }
 
+/// A reader opening while others read continuously still gets its pieces:
+/// their shared pieces, always with chunks left, do not keep every peer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_new_reader_is_not_starved_by_busy_ones() -> anyhow::Result<()> {
+    let capacity = 32 * MIB;
+    let spec = catalog::large(capacity);
+    let upload = NonZeroU32::new(512 * KIB as u32).unwrap();
+    let mut seeders = Vec::new();
+    for _ in 0..3 {
+        seeders.push(Seeder::start_with_upload_limit(&spec, &spec.metainfo().bytes, upload).await?);
+    }
+    let peers: Vec<_> = seeders.iter().map(|seeder| seeder.addr).collect();
+    let leecher = Leecher::start().await?;
+    let memory = MemoryCache::start(capacity);
+    let torrent = memory
+        .add_scheduled_with(&leecher, &peers, &spec, 16 * MIB, |_| {})
+        .await?;
+
+    // Two readers that read as fast as pieces arrive, so their current and
+    // next pieces always need more chunks.
+    let busy: Vec<_> = [0, 48 * MIB]
+        .into_iter()
+        .map(|start| {
+            let scheduler = torrent.scheduler.clone();
+            let handle = torrent.handle.clone();
+            tokio::spawn(async move {
+                let mut reader = scheduler.open(&handle, 0).await?;
+                reader.seek(SeekFrom::Start(start)).await?;
+                let mut chunk = vec![0; 64 * KIB as usize];
+                loop {
+                    reader.read_exact(&mut chunk).await?;
+                }
+                #[allow(unreachable_code)]
+                anyhow::Ok(())
+            })
+        })
+        .collect();
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    let offset = 96 * MIB;
+    let opened = Instant::now();
+    let mut reader = bounded("opening a reader", async {
+        Ok(torrent.scheduler.open(&torrent.handle, 0).await?)
+    })
+    .await?;
+    let byte = read_at(&mut reader, offset, 1).await?;
+    let waited = opened.elapsed();
+    check(&spec, 0, offset, &byte);
+    eprintln!("the new reader's first byte took {waited:?}");
+    // Alone, its owner sends the 1 MiB piece in about two seconds.
+    assert!(
+        waited < Duration::from_secs(8),
+        "the new reader waited {waited:?} for its first byte"
+    );
+
+    for task in busy {
+        task.abort();
+        match task.await {
+            Err(error) if error.is_cancelled() => {}
+            Err(error) => return Err(error.into()),
+            Ok(result) => result?,
+        }
+    }
+    drop(reader);
+    leecher.session.stop().await;
+    for seeder in seeders {
+        seeder.stop().await;
+    }
+    memory.shutdown().await?;
+    Ok(())
+}
+
 /// How long a new reader waits for its first 1 MiB piece from `seeders`
 /// seeders that each upload at most `upload`.
 async fn first_piece_time(seeders: usize, upload: NonZeroU32) -> anyhow::Result<Duration> {

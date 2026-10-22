@@ -25,7 +25,10 @@
 //! spans at least one piece more than the torrent has live peers, and each
 //! reader's current and next pieces are shared: free peers join them,
 //! fetching their chunks from the other end, before starting later pieces,
-//! so the piece a reader needs now arrives at several peers' rate.
+//! so the piece a reader needs now arrives at several peers' rate. Every
+//! reader's current piece is listed before any next piece, and librqbit
+//! gives each shared piece a peer before helping any, so one reader's
+//! pieces cannot keep every peer from another's.
 //!
 //! Closing the scheduler, when its torrent pauses, fails, or is deleted,
 //! cancels its streams and releases its readers, idle ones included, at
@@ -97,7 +100,7 @@ pub(crate) struct Plan {
     /// The pieces eviction must skip.
     pub(crate) pins: HashSet<u32>,
     /// Each reader's current and next pieces, which several peers may
-    /// fetch at once.
+    /// fetch at once: every current piece first, then the next ones.
     pub(crate) shared: Vec<u32>,
 }
 
@@ -171,8 +174,12 @@ pub(crate) fn plan(
     };
     for span in &spans {
         add(&mut plan, span.current, true, true);
-        for piece in [span.current, span.current + 1] {
-            if let Ok(piece) = u32::try_from(piece)
+    }
+    // Every reader's current piece comes before any next piece, so peers
+    // help the reader that waits now before the one reading ahead.
+    for ahead in [0, 1] {
+        for span in &spans {
+            if let Ok(piece) = u32::try_from(span.current + ahead)
                 && piece as u64 <= span.last
                 && !plan.shared.contains(&piece)
             {
@@ -770,7 +777,8 @@ mod tests {
     #[test]
     fn readers_share_their_current_and_next_pieces() {
         // Pieces 3 and 4 for the first reader, 8 and 9 for the second, whose
-        // file ends at piece 9; the third shares the first one's.
+        // file ends at piece 9; the third shares the first one's. Current
+        // pieces come first.
         let plan = plan(
             &layout(),
             &[at(0, 350), at(0, 850), at(0, 399)],
@@ -778,7 +786,7 @@ mod tests {
             0,
             0,
         );
-        assert_eq!(plan.shared, [3, 4, 8, 9]);
+        assert_eq!(plan.shared, [3, 8, 4, 9]);
         let at_end = super::plan(&layout(), &[at(0, 950)], 8 * PIECE, 0, 0);
         assert_eq!(at_end.shared, [9], "nothing past the file's last piece");
     }
