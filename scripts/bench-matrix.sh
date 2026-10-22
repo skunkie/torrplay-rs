@@ -34,6 +34,9 @@
 #   BENCH_USER the user benchmark commands run as
 #   COMMIT     the commit label (default: the Go binary's vcs.revision, or
 #              this checkout's HEAD for torrplay)
+#   SERVER_LOG_FILTER
+#              TorrPlay's --log-filter for every run, as in librqbit=debug,
+#              for diagnosis; its logs go to each run's log file
 #   DRY_RUN=1  prints the commands instead of running them
 #
 # Runs write OUT/<profile>/<trace>-<implementation>-<n>.json. A run whose file
@@ -304,16 +307,21 @@ for profile in $PROFILES; do
                 continue
             fi
             echo "$(date -u +%FT%TZ) $profile $name" >&2
+            diagnosis=()
+            if [[ -n ${SERVER_LOG_FILTER:-} ]]; then
+                diagnosis=(--server-log-filter "$SERVER_LOG_FILTER")
+            fi
             # A failed run is kept apart, so a resumed matrix retries it.
             if [[ $dry_run == 1 ]]; then
                 in_netns "$CLIENT" "$BENCH" run --trace "bench/traces/$trace.jsonl" \
                     --dir "$DIR" "$flag" "$binary" --out "$file" \
-                    --label "commit=$COMMIT" --label "profile=$profile"
+                    --label "commit=$COMMIT" --label "profile=$profile" \
+                    "${diagnosis[@]}"
             elif ! ip netns exec "$CLIENT" runuser -u "$user" -- \
                 "$BENCH" run --trace "bench/traces/$trace.jsonl" \
                 --dir "$DIR" "$flag" "$binary" --out "$file" \
                 --label "commit=$COMMIT" --label "profile=$profile" \
-                >"$results/$name.log" 2>&1; then
+                "${diagnosis[@]}" >"$results/$name.log" 2>&1; then
                 echo "$name failed; see $results/$name.log" >&2
                 rm -f "$file"
                 failures=$((failures + 1))

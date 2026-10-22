@@ -425,6 +425,15 @@ impl TorrentScheduler {
                 .iter()
                 .filter_map(|&piece| binding.layout.lengths.validate_piece_index(piece))
                 .collect();
+            tracing::debug!(
+                readers = ?readers,
+                budget,
+                live_peers,
+                priorities = plan.priorities.len(),
+                first_priorities = ?&plan.priorities[..plan.priorities.len().min(8)],
+                shared = ?plan.shared,
+                "replanned"
+            );
             match binding
                 .cache
                 .set_plan(binding.key, plan.pins, &plan.priorities)

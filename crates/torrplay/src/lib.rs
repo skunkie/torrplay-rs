@@ -53,6 +53,8 @@ Options:
   --peer-port <PORT>         The BitTorrent peer port on every interface [default: 4240]
   --cache-capacity <BYTES>   The piece cache capacity [default: 268435456]
   --log-level <LEVEL>        error, warn, info, debug, or trace [default: info]
+  --log-filter <TARGETS>     Per-target levels, as in librqbit=debug,torrplay=info,
+                             replacing --log-level's filter, for diagnosing the engine
   --no-dht                   Find peers through trackers only, as benchmarks do
   -h, --help                 Print this help
   -V, --version              Print the version
@@ -70,6 +72,9 @@ pub struct Config {
     /// The most verbose level TorrPlay's own logs record; other crates log
     /// warnings and errors only.
     pub log_level: Level,
+    /// Per-target levels in `tracing-subscriber`'s `Targets` syntax that
+    /// replace the filter `log_level` sets, so other crates can log too.
+    pub log_filter: Option<String>,
     /// Whether DHT finds peers.
     pub dht: bool,
 }
@@ -81,6 +86,7 @@ impl Default for Config {
             peer_port: DEFAULT_PEER_PORT,
             cache_capacity_bytes: DEFAULT_CACHE_CAPACITY_BYTES,
             log_level: Level::INFO,
+            log_filter: None,
             dht: true,
         }
     }
@@ -191,6 +197,16 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, Arg
                     .parse()
                     .map_err(|_| invalid(value.clone(), "error, warn, info, debug, or trace"))?;
             }
+            "--log-filter" => {
+                let value = value()?;
+                if value
+                    .parse::<tracing_subscriber::filter::Targets>()
+                    .is_err()
+                {
+                    return Err(invalid(value, "targets with levels, as in librqbit=debug"));
+                }
+                config.log_filter = Some(value);
+            }
             _ => return Err(ArgsError::Unknown(option)),
         }
     }
@@ -198,24 +214,30 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, Arg
 }
 
 /// Records logs to standard error: TorrPlay's own at `level` and more
-/// severe, other crates' warnings and errors only.
-pub fn init_logging(level: Level) {
+/// severe, other crates' warnings and errors only, unless `filter`, already
+/// validated by [`parse_args`], sets every target's level instead.
+pub fn init_logging(level: Level, filter: Option<&str>) {
     use tracing_subscriber::filter::{LevelFilter, Targets};
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
     let level = LevelFilter::from_level(level);
-    let filter = [
-        "torrplay",
-        "torrplay_core",
-        "torrplay_engine",
-        "torrplay_server",
-    ]
-    .into_iter()
-    .fold(
-        Targets::new().with_default(LevelFilter::WARN),
-        |filter, target| filter.with_target(target, level),
-    );
+    let default = || {
+        [
+            "torrplay",
+            "torrplay_core",
+            "torrplay_engine",
+            "torrplay_server",
+        ]
+        .into_iter()
+        .fold(
+            Targets::new().with_default(LevelFilter::WARN),
+            |filter, target| filter.with_target(target, level),
+        )
+    };
+    let filter = filter
+        .and_then(|filter| filter.parse::<Targets>().ok())
+        .unwrap_or_else(default);
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .with(filter)
@@ -362,6 +384,8 @@ mod tests {
             "--cache-capacity",
             "1048576",
             "--log-level=debug",
+            "--log-filter",
+            "librqbit=debug,torrplay_engine=trace",
             "--no-dht",
         ]) else {
             panic!("the options parse");
@@ -373,6 +397,7 @@ mod tests {
                 peer_port: 6881,
                 cache_capacity_bytes: 1_048_576,
                 log_level: Level::DEBUG,
+                log_filter: Some("librqbit=debug,torrplay_engine=trace".into()),
                 dht: false,
             }
         );
@@ -402,6 +427,7 @@ mod tests {
             &["--cache-capacity", "0"],
             &["--cache-capacity", "1GiB"],
             &["--log-level", "loud"],
+            &["--log-filter", "librqbit=loud"],
         ] {
             assert!(
                 matches!(parse(args), Err(ArgsError::InvalidValue { .. })),

@@ -33,7 +33,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    torrplay::init_logging(config.log_level);
+    torrplay::init_logging(config.log_level, config.log_filter.as_deref());
     match torrplay_engine::raise_open_file_limit() {
         Ok(limit) => tracing::info!(limit, "open file limit"),
         Err(error) => tracing::warn!(
