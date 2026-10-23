@@ -13,6 +13,7 @@ members = [
     "crates/torrplay-engine",
     "crates/torrplay-fixtures",
     "crates/torrplay-server",
+    "crates/torrplay-store",
 ]
 
 [workspace.package]
@@ -56,8 +57,12 @@ jsonschema = { version = "0.59", default-features = false }
 librqbit = { git = "https://github.com/skunkie/rqbit", rev = "a36c202223e704f0866beaf22ed15cc69eeb7439", default-features = false, features = ["rust-tls"] }
 librqbit-core = { git = "https://github.com/skunkie/rqbit", rev = "a36c202223e704f0866beaf22ed15cc69eeb7439", default-features = false }
 memchr = "2"
+# The two candidate databases of the ADR 8 spike. SQLite is compiled from
+# the bundled amalgamation, so builds do not depend on a system library.
+redb = "4.4"
 # Tests reach the server over loopback HTTP only, so they need no TLS.
 reqwest = { version = "0.13", default-features = false }
+rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde-saphyr = "2"
 serde_json = "1"
