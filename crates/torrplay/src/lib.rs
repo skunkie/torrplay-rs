@@ -15,6 +15,7 @@
 //! progress get the drain period to finish and are then canceled, the
 //! listener closes, and the engine stops. The whole sequence is bounded.
 
+use std::collections::HashSet;
 use std::future::{Future, IntoFuture};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -24,6 +25,8 @@ use std::time::Duration;
 use anyhow::Context;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
+use torrplay_core::id::TorrentId;
+use torrplay_core::lifecycle::StorageMode;
 use torrplay_engine::{DEFAULT_PEER_PORT, EngineConfig, LibrqbitEngine, NetworkConfig};
 use torrplay_server::App;
 use torrplay_store::{Contents, Store};
@@ -311,7 +314,37 @@ pub async fn serve(
     timings: ShutdownTimings,
     shutdown: impl Future<Output = ()>,
 ) -> anyhow::Result<()> {
-    let Contents { torrents, settings } = contents;
+    let Contents {
+        torrents,
+        settings,
+        clean_shutdown,
+    } = contents;
+    if !clean_shutdown {
+        tracing::warn!(
+            "the last run did not shut down cleanly; disk torrents check their data in full"
+        );
+        engine.distrust_resume_bitfields();
+    }
+    // ADR 9: data a crash left in the download directory, of torrents that
+    // are gone or no longer on disk, goes before anything is added.
+    let keep: HashSet<TorrentId> = torrents
+        .iter()
+        .filter(|torrent| {
+            torrent.storage_mode == StorageMode::Disk
+                || torrent.configuration.storage_mode() == StorageMode::Disk
+        })
+        .map(|torrent| torrent.id.clone())
+        .collect();
+    let sweeping = engine.clone();
+    match tokio::task::spawn_blocking(move || sweeping.sweep_download_dir(&keep)).await {
+        Ok(Ok(deleted)) => {
+            for path in deleted {
+                tracing::info!(path = %path.display(), "deleted orphaned disk data");
+            }
+        }
+        Ok(Err(error)) => tracing::warn!(%error, "the download directory could not be swept"),
+        Err(error) => tracing::warn!(%error, "sweeping the download directory panicked"),
+    }
     let app = Arc::new(App::new(engine.clone(), store).with_settings(settings));
     let (close_listener, listener_closed) = oneshot::channel::<()>();
     let mut server = tokio::spawn(
@@ -338,6 +371,7 @@ pub async fn serve(
                 restored = app.restore(torrents) => match restored {
                     Ok(()) => {
                         tracing::info!(torrents = count, "the engine is ready, with the stored torrents");
+                        app.resume_transitions();
                         Ok(true)
                     }
                     Err(error) => {
@@ -374,6 +408,9 @@ pub async fn serve(
             server_result(server.await)?;
         }
         engine.shutdown().await?;
+        app.record_clean_shutdown()
+            .await
+            .context("recording the clean shutdown")?;
         app.close_store().await.context("closing the store")
     };
     let stopped = tokio::time::timeout(timings.limit, sequence)

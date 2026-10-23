@@ -181,8 +181,8 @@ mode (M6).
 | DSK-05 | Ask for `disk` with too little free space, with files that differ only in case or normalization, with a reserved or overlong name, or during another transition | `507 insufficient-storage`, `422 unsupported-torrent` naming the files, or `409 lifecycle-conflict`; nothing changes |
 | DSK-06 | Delete a disk torrent | `204`; its directory and resume bitfield are deleted; entries in the download directory not named like a torrent ID are untouched |
 | DSK-07 | Start after an unclean shutdown with a resume bitfield newer than the data | The full check runs and finds the missing pieces; they are downloaded again and no unverified byte is served |
-| DSK-08 | Delete a disk torrent's file from outside while it streams, then start the torrent again | The torrent fails with a `failure` detail; starting it runs the full check and downloads the file again |
-| DSK-09 | A disk torrent uploads to a local leecher, then switches to memory | The leecher receives the bitfield and blocks; after the switch its connection closes, and a reconnect receives no bitfield |
+| DSK-08 | Empty a disk torrent's file from outside, stream it, then pause and start the torrent | The stream ends and the torrent fails; starting it runs the full check and downloads the file again |
+| DSK-09 | A disk torrent uploads to a local leecher, then switches to memory | The leecher downloads the whole torrent; a leecher that connects after the switch receives nothing |
 
 ### Settings
 

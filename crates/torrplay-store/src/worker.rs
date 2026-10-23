@@ -64,6 +64,13 @@ impl Worker {
                         Ok(())
                     }));
                 }
+                Command::RecordCleanShutdown(reply) => {
+                    let _ = reply.send(self.write(|connection| {
+                        connection
+                            .execute("UPDATE runs SET clean_shutdown = 1 WHERE id = 1", [])?;
+                        Ok(())
+                    }));
+                }
                 Command::SetSettings(settings, reply) => {
                     let _ = reply
                         .send(self.write(|connection| schema::set_settings(connection, &settings)));

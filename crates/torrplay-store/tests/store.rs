@@ -194,7 +194,7 @@ async fn a_newer_schema_is_refused() {
         Store::open(dir.path()),
         Err(StoreError::TooNew {
             found: 99,
-            supported: 4
+            supported: 5
         })
     ));
 }
@@ -296,6 +296,7 @@ async fn a_version_1_database_is_copied_then_migrated() {
             .execute_batch(
                 "DROP TABLE settings;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
+                 DROP TABLE runs;
                  PRAGMA user_version = 1;",
             )
             .unwrap();
@@ -332,6 +333,7 @@ async fn a_version_1_database_is_copied_then_migrated() {
             .execute_batch(
                 "DROP TABLE settings;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
+                 DROP TABLE runs;
                  PRAGMA user_version = 1;",
             )
             .unwrap();
@@ -367,6 +369,7 @@ async fn settings_from_version_2_keep_their_values_and_lack_the_cache_capacity()
             .execute_batch(
                 "ALTER TABLE settings DROP COLUMN cache_capacity_bytes;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
+                 DROP TABLE runs;
                  PRAGMA user_version = 2;",
             )
             .unwrap();
@@ -407,6 +410,7 @@ async fn torrents_from_version_3_use_memory_storage() {
         connection
             .execute_batch(
                 "ALTER TABLE torrents DROP COLUMN desired_storage_mode;
+                 DROP TABLE runs;
                  PRAGMA user_version = 3;",
             )
             .unwrap();
@@ -444,6 +448,23 @@ async fn a_configured_storage_mode_is_stored_apart_from_the_one_in_effect() {
     let (_store, stored) = open(&dir);
     assert_eq!(stored[0].storage_mode, StorageMode::Memory);
     assert_eq!(stored[0].configuration.storage_mode(), StorageMode::Disk);
+}
+
+#[tokio::test]
+async fn a_run_counts_as_clean_only_once_it_records_its_shutdown() {
+    let dir = TempDir::new().unwrap();
+    let (store, contents) = Store::open(dir.path()).unwrap();
+    assert!(contents.clean_shutdown, "a new database has no unclean run");
+    drop(store);
+    let (store, contents) = Store::open(dir.path()).unwrap();
+    assert!(
+        !contents.clean_shutdown,
+        "the run before ended without recording its shutdown"
+    );
+    store.record_clean_shutdown().await.unwrap();
+    store.close().await.unwrap();
+    let (_store, contents) = Store::open(dir.path()).unwrap();
+    assert!(contents.clean_shutdown);
 }
 
 const CHILD: &str = "TORRPLAY_STORE_CHILD";

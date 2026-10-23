@@ -13,7 +13,7 @@ mod common;
 
 use std::path::PathBuf;
 
-use common::{MIB, Running, eventually, expected, json, upload};
+use common::{MIB, Running, eventually, expected, json, set_desired_state, upload};
 use reqwest::{Client, StatusCode};
 use torrplay::ShutdownTimings;
 use torrplay_engine::EngineConfig;
@@ -180,6 +180,208 @@ async fn a_stream_continues_while_its_torrent_changes_storage() -> anyhow::Resul
         received.extend_from_slice(&chunk);
     }
     assert!(received == expected(&spec, 0, 0, size), "the whole file");
+
+    running.stop().await?;
+    seeder.stop().await;
+    Ok(())
+}
+
+/// Creates `spec` in disk storage and returns its ID, its path, and the
+/// content path of each file.
+async fn create_on_disk(
+    running: &Running,
+    client: &Client,
+    spec: &torrplay_fixtures::FixtureSpec,
+) -> anyhow::Result<(String, String, Vec<String>)> {
+    let (content_type, body) = disk_upload(&spec.metainfo().bytes);
+    let created = client
+        .post(running.url("/api/v1/torrents"))
+        .header("content-type", content_type)
+        .body(body)
+        .send()
+        .await?;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let torrent = json(created).await?;
+    let id = torrent["id"].as_str().expect("an ID").to_owned();
+    let path = torrent["links"]["self"]
+        .as_str()
+        .expect("a link")
+        .to_owned();
+    let files = json(
+        client
+            .get(running.url(&format!("{path}/files")))
+            .send()
+            .await?,
+    )
+    .await?;
+    let content = files["items"]
+        .as_array()
+        .expect("file items")
+        .iter()
+        .map(|file| {
+            file["links"]["content"]
+                .as_str()
+                .expect("a link")
+                .to_owned()
+        })
+        .collect();
+    Ok((id, path, content))
+}
+
+/// Streams file `index` of `spec` from `link` and checks it byte for byte.
+async fn stream_file(
+    running: &Running,
+    client: &Client,
+    spec: &torrplay_fixtures::FixtureSpec,
+    link: &str,
+    index: usize,
+) -> anyhow::Result<()> {
+    let response = client.get(running.url(link)).send().await?;
+    let status = response.status();
+    if status != StatusCode::OK {
+        anyhow::bail!("{status}: {}", response.text().await?);
+    }
+    let size = spec.files()[index].size_bytes;
+    assert!(
+        response.bytes().await? == expected(spec, index, 0, size),
+        "file {index}"
+    );
+    Ok(())
+}
+
+/// DSK-04 and the orphan sweep: a transition that a crash interrupted runs
+/// again at startup, and entries of the download directory named like
+/// torrent IDs that no disk torrent owns are deleted, other entries kept.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn startup_finishes_interrupted_transitions_and_sweeps_orphans() -> anyhow::Result<()> {
+    let spec = catalog::single_small();
+    let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
+    let downloads = tempfile::tempdir()?;
+    let download_dir: PathBuf = downloads.path().to_path_buf();
+    let in_downloads = |config: &mut EngineConfig| config.download_dir = download_dir.clone();
+    let client = Client::new();
+    let running =
+        Running::start(vec![seeder.addr], ShutdownTimings::default(), in_downloads).await?;
+    let (id, path, content) = create_on_disk(&running, &client, &spec).await?;
+    stream_file(&running, &client, &spec, &content[0], 0).await?;
+    let directory = download_dir.join(&id);
+    assert!(directory.is_dir());
+
+    let orphan = torrplay_core::id::TorrentId::from_random_bytes([7; 16]).to_string();
+    let running = running
+        .restart_after(in_downloads, async |data: &std::path::Path| {
+            // The configuration asks for memory storage, as when a crash
+            // interrupted the transition to it.
+            let (store, contents) = torrplay_store::Store::open(data)?;
+            let stored = &contents.torrents[0];
+            let mut configuration = stored.configuration.clone();
+            configuration.set_storage_mode(torrplay_core::lifecycle::StorageMode::Memory);
+            store.set_configuration(&stored.id, &configuration).await?;
+            store.record_clean_shutdown().await?;
+            store.close().await?;
+            std::fs::create_dir_all(download_dir.join(&orphan).join("x"))?;
+            std::fs::write(download_dir.join(format!("{orphan}.have")), b"x")?;
+            std::fs::write(download_dir.join("notes.txt"), b"kept")?;
+            Ok(())
+        })
+        .await?;
+
+    eventually("the transition finishing", async || {
+        let torrent = json(client.get(running.url(&path)).send().await?).await?;
+        Ok(
+            (torrent["storage_mode"] == "memory" && torrent["storage_transition"].is_null())
+                .then_some(()),
+        )
+    })
+    .await?;
+    assert!(!directory.exists(), "memory storage keeps nothing on disk");
+    assert!(!download_dir.join(&orphan).exists(), "an orphan is deleted");
+    assert!(!download_dir.join(format!("{orphan}.have")).exists());
+    assert!(
+        download_dir.join("notes.txt").is_file(),
+        "other entries stay"
+    );
+    stream_file(&running, &client, &spec, &content[0], 0).await?;
+
+    running.stop().await?;
+    seeder.stop().await;
+    Ok(())
+}
+
+/// DSK-07: after an unclean shutdown, a disk torrent checks its data in
+/// full instead of trusting its resume bitfield, so a piece the bitfield
+/// claims but the file lost is downloaded again rather than served.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unclean_shutdown_checks_disk_data_in_full() -> anyhow::Result<()> {
+    // Enough pieces that sampling the bitfield would likely miss the one
+    // damaged.
+    let spec = catalog::large(16 * MIB);
+    let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
+    let downloads = tempfile::tempdir()?;
+    let download_dir: PathBuf = downloads.path().to_path_buf();
+    let in_downloads = |config: &mut EngineConfig| config.download_dir = download_dir.clone();
+    let client = Client::new();
+    let running =
+        Running::start(vec![seeder.addr], ShutdownTimings::default(), in_downloads).await?;
+    let (id, _path, content) = create_on_disk(&running, &client, &spec).await?;
+    stream_file(&running, &client, &spec, &content[0], 0).await?;
+
+    let file = download_dir.join(&id).join(&spec.torrent_name);
+    let running = running
+        .crash_and_restart(in_downloads, async || {
+            // Data a power loss kept from reaching the disk, which the
+            // bitfield already records.
+            use std::os::unix::fs::FileExt as _;
+            let damaged = std::fs::OpenOptions::new().write(true).open(&file)?;
+            damaged.write_all_at(&vec![0; MIB as usize], 40 * MIB)?;
+            Ok(())
+        })
+        .await?;
+    stream_file(&running, &client, &spec, &content[0], 0).await?;
+
+    running.stop().await?;
+    seeder.stop().await;
+    Ok(())
+}
+
+/// DSK-08: a disk torrent whose file was emptied from outside fails when a
+/// read finds the data gone; starting it again checks its data in full and
+/// downloads the file again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_disk_torrent_fails_when_its_data_goes_and_recovers() -> anyhow::Result<()> {
+    let spec = catalog::single_small();
+    let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
+    let downloads = tempfile::tempdir()?;
+    let download_dir: PathBuf = downloads.path().to_path_buf();
+    let in_downloads = |config: &mut EngineConfig| config.download_dir = download_dir.clone();
+    let client = Client::new();
+    let running =
+        Running::start(vec![seeder.addr], ShutdownTimings::default(), in_downloads).await?;
+    let (id, path, content) = create_on_disk(&running, &client, &spec).await?;
+    stream_file(&running, &client, &spec, &content[0], 0).await?;
+
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(download_dir.join(&id).join(&spec.torrent_name))?
+        .set_len(0)?;
+    // The stream ends where the data is gone, failing the request if the
+    // response had not begun.
+    if let Ok(response) = client.get(running.url(&content[0])).send().await {
+        assert!(
+            response.bytes().await.is_err(),
+            "the stream ends where the data is gone"
+        );
+    }
+    eventually("the torrent failing", async || {
+        let torrent = json(client.get(running.url(&path)).send().await?).await?;
+        Ok((torrent["observed_state"] == "failed").then_some(()))
+    })
+    .await?;
+
+    set_desired_state(&running, &client, &path, "paused").await?;
+    set_desired_state(&running, &client, &path, "started").await?;
+    stream_file(&running, &client, &spec, &content[0], 0).await?;
 
     running.stop().await?;
     seeder.stop().await;

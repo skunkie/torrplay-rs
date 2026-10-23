@@ -454,7 +454,11 @@ impl<E: Engine> App<E> {
                     let _ = app.registry.set_storage_mode(id.as_str(), target);
                     None
                 }
-                Err(EngineError::TransitionFailed { detail }) => {
+                // Shutting down fails a transition too, which is an
+                // interruption the next start finishes, not a failure.
+                Err(EngineError::TransitionFailed { detail })
+                    if !app.shutting_down.load(Ordering::SeqCst) =>
+                {
                     app.revert_storage_mode(&id).await;
                     Some((target, detail))
                 }
@@ -468,6 +472,26 @@ impl<E: Engine> App<E> {
                 observation.storage_failure = failure;
             }
         });
+    }
+
+    /// Runs again the transitions a crash or a shutdown interrupted: those of
+    /// torrents whose configured storage mode is not the one in effect. Call
+    /// it once the stored torrents are restored.
+    pub fn resume_transitions(self: &Arc<Self>) {
+        for record in self.registry.list() {
+            let target = record.configuration.storage_mode();
+            if target != record.storage_mode && self.restore_failure(&record.id).is_none() {
+                tracing::info!(id = %record.id, target = target.as_str(), "resuming a storage mode transition");
+                self.start_transition(record.id, target);
+            }
+        }
+    }
+
+    /// Records that this run shut down cleanly, once the engine has stopped
+    /// and flushed disk torrents' data.
+    pub async fn record_clean_shutdown(&self) -> Result<(), StoreError> {
+        let _lane = self.writes.lock().await;
+        self.store.record_clean_shutdown().await
     }
 
     /// Returns torrent `id`'s configured storage mode to the one in effect,

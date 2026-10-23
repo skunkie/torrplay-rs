@@ -6,8 +6,9 @@ SPDX-License-Identifier: MIT
 
 # 9. Disk storage
 
-- Status: proposed on 2026-10-23. The implementation confirms the engine
-  behavior this record assumes, and fork patch P10 with it.
+- Status: accepted on 2026-10-24. The implementation confirmed the engine
+  behavior this record assumes, with fork patch P10, and the DSK acceptance
+  scenarios pass.
 - Date: 2026-10-23
 
 ## Context
@@ -330,8 +331,12 @@ piece's data is written, through the storage's `on_piece_completed`.
 
 - **A failed write** fails the torrent, as for memory storage, with a
   `failure` detail that names the cause, such as a full filesystem.
-- **A failed read**, such as of a file deleted from outside, also fails the
-  torrent, and a stream that needs the data ends.
+- **A failed read**, such as of a file emptied from outside, also fails the
+  torrent, and a stream that needs the data ends. A file deleted from
+  outside stays readable through the handle the torrent holds, on Unix,
+  until the torrent closes it.
+- Failed reads during a torrent's first check are expected, since its
+  files do not hold what it has not downloaded, and fail nothing.
 - **Starting a failed disk torrent again** runs the full check, ignoring its
   resume bitfield, so it downloads again whatever went missing or changed.
 - A torrent's directory and data stay through a failure; only deletion and

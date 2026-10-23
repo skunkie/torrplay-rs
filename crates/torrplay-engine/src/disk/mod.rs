@@ -180,6 +180,12 @@ pub struct DiskFiles {
     // One per file in metadata order; `None` for a padding file.
     files: Vec<Option<File>>,
     bitfield: ResumeBitfield,
+    // Whether a read or write for librqbit failed, as when a file was
+    // deleted from outside or its filesystem filled up.
+    failed: std::sync::atomic::AtomicBool,
+    // Whether failures count: not during the torrent's first check, whose
+    // reads of data not downloaded yet fail by design.
+    armed: std::sync::atomic::AtomicBool,
 }
 
 impl DiskFiles {
@@ -214,7 +220,12 @@ impl DiskFiles {
         }
         let bitfield = ResumeBitfield::create(&bitfield::path_for(directory), bits)
             .context("writing the resume bitfield")?;
-        Ok(Self { files, bitfield })
+        Ok(Self {
+            files,
+            bitfield,
+            failed: std::sync::atomic::AtomicBool::new(false),
+            armed: std::sync::atomic::AtomicBool::new(false),
+        })
     }
 
     fn file(&self, file_id: usize) -> anyhow::Result<Option<&File>> {
@@ -280,6 +291,26 @@ impl DiskFiles {
             self.read(file_id, offset, &mut buf[range])?;
         }
         Ok(())
+    }
+
+    /// Whether a read or write for librqbit failed, which fails the
+    /// torrent.
+    pub fn has_failed(&self) -> bool {
+        self.failed.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Makes later failed reads and writes fail the torrent, once its first
+    /// check has finished.
+    pub fn arm_failures(&self) {
+        self.armed.store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    fn record<T>(&self, result: anyhow::Result<T>) -> anyhow::Result<T> {
+        if result.is_err() && self.armed.load(std::sync::atomic::Ordering::Acquire) {
+            self.failed
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+        result
     }
 
     /// The resume bitfield.
@@ -348,11 +379,13 @@ impl TorrentStorage for DiskStorage {
     }
 
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        self.files()?.read(file_id, offset, buf)
+        let files = self.files()?;
+        files.record(files.read(file_id, offset, buf))
     }
 
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
-        self.files()?.write(file_id, offset, buf)
+        let files = self.files()?;
+        files.record(files.write(file_id, offset, buf))
     }
 
     // TorrPlay deletes a torrent's directory itself, after closing its

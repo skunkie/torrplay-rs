@@ -70,6 +70,10 @@ pub struct Contents {
     /// The stored settings: the explicit values and their version, or every
     /// setting unset at version 1 if none were stored.
     pub settings: StoredSettings,
+    /// Whether the last run recorded a clean shutdown. After a crash or a
+    /// power loss, disk torrents' resume bitfields may be newer than their
+    /// data.
+    pub clean_shutdown: bool,
 }
 
 /// A failure of the store.
@@ -125,6 +129,7 @@ enum Command {
     Insert(StoredTorrent, Reply<()>),
     SetConfiguration(TorrentId, Configuration, Reply<()>),
     SetStorageMode(TorrentId, StorageMode, Reply<()>),
+    RecordCleanShutdown(Reply<()>),
     SetSettings(StoredSettings, Reply<()>),
     SetTorrentFile(TorrentId, Vec<u8>, Reply<()>),
     Delete(TorrentId, Reply<()>),
@@ -153,6 +158,7 @@ impl Store {
         let mut connection = schema::open(&path)?;
         let torrents = schema::torrents(&mut connection)?;
         let settings = schema::settings(&connection)?;
+        let clean_shutdown = schema::begin_run(&mut connection)?;
         let (sender, receiver) = mpsc::channel(QUEUE);
         #[cfg(feature = "test-support")]
         let failing = Arc::new(AtomicBool::new(false));
@@ -175,7 +181,14 @@ impl Store {
             #[cfg(feature = "test-support")]
             failing,
         };
-        Ok((store, Contents { torrents, settings }))
+        Ok((
+            store,
+            Contents {
+                torrents,
+                settings,
+                clean_shutdown,
+            },
+        ))
     }
 
     /// The database file.
@@ -209,6 +222,12 @@ impl Store {
         let id = id.clone();
         self.send(|reply| Command::SetStorageMode(id, storage_mode, reply))
             .await
+    }
+
+    /// Records that this run shut down cleanly: disk torrents' data and
+    /// resume bitfields are flushed, so the next run may trust them.
+    pub async fn record_clean_shutdown(&self) -> Result<(), StoreError> {
+        self.send(Command::RecordCleanShutdown).await
     }
 
     /// Replaces the stored settings.

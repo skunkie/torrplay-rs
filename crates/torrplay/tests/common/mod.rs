@@ -117,6 +117,45 @@ impl Running {
         Ok(running)
     }
 
+    /// Ends the application as a crash would, without its shutdown, so the
+    /// store records no clean shutdown, and starts it again over the same
+    /// data directory. The old engine is stopped only to close its files
+    /// and listeners.
+    pub async fn crash_and_restart(
+        self,
+        tune: impl FnOnce(&mut EngineConfig),
+        between: impl AsyncFnOnce() -> anyhow::Result<()>,
+    ) -> anyhow::Result<Self> {
+        let (data, peers, timings) = (Arc::clone(&self.data), self.peers.clone(), self.timings);
+        self.task.abort();
+        let _ = self.task.await;
+        self.engine.shutdown().await?;
+        between().await?;
+        let running = Self::spawn_in(data, peers, timings, tune).await?;
+        running.ready(&Client::new()).await?;
+        Ok(running)
+    }
+
+    /// Stops the application cleanly, runs `between` on its data
+    /// directory, and starts it again over it.
+    pub async fn restart_after(
+        self,
+        tune: impl FnOnce(&mut EngineConfig),
+        between: impl AsyncFnOnce(&std::path::Path) -> anyhow::Result<()>,
+    ) -> anyhow::Result<Self> {
+        let (data, peers, timings) = (Arc::clone(&self.data), self.peers.clone(), self.timings);
+        self.stop().await?;
+        between(data.path()).await?;
+        let running = Self::spawn_in(data, peers, timings, tune).await?;
+        running.ready(&Client::new()).await?;
+        Ok(running)
+    }
+
+    /// The data directory, which a restart keeps.
+    pub fn data_dir(&self) -> &std::path::Path {
+        self.data.path()
+    }
+
     async fn spawn_in(
         data: Arc<TempDir>,
         peers: Vec<SocketAddr>,

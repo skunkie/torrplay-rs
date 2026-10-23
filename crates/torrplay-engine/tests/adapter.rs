@@ -9,9 +9,10 @@ mod support;
 
 use std::time::Duration;
 
+use librqbit::AddTorrent;
 use support::{
-    MIB, Seeder, bounded, eventually, expected, futures_now, id, magnet, range, read, start,
-    start_with, upload,
+    Leecher, MIB, Seeder, bounded, eventually, expected, futures_now, id, magnet, range, read,
+    start, start_with, upload,
 };
 use tokio::io::AsyncReadExt;
 use torrplay_core::engine::{ByteRange, Engine, EngineError, Source, SourceRejection};
@@ -568,6 +569,75 @@ async fn a_failed_transition_leaves_the_torrent_and_its_stream() -> anyhow::Resu
 
     engine.shutdown().await?;
     seeder.stop().await;
+    Ok(())
+}
+
+/// DSK-09 through the facade: a disk torrent uploads to a leecher, as ADR 3
+/// decides, and once it moves to memory storage it uploads nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_disk_torrent_uploads_until_it_moves_to_memory() -> anyhow::Result<()> {
+    let spec = catalog::single_small();
+    let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
+    let downloads = tempfile::tempdir()?;
+    let started = start_with(vec![seeder.addr], |config| {
+        config.download_dir = downloads.path().to_path_buf();
+    })
+    .await?;
+    let engine = &started.engine;
+    engine
+        .add_in(
+            &id(1),
+            &upload(&spec),
+            DesiredState::Started,
+            StorageMode::Disk,
+        )
+        .await?;
+    let size = spec.total_size_bytes();
+    read(engine, &id(1), 0, 0, size).await?;
+    // Only the engine has the torrent now.
+    seeder.stop().await;
+    let ours = engine.listen_addr().expect("a peer listener");
+
+    let leecher = Leecher::start().await?;
+    let handle = leecher
+        .session
+        .add_torrent(
+            AddTorrent::from_bytes(spec.metainfo().bytes),
+            Some(leecher.add_options(&[ours])?),
+        )
+        .await?
+        .into_handle()
+        .expect("a torrent");
+    bounded(
+        "downloading from the disk torrent",
+        handle.wait_until_completed(),
+    )
+    .await?;
+
+    bounded("moving to memory", async {
+        Ok(engine
+            .change_storage_mode(&id(1), StorageMode::Memory)
+            .await?)
+    })
+    .await?;
+    let late = Leecher::start().await?;
+    let handle = late
+        .session
+        .add_torrent(
+            AddTorrent::from_bytes(spec.metainfo().bytes),
+            Some(late.add_options(&[ours])?),
+        )
+        .await?
+        .into_handle()
+        .expect("a torrent");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(
+        handle.stats().progress_bytes,
+        0,
+        "a memory torrent uploads nothing"
+    );
+
+    engine.shutdown().await?;
     Ok(())
 }
 

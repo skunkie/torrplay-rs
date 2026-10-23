@@ -38,7 +38,7 @@
 //! librqbit's error text can quote tracker URLs or internal state, so it is
 //! logged redacted and never becomes a failure detail.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::SeekFrom;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -302,6 +302,9 @@ pub struct LibrqbitEngine {
     tunables: Mutex<Tunables>,
     phase: Mutex<Phase>,
     torrents: Mutex<HashMap<TorrentId, Arc<Torrent>>>,
+    // Whether disk torrents start from their resume bitfields; not after an
+    // unclean shutdown, when a bitfield may be newer than its data.
+    trust_bitfields: std::sync::atomic::AtomicBool,
 }
 
 /// The values [`Engine::apply_settings`] changes.
@@ -439,6 +442,7 @@ impl LibrqbitEngine {
             config,
             phase: Mutex::new(Phase::Starting),
             torrents: Mutex::new(HashMap::new()),
+            trust_bitfields: std::sync::atomic::AtomicBool::new(true),
         })
     }
 
@@ -526,6 +530,9 @@ impl LibrqbitEngine {
             }
         }
         running.playback.release_idle_readers();
+        // Disk torrents' data and bitfields reach stable storage before the
+        // application records a clean shutdown.
+        let flushed = self.flush_disk_data().await;
         let monitor = take(&running.failure_monitor);
         if let Some(monitor) = monitor {
             monitor.abort();
@@ -540,7 +547,71 @@ impl LibrqbitEngine {
         if let Some(evictor) = evictor {
             evictor.await?;
         }
-        Ok(())
+        flushed
+    }
+
+    /// Makes every disk torrent's data and resume bitfield durable.
+    async fn flush_disk_data(&self) -> anyhow::Result<()> {
+        let files: Vec<Arc<DiskFiles>> = self
+            .lock_torrents()
+            .values()
+            .filter_map(|torrent| torrent.state().live.as_ref()?.files.clone())
+            .collect();
+        use anyhow::Context as _;
+        tokio::task::spawn_blocking(move || {
+            for files in files {
+                files.flush().context("flushing a disk torrent's data")?;
+            }
+            Ok(())
+        })
+        .await
+        .context("flushing disk data panicked")?
+    }
+
+    /// Makes disk torrents added from now on check their data in full
+    /// instead of starting from their resume bitfields, as after an unclean
+    /// shutdown, which can leave a bitfield newer than the data it records.
+    pub fn distrust_resume_bitfields(&self) {
+        self.trust_bitfields
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Deletes every entry of the download directory named like a torrent
+    /// ID, with or without the resume bitfield's extension, except those of
+    /// `keep`, the torrents that use disk storage or move to or from it.
+    /// Other entries stay. Returns the paths deleted. Run it before the
+    /// engine adds any torrent.
+    pub fn sweep_download_dir(&self, keep: &HashSet<TorrentId>) -> std::io::Result<Vec<PathBuf>> {
+        let entries = match std::fs::read_dir(&self.config.download_dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
+        let mut deleted = Vec::new();
+        for entry in entries {
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            let stem = name
+                .strip_suffix(&format!(".{}", bitfield::EXTENSION))
+                .unwrap_or(name);
+            let Some(id) = TorrentId::from_stored(stem) else {
+                continue;
+            };
+            if keep.contains(&id) {
+                continue;
+            }
+            let path = entry.path();
+            if entry.file_type()?.is_dir() {
+                std::fs::remove_dir_all(&path)?;
+            } else {
+                std::fs::remove_file(&path)?;
+            }
+            deleted.push(path);
+        }
+        Ok(deleted)
     }
 
     /// Cancels every stream in progress and releases every reader, idle
@@ -835,6 +906,7 @@ impl LibrqbitEngine {
         handle.wait_until_initialized().await?;
         if let Some(files) = &files {
             files.bitfield().replace(&handle.have_pieces()?)?;
+            files.arm_failures();
         }
         Ok(Live {
             handle,
@@ -1231,7 +1303,9 @@ impl LibrqbitEngine {
         let failure = Failure {
             detail: ENGINE_FAILURE.to_owned(),
         };
-        if live.cached.as_ref().is_some_and(CachedTorrent::has_failed) {
+        if live.cached.as_ref().is_some_and(CachedTorrent::has_failed)
+            || live.files.as_ref().is_some_and(|files| files.has_failed())
+        {
             return Some(failure);
         }
         let stats = live.handle.stats();
@@ -1412,9 +1486,17 @@ impl Engine for LibrqbitEngine {
                 self.check_storage(&inspected, storage_mode, &directory)?;
                 let initial = match storage_mode {
                     StorageMode::Memory => None,
-                    StorageMode::Disk => {
+                    StorageMode::Disk
+                        if self
+                            .trust_bitfields
+                            .load(std::sync::atomic::Ordering::Acquire) =>
+                    {
                         initial_pieces(&directory, inspected.piece_count).map_err(internal)?
                     }
+                    // A new directory holds nothing; an existing one is
+                    // checked in full.
+                    StorageMode::Disk => (!directory.exists())
+                        .then(|| vec![0; bitfield::bitfield_bytes(inspected.piece_count)]),
                 };
                 (
                     inspected.info_hash,

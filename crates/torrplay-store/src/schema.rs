@@ -21,7 +21,7 @@ use torrplay_core::settings::{self, Explicit, Stored};
 use crate::{StoreError, StoredTorrent};
 
 /// The schema version this build creates and migrates to.
-pub(crate) const VERSION: u32 = 4;
+pub(crate) const VERSION: u32 = 5;
 
 /// The schema at each version, applied in order to reach the next one.
 const MIGRATIONS: [&str; VERSION as usize] = [
@@ -64,6 +64,12 @@ const MIGRATIONS: [&str; VERSION as usize] = [
     "ALTER TABLE torrents
         ADD COLUMN desired_storage_mode TEXT NOT NULL DEFAULT 'memory'
             CHECK (desired_storage_mode IN ('memory', 'disk'));",
+    // Version 5: whether the last run shut down cleanly, one row, which a
+    // run clears when it opens the store and sets when it shuts down.
+    "CREATE TABLE runs (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        clean_shutdown INTEGER NOT NULL CHECK (clean_shutdown IN (0, 1))
+    ) STRICT;",
 ];
 
 /// Opens the database at `path`, takes its lock, and migrates it.
@@ -223,6 +229,25 @@ pub(crate) fn created_at_ns(created_at: SystemTime) -> Result<i64, StoreError> {
 pub(crate) fn version(configuration: &Configuration) -> Result<i64, StoreError> {
     i64::try_from(configuration.version())
         .map_err(|_| StoreError::Corrupt("the configuration version is out of range".into()))
+}
+
+/// Returns whether the last run shut down cleanly, and records this run as
+/// not yet shut down. A database no run recorded counts as clean.
+pub(crate) fn begin_run(connection: &mut Connection) -> Result<bool, StoreError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let clean = transaction
+        .query_row("SELECT clean_shutdown FROM runs WHERE id = 1", [], |row| {
+            row.get::<_, bool>(0)
+        })
+        .optional()?
+        .unwrap_or(true);
+    transaction.execute(
+        "INSERT INTO runs (id, clean_shutdown) VALUES (1, 0)
+         ON CONFLICT (id) DO UPDATE SET clean_shutdown = 0",
+        [],
+    )?;
+    transaction.commit()?;
+    Ok(clean)
 }
 
 /// Reads the stored settings, or the defaults if none were stored.
