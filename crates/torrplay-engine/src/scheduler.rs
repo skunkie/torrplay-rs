@@ -27,10 +27,11 @@
 //! fetching their chunks from the other end, before starting later pieces,
 //! so the piece a reader needs now arrives at several peers' rate. Every
 //! reader's current piece is in the first tier and every next piece in the
-//! second: librqbit gives each piece of a tier a peer, then helps them,
-//! before turning to the next tier, so one reader's pieces cannot keep every
-//! peer from another's, and a lone reader's next piece waits for the one it
-//! reads.
+//! second, followed by pinned file boundaries, which players read right
+//! after a file's start: librqbit gives each piece of a tier a peer, then
+//! helps them, before turning to the next tier, so one reader's pieces cannot
+//! keep every peer from another's, a lone reader's next piece waits for the
+//! one it reads, and a boundary does not wait for shared work to run out.
 //!
 //! Closing the scheduler, when its torrent pauses, fails, or is deleted,
 //! cancels its streams and releases its readers, idle ones included, at
@@ -101,9 +102,10 @@ pub(crate) struct Plan {
     pub(crate) priorities: Vec<u32>,
     /// The pieces eviction must skip.
     pub(crate) pins: HashSet<u32>,
-    /// Each reader's current and next pieces, which several peers may
-    /// fetch at once, with their tiers: every current piece first, in tier
-    /// 0, then the next ones, in tier 1.
+    /// Each reader's current and next pieces and its file's pinned
+    /// boundaries, which several peers may fetch at once, with their tiers:
+    /// every current piece first, in tier 0, then the next pieces and the
+    /// boundaries, in tier 1.
     pub(crate) shared: Vec<(u32, u8)>,
 }
 
@@ -193,6 +195,20 @@ pub(crate) fn plan(
     for span in &spans {
         add(&mut plan, span.first, false, true);
         add(&mut plan, span.last, false, true);
+    }
+    // Pinned file boundaries, which players read right after a file's start,
+    // join the second tier after the next pieces: shared work is never short
+    // while a reader reads, so a boundary that is only a priority would wait
+    // until it ran out.
+    for span in &spans {
+        for piece in [span.first, span.last] {
+            if let Ok(piece) = u32::try_from(piece)
+                && plan.pins.contains(&piece)
+                && !plan.shared.iter().any(|&(shared, _)| shared == piece)
+            {
+                plan.shared.push((piece, 1));
+            }
+        }
     }
     for distance in 1..window {
         for span in &spans {
@@ -783,7 +799,8 @@ mod tests {
     fn readers_share_their_current_and_next_pieces() {
         // Pieces 3 and 4 for the first reader, 8 and 9 for the second, whose
         // file ends at piece 9; the third shares the first one's. Current
-        // pieces are the first tier, next pieces the second.
+        // pieces are the first tier, next pieces the second, followed by the
+        // file's first piece, a pinned boundary.
         let plan = plan(
             &layout(),
             &[at(0, 350), at(0, 850), at(0, 399)],
@@ -791,18 +808,34 @@ mod tests {
             0,
             0,
         );
-        assert_eq!(plan.shared, [(3, 0), (8, 0), (4, 1), (9, 1)]);
+        assert_eq!(plan.shared, [(3, 0), (8, 0), (4, 1), (9, 1), (0, 1)]);
         let at_end = super::plan(&layout(), &[at(0, 950)], 8 * PIECE, 0, 0);
         assert_eq!(
             at_end.shared,
-            [(9, 0)],
+            [(9, 0), (0, 1)],
             "nothing past the file's last piece"
         );
         let behind = super::plan(&layout(), &[at(0, 350), at(0, 250)], 8 * PIECE, 0, 0);
         assert_eq!(
             behind.shared,
-            [(3, 0), (2, 0), (4, 1)],
+            [(3, 0), (2, 0), (4, 1), (0, 1), (9, 1)],
             "a piece one reader needs now stays in the first tier"
+        );
+    }
+
+    #[test]
+    fn pinned_file_boundaries_are_shared_after_next_pieces() {
+        let plan = plan(&layout(), &[at(0, 350)], 5 * PIECE, 0, 0);
+        assert_eq!(
+            plan.shared,
+            [(3, 0), (4, 1), (0, 1), (9, 1)],
+            "the file's first and last pieces follow the next piece"
+        );
+        let tight = super::plan(&layout(), &[at(0, 350)], PIECE, 0, 0);
+        assert_eq!(
+            tight.shared,
+            [(3, 0), (4, 1)],
+            "a boundary the pin budget leaves out is not shared"
         );
     }
 
