@@ -171,11 +171,13 @@ slightly (PR 53); and stopping a matrix through su cut its teardown short.
 
 ## Reproducing the results
 
-`torrplay-bench compare` computes every check here from the run files in
-`target/bench-results/`, by the rules in `docs/acceptance.md`:
+`torrplay-bench compare` computes every check here from the run files, by
+the rules in `docs/acceptance.md`. Go TorrPlay's baseline stays in
+`target/bench-results/`; this decision's Rust runs moved to
+`target/bench-results-rust-adr7/` when the update below was measured:
 
 ```bash
-target/release/torrplay-bench compare --baseline go-torrplay --candidate torrplay --out compare.json target/bench-results/*/*.json
+target/release/torrplay-bench compare --baseline go-torrplay --candidate torrplay --out compare.json target/bench-results/*/*go-torrplay*.json target/bench-results-rust-adr7/*/*.json
 ```
 
 It reports 124 of 126 checks passed: the 90 measurement checks, whose
@@ -185,12 +187,78 @@ capacity, and clean stops. The tables above are medians from the same run
 files. The run files are not committed: they are about 25 MB of JSON, and
 the protocol's raw per-run data stays with the benchmark runs.
 
+## Update: shared urgent pieces (2026-10-23)
+
+Milestone 6's first engine task, fork patch P9 in
+[ADR 2](0002-engine-selection.md#patch-set), lets several peers fetch a
+reader's most urgent pieces. The scheduler shares every reader's current
+piece in a first tier and its next piece in a second; free peers give each
+piece of a tier an owner, then help those with chunks no one requested,
+before turning to the next tier, and duplicate a request only when no chunk
+is free. Each peer holds at most 16 of a shared piece's requests, 256 KiB,
+and waits at that cap for one to be answered.
+
+A full Rust matrix at `813eb48`, with fork revision `a36c2022`, against the
+same Go baseline, again passed 124 of 126 checks, with no request error, no
+run over cache capacity, and every server stopped cleanly:
+
+```bash
+target/release/torrplay-bench compare --baseline go-torrplay --candidate torrplay --out compare.json target/bench-results/*/*.json
+```
+
+Its slow-profile medians against this decision's run:
+
+| Slow trace | First byte, Go / before / P9 | Stall total, Go / before / P9 | Limit on stalls |
+|---|---|---|---|
+| `cold-start` | 4.31 / 3.15 / 2.10 s | 174 / 165 / 131 s | 193 s |
+| `concurrent` | 3.56 / 2.86 / 2.31 s | 855 / 721 / 717 s | 942 s |
+| `far-seeks` | 4.36 / 3.29 / 2.18 s | 72 / 66 / 54 s | 80 s |
+| `idle-resume` | 4.12 / 4.32 / 2.52 s | 6.2 / 13.6 / **21.4 s** | 7.8 s |
+| `player-ranges` | 3.48 / **4.40** / 2.51 s | 33.7 / 25.1 / **38.2 s** | 38.0 s |
+
+- **First bytes** came 0.6 to 1.9 seconds sooner on the slow traces and
+  about 0.2 seconds sooner on the fast ones, 524 against 715 ms for fast
+  `cold-start`. The `player-ranges` miss of this decision is gone.
+- **Seeks** on slow `far-seeks` took 5.3 seconds at the median against 11.9
+  before and 11.8 for Go.
+- **Stall totals** still miss on slow `idle-resume`, and slow
+  `player-ranges` now misses by 0.2 seconds. Both vary more between runs
+  than between implementations: five runs of `idle-resume` stalled 0 to
+  18.5 seconds for Go, 0.7 to 47.3 before P9, and 0.9 to 24.1 with it, and
+  `player-ranges` 24.3 to 58.7 seconds for Go and 27.8 to 41.0 with P9. A
+  check matrix of three slow runs on the same code passed both limits, with
+  medians of 5.5 and 22.6 seconds. Five runs are
+  too few to place a median of such spread against a limit 25 percent above
+  Go's, which leaves these two misses unresolved rather than intentional.
+- **The jump to a file's end**, which `player-ranges` makes right after the
+  start as a player reading a container's index does, found the last piece
+  cached before P9, in 1 to 26 ms on the fast profile. With P9 it waits:
+  388 to 521 ms fast, and 2.3 to 4.5 seconds slow, which is Go TorrPlay's
+  level, 316 to 523 ms and 1.5 to 2.4 seconds. The file's pinned last piece
+  is a priority but not shared, and a peer at a shared piece's cap waits on
+  that piece rather than reserving others. Sharing file boundaries in the
+  second tier had no effect while peers wait at the cap; letting them reserve
+  later tiers instead fetched the boundary early, but split each peer's
+  bandwidth evenly between tiers and doubled the urgent piece's time, 6.1
+  against 3.1 seconds from one seeder. The wait stays.
+- **Elsewhere**, P9 costs some memory and waste on the fast profile, within
+  every limit: `concurrent` peaked at 341 MiB against 289 before, Go's 458,
+  and `sustained-eviction` downloaded 209 MiB in excess against 116, Go's
+  290.
+
+P9 is the largest patch in the fork: with it, the fork adds about 2,300
+lines to upstream `57e95d16`, about half of them tests, and doubles
+`piece_tracker.rs`'s non-test code. Upstream changes to piece assignment
+would mean redoing P9 by hand rather than resolving conflicts, a larger
+share of the maintenance cost this decision accepted.
+
 ## Consequences
 
-- Milestone 6 starts with the Rust prototype. Its first engine task is a
-  fork patch that spreads a reader's most urgent pieces over several peers,
-  followed by a rerun of the slow profile; until then, slow, lossy links
-  stall more than Go after a reader restarts.
+- Milestone 6 starts with the Rust prototype. Its first engine task, a fork
+  patch that spreads a reader's most urgent pieces over several peers, is
+  done; see [the update](#update-shared-urgent-pieces-2026-10-23). Slow
+  `idle-resume` and `player-ranges` stall totals remain unresolved misses
+  until more runs separate them from run-to-run spread.
 - The benchmark harness stays as a regression check for streaming changes,
   as AGENTS.md asks, with the Go baseline above as its reference.
 - The deferred devices and the public swarm remain open evidence. A rerun on
