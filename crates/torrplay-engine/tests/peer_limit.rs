@@ -23,7 +23,9 @@ async fn peers(engine: &LibrqbitEngine) -> anyhow::Result<u64> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_torrent_connects_to_at_most_its_peer_limit() -> anyhow::Result<()> {
-    let spec = catalog::single_small();
+    // Four times the cache, so the torrent cannot finish while the test
+    // runs: a finished memory torrent takes no new peers.
+    let spec = catalog::large(8 * MIB);
     let mut seeders = Vec::new();
     for _ in 0..3 {
         seeders.push(Seeder::start(&spec, &spec.metainfo().bytes).await?);
