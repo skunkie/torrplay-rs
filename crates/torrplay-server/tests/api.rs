@@ -1635,6 +1635,7 @@ mod scenario {
                 "idle_readers_total": 16,
                 "drain_period_seconds": 10,
                 "peer_limit": 50,
+                "cache_capacity_bytes": 268_435_456,
                 "links": { "self": path },
             })
         );
@@ -1707,7 +1708,7 @@ mod scenario {
                 &json!({
                     "piece_wait_seconds": 0,
                     "peer_limit": "many",
-                    "cache_capacity_bytes": 1,
+                    "readahead_bytes": 1,
                     "idle_readers_total": 2,
                 }),
             ))
@@ -1721,7 +1722,7 @@ mod scenario {
         pointers.sort();
         assert_eq!(
             pointers,
-            ["/cache_capacity_bytes", "/peer_limit"],
+            ["/peer_limit", "/readahead_bytes"],
             "member types are checked before bounds"
         );
         let invalid = server
@@ -1840,6 +1841,71 @@ mod scenario {
         server.stop().await;
     }
 
+    /// SET-05 and SET-09 for the cache capacity: one below a torrent's
+    /// piece length is refused, and a failed write leaves the engine's
+    /// capacity as it was, whether the change grows or shrinks it.
+    pub async fn cache_capacity_settings() {
+        const MIB: u64 = 1 << 20;
+        let server = TestServer::start().await;
+        server.engine.set_longest_piece(16 * MIB);
+        let path = "/api/v1/settings";
+        let tag = server
+            .get(path)
+            .await
+            .header(header::ETAG)
+            .unwrap()
+            .to_owned();
+        let capacity = |bytes: u64| json!({ "cache_capacity_bytes": bytes });
+
+        let refused = server
+            .send(merge_patch(path, &tag, &capacity(8 * MIB)))
+            .await;
+        assert_problem(
+            &refused,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation-failed",
+        );
+        assert_eq!(errors(&refused, "pointer"), ["/cache_capacity_bytes"]);
+        let out_of_bounds = server
+            .send_unchecked(merge_patch(path, &tag, &capacity((64 << 30) + 1)))
+            .await;
+        assert_eq!(errors(&out_of_bounds, "pointer"), ["/cache_capacity_bytes"]);
+        assert_eq!(server.engine.settings(), Settings::DEFAULT);
+
+        server.app.store().fail_writes(true);
+        for bytes in [512 * MIB, 32 * MIB] {
+            assert_problem(
+                &server.send(merge_patch(path, &tag, &capacity(bytes))).await,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal-error",
+            );
+            assert_eq!(
+                server.engine.settings(),
+                Settings::DEFAULT,
+                "the engine keeps the capacity a write of {bytes} bytes failed to change"
+            );
+        }
+        server.app.store().fail_writes(false);
+        assert_eq!(
+            server.get(path).await.header(header::ETAG),
+            Some(tag.as_str())
+        );
+
+        let shrunk = server
+            .send(merge_patch(path, &tag, &capacity(16 * MIB)))
+            .await;
+        assert_eq!(shrunk.status, StatusCode::OK);
+        assert_eq!(shrunk.json()["cache_capacity_bytes"], 16 * MIB);
+        assert_eq!(server.engine.settings().cache_capacity_bytes, 16 * MIB);
+        let tag = shrunk.header(header::ETAG).unwrap().to_owned();
+        let grown = server
+            .send(merge_patch(path, &tag, &capacity(64 << 30)))
+            .await;
+        assert_eq!(grown.json()["cache_capacity_bytes"], 64_u64 << 30);
+        assert_eq!(server.engine.settings().cache_capacity_bytes, 64 << 30);
+        server.stop().await;
+    }
+
     /// SET-03: stored settings that leave a setting unset, or hold a value
     /// the current bounds refuse, run with the defaults for it.
     pub async fn stored_settings() {
@@ -1941,4 +2007,5 @@ scenarios!(
     refused_on_restore,
     settings,
     stored_settings,
+    cache_capacity_settings,
 );

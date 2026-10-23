@@ -365,7 +365,8 @@ impl From<EngineError> for Problem {
             error @ (EngineError::Rejected(SourceRejection::Invalid { .. })
             | EngineError::DuplicateTorrent
             | EngineError::MetadataMismatch
-            | EngineError::RangeOutOfBounds) => {
+            | EngineError::RangeOutOfBounds
+            | EngineError::CapacityBelowPieceLength { .. }) => {
                 tracing::error!(
                     error = %redact(&error.to_string()),
                     "the torrent engine contradicted itself"

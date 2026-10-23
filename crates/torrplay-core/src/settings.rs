@@ -21,11 +21,11 @@ pub struct Bounds {
     /// The member name in the contract.
     pub name: &'static str,
     /// The least value.
-    pub minimum: u32,
+    pub minimum: u64,
     /// The greatest value.
-    pub maximum: u32,
+    pub maximum: u64,
     /// The value while unset.
-    pub default: u32,
+    pub default: u64,
 }
 
 /// The piece wait bound, in seconds.
@@ -70,15 +70,23 @@ pub const PEER_LIMIT: Bounds = Bounds {
     maximum: 500,
     default: 50,
 };
+/// The cache capacity, in bytes: 4 MiB to 64 GiB, 256 MiB by default.
+pub const CACHE_CAPACITY_BYTES: Bounds = Bounds {
+    name: "cache_capacity_bytes",
+    minimum: 4 << 20,
+    maximum: 64 << 30,
+    default: 256 << 20,
+};
 
 /// Every setting, in the order representations list them.
-pub const ALL: [Bounds; 6] = [
+pub const ALL: [Bounds; 7] = [
     PIECE_WAIT_SECONDS,
     IDLE_TIMEOUT_SECONDS,
     IDLE_READERS_PER_TORRENT,
     IDLE_READERS_TOTAL,
     DRAIN_PERIOD_SECONDS,
     PEER_LIMIT,
+    CACHE_CAPACITY_BYTES,
 ];
 
 /// The effective settings.
@@ -97,17 +105,20 @@ pub struct Settings {
     pub drain_period: Duration,
     /// The most peers one torrent connects to at a time.
     pub peer_limit: usize,
+    /// The global piece cache's capacity.
+    pub cache_capacity_bytes: u64,
 }
 
 impl Settings {
     /// Every setting at its default.
     pub const DEFAULT: Self = Self {
-        piece_wait: Duration::from_secs(PIECE_WAIT_SECONDS.default as u64),
-        idle_timeout: Duration::from_secs(IDLE_TIMEOUT_SECONDS.default as u64),
+        piece_wait: Duration::from_secs(PIECE_WAIT_SECONDS.default),
+        idle_timeout: Duration::from_secs(IDLE_TIMEOUT_SECONDS.default),
         idle_readers_per_torrent: IDLE_READERS_PER_TORRENT.default as usize,
         idle_readers_total: IDLE_READERS_TOTAL.default as usize,
-        drain_period: Duration::from_secs(DRAIN_PERIOD_SECONDS.default as u64),
+        drain_period: Duration::from_secs(DRAIN_PERIOD_SECONDS.default),
         peer_limit: PEER_LIMIT.default as usize,
+        cache_capacity_bytes: CACHE_CAPACITY_BYTES.default,
     };
 }
 
@@ -115,17 +126,19 @@ impl Settings {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Explicit {
     /// [`PIECE_WAIT_SECONDS`].
-    pub piece_wait_seconds: Option<u32>,
+    pub piece_wait_seconds: Option<u64>,
     /// [`IDLE_TIMEOUT_SECONDS`].
-    pub idle_timeout_seconds: Option<u32>,
+    pub idle_timeout_seconds: Option<u64>,
     /// [`IDLE_READERS_PER_TORRENT`].
-    pub idle_readers_per_torrent: Option<u32>,
+    pub idle_readers_per_torrent: Option<u64>,
     /// [`IDLE_READERS_TOTAL`].
-    pub idle_readers_total: Option<u32>,
+    pub idle_readers_total: Option<u64>,
     /// [`DRAIN_PERIOD_SECONDS`].
-    pub drain_period_seconds: Option<u32>,
+    pub drain_period_seconds: Option<u64>,
     /// [`PEER_LIMIT`].
-    pub peer_limit: Option<u32>,
+    pub peer_limit: Option<u64>,
+    /// [`CACHE_CAPACITY_BYTES`].
+    pub cache_capacity_bytes: Option<u64>,
 }
 
 /// A value a setting cannot take, with the setting's name.
@@ -139,7 +152,7 @@ pub struct InvalidSetting {
 
 impl Explicit {
     /// The slot of the setting named `name`, if there is one.
-    pub fn slot(&mut self, name: &str) -> Option<&mut Option<u32>> {
+    pub fn slot(&mut self, name: &str) -> Option<&mut Option<u64>> {
         Some(match name {
             "piece_wait_seconds" => &mut self.piece_wait_seconds,
             "idle_timeout_seconds" => &mut self.idle_timeout_seconds,
@@ -147,13 +160,14 @@ impl Explicit {
             "idle_readers_total" => &mut self.idle_readers_total,
             "drain_period_seconds" => &mut self.drain_period_seconds,
             "peer_limit" => &mut self.peer_limit,
+            "cache_capacity_bytes" => &mut self.cache_capacity_bytes,
             _ => return None,
         })
     }
 
     /// Each setting's value, explicit or default, in [`ALL`]'s order.
-    pub fn values(&self) -> [u32; 6] {
-        let value = |explicit: Option<u32>, bounds: Bounds| explicit.unwrap_or(bounds.default);
+    pub fn values(&self) -> [u64; 7] {
+        let value = |explicit: Option<u64>, bounds: Bounds| explicit.unwrap_or(bounds.default);
         [
             value(self.piece_wait_seconds, PIECE_WAIT_SECONDS),
             value(self.idle_timeout_seconds, IDLE_TIMEOUT_SECONDS),
@@ -161,6 +175,7 @@ impl Explicit {
             value(self.idle_readers_total, IDLE_READERS_TOTAL),
             value(self.drain_period_seconds, DRAIN_PERIOD_SECONDS),
             value(self.peer_limit, PEER_LIMIT),
+            value(self.cache_capacity_bytes, CACHE_CAPACITY_BYTES),
         ]
     }
 
@@ -180,7 +195,7 @@ impl Explicit {
                 ),
             })
             .collect();
-        let [_, _, per_torrent, total, _, _] = values;
+        let [_, _, per_torrent, total, _, _, _] = values;
         if invalid.is_empty() && per_torrent > total {
             invalid.push(InvalidSetting {
                 name: IDLE_READERS_PER_TORRENT.name,
@@ -196,14 +211,24 @@ impl Explicit {
 
     /// The effective settings: each explicit value, or its default.
     pub fn effective(&self) -> Settings {
-        let [piece_wait, idle_timeout, per_torrent, total, drain, peers] = self.values();
+        let [
+            piece_wait,
+            idle_timeout,
+            per_torrent,
+            total,
+            drain,
+            peers,
+            capacity,
+        ] = self.values();
+        // The counts' bounds are far below any usize.
         Settings {
-            piece_wait: Duration::from_secs(piece_wait.into()),
-            idle_timeout: Duration::from_secs(idle_timeout.into()),
+            piece_wait: Duration::from_secs(piece_wait),
+            idle_timeout: Duration::from_secs(idle_timeout),
             idle_readers_per_torrent: per_torrent as usize,
             idle_readers_total: total as usize,
-            drain_period: Duration::from_secs(drain.into()),
+            drain_period: Duration::from_secs(drain),
             peer_limit: peers as usize,
+            cache_capacity_bytes: capacity,
         }
     }
 }
@@ -309,9 +334,9 @@ mod tests {
     fn every_setting_has_a_slot() {
         let mut explicit = Explicit::default();
         for (n, bounds) in ALL.iter().enumerate() {
-            *explicit.slot(bounds.name).unwrap() = Some(n as u32 + 100);
+            *explicit.slot(bounds.name).unwrap() = Some(n as u64 + 100);
         }
-        assert_eq!(explicit.values(), [100, 101, 102, 103, 104, 105]);
-        assert!(explicit.slot("cache_capacity_bytes").is_none());
+        assert_eq!(explicit.values(), [100, 101, 102, 103, 104, 105, 106]);
+        assert!(explicit.slot("readahead_bytes").is_none());
     }
 }

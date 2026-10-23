@@ -18,6 +18,12 @@
 //! the write path. Partial pieces are never evicted; one that goes back to
 //! the engine's queue unverified is released.
 //!
+//! Cache capacity can change while the cache runs. Growing it lets waiting
+//! reservations in; shrinking it below cache usage makes the evictor evict
+//! down to the new capacity, as ADR 5's capacity changes describe, while
+//! nothing new is admitted. A capacity below the piece length of a
+//! registered torrent is refused.
+//!
 //! The cache lock guards only the accounting. Piece buffers have locks of
 //! their own: buffers are allocated, and bytes copied in and out, with the
 //! cache lock released. A buffer freed while nothing waits for room is
@@ -99,12 +105,20 @@ pub enum CacheError {
         /// The sum of resident buffer lengths.
         resident: u64,
     },
-    /// Cache usage has exceeded capacity at some point.
-    #[error("cache usage peaked at {peak_bytes} bytes, above the capacity of {capacity_bytes}")]
+    /// Cache usage rose above capacity at some point.
+    #[error("cache usage rose to {peak_bytes} bytes, above the capacity of {capacity_bytes}")]
     CapacityViolated {
-        /// The highest cache usage seen.
+        /// The highest cache usage above capacity.
         peak_bytes: u64,
-        /// The cache capacity.
+        /// The cache capacity it rose above.
+        capacity_bytes: u64,
+    },
+    /// A new capacity is below a registered torrent's piece length.
+    #[error("{piece_length_bytes}-byte pieces exceed a cache capacity of {capacity_bytes} bytes")]
+    CapacityBelowPieceLength {
+        /// The longest piece length among registered torrents.
+        piece_length_bytes: u64,
+        /// The capacity refused.
         capacity_bytes: u64,
     },
     /// Only verified pieces can be evicted.
@@ -126,10 +140,11 @@ pub enum CacheError {
 /// A snapshot of the cache's accounting.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CacheStats {
-    /// The configured cache capacity.
+    /// The cache capacity in effect.
     pub capacity_bytes: u64,
     /// The bytes counted against capacity: pending allocations, resident
-    /// piece buffers, and retained reusable buffers.
+    /// piece buffers, and retained reusable buffers. Only a capacity that
+    /// shrank leaves it above capacity.
     pub usage_bytes: u64,
     /// The highest cache usage since the cache was created.
     pub peak_usage_bytes: u64,
@@ -198,6 +213,8 @@ struct Slot {
 struct TorrentEntry {
     // Absent until the engine can invalidate the torrent's pieces.
     engine: Option<Arc<dyn EngineTorrent>>,
+    // The capacity may not shrink below it.
+    piece_length: u64,
     started: bool,
     pins: HashSet<u32>,
     // Each planned piece's place in the torrent's priority order, 0 first.
@@ -211,10 +228,13 @@ struct Waiting {
     since: u64,
 }
 
-#[derive(Default)]
 struct State {
+    capacity_bytes: u64,
     usage_bytes: u64,
     peak_usage_bytes: u64,
+    // The highest usage that an addition took above capacity, with that
+    // capacity: an accounting bug, which the audit reports.
+    exceeded: Option<(u64, u64)>,
     eviction_count: u64,
     next_key: u64,
     clock: u64,
@@ -244,6 +264,21 @@ impl State {
     fn add(&mut self, length: usize) {
         self.usage_bytes += length as u64;
         self.peak_usage_bytes = self.peak_usage_bytes.max(self.usage_bytes);
+        if self.usage_bytes > self.capacity_bytes {
+            let peak = self.exceeded.map_or(0, |(peak, _)| peak);
+            if self.usage_bytes > peak {
+                self.exceeded = Some((self.usage_bytes, self.capacity_bytes));
+            }
+        }
+    }
+
+    // What the capacity lacks for current usage plus `needed_bytes`.
+    fn shortfall(&self, needed_bytes: u64) -> u64 {
+        (self.usage_bytes + needed_bytes).saturating_sub(self.capacity_bytes)
+    }
+
+    fn free_bytes(&self) -> u64 {
+        self.capacity_bytes.saturating_sub(self.usage_bytes)
     }
 
     fn retained_bytes(&self) -> u64 {
@@ -252,9 +287,9 @@ impl State {
 
     /// Releases retained buffers until `needed_bytes` fit, and returns them
     /// for the caller to drop after unlocking.
-    fn release_retained(&mut self, needed_bytes: u64, capacity_bytes: u64) -> Vec<Box<[u8]>> {
+    fn release_retained(&mut self, needed_bytes: u64) -> Vec<Box<[u8]>> {
         let mut released = Vec::new();
-        while self.usage_bytes + needed_bytes > capacity_bytes {
+        while self.shortfall(needed_bytes) > 0 {
             let Some(buffer) = self.retained.pop() else {
                 break;
             };
@@ -277,8 +312,9 @@ impl State {
     }
 
     /// Removes a slot and returns its bytes to the capacity. Its buffer is
-    /// retained when nothing waits for room, the pool has space, and no copy
-    /// still holds it; otherwise it is returned to drop after unlocking.
+    /// retained when nothing waits for room, the pool has space, usage is
+    /// within capacity, and no copy still holds it; otherwise it is returned
+    /// to drop after unlocking.
     fn remove_slot(&mut self, key: (TorrentKey, u32)) -> Option<(Slot, Option<Box<[u8]>>)> {
         let mut slot = self.slots.remove(&key)?;
         self.usage_bytes -= slot.length as u64;
@@ -286,7 +322,9 @@ impl State {
         if let Some(buffer) = slot.bytes.take() {
             match Arc::try_unwrap(buffer).map(Mutex::into_inner) {
                 Ok(Ok(bytes))
-                    if self.waiting.is_empty() && self.retained.len() < MAX_RETAINED_BUFFERS =>
+                    if self.waiting.is_empty()
+                        && self.retained.len() < MAX_RETAINED_BUFFERS
+                        && self.shortfall(bytes.len() as u64) == 0 =>
                 {
                     self.add(bytes.len());
                     self.retained.push(bytes);
@@ -303,7 +341,6 @@ impl State {
 
 /// The piece cache shared by every torrent in memory storage mode.
 pub struct PieceCache {
-    capacity_bytes: u64,
     state: Mutex<State>,
     // Wakes the evictor when a reservation waits or room may have appeared.
     room_wanted: Notify,
@@ -313,8 +350,20 @@ impl PieceCache {
     /// Creates an empty cache with the given capacity.
     pub fn new(capacity_bytes: u64) -> Arc<Self> {
         Arc::new(Self {
-            capacity_bytes,
-            state: Mutex::new(State::default()),
+            state: Mutex::new(State {
+                capacity_bytes,
+                usage_bytes: 0,
+                peak_usage_bytes: 0,
+                exceeded: None,
+                eviction_count: 0,
+                next_key: 0,
+                clock: 0,
+                torrents: HashMap::new(),
+                slots: HashMap::new(),
+                waiting: HashMap::new(),
+                admitted: HashMap::new(),
+                retained: Vec::new(),
+            }),
             room_wanted: Notify::new(),
         })
     }
@@ -323,15 +372,44 @@ impl PieceCache {
         self.state.lock().map_err(|_| CacheError::Poisoned)
     }
 
-    // Called after a change that may let a waiting reservation proceed.
+    // Called after a change that may let a waiting reservation proceed, or
+    // let usage above a shrunk capacity come down.
     fn room_may_have_changed(&self, state: &State) {
-        if !state.waiting.is_empty() {
+        if !state.waiting.is_empty() || state.shortfall(0) > 0 {
             self.room_wanted.notify_one();
         }
     }
 
     pub(crate) fn room_wanted(&self) -> &Notify {
         &self.room_wanted
+    }
+
+    /// The cache capacity in effect.
+    pub fn capacity_bytes(&self) -> Result<u64, CacheError> {
+        Ok(self.lock()?.capacity_bytes)
+    }
+
+    /// Changes the cache capacity, unless it is below the piece length of a
+    /// registered torrent. A smaller capacity than cache usage leaves usage
+    /// above it, admits nothing new, and wakes the evictor to evict down to
+    /// it; a larger one wakes the evictor to admit waiting reservations.
+    pub fn set_capacity(&self, capacity_bytes: u64) -> Result<(), CacheError> {
+        let mut state = self.lock()?;
+        let longest = state
+            .torrents
+            .values()
+            .map(|entry| entry.piece_length)
+            .max()
+            .unwrap_or(0);
+        if longest > capacity_bytes {
+            return Err(CacheError::CapacityBelowPieceLength {
+                piece_length_bytes: longest,
+                capacity_bytes,
+            });
+        }
+        state.capacity_bytes = capacity_bytes;
+        self.room_wanted.notify_one();
+        Ok(())
     }
 
     /// Returns a snapshot of the accounting.
@@ -343,7 +421,7 @@ impl PieceCache {
     fn snapshot(&self, state: &State) -> CacheStats {
         let resident = || state.slots.values().filter(|slot| slot.bytes.is_some());
         CacheStats {
-            capacity_bytes: self.capacity_bytes,
+            capacity_bytes: state.capacity_bytes,
             usage_bytes: state.usage_bytes,
             peak_usage_bytes: state.peak_usage_bytes,
             resident_pieces: resident().count() as u64,
@@ -369,7 +447,7 @@ impl PieceCache {
 
     /// Recomputes cache usage from pending allocations, resident buffers,
     /// and retained buffers, and checks that it matches the running total
-    /// and stays within capacity.
+    /// and that nothing ever added to it beyond capacity.
     pub fn audit(&self) -> Result<CacheStats, CacheError> {
         let state = self.lock()?;
         let stats = self.snapshot(&state);
@@ -385,10 +463,10 @@ impl PieceCache {
                 resident,
             });
         }
-        if stats.peak_usage_bytes > self.capacity_bytes {
+        if let Some((peak_bytes, capacity_bytes)) = state.exceeded {
             return Err(CacheError::CapacityViolated {
-                peak_bytes: stats.peak_usage_bytes,
-                capacity_bytes: self.capacity_bytes,
+                peak_bytes,
+                capacity_bytes,
             });
         }
         Ok(stats)
@@ -403,7 +481,9 @@ impl PieceCache {
             .is_some_and(|slot| slot.bytes.is_some()))
     }
 
-    pub(crate) fn register_torrent(&self) -> Result<TorrentKey, CacheError> {
+    /// Registers a torrent of `piece_length`-byte pieces, which the
+    /// capacity may not shrink below while it is registered.
+    pub(crate) fn register_torrent(&self, piece_length: u32) -> Result<TorrentKey, CacheError> {
         let mut state = self.lock()?;
         state.next_key += 1;
         let key = TorrentKey(state.next_key);
@@ -411,6 +491,7 @@ impl PieceCache {
             key,
             TorrentEntry {
                 engine: None,
+                piece_length: piece_length.into(),
                 started: true,
                 pins: HashSet::new(),
                 ranks: HashMap::new(),
@@ -501,11 +582,11 @@ impl PieceCache {
         piece: u32,
         length: usize,
     ) -> Result<Reservation, CacheError> {
-        if length as u64 > self.capacity_bytes {
-            return Ok(Reservation::TooLarge);
-        }
         let mut state = self.lock()?;
         let state = &mut *state;
+        if length as u64 > state.capacity_bytes {
+            return Ok(Reservation::TooLarge);
+        }
         if !state.torrents.contains_key(&torrent) {
             return Err(CacheError::UnknownTorrent(torrent));
         }
@@ -522,9 +603,9 @@ impl PieceCache {
         let released = if queue_ahead {
             Vec::new()
         } else {
-            state.release_retained(length as u64, self.capacity_bytes)
+            state.release_retained(length as u64)
         };
-        if queue_ahead || state.usage_bytes + length as u64 > self.capacity_bytes {
+        if queue_ahead || state.shortfall(length as u64) > 0 {
             let since = admitted.unwrap_or_else(|| state.tick());
             state.waiting.insert(key, Waiting { length, since });
             self.room_wanted.notify_one();
@@ -570,10 +651,11 @@ impl PieceCache {
         Ok(())
     }
 
-    /// Returns the bytes the waiting reservations need, for
-    /// [`eviction_candidates`](Self::eviction_candidates), after releasing
-    /// retained buffers toward them, or zero when they fit in the free
-    /// capacity.
+    /// Returns the bytes eviction must make room for, for
+    /// [`eviction_candidates`](Self::eviction_candidates): those the waiting
+    /// reservations need, together with any usage above a capacity that
+    /// shrank, after releasing retained buffers toward them, or zero when
+    /// everything fits.
     pub(crate) fn room_needed(&self) -> Result<u64, CacheError> {
         let (needed, released) = {
             let mut state = self.lock()?;
@@ -582,13 +664,14 @@ impl PieceCache {
                 .values()
                 .map(|waiting| waiting.length as u64)
                 .sum();
-            let released = if needed > 0 {
-                state.release_retained(needed, self.capacity_bytes)
+            let released = state.release_retained(needed);
+            let excess = state.usage_bytes.saturating_sub(state.capacity_bytes);
+            let room = if state.shortfall(needed) > 0 {
+                needed + excess
             } else {
-                Vec::new()
+                0
             };
-            let free = self.capacity_bytes.saturating_sub(state.usage_bytes);
-            (if needed > free { needed } else { 0 }, released)
+            (room, released)
         };
         drop(released);
         Ok(needed)
@@ -617,7 +700,7 @@ impl PieceCache {
             })
             .collect();
         queue.sort_unstable();
-        let mut free = self.capacity_bytes.saturating_sub(state.usage_bytes);
+        let mut free = state.free_bytes();
         let mut torrents: Vec<TorrentKey> = Vec::new();
         for (_, since, key, length) in queue {
             if length as u64 > free {
@@ -646,8 +729,7 @@ impl PieceCache {
         needed_bytes: u64,
     ) -> Result<Vec<EvictionBatch>, CacheError> {
         let state = self.lock()?;
-        let free = self.capacity_bytes.saturating_sub(state.usage_bytes);
-        let mut shortfall = needed_bytes.saturating_sub(free);
+        let mut shortfall = needed_bytes.saturating_sub(state.free_bytes());
         let mut candidates: Vec<_> = state
             .slots
             .iter()
@@ -729,13 +811,13 @@ impl PieceCache {
         if !state.slots.contains_key(&(torrent, piece)) {
             let needed_bytes = piece_length as u64;
             // Retained buffers go first; a reused one returns its usage here.
-            let released = state.release_retained(needed_bytes, self.capacity_bytes);
+            let released = state.release_retained(needed_bytes);
             drop(released);
-            if state.usage_bytes + needed_bytes > self.capacity_bytes {
+            if state.shortfall(needed_bytes) > 0 {
                 return Err(CacheError::CapacityExceeded {
                     needed_bytes,
                     usage_bytes: state.usage_bytes,
-                    capacity_bytes: self.capacity_bytes,
+                    capacity_bytes: state.capacity_bytes,
                 });
             }
             state.add(piece_length);
@@ -903,7 +985,7 @@ mod tests {
     }
 
     fn evictable(cache: &PieceCache) -> TorrentKey {
-        let torrent = cache.register_torrent().unwrap();
+        let torrent = cache.register_torrent(0).unwrap();
         cache.attach_engine(torrent, Arc::new(NoEngine)).unwrap();
         torrent
     }
@@ -957,7 +1039,7 @@ mod tests {
     fn only_verified_pieces_of_attached_torrents_are_candidates() {
         let cache = PieceCache::new(100);
         let attached = evictable(&cache);
-        let unattached = cache.register_torrent().unwrap();
+        let unattached = cache.register_torrent(0).unwrap();
         verified(&cache, unattached, 0, 30);
         cache.write(attached, 0, 30, 0, &[0]).unwrap();
         verified(&cache, attached, 1, 30);
@@ -1006,7 +1088,7 @@ mod tests {
     #[test]
     fn a_first_write_reserves_the_whole_piece() {
         let cache = PieceCache::new(100);
-        let torrent = cache.register_torrent().unwrap();
+        let torrent = cache.register_torrent(0).unwrap();
         cache.write(torrent, 0, 40, 10, &[1, 2, 3]).unwrap();
         let stats = cache.audit().unwrap();
         assert_eq!(
@@ -1025,7 +1107,7 @@ mod tests {
     #[test]
     fn reads_return_written_bytes_and_fail_for_missing_pieces() {
         let cache = PieceCache::new(100);
-        let torrent = cache.register_torrent().unwrap();
+        let torrent = cache.register_torrent(0).unwrap();
         cache.write(torrent, 2, 8, 0, &[9; 8]).unwrap();
         let mut buf = [0; 4];
         cache.read(torrent, 2, 4, &mut buf).unwrap();
@@ -1043,7 +1125,7 @@ mod tests {
     #[test]
     fn a_reservation_beyond_capacity_fails_without_counting() {
         let cache = PieceCache::new(100);
-        let torrent = cache.register_torrent().unwrap();
+        let torrent = cache.register_torrent(0).unwrap();
         cache.write(torrent, 0, 60, 0, &[0]).unwrap();
         assert_eq!(
             cache.write(torrent, 1, 60, 0, &[0]),
@@ -1060,8 +1142,8 @@ mod tests {
     #[test]
     fn releasing_a_torrent_returns_only_its_bytes() {
         let cache = PieceCache::new(100);
-        let first = cache.register_torrent().unwrap();
-        let second = cache.register_torrent().unwrap();
+        let first = cache.register_torrent(0).unwrap();
+        let second = cache.register_torrent(0).unwrap();
         cache.write(first, 0, 30, 0, &[1]).unwrap();
         cache.write(second, 0, 20, 0, &[2]).unwrap();
         cache.mark_verified(first, 0).unwrap();
@@ -1081,7 +1163,7 @@ mod tests {
     #[test]
     fn writes_past_the_piece_or_with_another_length_fail() {
         let cache = PieceCache::new(100);
-        let torrent = cache.register_torrent().unwrap();
+        let torrent = cache.register_torrent(0).unwrap();
         assert!(matches!(
             cache.write(torrent, 0, 8, 6, &[0; 4]),
             Err(CacheError::OutOfBounds { .. })
@@ -1155,6 +1237,132 @@ mod tests {
             candidates(&cache, cache.room_needed().unwrap()),
             vec![vec![0]],
             "40 bytes are free, so one 30-byte piece makes room for 50"
+        );
+    }
+
+    #[test]
+    fn a_smaller_capacity_admits_nothing_until_eviction_brings_usage_down() {
+        let cache = PieceCache::new(300);
+        let torrent = evictable(&cache);
+        for piece in 0..3 {
+            verified(&cache, torrent, piece, 100);
+        }
+        cache.set_capacity(150).unwrap();
+        let stats = cache.audit().unwrap();
+        assert_eq!((stats.capacity_bytes, stats.usage_bytes), (150, 300));
+        assert_eq!(
+            cache.reserve(torrent, 3, 50).unwrap(),
+            Reservation::Waiting,
+            "nothing is admitted above capacity"
+        );
+        assert_eq!(
+            cache.room_needed().unwrap(),
+            200,
+            "the 150 bytes above capacity and the waiting 50"
+        );
+        assert_eq!(candidates(&cache, 200), vec![vec![0, 1]]);
+        cache.evict(torrent, 0).unwrap();
+        cache.evict(torrent, 1).unwrap();
+        let stats = cache.audit().unwrap();
+        assert_eq!(
+            (stats.usage_bytes, stats.retained_bytes),
+            (100, 0),
+            "nothing is retained while usage is above capacity or pieces wait"
+        );
+        assert_eq!(cache.take_admissible().unwrap().len(), 1);
+        reserved(&cache, torrent, 3, 50);
+        assert_eq!(cache.audit().unwrap().usage_bytes, 150);
+    }
+
+    #[test]
+    fn usage_above_a_smaller_capacity_wants_eviction_without_waiting_pieces() {
+        let cache = PieceCache::new(200);
+        let torrent = evictable(&cache);
+        verified(&cache, torrent, 0, 100);
+        cache.write(torrent, 1, 100, 0, &[0]).unwrap();
+        cache.set_capacity(100).unwrap();
+        assert_eq!(cache.room_needed().unwrap(), 100);
+        assert_eq!(candidates(&cache, 100), vec![vec![0]]);
+        cache.evict(torrent, 0).unwrap();
+        assert_eq!(
+            cache.room_needed().unwrap(),
+            0,
+            "the partial piece alone fits"
+        );
+        assert_eq!(
+            cache.write(torrent, 2, 100, 0, &[0]),
+            Err(CacheError::CapacityExceeded {
+                needed_bytes: 100,
+                usage_bytes: 100,
+                capacity_bytes: 100
+            }),
+            "an unreserved write is checked against the new capacity"
+        );
+    }
+
+    #[test]
+    fn a_larger_capacity_admits_waiting_pieces() {
+        let cache = PieceCache::new(100);
+        let torrent = evictable(&cache);
+        verified(&cache, torrent, 0, 100);
+        cache
+            .set_plan(torrent, HashSet::from([0]), &[0, 1])
+            .unwrap();
+        assert_eq!(
+            cache.reserve(torrent, 1, 100).unwrap(),
+            Reservation::Waiting
+        );
+        assert!(cache.take_admissible().unwrap().is_empty());
+        cache.set_capacity(200).unwrap();
+        assert_eq!(cache.take_admissible().unwrap().len(), 1);
+        reserved(&cache, torrent, 1, 100);
+        assert_eq!(
+            cache.reserve(torrent, 2, 150).unwrap(),
+            Reservation::Waiting,
+            "a piece that was too large now fits the capacity"
+        );
+        cache.audit().unwrap();
+    }
+
+    #[test]
+    fn a_capacity_below_a_registered_piece_length_is_refused() {
+        let cache = PieceCache::new(300);
+        let torrent = cache.register_torrent(200).unwrap();
+        assert_eq!(
+            cache.set_capacity(150),
+            Err(CacheError::CapacityBelowPieceLength {
+                piece_length_bytes: 200,
+                capacity_bytes: 150
+            })
+        );
+        assert_eq!(cache.capacity_bytes().unwrap(), 300, "nothing changed");
+        cache.set_capacity(200).unwrap();
+        cache.release_torrent(torrent).unwrap();
+        cache.set_capacity(150).unwrap();
+        assert_eq!(cache.capacity_bytes().unwrap(), 150);
+    }
+
+    #[test]
+    fn the_audit_reports_usage_added_beyond_capacity() {
+        let cache = PieceCache::new(100);
+        let torrent = evictable(&cache);
+        verified(&cache, torrent, 0, 100);
+        cache.set_capacity(50).unwrap();
+        cache
+            .audit()
+            .expect("usage left above a smaller capacity is no violation");
+        {
+            // An addition beyond capacity, undone so the totals still agree.
+            let mut state = cache.lock().unwrap();
+            state.add(10);
+            state.usage_bytes -= 10;
+        }
+        assert_eq!(
+            cache.audit(),
+            Err(CacheError::CapacityViolated {
+                peak_bytes: 110,
+                capacity_bytes: 50
+            })
         );
     }
 

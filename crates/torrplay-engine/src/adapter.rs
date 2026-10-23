@@ -20,6 +20,12 @@
 //! longer than the cache capacity fails the torrent instead, as ADR 5
 //! decides.
 //!
+//! The cache capacity changes with settings. A torrent's piece length is
+//! checked against the capacity in effect once its storage is registered
+//! with the cache, which refuses to shrink below a registered piece length,
+//! so a concurrent shrink and addition can never leave a torrent whose
+//! pieces exceed the capacity.
+//!
 //! Readers share one [`Playback`]: readahead is split across every torrent's
 //! readers, a stream that ends leaves its reader idle for the next stream of
 //! the file, and active playback is published as readers come and go.
@@ -57,8 +63,8 @@ use torrplay_core::metadata::{FileIndex, ReportedMetadata};
 use torrplay_core::redact::redact;
 use torrplay_core::settings::Settings;
 
-use crate::cache::PieceCache;
 use crate::cache::TorrentKey;
+use crate::cache::{CacheError, PieceCache};
 use crate::evictor::Evictor;
 use crate::inspect;
 use crate::playback::{
@@ -293,6 +299,28 @@ struct Tunables {
     idle_readers_per_torrent: usize,
     idle_readers_total: usize,
     peer_limit: usize,
+    cache_capacity_bytes: u64,
+    readahead_bytes: u64,
+}
+
+/// Why a torrent did not join the session.
+enum AddFailure {
+    /// Its pieces are longer than the cache capacity in effect; the detail
+    /// names both.
+    TooLarge(String),
+    /// librqbit or the cache failed.
+    Engine(anyhow::Error),
+}
+
+impl AddFailure {
+    /// The error for an addition the API requested: a torrent file whose
+    /// pieces are too long is unsupported.
+    fn into_engine_error(self) -> EngineError {
+        match self {
+            Self::TooLarge(detail) => SourceRejection::Unsupported { detail }.into(),
+            Self::Engine(error) => internal(error),
+        }
+    }
 }
 
 fn internal(error: impl Into<anyhow::Error>) -> EngineError {
@@ -312,6 +340,8 @@ impl LibrqbitEngine {
                 idle_readers_per_torrent: config.idle_readers_per_torrent,
                 idle_readers_total: config.idle_readers_total,
                 peer_limit: config.peer_limit,
+                cache_capacity_bytes: config.cache_capacity_bytes,
+                readahead_bytes: config.readahead_bytes,
             }),
             config,
             phase: Mutex::new(Phase::Starting),
@@ -342,10 +372,12 @@ impl LibrqbitEngine {
             ..Default::default()
         };
         let session = Session::new_with_opts(self.config.folder.clone(), options).await?;
-        let cache = PieceCache::new(self.config.cache_capacity_bytes);
-        let tunables = self.tunables();
+        // Held until the engine is ready, so settings applied meanwhile
+        // reach the cache and playback built here.
+        let tunables = self.tunables.lock().unwrap_or_else(PoisonError::into_inner);
+        let cache = PieceCache::new(tunables.cache_capacity_bytes);
         let playback = Playback::new(PlaybackConfig {
-            readahead_bytes: self.config.readahead_bytes,
+            readahead_bytes: tunables.readahead_bytes,
             readahead_ramp_bytes: self.config.readahead_ramp_bytes,
             idle_timeout: tunables.idle_timeout,
             idle_readers_per_torrent: tunables.idle_readers_per_torrent,
@@ -367,15 +399,8 @@ impl LibrqbitEngine {
             cache,
             session,
         });
-        let playback = Arc::clone(&running.playback);
         *self.lock_phase() = Phase::Ready(running);
-        // Settings applied while the playback was built reach it now.
-        let tunables = self.tunables();
-        playback.set_idle_limits(
-            tunables.idle_timeout,
-            tunables.idle_readers_per_torrent,
-            tunables.idle_readers_total,
-        );
+        drop(tunables);
         Ok(())
     }
 
@@ -515,11 +540,22 @@ impl LibrqbitEngine {
             .ok_or(EngineError::UnknownTorrent)
     }
 
+    /// The cache capacity in effect.
+    fn capacity_bytes(&self) -> u64 {
+        let cache = match &*self.lock_phase() {
+            Phase::Ready(running) => Some(running.cache.clone()),
+            Phase::Starting | Phase::Stopped => None,
+        };
+        cache
+            .and_then(|cache| cache.capacity_bytes().ok())
+            .unwrap_or_else(|| self.tunables().cache_capacity_bytes)
+    }
+
     fn too_large(&self, piece_length: u32) -> Option<String> {
-        (u64::from(piece_length) > self.config.cache_capacity_bytes).then(|| {
+        let capacity = self.capacity_bytes();
+        (u64::from(piece_length) > capacity).then(|| {
             format!(
-                "The torrent's {piece_length}-byte pieces exceed the {}-byte cache capacity.",
-                self.config.cache_capacity_bytes
+                "The torrent's {piece_length}-byte pieces exceed the {capacity}-byte cache capacity."
             )
         })
     }
@@ -558,14 +594,43 @@ impl LibrqbitEngine {
     }
 
     /// Adds `add` to the session, attaches it to the cache, waits for its
-    /// initial check, and starts it if `desired` says so. A magnet URI
-    /// waits for its metadata first.
+    /// initial check, and starts it if `desired` says so, unless its pieces
+    /// are longer than the cache capacity in effect once the cache has
+    /// registered them. A magnet URI waits for its metadata first.
     async fn add_to_session(
         &self,
         running: &Running,
         add: AddTorrent<'_>,
         desired: DesiredState,
-    ) -> anyhow::Result<Live> {
+    ) -> Result<Live, AddFailure> {
+        let live = self
+            .join_session(running, add)
+            .await
+            .map_err(AddFailure::Engine)?;
+        let piece_length = live
+            .handle
+            .with_metadata(|metadata| metadata.info.info().piece_length)
+            .map_err(AddFailure::Engine)?;
+        if let Some(detail) = self.too_large(piece_length) {
+            self.delete_live(running, live)
+                .await
+                .map_err(AddFailure::Engine)?;
+            return Err(AddFailure::TooLarge(detail));
+        }
+        let started = match desired {
+            DesiredState::Started => running.session.unpause(&live.handle).await,
+            DesiredState::Paused => live
+                .scheduler
+                .close()
+                .and_then(|()| live.cached.set_started(false).map_err(Into::into)),
+        };
+        started.map_err(AddFailure::Engine)?;
+        Ok(live)
+    }
+
+    /// Adds `add` to the session paused, attaches it to the cache, and waits
+    /// for its initial check.
+    async fn join_session(&self, running: &Running, add: AddTorrent<'_>) -> anyhow::Result<Live> {
         let scheduler = TorrentScheduler::new(&running.playback);
         let handle = running
             .session
@@ -576,19 +641,11 @@ impl LibrqbitEngine {
         let cached = running.factory.attach(&handle)?;
         scheduler.bind(&cached, &handle)?;
         handle.wait_until_initialized().await?;
-        let live = Live {
+        Ok(Live {
             handle,
             cached,
             scheduler,
-        };
-        match desired {
-            DesiredState::Started => running.session.unpause(&live.handle).await?,
-            DesiredState::Paused => {
-                live.scheduler.close()?;
-                live.cached.set_started(false)?;
-            }
-        }
-        Ok(live)
+        })
     }
 
     /// Spawns metadata retrieval for a magnet torrent.
@@ -619,7 +676,12 @@ impl LibrqbitEngine {
                     self.retrieved(&running, torrent, live).await;
                     return;
                 }
-                Err(error) => {
+                // Peers would send the same metadata again.
+                Err(AddFailure::TooLarge(detail)) => {
+                    torrent.state().failure = Some(Failure { detail });
+                    return;
+                }
+                Err(AddFailure::Engine(error)) => {
                     tracing::debug!(
                         error = %redact(&format!("{error:#}")),
                         "metadata retrieval failed; retrying"
@@ -631,17 +693,13 @@ impl LibrqbitEngine {
         }
     }
 
-    /// Records a magnet torrent's retrieved metadata, or fails it when its
-    /// pieces are longer than the cache.
+    /// Records a magnet torrent's retrieved metadata.
     async fn retrieved(&self, running: &Running, torrent: &Torrent, live: Live) {
-        let checked = live.handle.with_metadata(|metadata| {
-            (
-                metadata.info.info().piece_length,
-                inspect::reported_metadata(&metadata.info),
-            )
-        });
-        let (piece_length, metadata) = match checked {
-            Ok(checked) => checked,
+        let checked = live
+            .handle
+            .with_metadata(|metadata| inspect::reported_metadata(&metadata.info));
+        let metadata = match checked {
+            Ok(metadata) => metadata,
             Err(error) => {
                 tracing::error!(error = %redact(&format!("{error:#}")), "retrieved metadata is unreadable");
                 let _ = self.delete_live(running, live).await;
@@ -651,11 +709,6 @@ impl LibrqbitEngine {
                 return;
             }
         };
-        if let Some(detail) = self.too_large(piece_length) {
-            let _ = self.delete_live(running, live).await;
-            torrent.state().failure = Some(Failure { detail });
-            return;
-        }
         let mut state = torrent.state();
         state.metadata = Some(Arc::new(metadata));
         state.live = Some(live);
@@ -748,10 +801,23 @@ impl LibrqbitEngine {
         let Some(live) = live else {
             return Ok(());
         };
-        let bytes = live
+        let (bytes, piece_length) = live
             .handle
-            .with_metadata(|metadata| metadata.torrent_bytes.clone())
+            .with_metadata(|metadata| {
+                (
+                    metadata.torrent_bytes.clone(),
+                    metadata.info.info().piece_length,
+                )
+            })
             .map_err(internal)?;
+        // A failed torrent's storage left the cache, so the capacity may
+        // have shrunk below its pieces; it stays failed until it grows.
+        if let Some(detail) = self.too_large(piece_length) {
+            let mut state = torrent.state();
+            state.live = Some(live);
+            state.failure = Some(Failure { detail });
+            return Ok(());
+        }
         self.delete_live(running, live).await.map_err(internal)?;
         let live = self
             .add_to_session(
@@ -760,7 +826,7 @@ impl LibrqbitEngine {
                 DesiredState::Started,
             )
             .await
-            .map_err(internal)?;
+            .map_err(AddFailure::into_engine_error)?;
         let mut state = torrent.state();
         state.live = Some(live);
         state.engine_error_logged = false;
@@ -771,27 +837,57 @@ impl LibrqbitEngine {
 impl Engine for LibrqbitEngine {
     type Reader = RangeReader;
 
-    fn apply_settings(&self, settings: &Settings) {
-        let tunables = Tunables {
-            piece_wait: settings.piece_wait,
-            idle_timeout: settings.idle_timeout,
-            idle_readers_per_torrent: settings.idle_readers_per_torrent,
-            idle_readers_total: settings.idle_readers_total,
-            peer_limit: settings.peer_limit,
+    fn apply_settings(&self, settings: &Settings) -> Result<(), EngineError> {
+        let (tunables, running, resized) = {
+            let mut current = self.tunables.lock().unwrap_or_else(PoisonError::into_inner);
+            let running = match &*self.lock_phase() {
+                Phase::Ready(running) => Some(Arc::clone(running)),
+                Phase::Starting | Phase::Stopped => None,
+            };
+            // An unchanged capacity keeps a readahead budget the
+            // configuration set apart from it.
+            let resized = settings.cache_capacity_bytes != current.cache_capacity_bytes;
+            if resized && let Some(running) = &running {
+                running
+                    .cache
+                    .set_capacity(settings.cache_capacity_bytes)
+                    .map_err(|error| match error {
+                        CacheError::CapacityBelowPieceLength {
+                            piece_length_bytes, ..
+                        } => EngineError::CapacityBelowPieceLength { piece_length_bytes },
+                        error => internal(error),
+                    })?;
+            }
+            *current = Tunables {
+                piece_wait: settings.piece_wait,
+                idle_timeout: settings.idle_timeout,
+                idle_readers_per_torrent: settings.idle_readers_per_torrent,
+                idle_readers_total: settings.idle_readers_total,
+                peer_limit: settings.peer_limit,
+                cache_capacity_bytes: settings.cache_capacity_bytes,
+                readahead_bytes: if resized {
+                    settings.cache_capacity_bytes / 2
+                } else {
+                    current.readahead_bytes
+                },
+            };
+            (*current, running, resized)
         };
-        *self.tunables.lock().unwrap_or_else(PoisonError::into_inner) = tunables;
-        let playback = match &*self.lock_phase() {
-            Phase::Ready(running) => Some(Arc::clone(&running.playback)),
-            Phase::Starting | Phase::Stopped => None,
-        };
-        // A starting engine builds its playback from the tunables.
-        if let Some(playback) = playback {
-            playback.set_idle_limits(
+        // A starting engine builds its cache and playback from the
+        // tunables. Replanning takes scheduler locks, so it runs unlocked.
+        if let Some(running) = running {
+            running.playback.set_idle_limits(
                 tunables.idle_timeout,
                 tunables.idle_readers_per_torrent,
                 tunables.idle_readers_total,
             );
+            if resized {
+                running
+                    .playback
+                    .set_readahead_bytes(tunables.readahead_bytes);
+            }
         }
+        Ok(())
     }
 
     fn readiness(&self) -> Readiness {
@@ -869,9 +965,9 @@ impl Engine for LibrqbitEngine {
                     .await
                 {
                     Ok(live) => torrent.state().live = Some(live),
-                    Err(error) => {
+                    Err(failure) => {
                         self.lock_torrents().remove(id);
-                        return Err(internal(error));
+                        return Err(failure.into_engine_error());
                     }
                 }
             }
@@ -908,7 +1004,7 @@ impl Engine for LibrqbitEngine {
                 desired,
             )
             .await
-            .map_err(internal)?;
+            .map_err(AddFailure::into_engine_error)?;
         let mut state = torrent.state();
         state.metadata = Some(Arc::new(inspected.metadata));
         state.live = Some(live);

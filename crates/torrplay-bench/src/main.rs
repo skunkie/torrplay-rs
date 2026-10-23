@@ -354,8 +354,6 @@ async fn run(options: &Options) -> anyhow::Result<()> {
             api.to_string(),
             "--peer-port".to_owned(),
             free_port().await?.to_string(),
-            "--cache-capacity".to_owned(),
-            trace.cache_capacity_bytes.to_string(),
             "--no-dht".to_owned(),
             "--data-dir".to_owned(),
             data.path()
@@ -405,7 +403,10 @@ async fn run(options: &Options) -> anyhow::Result<()> {
     let record = match implementation {
         Implementation::TorrPlay => {
             let target = Arc::new(TorrPlay::new(client.clone(), base));
-            runner::run(target, client.clone(), pid, &trace, &fixtures).await
+            match target.configure(trace.cache_capacity_bytes).await {
+                Ok(()) => runner::run(target, client.clone(), pid, &trace, &fixtures).await,
+                Err(error) => Err(error),
+            }
         }
         Implementation::GoTorrPlay => {
             let target = Arc::new(GoTorrPlay::new(client.clone(), base));

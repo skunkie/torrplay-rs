@@ -10,7 +10,7 @@ mod support;
 use std::time::Duration;
 
 use support::{
-    MIB, Seeder, bounded, eventually, expected, futures_now, id, magnet, read, start, upload,
+    MIB, Seeder, bounded, eventually, expected, futures_now, id, magnet, range, read, start, upload,
 };
 use tokio::io::AsyncReadExt;
 use torrplay_core::engine::{ByteRange, Engine, EngineError, Source, SourceRejection};
@@ -104,7 +104,7 @@ async fn applied_settings_reach_idle_readers_and_later_waits() -> anyhow::Result
     settings.idle_readers_per_torrent = 0;
     settings.idle_readers_total = 0;
     settings.piece_wait = Duration::from_secs(1);
-    engine.apply_settings(&settings);
+    engine.apply_settings(&settings)?;
     assert_eq!(
         playback.stats().idle_readers,
         0,
@@ -127,6 +127,111 @@ async fn applied_settings_reach_idle_readers_and_later_waits() -> anyhow::Result
 
     engine.shutdown().await?;
     seeder.stop().await;
+    Ok(())
+}
+
+/// SET-08 through the facade: shrinking the cache below its usage while a
+/// reader streams evicts down to the new capacity, which no reservation
+/// exceeds meanwhile, and the stream stays byte-correct; growing it again
+/// lets the cache hold more than the smaller capacity.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_cache_capacity_shrinks_and_grows_during_a_stream() -> anyhow::Result<()> {
+    let spec = catalog::large(8 * MIB);
+    let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
+    let started = start(vec![seeder.addr], 16 * MIB, Duration::from_secs(30)).await?;
+    let engine = &started.engine;
+    let cache = engine.cache().expect("a started cache");
+    engine
+        .add(&id(1), &upload(&spec), DesiredState::Started)
+        .await?;
+    let size = spec.total_size_bytes();
+    let half = size / 2;
+    let mut reader = engine
+        .open_reader(&id(1), FileIndex(0), range(0, size))
+        .await?;
+    let mut first = vec![0; usize::try_from(half)?];
+    bounded("reading the first half", async {
+        Ok(reader.read_exact(&mut first).await?)
+    })
+    .await?;
+    assert!(first == expected(&spec, 0, 0, half), "the first half");
+    let before = cache.audit()?;
+    assert!(
+        before.usage_bytes > 6 * MIB,
+        "{} bytes in use before the shrink",
+        before.usage_bytes
+    );
+
+    let mut settings = Settings::DEFAULT;
+    settings.cache_capacity_bytes = 6 * MIB;
+    engine.apply_settings(&settings)?;
+    assert_eq!(engine.cache_statistics().await?.capacity_bytes, 6 * MIB);
+    eventually("eviction down to the new capacity", || {
+        let stats = cache.audit()?;
+        Ok((stats.usage_bytes <= 6 * MIB).then_some(()))
+    })
+    .await?;
+    let mut rest = Vec::new();
+    bounded("reading the second half", async {
+        Ok(reader.read_to_end(&mut rest).await?)
+    })
+    .await?;
+    assert!(rest == expected(&spec, 0, half, size), "the second half");
+    drop(reader);
+    let shrunk = cache.audit()?;
+    assert!(shrunk.usage_bytes <= 6 * MIB);
+    assert!(shrunk.eviction_count > before.eviction_count);
+
+    settings.cache_capacity_bytes = 32 * MIB;
+    engine.apply_settings(&settings)?;
+    let bytes = read(engine, &id(1), 0, 0, size).await?;
+    assert!(bytes == expected(&spec, 0, 0, size), "the whole file again");
+    let grown = cache.audit()?;
+    assert!(
+        grown.usage_bytes > 6 * MIB && grown.usage_bytes <= 32 * MIB,
+        "{} bytes in use after growing",
+        grown.usage_bytes
+    );
+
+    engine.shutdown().await?;
+    seeder.stop().await;
+    Ok(())
+}
+
+/// SET-09 through the facade: a cache capacity below a torrent's piece
+/// length is refused and changes nothing. Once that torrent is gone it
+/// applies, and a later upload is checked against it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_capacity_below_a_torrents_piece_length_is_refused() -> anyhow::Result<()> {
+    let spec = catalog::large(4 * MIB);
+    let started = start(Vec::new(), 8 * MIB, Duration::from_secs(30)).await?;
+    let engine = &started.engine;
+    engine
+        .add(&id(1), &upload(&spec), DesiredState::Paused)
+        .await?;
+
+    let mut settings = Settings::DEFAULT;
+    settings.cache_capacity_bytes = MIB / 2;
+    assert!(matches!(
+        engine.apply_settings(&settings),
+        Err(EngineError::CapacityBelowPieceLength { piece_length_bytes }) if piece_length_bytes == MIB
+    ));
+    assert_eq!(engine.cache_statistics().await?.capacity_bytes, 8 * MIB);
+
+    engine.remove(&id(1)).await?;
+    engine.apply_settings(&settings)?;
+    assert_eq!(engine.cache_statistics().await?.capacity_bytes, MIB / 2);
+    match engine
+        .add(&id(2), &upload(&spec), DesiredState::Started)
+        .await
+    {
+        Err(EngineError::Rejected(SourceRejection::Unsupported { detail })) => {
+            assert!(detail.contains("524288-byte cache capacity"), "{detail}");
+        }
+        other => anyhow::bail!("the upload was not refused: {other:?}"),
+    }
+
+    engine.shutdown().await?;
     Ok(())
 }
 

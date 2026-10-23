@@ -24,9 +24,7 @@ use std::time::Duration;
 use anyhow::Context;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
-use torrplay_engine::{
-    DEFAULT_CACHE_CAPACITY_BYTES, DEFAULT_PEER_PORT, EngineConfig, LibrqbitEngine, NetworkConfig,
-};
+use torrplay_engine::{DEFAULT_PEER_PORT, EngineConfig, LibrqbitEngine, NetworkConfig};
 use torrplay_server::App;
 use torrplay_store::{Contents, Store};
 use tracing::Level;
@@ -49,7 +47,6 @@ Streams torrents through the TorrPlay REST API on a loopback address.
 Options:
   --listen <ADDRESS>         The API's loopback address [default: 127.0.0.1:8080]
   --peer-port <PORT>         The BitTorrent peer port on every interface [default: 4240]
-  --cache-capacity <BYTES>   The piece cache capacity [default: 268435456]
   --data-dir <DIR>           Where the torrents database lives, on a local
                              filesystem [default: the platform's data directory]
   --log-level <LEVEL>        error, warn, info, debug, or trace [default: info]
@@ -67,8 +64,6 @@ pub struct Config {
     pub listen: SocketAddr,
     /// The peer listener's port, on every interface.
     pub peer_port: u16,
-    /// The piece cache capacity.
-    pub cache_capacity_bytes: u64,
     /// The most verbose level TorrPlay's own logs record; other crates log
     /// warnings and errors only.
     pub log_level: Level,
@@ -87,7 +82,6 @@ impl Default for Config {
         Self {
             listen: (Ipv4Addr::LOCALHOST, DEFAULT_PORT).into(),
             peer_port: DEFAULT_PEER_PORT,
-            cache_capacity_bytes: DEFAULT_CACHE_CAPACITY_BYTES,
             log_level: Level::INFO,
             log_filter: None,
             dht: true,
@@ -116,7 +110,6 @@ impl Config {
         network.listen.set_port(self.peer_port);
         network.dht = self.dht;
         EngineConfig::new(folder.to_path_buf(), network)
-            .with_cache_capacity(self.cache_capacity_bytes)
     }
 }
 
@@ -198,14 +191,6 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, Arg
                     .ok()
                     .filter(|&port| port != 0)
                     .ok_or_else(|| invalid(value, "a port from 1 to 65535"))?;
-            }
-            "--cache-capacity" => {
-                let value = value()?;
-                config.cache_capacity_bytes = value
-                    .parse()
-                    .ok()
-                    .filter(|&bytes| bytes > 0)
-                    .ok_or_else(|| invalid(value, "a positive number of bytes"))?;
             }
             "--log-level" => {
                 let value = value()?;
@@ -426,6 +411,7 @@ mod tests {
                 engine.idle_readers_per_torrent,
                 engine.idle_readers_total,
                 engine.peer_limit,
+                engine.cache_capacity_bytes,
             ),
             (
                 settings.piece_wait,
@@ -433,6 +419,7 @@ mod tests {
                 settings.idle_readers_per_torrent,
                 settings.idle_readers_total,
                 settings.peer_limit,
+                settings.cache_capacity_bytes,
             ),
         );
     }
@@ -452,8 +439,6 @@ mod tests {
             "--listen",
             "[::1]:9000",
             "--peer-port=6881",
-            "--cache-capacity",
-            "1048576",
             "--log-level=debug",
             "--log-filter",
             "librqbit=debug,torrplay_engine=trace",
@@ -467,7 +452,6 @@ mod tests {
             Config {
                 listen: "[::1]:9000".parse().unwrap(),
                 peer_port: 6881,
-                cache_capacity_bytes: 1_048_576,
                 log_level: Level::DEBUG,
                 log_filter: Some("librqbit=debug,torrplay_engine=trace".into()),
                 dht: false,
@@ -502,8 +486,6 @@ mod tests {
         for args in [
             &["--peer-port", "0"][..],
             &["--peer-port", "70000"],
-            &["--cache-capacity", "0"],
-            &["--cache-capacity", "1GiB"],
             &["--log-level", "loud"],
             &["--log-filter", "librqbit=loud"],
             &["--data-dir="],
@@ -514,8 +496,13 @@ mod tests {
             );
         }
         assert_eq!(
-            parse(&["--cache-capacity"]),
-            Err(ArgsError::MissingValue("--cache-capacity".into()))
+            parse(&["--peer-port"]),
+            Err(ArgsError::MissingValue("--peer-port".into()))
+        );
+        assert_eq!(
+            parse(&["--cache-capacity", "1048576"]),
+            Err(ArgsError::Unknown("--cache-capacity".into())),
+            "the cache capacity is a setting"
         );
         assert_eq!(
             parse(&["--verbose"]),
@@ -527,14 +514,11 @@ mod tests {
     fn the_engine_uses_the_peer_port_on_every_interface() {
         let config = Config {
             peer_port: 6881,
-            cache_capacity_bytes: 1024,
             ..Config::default()
         };
         let engine = config.engine_config(Path::new("/session"));
         assert_eq!(engine.network.listen.port(), 6881);
         assert!(engine.network.listen.ip().is_unspecified());
-        assert_eq!(engine.cache_capacity_bytes, 1024);
-        assert_eq!(engine.readahead_bytes, 512);
         assert!(engine.network.dht);
     }
 }

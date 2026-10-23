@@ -384,6 +384,10 @@ impl AsRef<str> for ObservedState {
 ///The application's settings. Each value is the one set, or its default while it is unset.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Settings {
+    ///The capacity of the global piece cache that every torrent in memory storage mode shares; the readahead budget is half of it. It must be at least the piece length of every torrent with metadata. Applies at once. Growing it admits the pieces waiting for room. Shrinking it evicts verified, unpinned pieces down to the new capacity, releasing idle readers when nothing else can be evicted; until partial pieces complete and active readers leave their current pieces, cache usage may stay above the capacity, and no new piece is admitted.
+    ///Constraint: minimum=4194304, maximum=68719476736
+    #[serde(default)]
+    pub cache_capacity_bytes: i64,
     ///How long streams in progress may continue after a termination signal before they are canceled, within the 30-second shutdown limit. Applies to the next shutdown.
     ///Constraint: minimum=0, maximum=25
     #[serde(default)]
@@ -542,7 +546,7 @@ pub struct Problem {
 ///The global piece cache's capacity and usage. Cache usage is reported separately from process memory and does not bound it.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CacheStatistics {
-    ///The configured cache capacity.
+    ///The cache capacity in effect, as the cache_capacity_bytes setting sets it.
     ///Constraint: minimum=0
     pub capacity_bytes: i64,
     ///The number of pieces evicted since the process started.
@@ -553,7 +557,7 @@ pub struct CacheStatistics {
     ///The full length of each resident piece covered by at least one pinned range, counted once. Eviction skips these pieces.
     ///Constraint: minimum=0
     pub pinned_bytes: i64,
-    ///The bytes counted against capacity, including pending allocations and retained reusable buffers.
+    ///The bytes counted against capacity, including pending allocations and retained reusable buffers. It stays within capacity_bytes, except after the capacity shrinks, until eviction and readers leaving their pieces bring it down.
     ///Constraint: minimum=0
     pub usage_bytes: i64,
 }
@@ -567,6 +571,14 @@ pub struct CacheStatisticsLinks {
 ///A JSON merge patch of the settings. Omitted members keep their values; a member set to null returns to its default.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct SettingsPatch {
+    ///The new value, or null for the default, 268435456.
+    ///Constraint: minimum=4194304, maximum=68719476736
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub cache_capacity_bytes: Option<Option<i64>>,
     ///The new value, or null for the default, 10.
     ///Constraint: minimum=0, maximum=25
     #[serde(
