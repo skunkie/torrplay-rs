@@ -30,6 +30,7 @@ mod problem;
 mod query;
 mod representation;
 mod service;
+mod settings;
 mod torrents;
 
 use std::sync::Arc;
@@ -81,6 +82,10 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
         .route(
             "/api/v1/cache/statistics",
             get(torrents::cache_statistics::<E>),
+        )
+        .route(
+            "/api/v1/settings",
+            get(settings::get::<E>).patch(settings::update::<E>),
         )
         .route("/livez", get(service::liveness))
         .route("/readyz", get(service::readiness::<E>))

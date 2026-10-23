@@ -30,6 +30,8 @@ tags:
     description: Torrents the application tracks, with their configuration.
   - name: Files
     description: Files listed in torrent metadata and their content.
+  - name: Settings
+    description: The application's settings, which tune streaming and shutdown.
   - name: Statistics
     description: Measurements of torrents and of the piece cache.
   - name: Health
@@ -59,6 +61,7 @@ paths:
                       self: /api/v1
                       torrents: /api/v1/torrents
                       cache_statistics: /api/v1/cache/statistics
+                      settings: /api/v1/settings
                       service-desc: /api/v1/openapi.yaml
         '500':
           $ref: '#/components/responses/InternalError'
@@ -337,10 +340,9 @@ paths:
         Applies a JSON merge patch to the configuration. The request must
         carry If-Match with the configuration's current ETag. The change is
         stored before this returns, and the configuration and its ETag survive
-        restarts. Pausing closes
-        the torrent's peer connections and cancels its streams; pausing and
-        then starting a failed torrent restarts it. The observed state follows
-        once the engine applies the change.
+        restarts. Pausing closes the torrent's peer connections and cancels its
+        streams; pausing and then starting a failed torrent restarts it. The
+        observed state follows once the engine applies the change.
       tags: [Torrents]
       parameters:
         - $ref: '#/components/parameters/IfMatch'
@@ -381,10 +383,10 @@ paths:
           $ref: '#/components/responses/MalformedRequest'
         '404':
           $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/LifecycleConflict'
         '408':
           $ref: '#/components/responses/RequestTimeout'
+        '409':
+          $ref: '#/components/responses/LifecycleConflict'
         '412':
           $ref: '#/components/responses/PreconditionFailed'
         '413':
@@ -714,6 +716,114 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/settings:
+    get:
+      operationId: getSettings
+      summary: Read the settings
+      description: >-
+        Returns the application's settings: each value as set, or its default
+        while it is unset.
+      tags: [Settings]
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The settings.
+          headers:
+            ETag:
+              $ref: '#/components/headers/SettingsETag'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settings'
+              examples:
+                defaults:
+                  summary: Settings at their defaults
+                  value:
+                    piece_wait_seconds: 60
+                    idle_timeout_seconds: 30
+                    idle_readers_per_torrent: 4
+                    idle_readers_total: 16
+                    drain_period_seconds: 10
+                    peer_limit: 50
+                    links:
+                      self: /api/v1/settings
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    patch:
+      operationId: updateSettings
+      summary: Change the settings
+      description: >-
+        Applies a JSON merge patch to the settings. The request must carry
+        If-Match with the settings' current ETag. A member set to null
+        returns to its default, which later releases may change; one omitted
+        keeps its value. The whole patch is validated before anything
+        changes, and the change is stored before this returns and survives
+        restarts. Each setting's description says when a change takes effect.
+      tags: [Settings]
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        description: >-
+          The settings to change, in a body of at most 16384 bytes. Larger
+          bodies are content-too-large, and a body that does not arrive within
+          30 seconds is request-timeout.
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/SettingsPatch'
+            examples:
+              longer_wait:
+                summary: Wait longer for pieces, and reset the peer limit
+                value:
+                  piece_wait_seconds: 120
+                  peer_limit: null
+      responses:
+        '200':
+          description: The updated settings.
+          headers:
+            ETag:
+              $ref: '#/components/headers/SettingsETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settings'
+              examples:
+                longer_wait:
+                  summary: Settings with a longer piece wait
+                  value:
+                    piece_wait_seconds: 120
+                    idle_timeout_seconds: 30
+                    idle_readers_per_torrent: 4
+                    idle_readers_total: 16
+                    drain_period_seconds: 10
+                    peer_limit: 50
+                    links:
+                      self: /api/v1/settings
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
+        '412':
+          $ref: '#/components/responses/SettingsPreconditionFailed'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
   /livez:
     get:
       operationId: getLiveness
@@ -846,6 +956,12 @@ components:
       schema:
         type: string
       example: '"cfg-3"'
+    SettingsETag:
+      description: A strong validator that changes only when a setting changes.
+      required: true
+      schema:
+        type: string
+      example: '"set-2"'
     ContentETag:
       description: A strong validator that identifies the file's bytes.
       required: true
@@ -1062,6 +1178,20 @@ components:
                 title: Precondition failed
                 status: 412
                 detail: The configuration changed since the ETag was issued.
+    SettingsPreconditionFailed:
+      description: If-Match does not match the settings' current ETag.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            stale:
+              summary: A stale ETag
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/precondition-failed
+                title: Precondition failed
+                status: 412
+                detail: The settings changed since the ETag was issued.
     ContentTooLarge:
       description: The request body exceeds its documented limit.
       content:
@@ -1233,7 +1363,7 @@ components:
         links:
           type: object
           description: Links to the top-level resources and the OpenAPI document.
-          required: [self, torrents, cache_statistics, service-desc]
+          required: [self, torrents, cache_statistics, settings, service-desc]
           properties:
             self:
               type: string
@@ -1250,6 +1380,11 @@ components:
               format: uri-reference
               description: The piece cache's statistics.
               examples: [/api/v1/cache/statistics]
+            settings:
+              type: string
+              format: uri-reference
+              description: The application's settings.
+              examples: [/api/v1/settings]
             service-desc:
               type: string
               format: uri-reference
@@ -1492,6 +1627,141 @@ components:
       properties:
         desired_state:
           $ref: '#/components/schemas/DesiredState'
+
+    Settings:
+      type: object
+      description: >-
+        The application's settings. Each value is the one set, or its default
+        while it is unset.
+      required: [piece_wait_seconds, idle_timeout_seconds, idle_readers_per_torrent, idle_readers_total, drain_period_seconds, peer_limit, links]
+      properties:
+        piece_wait_seconds:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 600
+          default: 60
+          description: >-
+            How long a stream waits for a missing piece before it is canceled,
+            and how long a peer may hold requests without delivering before it
+            is disconnected. Applies to waits that begin after the change.
+          examples: [60]
+        idle_timeout_seconds:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 3600
+          default: 30
+          description: >-
+            How long a reader stays idle after its stream ends, for the
+            player's next range request to continue it; 0 releases it at once.
+            Applies at once: idle readers idle for longer are released.
+          examples: [30]
+        idle_readers_per_torrent:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 64
+          default: 4
+          description: >-
+            The most idle readers one torrent keeps; at most
+            idle_readers_total. Applies at once: the oldest idle readers over
+            the limit are released.
+          examples: [4]
+        idle_readers_total:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 256
+          default: 16
+          description: >-
+            The most idle readers all torrents keep together. Applies at once:
+            the oldest idle readers over the limit are released.
+          examples: [16]
+        drain_period_seconds:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 25
+          default: 10
+          description: >-
+            How long streams in progress may continue after a termination
+            signal before they are canceled, within the 30-second shutdown
+            limit. Applies to the next shutdown.
+          examples: [10]
+        peer_limit:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 500
+          default: 50
+          description: >-
+            The most peers one torrent connects to at a time, connecting ones
+            included. Applies to torrents as they start: when created,
+            started, or restored after a restart.
+          examples: [50]
+        links:
+          type: object
+          readOnly: true
+          description: Links from the settings.
+          required: [self]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: These settings.
+              examples: [/api/v1/settings]
+
+    SettingsPatch:
+      type: object
+      description: >-
+        A JSON merge patch of the settings. Omitted members keep their values;
+        a member set to null returns to its default.
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        piece_wait_seconds:
+          type: [integer, 'null']
+          format: int32
+          minimum: 1
+          maximum: 600
+          description: The new value, or null for the default, 60.
+          examples: [60, null]
+        idle_timeout_seconds:
+          type: [integer, 'null']
+          format: int32
+          minimum: 0
+          maximum: 3600
+          description: The new value, or null for the default, 30.
+          examples: [30, null]
+        idle_readers_per_torrent:
+          type: [integer, 'null']
+          format: int32
+          minimum: 0
+          maximum: 64
+          description: The new value, or null for the default, 4.
+          examples: [4, null]
+        idle_readers_total:
+          type: [integer, 'null']
+          format: int32
+          minimum: 0
+          maximum: 256
+          description: The new value, or null for the default, 16.
+          examples: [16, null]
+        drain_period_seconds:
+          type: [integer, 'null']
+          format: int32
+          minimum: 0
+          maximum: 25
+          description: The new value, or null for the default, 10.
+          examples: [10, null]
+        peer_limit:
+          type: [integer, 'null']
+          format: int32
+          minimum: 1
+          maximum: 500
+          description: The new value, or null for the default, 50.
+          examples: [50, null]
 
     TorrentFile:
       type: object

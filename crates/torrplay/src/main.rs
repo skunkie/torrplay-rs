@@ -68,11 +68,15 @@ fn main() -> ExitCode {
 async fn run(config: &Config) -> anyhow::Result<()> {
     let data_dir = config.data_dir()?;
     let opening = data_dir.clone();
-    let (store, stored) = tokio::task::spawn_blocking(move || Store::open(&opening))
+    let (store, contents) = tokio::task::spawn_blocking(move || Store::open(&opening))
         .await
         .context("opening the store")?
         .with_context(|| format!("opening the store in {}", data_dir.display()))?;
-    tracing::info!(path = %store.path().display(), torrents = stored.len(), "the store is open");
+    tracing::info!(
+        path = %store.path().display(),
+        torrents = contents.torrents.len(),
+        "the store is open"
+    );
     // Memory storage writes nothing to the session folder, so it lives only
     // as long as the process; torrents persist in the store.
     let folder = tempfile::tempdir().context("creating the session folder")?;
@@ -84,7 +88,7 @@ async fn run(config: &Config) -> anyhow::Result<()> {
         listener,
         LibrqbitEngine::new(config.engine_config(folder.path())),
         store,
-        stored,
+        contents,
         ShutdownTimings::default(),
         termination(),
     )

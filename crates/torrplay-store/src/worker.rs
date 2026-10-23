@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use rusqlite::{Connection, TransactionBehavior, params};
 use tokio::sync::mpsc;
 
-use crate::schema::{created_at_ns, version};
+use crate::schema::{self, created_at_ns, version};
 use crate::{Command, StoreError, StoredTorrent};
 
 pub(crate) struct Worker {
@@ -48,6 +48,10 @@ impl Worker {
                         }
                         Ok(())
                     }));
+                }
+                Command::SetSettings(settings, reply) => {
+                    let _ = reply
+                        .send(self.write(|connection| schema::set_settings(connection, &settings)));
                 }
                 Command::SetTorrentFile(id, bytes, reply) => {
                     let _ = reply.send(self.write(|connection| {

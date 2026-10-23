@@ -137,7 +137,8 @@ impl TestServer {
         restore: bool,
     ) -> Self {
         let engine = Arc::new(engine);
-        let (store, stored) = Store::open(data.path()).expect("the store opens");
+        let (store, contents) = Store::open(data.path()).expect("the store opens");
+        let stored = contents.torrents;
         // Sequential IDs, recorded so tests can address the engine's
         // torrents by the IDs the API reports.
         let issued = Arc::new(Mutex::new(Vec::new()));
@@ -152,7 +153,8 @@ impl TestServer {
                 .push(TorrentId::from_random_bytes(bytes));
             Ok(bytes)
         });
-        let mut app = App::with_registry(Arc::clone(&engine), registry, store);
+        let mut app = App::with_registry(Arc::clone(&engine), registry, store)
+            .with_settings(contents.settings);
         if let Some(timeout) = body_timeout {
             app = app.with_body_timeout(timeout);
         }

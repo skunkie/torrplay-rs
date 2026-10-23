@@ -8,6 +8,19 @@
 #![allow(clippy::let_unit_value)]
 #![allow(unreachable_patterns)]
 use serde::{Deserialize, Serialize};
+/// Serde normally maps both a missing `Option<T>` field and an
+/// explicit JSON null to `None`. Wrapping the decoded value in
+/// `Some` retains the field-presence bit for `Option<Option<T>>`.
+mod tri_state_serde {
+    use serde::{Deserialize, Deserializer};
+    pub fn deserialize<'de, D, T>(de: D) -> Result<Option<T>, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: Deserialize<'de>,
+    {
+        T::deserialize(de).map(Some)
+    }
+}
 ///A problem that lists the invalid parameters or body members.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ValidationProblem {
@@ -368,6 +381,43 @@ impl AsRef<str> for ObservedState {
         self.as_str()
     }
 }
+///The application's settings. Each value is the one set, or its default while it is unset.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Settings {
+    ///How long streams in progress may continue after a termination signal before they are canceled, within the 30-second shutdown limit. Applies to the next shutdown.
+    ///Constraint: minimum=0, maximum=25
+    #[serde(default)]
+    pub drain_period_seconds: i32,
+    ///The most idle readers one torrent keeps; at most idle_readers_total. Applies at once: the oldest idle readers over the limit are released.
+    ///Constraint: minimum=0, maximum=64
+    #[serde(default)]
+    pub idle_readers_per_torrent: i32,
+    ///The most idle readers all torrents keep together. Applies at once: the oldest idle readers over the limit are released.
+    ///Constraint: minimum=0, maximum=256
+    #[serde(default)]
+    pub idle_readers_total: i32,
+    ///How long a reader stays idle after its stream ends, for the player's next range request to continue it; 0 releases it at once. Applies at once: idle readers idle for longer are released.
+    ///Constraint: minimum=0, maximum=3600
+    #[serde(default)]
+    pub idle_timeout_seconds: i32,
+    ///Links from the settings.
+    pub links: SettingsLinks,
+    ///The most peers one torrent connects to at a time, connecting ones included. Applies to torrents as they start: when created, started, or restored after a restart.
+    ///Constraint: minimum=1, maximum=500
+    #[serde(default)]
+    pub peer_limit: i32,
+    ///How long a stream waits for a missing piece before it is canceled, and how long a peer may hold requests without delivering before it is disconnected. Applies to waits that begin after the change.
+    ///Constraint: minimum=1, maximum=600
+    #[serde(default)]
+    pub piece_wait_seconds: i32,
+}
+///Links from the settings.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SettingsLinks {
+    ///These settings.
+    #[serde(rename = "self")]
+    pub self_field: String,
+}
 ///A protocol identifier of a torrent's info dictionary.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct InfoHash {
@@ -448,6 +498,8 @@ pub struct EntryPointLinks {
     ///The OpenAPI document, under its RFC 8631 relation name.
     #[serde(rename = "service-desc")]
     pub service_desc: String,
+    ///The application's settings.
+    pub settings: String,
     ///The torrents collection.
     pub torrents: String,
 }
@@ -511,4 +563,56 @@ pub struct CacheStatisticsLinks {
     ///The cache statistics.
     #[serde(rename = "self")]
     pub self_field: String,
+}
+///A JSON merge patch of the settings. Omitted members keep their values; a member set to null returns to its default.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct SettingsPatch {
+    ///The new value, or null for the default, 10.
+    ///Constraint: minimum=0, maximum=25
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub drain_period_seconds: Option<Option<i32>>,
+    ///The new value, or null for the default, 4.
+    ///Constraint: minimum=0, maximum=64
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub idle_readers_per_torrent: Option<Option<i32>>,
+    ///The new value, or null for the default, 16.
+    ///Constraint: minimum=0, maximum=256
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub idle_readers_total: Option<Option<i32>>,
+    ///The new value, or null for the default, 30.
+    ///Constraint: minimum=0, maximum=3600
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub idle_timeout_seconds: Option<Option<i32>>,
+    ///The new value, or null for the default, 50.
+    ///Constraint: minimum=1, maximum=500
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub peer_limit: Option<Option<i32>>,
+    ///The new value, or null for the default, 60.
+    ///Constraint: minimum=1, maximum=600
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub piece_wait_seconds: Option<Option<i32>>,
 }

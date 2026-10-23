@@ -42,7 +42,7 @@ const OBSERVED_STATE_PARAMETER: &str = "observed_state";
 const MAGNET_URI_MAX_CHARS: usize = 8192;
 
 /// The media type of merge patches (RFC 7396).
-const MERGE_PATCH: &str = "application/merge-patch+json";
+pub(crate) const MERGE_PATCH: &str = "application/merge-patch+json";
 
 /// The media type of torrent file uploads.
 const FORM_DATA: &str = "multipart/form-data";
@@ -281,16 +281,16 @@ fn source_problem(error: EngineError, source: &Source) -> Problem {
 }
 
 /// Escapes a member name as a JSON Pointer reference token (RFC 6901).
-fn pointer(member: &str) -> String {
+pub(crate) fn pointer(member: &str) -> String {
     format!("/{}", member.replace('~', "~0").replace('/', "~1"))
 }
 
-fn parse_json(bytes: &Bytes) -> Result<Value, Problem> {
+pub(crate) fn parse_json(bytes: &Bytes) -> Result<Value, Problem> {
     serde_json::from_slice(bytes)
         .map_err(|_| Problem::new(ProblemType::MalformedRequest, "The body is not valid JSON."))
 }
 
-fn object(value: Value) -> Result<Map<String, Value>, Problem> {
+pub(crate) fn object(value: Value) -> Result<Map<String, Value>, Problem> {
     match value {
         Value::Object(members) => Ok(members),
         _ => Err(Problem::invalid_body(vec![InvalidValue::pointer(
@@ -300,7 +300,7 @@ fn object(value: Value) -> Result<Map<String, Value>, Problem> {
     }
 }
 
-fn unknown_member(member: &str) -> InvalidValue {
+pub(crate) fn unknown_member(member: &str) -> InvalidValue {
     InvalidValue::pointer(pointer(member), "Not a writable member of the request.")
 }
 
@@ -410,7 +410,7 @@ pub(crate) fn not_modified(headers: &HeaderMap, etag: &EntityTag) -> Option<Resp
     })
 }
 
-fn with_etag(mut response: Response, etag: &EntityTag) -> Result<Response, Problem> {
+pub(crate) fn with_etag(mut response: Response, etag: &EntityTag) -> Result<Response, Problem> {
     let value = HeaderValue::try_from(etag.to_string()).map_err(|_| Problem::internal())?;
     response.headers_mut().insert(header::ETAG, value);
     Ok(response)

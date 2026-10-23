@@ -29,6 +29,7 @@ use crate::engine::{
 use crate::id::{InfoHashV1, TorrentId};
 use crate::lifecycle::{DesiredState, Failure, Readiness};
 use crate::metadata::{FileIndex, ReportedFile, ReportedMetadata};
+use crate::settings::Settings;
 
 /// The detail of a rejected torrent file.
 const INVALID_TORRENT_FILE: &str = "Must be a valid torrent file.";
@@ -53,6 +54,8 @@ struct State {
     /// The detail of an unexpected failure every operation reports, while
     /// one is injected.
     fault: Option<String>,
+    /// The settings last applied.
+    settings: Settings,
     cache_statistics: CacheStatistics,
 }
 
@@ -95,6 +98,7 @@ impl FakeEngine {
                 retrievable: HashSet::new(),
                 readiness: Readiness::Ready,
                 fault: None,
+                settings: Settings::DEFAULT,
                 cache_statistics: CacheStatistics::default(),
             }),
         }
@@ -244,6 +248,11 @@ impl FakeEngine {
         self.lock().fault = detail.map(str::to_owned);
     }
 
+    /// The settings last applied, or the defaults.
+    pub fn settings(&self) -> Settings {
+        self.lock().settings
+    }
+
     /// Sets the engine's readiness.
     pub fn set_readiness(&self, readiness: Readiness) {
         self.lock().readiness = readiness;
@@ -356,6 +365,10 @@ impl Engine for FakeEngine {
 
     fn readiness(&self) -> Readiness {
         self.lock().readiness
+    }
+
+    fn apply_settings(&self, settings: &Settings) {
+        self.lock().settings = *settings;
     }
 
     async fn inspect(&self, source: &Source) -> Result<Inspection, EngineError> {

@@ -59,7 +59,7 @@ async fn a_trace_runs_against_torrplay_through_the_local_tracker() -> anyhow::Re
         },
     )
     .with_cache_capacity(trace.cache_capacity_bytes);
-    let (store, stored) = torrplay_store::Store::open(&session.path().join("data"))?;
+    let (store, contents) = torrplay_store::Store::open(&session.path().join("data"))?;
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
     let base = format!("http://{}", listener.local_addr()?);
     let (shutdown, triggered) = oneshot::channel::<()>();
@@ -67,7 +67,7 @@ async fn a_trace_runs_against_torrplay_through_the_local_tracker() -> anyhow::Re
         listener,
         LibrqbitEngine::new(config),
         store,
-        stored,
+        contents,
         ShutdownTimings::default(),
         async {
             let _ = triggered.await;

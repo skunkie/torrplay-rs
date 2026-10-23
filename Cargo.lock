@@ -3412,6 +3412,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "torrplay-core",
  "torrplay-engine",
  "torrplay-fixtures",
  "torrplay-server",

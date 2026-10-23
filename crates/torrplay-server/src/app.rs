@@ -24,7 +24,7 @@ use torrplay_core::id::TorrentId;
 use torrplay_core::lifecycle::{Failure, ObservedState, Readiness};
 use torrplay_core::metadata::Metadata;
 use torrplay_core::registry::{Registry, TorrentRecord};
-use torrplay_store::{Store, StoreError, StoredTorrent};
+use torrplay_store::{Store, StoreError, StoredSettings, StoredTorrent};
 
 use crate::problem::Problem;
 
@@ -41,6 +41,8 @@ pub struct App<E> {
     writes: tokio::sync::Mutex<()>,
     body_timeout: Duration,
     observations: Mutex<Observations>,
+    /// The stored settings, changed under the write lane after the store.
+    settings: Mutex<StoredSettings>,
     /// Set until [`App::restore`] has registered the stored torrents.
     restoring: AtomicBool,
     shutting_down: AtomicBool,
@@ -100,9 +102,38 @@ impl<E: Engine> App<E> {
             writes: tokio::sync::Mutex::new(()),
             body_timeout: DEFAULT_BODY_TIMEOUT,
             observations: Mutex::new(Observations::default()),
+            settings: Mutex::new(StoredSettings::default()),
             restoring: AtomicBool::new(true),
             shutting_down: AtomicBool::new(false),
         }
+    }
+
+    /// Runs with the settings the store held at startup, and gives them to
+    /// the engine. Stored values outside the current bounds count as unset,
+    /// with a warning, and stay stored until a change replaces them.
+    pub fn with_settings(self, stored: StoredSettings) -> Self {
+        let explicit = crate::settings::usable(stored.explicit);
+        if explicit != stored.explicit {
+            tracing::warn!("stored settings outside the current bounds take their defaults");
+        }
+        let stored = StoredSettings { explicit, ..stored };
+        self.engine.apply_settings(&explicit.effective());
+        self.set_settings(stored);
+        self
+    }
+
+    /// The stored settings.
+    pub fn settings(&self) -> StoredSettings {
+        *self.settings.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The effective drain period, for shutting down.
+    pub fn drain_period(&self) -> Duration {
+        self.settings().explicit.effective().drain_period
+    }
+
+    pub(crate) fn set_settings(&self, stored: StoredSettings) {
+        *self.settings.lock().unwrap_or_else(PoisonError::into_inner) = stored;
     }
 
     /// Registers the torrents the store held at startup, in creation order,

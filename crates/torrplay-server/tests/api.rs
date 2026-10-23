@@ -24,7 +24,9 @@ use serde_json::{Value, json};
 use torrplay_core::engine::{CacheStatistics, Ratio, TorrentStatistics};
 use torrplay_core::id::FileId;
 use torrplay_core::lifecycle::Readiness;
+use torrplay_core::settings::{Explicit, Settings};
 use torrplay_fixtures::{FixtureSpec, catalog, generator, hex};
+use torrplay_store::StoredSettings;
 
 fn magnet(spec: &FixtureSpec) -> String {
     spec.magnet_uri(&spec.metainfo().info_hash)
@@ -1329,6 +1331,12 @@ mod scenario {
             .header(header::ETAG)
             .unwrap()
             .to_owned();
+        let settings_tag = server
+            .get("/api/v1/settings")
+            .await
+            .header(header::ETAG)
+            .unwrap()
+            .to_owned();
         let partial = br#"{"desired_state":"#.to_vec();
         let length = (partial.len() + 10).to_string();
         let requests = [
@@ -1343,6 +1351,12 @@ mod scenario {
                 configuration.clone(),
                 "application/merge-patch+json",
                 Some(tag.as_str()),
+            ),
+            (
+                Method::PATCH,
+                "/api/v1/settings".to_owned(),
+                "application/merge-patch+json",
+                Some(settings_tag.as_str()),
             ),
         ];
         for (method, path, media_type, if_match) in requests {
@@ -1604,6 +1618,262 @@ mod scenario {
         server.stop().await;
     }
 
+    /// SET-01, SET-02, SET-04, and SET-05: settings start at their
+    /// defaults, change with validated merge patches, reach the engine, and
+    /// survive a restart; a failed write changes nothing.
+    pub async fn settings() {
+        let server = TestServer::start().await;
+        let path = "/api/v1/settings";
+        let read = server.get(path).await;
+        assert_eq!(read.status, StatusCode::OK);
+        assert_eq!(
+            read.json(),
+            json!({
+                "piece_wait_seconds": 60,
+                "idle_timeout_seconds": 30,
+                "idle_readers_per_torrent": 4,
+                "idle_readers_total": 16,
+                "drain_period_seconds": 10,
+                "peer_limit": 50,
+                "links": { "self": path },
+            })
+        );
+        assert_eq!(
+            server.get("/api/v1").await.json()["links"]["settings"],
+            path
+        );
+        let tag = read.header(header::ETAG).unwrap().to_owned();
+        assert_eq!(
+            server
+                .send(with_header(Method::GET, path, header::IF_NONE_MATCH, &tag))
+                .await
+                .status,
+            StatusCode::NOT_MODIFIED
+        );
+
+        // Refused patches change nothing.
+        assert_problem(
+            &server
+                .send_unchecked(patch(
+                    path,
+                    None,
+                    br#"{"peer_limit":60}"#,
+                    "application/merge-patch+json",
+                ))
+                .await,
+            StatusCode::PRECONDITION_REQUIRED,
+            "precondition-required",
+        );
+        assert_problem(
+            &server
+                .send_unchecked(patch(
+                    path,
+                    Some(&tag),
+                    br#"{"peer_limit":60}"#,
+                    "application/json",
+                ))
+                .await,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported-media-type",
+        );
+        assert_problem(
+            &server
+                .send_unchecked(patch(
+                    path,
+                    Some(&tag),
+                    b"{",
+                    "application/merge-patch+json",
+                ))
+                .await,
+            StatusCode::BAD_REQUEST,
+            "malformed-request",
+        );
+        assert_problem(
+            &server
+                .send_unchecked(patch(
+                    path,
+                    Some(&tag),
+                    &vec![b' '; 20_000],
+                    "application/merge-patch+json",
+                ))
+                .await,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "content-too-large",
+        );
+        let invalid = server
+            .send_unchecked(merge_patch(
+                path,
+                &tag,
+                &json!({
+                    "piece_wait_seconds": 0,
+                    "peer_limit": "many",
+                    "cache_capacity_bytes": 1,
+                    "idle_readers_total": 2,
+                }),
+            ))
+            .await;
+        assert_problem(
+            &invalid,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation-failed",
+        );
+        let mut pointers = errors(&invalid, "pointer");
+        pointers.sort();
+        assert_eq!(
+            pointers,
+            ["/cache_capacity_bytes", "/peer_limit"],
+            "member types are checked before bounds"
+        );
+        let invalid = server
+            .send_unchecked(merge_patch(
+                path,
+                &tag,
+                &json!({ "piece_wait_seconds": 0, "idle_readers_total": 2 }),
+            ))
+            .await;
+        assert_problem(
+            &invalid,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation-failed",
+        );
+        assert_eq!(errors(&invalid, "pointer"), ["/piece_wait_seconds"]);
+        let related = server
+            .send(merge_patch(path, &tag, &json!({ "idle_readers_total": 2 })))
+            .await;
+        assert_eq!(
+            errors(&related, "pointer"),
+            ["/idle_readers_per_torrent"],
+            "the default per-torrent limit, 4, exceeds the new total"
+        );
+        assert_problem(
+            &server
+                .send(merge_patch(path, "\"set-9\"", &json!({ "peer_limit": 60 })))
+                .await,
+            StatusCode::PRECONDITION_FAILED,
+            "precondition-failed",
+        );
+        assert_eq!(
+            server.get(path).await.header(header::ETAG),
+            Some(tag.as_str())
+        );
+        assert_eq!(server.engine.settings(), Settings::DEFAULT);
+
+        server
+            .engine
+            .set_readiness(Readiness::Unavailable { retry_after: None });
+        assert_problem(
+            &server
+                .send(merge_patch(path, &tag, &json!({ "peer_limit": 60 })))
+                .await,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "engine-unavailable",
+        );
+        assert_eq!(
+            server.get(path).await.status,
+            StatusCode::OK,
+            "reads are served"
+        );
+        server.engine.set_readiness(Readiness::Ready);
+
+        server.app.store().fail_writes(true);
+        assert_problem(
+            &server
+                .send(merge_patch(path, &tag, &json!({ "peer_limit": 60 })))
+                .await,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal-error",
+        );
+        server.app.store().fail_writes(false);
+        assert_eq!(server.get(path).await.json()["peer_limit"], 50);
+        assert_eq!(
+            server.engine.settings(),
+            Settings::DEFAULT,
+            "nothing applied"
+        );
+
+        // Explicit zero, and a value set again keeps the tag.
+        let changed = server
+            .send(merge_patch(
+                path,
+                &tag,
+                &json!({ "idle_timeout_seconds": 0, "peer_limit": 60 }),
+            ))
+            .await;
+        assert_eq!(changed.status, StatusCode::OK);
+        assert_eq!(changed.json()["idle_timeout_seconds"], 0);
+        let changed_tag = changed.header(header::ETAG).unwrap().to_owned();
+        assert_ne!(changed_tag, tag);
+        assert_eq!(server.engine.settings().idle_timeout, Duration::ZERO);
+        assert_eq!(server.engine.settings().peer_limit, 60);
+        let again = server
+            .send(merge_patch(
+                path,
+                &changed_tag,
+                &json!({ "peer_limit": 60 }),
+            ))
+            .await;
+        assert_eq!(again.header(header::ETAG), Some(changed_tag.as_str()));
+
+        let server = server.restart().await;
+        let restored = server.get(path).await;
+        assert_eq!(restored.header(header::ETAG), Some(changed_tag.as_str()));
+        assert_eq!(restored.json()["idle_timeout_seconds"], 0, "zero survives");
+        assert_eq!(restored.json()["peer_limit"], 60);
+        assert_eq!(
+            server.engine.settings().peer_limit,
+            60,
+            "applied at startup"
+        );
+        let reset = server
+            .send(merge_patch(
+                path,
+                &changed_tag,
+                &json!({ "peer_limit": null }),
+            ))
+            .await;
+        assert_eq!(
+            reset.json()["peer_limit"],
+            50,
+            "null returns to the default"
+        );
+        assert_eq!(reset.json()["idle_timeout_seconds"], 0);
+        server.stop().await;
+    }
+
+    /// SET-03: stored settings that leave a setting unset, or hold a value
+    /// the current bounds refuse, run with the defaults for it.
+    pub async fn stored_settings() {
+        let server = TestServer::start().await;
+        let mut explicit = Explicit {
+            piece_wait_seconds: Some(5),
+            ..Explicit::default()
+        };
+        // An earlier release's value beyond the current maximum.
+        explicit.peer_limit = Some(9_000);
+        server
+            .app
+            .store()
+            .set_settings(StoredSettings {
+                explicit,
+                version: 3,
+            })
+            .await
+            .unwrap();
+        let server = server.restart().await;
+        let settings = server.get("/api/v1/settings").await.json();
+        assert_eq!(settings["piece_wait_seconds"], 5);
+        assert_eq!(
+            settings["peer_limit"], 50,
+            "out of bounds takes the default"
+        );
+        assert_eq!(
+            settings["idle_readers_total"], 16,
+            "unset takes the default"
+        );
+        assert_eq!(server.engine.settings().piece_wait, Duration::from_secs(5));
+        server.stop().await;
+    }
+
     async fn listed_len(server: &TestServer) -> usize {
         server.get("/api/v1/torrents").await.json()["items"]
             .as_array()
@@ -1619,6 +1889,7 @@ const EXEMPT: &[(&str, u16)] = &[
     ("getEntryPoint", 500),
     ("getOpenApiDocument", 500),
     ("getTorrentConfiguration", 500),
+    ("getSettings", 500),
     // A process that answers is live.
     ("getLiveness", 503),
 ];
@@ -1668,4 +1939,6 @@ scenarios!(
     store_failures,
     restoring,
     refused_on_restore,
+    settings,
+    stored_settings,
 );

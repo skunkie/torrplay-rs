@@ -16,6 +16,8 @@
 //!   defines them.
 //! - [`registry`]: the registered torrents, with atomic duplicate detection.
 //! - [`pagination`]: page sizes and opaque cursors for collections.
+//! - [`settings`]: the application's settings, their bounds and defaults,
+//!   and merging explicit values with the defaults.
 //! - [`redact`]: redaction of URLs and magnet URIs in text bound for logs.
 //! - [`engine`]: the [`Engine`](engine::Engine) trait, the torrent engine
 //!   facade, with its inputs, observations, and statistics.
@@ -34,5 +36,6 @@ pub mod metadata;
 pub mod pagination;
 pub mod redact;
 pub mod registry;
+pub mod settings;
 
 mod base32;
