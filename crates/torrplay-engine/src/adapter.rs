@@ -55,6 +55,7 @@ use torrplay_core::id::{InfoHashV1, TorrentId};
 use torrplay_core::lifecycle::{DesiredState, Failure, Readiness};
 use torrplay_core::metadata::{FileIndex, ReportedMetadata};
 use torrplay_core::redact::redact;
+use torrplay_core::settings::Settings;
 
 use crate::cache::PieceCache;
 use crate::cache::TorrentKey;
@@ -277,8 +278,21 @@ pub struct LibrqbitEngine {
     // The engine itself, for the retrieval tasks it spawns.
     this: Weak<LibrqbitEngine>,
     config: EngineConfig,
+    /// The configuration's values that settings change while the engine
+    /// runs.
+    tunables: Mutex<Tunables>,
     phase: Mutex<Phase>,
     torrents: Mutex<HashMap<TorrentId, Arc<Torrent>>>,
+}
+
+/// The values [`Engine::apply_settings`] changes.
+#[derive(Clone, Copy, Debug)]
+struct Tunables {
+    piece_wait: Duration,
+    idle_timeout: Duration,
+    idle_readers_per_torrent: usize,
+    idle_readers_total: usize,
+    peer_limit: usize,
 }
 
 fn internal(error: impl Into<anyhow::Error>) -> EngineError {
@@ -292,6 +306,13 @@ impl LibrqbitEngine {
     pub fn new(config: EngineConfig) -> Arc<Self> {
         Arc::new_cyclic(|this| Self {
             this: this.clone(),
+            tunables: Mutex::new(Tunables {
+                piece_wait: config.piece_wait,
+                idle_timeout: config.idle_timeout,
+                idle_readers_per_torrent: config.idle_readers_per_torrent,
+                idle_readers_total: config.idle_readers_total,
+                peer_limit: config.peer_limit,
+            }),
             config,
             phase: Mutex::new(Phase::Starting),
             torrents: Mutex::new(HashMap::new()),
@@ -322,12 +343,13 @@ impl LibrqbitEngine {
         };
         let session = Session::new_with_opts(self.config.folder.clone(), options).await?;
         let cache = PieceCache::new(self.config.cache_capacity_bytes);
+        let tunables = self.tunables();
         let playback = Playback::new(PlaybackConfig {
             readahead_bytes: self.config.readahead_bytes,
             readahead_ramp_bytes: self.config.readahead_ramp_bytes,
-            idle_timeout: self.config.idle_timeout,
-            idle_readers_per_torrent: self.config.idle_readers_per_torrent,
-            idle_readers_total: self.config.idle_readers_total,
+            idle_timeout: tunables.idle_timeout,
+            idle_readers_per_torrent: tunables.idle_readers_per_torrent,
+            idle_readers_total: tunables.idle_readers_total,
         });
         let (failures, failed) = mpsc::unbounded_channel();
         let running = Arc::new(Running {
@@ -345,7 +367,15 @@ impl LibrqbitEngine {
             cache,
             session,
         });
+        let playback = Arc::clone(&running.playback);
         *self.lock_phase() = Phase::Ready(running);
+        // Settings applied while the playback was built reach it now.
+        let tunables = self.tunables();
+        playback.set_idle_limits(
+            tunables.idle_timeout,
+            tunables.idle_readers_per_torrent,
+            tunables.idle_readers_total,
+        );
         Ok(())
     }
 
@@ -459,6 +489,10 @@ impl LibrqbitEngine {
         }
     }
 
+    fn tunables(&self) -> Tunables {
+        *self.tunables.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     fn lock_phase(&self) -> MutexGuard<'_, Phase> {
         self.phase.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -503,6 +537,7 @@ impl LibrqbitEngine {
         running: &Running,
         scheduler: &Arc<TorrentScheduler>,
     ) -> AddTorrentOptions {
+        let tunables = self.tunables();
         AddTorrentOptions {
             storage_factory: Some(running.factory.clone().into_boxed()),
             piece_selector: Some(scheduler.clone()),
@@ -510,10 +545,10 @@ impl LibrqbitEngine {
             paused: true,
             overwrite: true,
             initial_peers: Some(self.config.network.initial_peers.clone()),
-            peer_limit: Some(self.config.peer_limit),
+            peer_limit: Some(tunables.peer_limit),
             peer_opts: Some(PeerConnectionOptions {
                 max_request_window: Some(self.config.request_window_blocks),
-                request_stall_timeout: Some(self.config.piece_wait),
+                request_stall_timeout: Some(tunables.piece_wait),
                 keep_alive_interval: Some(self.config.peer_keep_alive_interval),
                 read_write_timeout: Some(self.config.peer_read_timeout),
                 ..Default::default()
@@ -735,6 +770,29 @@ impl LibrqbitEngine {
 
 impl Engine for LibrqbitEngine {
     type Reader = RangeReader;
+
+    fn apply_settings(&self, settings: &Settings) {
+        let tunables = Tunables {
+            piece_wait: settings.piece_wait,
+            idle_timeout: settings.idle_timeout,
+            idle_readers_per_torrent: settings.idle_readers_per_torrent,
+            idle_readers_total: settings.idle_readers_total,
+            peer_limit: settings.peer_limit,
+        };
+        *self.tunables.lock().unwrap_or_else(PoisonError::into_inner) = tunables;
+        let playback = match &*self.lock_phase() {
+            Phase::Ready(running) => Some(Arc::clone(&running.playback)),
+            Phase::Starting | Phase::Stopped => None,
+        };
+        // A starting engine builds its playback from the tunables.
+        if let Some(playback) = playback {
+            playback.set_idle_limits(
+                tunables.idle_timeout,
+                tunables.idle_readers_per_torrent,
+                tunables.idle_readers_total,
+            );
+        }
+    }
 
     fn readiness(&self) -> Readiness {
         match &*self.lock_phase() {
@@ -1038,7 +1096,7 @@ impl Engine for LibrqbitEngine {
         Ok(RangeReader::new(
             reader,
             range.len_bytes(),
-            self.config.piece_wait,
+            self.tunables().piece_wait,
         ))
     }
 

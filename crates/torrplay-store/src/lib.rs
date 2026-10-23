@@ -29,6 +29,7 @@ use std::time::SystemTime;
 use tokio::sync::{mpsc, oneshot};
 use torrplay_core::id::{InfoHashV1, TorrentId};
 use torrplay_core::lifecycle::Configuration;
+pub use torrplay_core::settings::Stored as StoredSettings;
 
 mod schema;
 mod worker;
@@ -56,6 +57,16 @@ pub struct StoredTorrent {
     /// from retrieved metadata and the magnet URI's trackers. At least one of
     /// this and `magnet_uri` is present.
     pub torrent_file: Option<Vec<u8>>,
+}
+
+/// What the store held when it was opened.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Contents {
+    /// The stored torrents, in creation order.
+    pub torrents: Vec<StoredTorrent>,
+    /// The stored settings: the explicit values and their version, or every
+    /// setting unset at version 1 if none were stored.
+    pub settings: StoredSettings,
 }
 
 /// A failure of the store.
@@ -110,6 +121,7 @@ type Reply<T> = oneshot::Sender<Result<T, StoreError>>;
 enum Command {
     Insert(StoredTorrent, Reply<()>),
     SetConfiguration(TorrentId, Configuration, Reply<()>),
+    SetSettings(StoredSettings, Reply<()>),
     SetTorrentFile(TorrentId, Vec<u8>, Reply<()>),
     Delete(TorrentId, Reply<()>),
 }
@@ -125,10 +137,10 @@ pub struct Store {
 
 impl Store {
     /// Opens or creates the database in `directory`, migrating it to the
-    /// current schema, and returns it with the stored torrents in creation
-    /// order. Blocks on disk I/O, so async callers run it on a blocking
+    /// current schema after copying a database an earlier release wrote, and
+    /// returns it with what it holds. Blocks on disk I/O, so async callers run it on a blocking
     /// thread.
-    pub fn open(directory: &Path) -> Result<(Self, Vec<StoredTorrent>), StoreError> {
+    pub fn open(directory: &Path) -> Result<(Self, Contents), StoreError> {
         std::fs::create_dir_all(directory).map_err(|source| StoreError::DataDirectory {
             path: directory.to_owned(),
             source,
@@ -136,6 +148,7 @@ impl Store {
         let path = directory.join(FILE_NAME);
         let mut connection = schema::open(&path)?;
         let torrents = schema::torrents(&mut connection)?;
+        let settings = schema::settings(&connection)?;
         let (sender, receiver) = mpsc::channel(QUEUE);
         #[cfg(feature = "test-support")]
         let failing = Arc::new(AtomicBool::new(false));
@@ -158,7 +171,7 @@ impl Store {
             #[cfg(feature = "test-support")]
             failing,
         };
-        Ok((store, torrents))
+        Ok((store, Contents { torrents, settings }))
     }
 
     /// The database file.
@@ -179,6 +192,12 @@ impl Store {
     ) -> Result<(), StoreError> {
         let (id, configuration) = (id.clone(), configuration.clone());
         self.send(|reply| Command::SetConfiguration(id, configuration, reply))
+            .await
+    }
+
+    /// Replaces the stored settings.
+    pub async fn set_settings(&self, settings: StoredSettings) -> Result<(), StoreError> {
+        self.send(|reply| Command::SetSettings(settings, reply))
             .await
     }
 

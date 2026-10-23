@@ -1,0 +1,204 @@
+// SPDX-FileCopyrightText: 2026 TorrPlay
+//
+// SPDX-License-Identifier: MIT
+
+//! The application's settings: reading them, and changing them with merge
+//! patches.
+
+use std::sync::Arc;
+
+use axum::body::Body;
+use axum::extract::State;
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
+use axum::response::Response;
+use serde_json::Value;
+use torrplay_api as api;
+use torrplay_core::engine::Engine;
+use torrplay_core::lifecycle::EntityTag;
+use torrplay_core::settings::{self, Explicit, Stored};
+
+use crate::app::{App, store_failed};
+use crate::body::{JSON_LIMIT_BYTES, read_limited};
+use crate::headers::{EntityTags, MediaType, negotiate};
+use crate::problem::{InvalidValue, Problem, ProblemType};
+use crate::representation::{BASE, JSON, NO_CACHE, json};
+use crate::torrents::{
+    MERGE_PATCH, not_modified, object, parse_json, pointer, unknown_member, with_etag,
+};
+
+pub(crate) fn settings_path() -> String {
+    format!("{BASE}/settings")
+}
+
+fn settings_etag(stored: &Stored) -> EntityTag {
+    EntityTag::new(format!("set-{}", stored.etag().opaque()))
+}
+
+fn representation(stored: &Stored) -> api::Settings {
+    let [piece_wait, idle_timeout, per_torrent, total, drain, peers] = stored.explicit.values();
+    // Every value lies within its bounds, all far below i32::MAX.
+    let int = |value: u32| i32::try_from(value).unwrap_or(i32::MAX);
+    api::Settings {
+        piece_wait_seconds: int(piece_wait),
+        idle_timeout_seconds: int(idle_timeout),
+        idle_readers_per_torrent: int(per_torrent),
+        idle_readers_total: int(total),
+        drain_period_seconds: int(drain),
+        peer_limit: int(peers),
+        links: api::SettingsLinks {
+            self_field: settings_path(),
+        },
+    }
+}
+
+pub(crate) async fn get<E: Engine>(
+    State(app): State<Arc<App<E>>>,
+    headers: HeaderMap,
+) -> Result<Response, Problem> {
+    negotiate(&headers, JSON)?;
+    let stored = app.settings();
+    let etag = settings_etag(&stored);
+    if let Some(response) = not_modified(&headers, &etag) {
+        return Ok(response);
+    }
+    let mut response = with_etag(json(StatusCode::OK, &representation(&stored))?, &etag)?;
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, NO_CACHE);
+    Ok(response)
+}
+
+pub(crate) async fn update<E: Engine>(
+    State(app): State<Arc<App<E>>>,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<Response, Problem> {
+    negotiate(&headers, JSON)?;
+    if MediaType::of_request(&headers).is_none_or(|media| media.essence != MERGE_PATCH) {
+        return Err(Problem::new(
+            ProblemType::UnsupportedMediaType,
+            "The operation accepts application/merge-patch+json.",
+        )
+        .with_header(
+            HeaderName::from_static("accept-patch"),
+            HeaderValue::from_static(MERGE_PATCH),
+        ));
+    }
+    let Some(if_match) = EntityTags::parse(&headers, &header::IF_MATCH) else {
+        return Err(Problem::new(
+            ProblemType::PreconditionRequired,
+            "Send If-Match with the settings' current ETag.",
+        ));
+    };
+    let bytes = read_limited(
+        &headers,
+        body,
+        JSON_LIMIT_BYTES,
+        JSON_LIMIT_BYTES as u64,
+        app.body_timeout(),
+    )
+    .await?;
+    let patch = parse_patch(parse_json(&bytes)?)?;
+    app.require_engine()?;
+
+    let _lane = app.write_lane().await;
+    let current = app.settings();
+    if !if_match.is_ok_and(|tags| tags.matches_strongly(settings_etag(&current).opaque())) {
+        return Err(Problem::new(
+            ProblemType::PreconditionFailed,
+            "The settings changed since the ETag was issued.",
+        ));
+    }
+    let mut explicit = current.explicit;
+    for (name, value) in patch {
+        if let Some(slot) = explicit.slot(name) {
+            *slot = value;
+        }
+    }
+    let effective = explicit.validate().map_err(|invalid| {
+        Problem::invalid_body(
+            invalid
+                .into_iter()
+                .map(|invalid| InvalidValue::pointer(pointer(invalid.name), invalid.detail))
+                .collect(),
+        )
+    })?;
+    let stored = if explicit == current.explicit {
+        // Setting the current values again keeps the entity tag.
+        current
+    } else {
+        let stored = Stored {
+            explicit,
+            version: current.version + 1,
+        };
+        app.store()
+            .set_settings(stored)
+            .await
+            .map_err(store_failed)?;
+        app.set_settings(stored);
+        app.engine().apply_settings(&effective);
+        stored
+    };
+    with_etag(
+        json(StatusCode::OK, &representation(&stored))?,
+        &settings_etag(&stored),
+    )
+}
+
+/// Reads a merge patch of the settings: each member's new value, or `None`
+/// to return it to its default. The patch must set at least one member.
+fn parse_patch(value: Value) -> Result<Vec<(&'static str, Option<u32>)>, Problem> {
+    let members = object(value)?;
+    let mut errors = Vec::new();
+    let mut patch = Vec::new();
+    for (member, value) in &members {
+        let Some(bounds) = settings::ALL.iter().find(|bounds| bounds.name == member) else {
+            errors.push(unknown_member(member));
+            continue;
+        };
+        match value {
+            Value::Null => patch.push((bounds.name, None)),
+            value => match value.as_u64().and_then(|value| u32::try_from(value).ok()) {
+                Some(value) => patch.push((bounds.name, Some(value))),
+                None => errors.push(InvalidValue::pointer(
+                    pointer(member),
+                    format!(
+                        "Must be an integer from {} to {}, or null for the default, {}.",
+                        bounds.minimum, bounds.maximum, bounds.default
+                    ),
+                )),
+            },
+        }
+    }
+    if members.is_empty() {
+        errors.push(InvalidValue::pointer("", "Must set at least one member."));
+    }
+    if errors.is_empty() {
+        Ok(patch)
+    } else {
+        Err(Problem::invalid_body(errors))
+    }
+}
+
+/// The explicit values to run with: stored values outside the current
+/// bounds, which an earlier release may have allowed, count as unset.
+pub(crate) fn usable(explicit: Explicit) -> Explicit {
+    let Err(invalid) = explicit.validate() else {
+        return explicit;
+    };
+    let mut usable = explicit;
+    for invalid in invalid {
+        if let Some(slot) = usable.slot(invalid.name) {
+            *slot = None;
+        }
+    }
+    if usable.validate().is_err() {
+        // Only the limits' relation can still fail: both now at the defaults
+        // or one of them set, so the per-torrent limit yields.
+        usable.idle_readers_per_torrent = None;
+    }
+    if usable.validate().is_err() {
+        usable.idle_readers_total = None;
+    }
+    usable
+}

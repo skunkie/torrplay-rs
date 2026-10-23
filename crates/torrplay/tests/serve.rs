@@ -29,7 +29,7 @@ fn patient(config: &mut EngineConfig) {
 async fn shutdown_drains_streams_then_closes_the_listener() -> anyhow::Result<()> {
     let drain = Duration::from_secs(1);
     let timings = ShutdownTimings {
-        drain,
+        drain: Some(drain),
         limit: Duration::from_secs(20),
     };
     let mut running = Running::start(Vec::new(), timings, patient).await?;
@@ -93,7 +93,7 @@ async fn shutdown_drains_streams_then_closes_the_listener() -> anyhow::Result<()
 async fn shutdown_joins_every_task() -> anyhow::Result<()> {
     let before = alive_tasks();
     let timings = ShutdownTimings {
-        drain: Duration::from_millis(500),
+        drain: Some(Duration::from_millis(500)),
         limit: Duration::from_secs(20),
     };
     let running = Running::start(Vec::new(), timings, patient).await?;
@@ -122,7 +122,7 @@ async fn shutdown_joins_every_task() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn shutdown_without_streams_skips_the_drain() -> anyhow::Result<()> {
     let timings = ShutdownTimings {
-        drain: Duration::from_secs(60),
+        drain: Some(Duration::from_secs(60)),
         limit: Duration::from_secs(20),
     };
     let running = Running::start(Vec::new(), timings, |_| {}).await?;
@@ -158,7 +158,7 @@ async fn an_engine_that_cannot_start_stops_the_application() -> anyhow::Result<(
     let mut network = NetworkConfig::isolated(Vec::new());
     network.listen = taken.local_addr()?;
     let config = EngineConfig::new(folder.path().to_path_buf(), network);
-    let (store, stored) = torrplay_store::Store::open(&folder.path().join("data"))?;
+    let (store, contents) = torrplay_store::Store::open(&folder.path().join("data"))?;
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let result = bounded(
         "the failed start",
@@ -166,7 +166,7 @@ async fn an_engine_that_cannot_start_stops_the_application() -> anyhow::Result<(
             listener,
             LibrqbitEngine::new(config),
             store,
-            stored,
+            contents,
             ShutdownTimings::default(),
             std::future::pending(),
         ),

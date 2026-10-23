@@ -31,6 +31,8 @@ fn through(schema: &str, example: &Value) -> Option<Result<Value, String>> {
         "Health" => round_trip::<api::Health>(example),
         "ObservedState" => round_trip::<api::ObservedState>(example),
         "Problem" => round_trip::<api::Problem>(example),
+        "Settings" => round_trip::<api::Settings>(example),
+        "SettingsPatch" => round_trip::<api::SettingsPatch>(example),
         "Torrent" => round_trip::<api::Torrent>(example),
         "TorrentConfiguration" => round_trip::<api::TorrentConfiguration>(example),
         "TorrentConfigurationPatch" => round_trip::<api::TorrentConfigurationPatch>(example),

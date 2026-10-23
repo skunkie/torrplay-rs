@@ -56,6 +56,20 @@ pub async fn eventually<T>(
     .await?
 }
 
+/// The settings that give an engine `config`'s tunable values.
+fn settings_of(config: &EngineConfig) -> torrplay_core::settings::Explicit {
+    let seconds = |duration: Duration| u32::try_from(duration.as_millis().div_ceil(1000)).ok();
+    let count = |count: usize| u32::try_from(count).ok();
+    torrplay_core::settings::Explicit {
+        piece_wait_seconds: seconds(config.piece_wait),
+        idle_timeout_seconds: seconds(config.idle_timeout),
+        idle_readers_per_torrent: count(config.idle_readers_per_torrent),
+        idle_readers_total: count(config.idle_readers_total),
+        drain_period_seconds: None,
+        peer_limit: count(config.peer_limit),
+    }
+}
+
 /// A running application with a trigger for its shutdown.
 pub struct Running {
     pub engine: Arc<LibrqbitEngine>,
@@ -120,8 +134,16 @@ impl Running {
             NetworkConfig::isolated(peers.clone()),
         );
         tune(&mut config);
+        // The application runs with its stored settings, so the values a
+        // test tuned become settings, in whole seconds rounded up.
+        let explicit = settings_of(&config);
         let engine = LibrqbitEngine::new(config);
-        let (store, stored) = torrplay_store::Store::open(data.path())?;
+        let (store, mut contents) = torrplay_store::Store::open(data.path())?;
+        contents.settings = torrplay_store::StoredSettings {
+            explicit,
+            version: contents.settings.version + 1,
+        };
+        store.set_settings(contents.settings).await?;
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let address = listener.local_addr()?;
         let (shutdown, triggered) = oneshot::channel::<()>();
@@ -129,7 +151,7 @@ impl Running {
             listener,
             engine.clone(),
             store,
-            stored,
+            contents,
             timings,
             async {
                 let _ = triggered.await;

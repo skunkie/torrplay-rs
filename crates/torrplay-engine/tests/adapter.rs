@@ -16,6 +16,7 @@ use tokio::io::AsyncReadExt;
 use torrplay_core::engine::{ByteRange, Engine, EngineError, Source, SourceRejection};
 use torrplay_core::lifecycle::{DesiredState, Readiness};
 use torrplay_core::metadata::FileIndex;
+use torrplay_core::settings::Settings;
 use torrplay_engine::{EngineConfig, LibrqbitEngine, NetworkConfig};
 use torrplay_fixtures::catalog;
 
@@ -70,6 +71,59 @@ async fn uploads_stream_every_file_and_range_byte_for_byte() -> anyhow::Result<(
         Err(EngineError::UnknownFile)
     ));
     engine.cache().expect("a started cache").audit()?;
+
+    engine.shutdown().await?;
+    seeder.stop().await;
+    Ok(())
+}
+
+/// SET-06 and SET-07 through the facade: applied settings release idle
+/// readers over a new limit at once, and a wait that begins afterward uses
+/// the new piece wait bound.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn applied_settings_reach_idle_readers_and_later_waits() -> anyhow::Result<()> {
+    let small = catalog::single_small();
+    let seeder = Seeder::start(&small, &small.metainfo().bytes).await?;
+    let started = start(vec![seeder.addr], 8 * MIB, Duration::from_secs(30)).await?;
+    let engine = &started.engine;
+    engine
+        .add(&id(1), &upload(&small), DesiredState::Started)
+        .await?;
+    let size = small.total_size_bytes();
+    assert_eq!(
+        read(engine, &id(1), 0, 0, size).await?,
+        expected(&small, 0, 0, size)
+    );
+    let playback = engine.playback().expect("a started engine");
+    eventually("the reader becoming idle", || {
+        Ok((playback.stats().idle_readers == 1).then_some(()))
+    })
+    .await?;
+
+    let mut settings = Settings::DEFAULT;
+    settings.idle_readers_per_torrent = 0;
+    settings.idle_readers_total = 0;
+    settings.piece_wait = Duration::from_secs(1);
+    engine.apply_settings(&settings);
+    assert_eq!(
+        playback.stats().idle_readers,
+        0,
+        "the idle reader over the new limits is released at once"
+    );
+
+    // No peer has this torrent, so its first read waits for the bound.
+    let multi = catalog::multi_boundary();
+    engine
+        .add(&id(2), &upload(&multi), DesiredState::Started)
+        .await?;
+    let waited = std::time::Instant::now();
+    let result = read(engine, &id(2), 0, 0, 1).await;
+    assert!(result.is_err(), "no piece arrives");
+    assert!(
+        waited.elapsed() < Duration::from_secs(10),
+        "the wait took {:?}, not the new bound of one second",
+        waited.elapsed()
+    );
 
     engine.shutdown().await?;
     seeder.stop().await;

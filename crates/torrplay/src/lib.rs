@@ -28,14 +28,11 @@ use torrplay_engine::{
     DEFAULT_CACHE_CAPACITY_BYTES, DEFAULT_PEER_PORT, EngineConfig, LibrqbitEngine, NetworkConfig,
 };
 use torrplay_server::App;
-use torrplay_store::{Store, StoredTorrent};
+use torrplay_store::{Contents, Store};
 use tracing::Level;
 
 /// The default API port, as the contract's server URL documents.
 pub const DEFAULT_PORT: u16 = 8080;
-
-/// How long streams in progress may continue after shutdown begins.
-pub const DEFAULT_DRAIN_PERIOD: Duration = Duration::from_secs(10);
 
 /// How long the whole shutdown may take before the process exits anyway.
 pub const DEFAULT_SHUTDOWN_LIMIT: Duration = Duration::from_secs(30);
@@ -273,8 +270,9 @@ pub fn init_logging(level: Level, filter: Option<&str>) {
 /// The bounds of the shutdown sequence.
 #[derive(Clone, Copy, Debug)]
 pub struct ShutdownTimings {
-    /// How long streams in progress may continue.
-    pub drain: Duration,
+    /// How long streams in progress may continue, for tests; `None` takes
+    /// the drain period setting.
+    pub drain: Option<Duration>,
     /// How long the whole sequence may take.
     pub limit: Duration,
 }
@@ -282,28 +280,29 @@ pub struct ShutdownTimings {
 impl Default for ShutdownTimings {
     fn default() -> Self {
         Self {
-            drain: DEFAULT_DRAIN_PERIOD,
+            drain: None,
             limit: DEFAULT_SHUTDOWN_LIMIT,
         }
     }
 }
 
 /// Serves the API on `listener` over `engine`, which must not be started
-/// yet, and `store` with the torrents it held, until `shutdown` completes,
-/// then shuts down in the lifecycle's order.
+/// yet, and `store` with what it held, until `shutdown` completes, then
+/// shuts down in the lifecycle's order.
 ///
-/// The listener serves before the engine starts, and the stored torrents are
-/// restored once it has. Fails if the engine cannot start, if restoring or
+/// The stored settings apply at once. The listener serves before the engine
+/// starts, and the stored torrents are restored once it has. Fails if the engine cannot start, if restoring or
 /// the server fails, or if shutdown takes longer than `timings.limit`.
 pub async fn serve(
     listener: TcpListener,
     engine: Arc<LibrqbitEngine>,
     store: Store,
-    stored: Vec<StoredTorrent>,
+    contents: Contents,
     timings: ShutdownTimings,
     shutdown: impl Future<Output = ()>,
 ) -> anyhow::Result<()> {
-    let app = Arc::new(App::new(engine.clone(), store));
+    let Contents { torrents, settings } = contents;
+    let app = Arc::new(App::new(engine.clone(), store).with_settings(settings));
     let (close_listener, listener_closed) = oneshot::channel::<()>();
     let mut server = tokio::spawn(
         axum::serve(listener, torrplay_server::router(app.clone()))
@@ -324,9 +323,9 @@ pub async fn serve(
     // the application runs until shutdown.
     let ready = match started {
         Ok(()) if engine.playback().is_some() => {
-            let count = stored.len();
+            let count = torrents.len();
             tokio::select! {
-                restored = app.restore(stored) => match restored {
+                restored = app.restore(torrents) => match restored {
                     Ok(()) => {
                         tracing::info!(torrents = count, "the engine is ready, with the stored torrents");
                         Ok(true)
@@ -358,7 +357,7 @@ pub async fn serve(
     tracing::info!("shutting down");
     let sequence = async {
         app.begin_shutdown();
-        drain(&engine, timings.drain).await;
+        drain(&engine, timings.drain.unwrap_or_else(|| app.drain_period())).await;
         engine.cancel_streams()?;
         let _ = close_listener.send(());
         if !server.is_finished() {
@@ -414,6 +413,28 @@ mod tests {
 
     fn parse(args: &[&str]) -> Result<Command, ArgsError> {
         parse_args(args.iter().map(|&arg| arg.to_owned()))
+    }
+
+    #[test]
+    fn the_engines_defaults_are_the_settings_defaults() {
+        let engine = EngineConfig::new(PathBuf::new(), NetworkConfig::isolated(Vec::new()));
+        let settings = torrplay_core::settings::Settings::DEFAULT;
+        assert_eq!(
+            (
+                engine.piece_wait,
+                engine.idle_timeout,
+                engine.idle_readers_per_torrent,
+                engine.idle_readers_total,
+                engine.peer_limit,
+            ),
+            (
+                settings.piece_wait,
+                settings.idle_timeout,
+                settings.idle_readers_per_torrent,
+                settings.idle_readers_total,
+                settings.peer_limit,
+            ),
+        );
     }
 
     #[test]

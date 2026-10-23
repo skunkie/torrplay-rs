@@ -25,6 +25,7 @@ use tokio::io::AsyncRead;
 use crate::id::{InfoHashV1, TorrentId};
 use crate::lifecycle::{DesiredState, Failure, Readiness};
 use crate::metadata::{FileIndex, ReportedMetadata};
+use crate::settings::Settings;
 
 /// The input a torrent is created from.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -226,6 +227,13 @@ pub trait Engine: Send + Sync + 'static {
     /// Returns whether the engine can serve requests. It answers from state
     /// the engine already holds and never waits.
     fn readiness(&self) -> Readiness;
+
+    /// Takes the settings the engine uses, before it starts or while it
+    /// runs, as the lifecycle's Settings section describes: the piece wait
+    /// bound for waits that begin afterward, the idle timeout and limits at
+    /// once, releasing idle readers past them, and the peer limit for
+    /// torrents that start afterward. The drain period is the application's.
+    fn apply_settings(&self, settings: &Settings);
 
     /// Inspects a source without adding a torrent, contacting peers, or
     /// prefetching. Returns the v1 info hash and, for a torrent file, its

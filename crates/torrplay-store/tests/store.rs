@@ -16,7 +16,8 @@ use std::time::{Duration, SystemTime};
 use tempfile::TempDir;
 use torrplay_core::id::{InfoHashV1, TORRENT_ID_RANDOM_BYTES, TorrentId};
 use torrplay_core::lifecycle::{Configuration, DesiredState};
-use torrplay_store::{FILE_NAME, Store, StoreError, StoredTorrent};
+use torrplay_core::settings::Explicit;
+use torrplay_store::{FILE_NAME, Store, StoreError, StoredSettings, StoredTorrent};
 
 fn id(n: u32) -> TorrentId {
     let mut bytes = [0; TORRENT_ID_RANDOM_BYTES];
@@ -44,8 +45,10 @@ fn torrent(n: u32, nanos: u64) -> StoredTorrent {
     }
 }
 
+/// Opens the store in `dir` and returns it with its torrents.
 fn open(dir: &TempDir) -> (Store, Vec<StoredTorrent>) {
-    Store::open(dir.path()).expect("the store opens")
+    let (store, contents) = Store::open(dir.path()).expect("the store opens");
+    (store, contents.torrents)
 }
 
 #[tokio::test]
@@ -182,7 +185,7 @@ async fn a_newer_schema_is_refused() {
         Store::open(dir.path()),
         Err(StoreError::TooNew {
             found: 99,
-            supported: 1
+            supported: 2
         })
     ));
 }
@@ -229,6 +232,101 @@ async fn a_failed_write_stores_nothing() {
     assert_eq!(ids, [&id(1), &id(3)]);
 }
 
+#[tokio::test]
+async fn settings_keep_explicit_values_and_their_version() {
+    let dir = TempDir::new().unwrap();
+    {
+        let (store, contents) = Store::open(dir.path()).unwrap();
+        assert_eq!(
+            contents.settings,
+            StoredSettings::default(),
+            "a new database has every setting unset"
+        );
+        let stored = StoredSettings {
+            explicit: Explicit {
+                idle_timeout_seconds: Some(0),
+                peer_limit: Some(80),
+                ..Explicit::default()
+            },
+            version: 4,
+        };
+        store.set_settings(stored).await.unwrap();
+        store
+            .set_settings(StoredSettings {
+                version: 5,
+                ..stored
+            })
+            .await
+            .unwrap();
+    }
+    let (_store, contents) = Store::open(dir.path()).unwrap();
+    assert_eq!(contents.settings.version, 5);
+    assert_eq!(
+        contents.settings.explicit.idle_timeout_seconds,
+        Some(0),
+        "zero stays set"
+    );
+    assert_eq!(contents.settings.explicit.peer_limit, Some(80));
+    assert_eq!(
+        contents.settings.explicit.piece_wait_seconds, None,
+        "unset stays unset"
+    );
+}
+
+#[tokio::test]
+async fn a_version_1_database_is_copied_then_migrated() {
+    let dir = TempDir::new().unwrap();
+    {
+        let (store, _) = open(&dir);
+        store.insert(torrent(2, 10)).await.unwrap();
+    }
+    // A database as version 1 left it.
+    {
+        let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
+        connection
+            .execute_batch("DROP TABLE settings; PRAGMA user_version = 1;")
+            .unwrap();
+    }
+    let (store, contents) = Store::open(dir.path()).unwrap();
+    assert_eq!(contents.torrents, [torrent(2, 10)]);
+    assert_eq!(contents.settings, StoredSettings::default());
+    store
+        .set_settings(StoredSettings {
+            version: 2,
+            ..StoredSettings::default()
+        })
+        .await
+        .unwrap();
+    drop(store);
+
+    let backup = dir.path().join(format!("{FILE_NAME}.v1.bak"));
+    let copy = rusqlite::Connection::open(&backup).unwrap();
+    let version: u32 = copy
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 1, "the copy is the database before the migration");
+    let torrents: i64 = copy
+        .query_row("SELECT count(*) FROM torrents", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(torrents, 1);
+    let modified = std::fs::metadata(&backup).unwrap().modified().unwrap();
+    drop(copy);
+
+    // A migration that did not finish keeps the first copy.
+    {
+        let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
+        connection
+            .execute_batch("DROP TABLE settings; PRAGMA user_version = 1;")
+            .unwrap();
+    }
+    drop(Store::open(dir.path()).unwrap());
+    assert_eq!(
+        std::fs::metadata(&backup).unwrap().modified().unwrap(),
+        modified,
+        "an existing copy is not replaced"
+    );
+}
+
 const CHILD: &str = "TORRPLAY_STORE_CHILD";
 
 /// The writing child of the recovery test: inserts torrents with 64 KiB
@@ -243,7 +341,8 @@ fn child() {
         .build()
         .unwrap();
     runtime.block_on(async {
-        let (store, stored) = Store::open(Path::new(&path)).unwrap();
+        let (store, contents) = Store::open(Path::new(&path)).unwrap();
+        let stored = contents.torrents;
         let mut out = std::io::stdout();
         for n in (stored.len() as u32 * 2..).step_by(2) {
             let mut torrent = torrent(n, u64::from(n));
@@ -290,7 +389,8 @@ fn inserts_killed_at_any_moment_leave_whole_torrents() {
         child.kill().unwrap();
         child.wait().unwrap();
 
-        let (store, stored) = Store::open(dir.path()).expect("the store opens after a kill");
+        let (store, contents) = Store::open(dir.path()).expect("the store opens after a kill");
+        let stored = contents.torrents;
         drop(store);
         for torrent in &stored {
             let n = u32::from_be_bytes(torrent.info_hash.as_bytes()[..4].try_into().unwrap());

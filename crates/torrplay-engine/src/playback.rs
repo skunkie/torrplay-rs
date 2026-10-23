@@ -261,6 +261,17 @@ impl Playback {
         reader
     }
 
+    /// Sets the idle timeout and limits, releasing at once the idle readers
+    /// past the new timeout or over a new limit, oldest first.
+    pub fn set_idle_limits(&self, timeout: Duration, per_torrent: usize, total: usize) {
+        let released = self
+            .lock()
+            .idle
+            .set_limits(Instant::now(), timeout, per_torrent, total);
+        drop(released);
+        self.idle_changed.notify_one();
+    }
+
     /// Releases the idle readers of one scheduler's torrent.
     pub(crate) fn release_idle_of(&self, scheduler: u64) {
         let released = self.lock().idle.release_scheduler(scheduler);
@@ -368,6 +379,43 @@ impl<T> IdlePool<T> {
             item,
         });
         let mut released = Vec::new();
+        self.limit_torrent(scheduler, &mut released);
+        while self.entries.len() > self.total {
+            released.extend(self.entries.pop_front().map(|idle| idle.item));
+        }
+        released
+    }
+
+    /// Sets the timeout and limits and returns the idle readers they
+    /// release at `now`: those past the new timeout, then the oldest of each
+    /// torrent over the per-torrent limit, then the oldest of all over the
+    /// total.
+    pub(crate) fn set_limits(
+        &mut self,
+        now: Instant,
+        timeout: Duration,
+        per_torrent: usize,
+        total: usize,
+    ) -> Vec<T> {
+        self.timeout = timeout;
+        self.per_torrent = per_torrent;
+        self.total = total;
+        let mut released = self.expire(now);
+        let mut schedulers: Vec<u64> = self.entries.iter().map(|idle| idle.scheduler).collect();
+        schedulers.sort_unstable();
+        schedulers.dedup();
+        for scheduler in schedulers {
+            self.limit_torrent(scheduler, &mut released);
+        }
+        while self.entries.len() > self.total {
+            released.extend(self.entries.pop_front().map(|idle| idle.item));
+        }
+        released
+    }
+
+    /// Releases the oldest idle readers of `scheduler` over the per-torrent
+    /// limit into `released`.
+    fn limit_torrent(&mut self, scheduler: u64, released: &mut Vec<T>) {
         while self
             .entries
             .iter()
@@ -384,10 +432,6 @@ impl<T> IdlePool<T> {
             };
             released.extend(self.entries.remove(oldest).map(|idle| idle.item));
         }
-        while self.entries.len() > self.total {
-            released.extend(self.entries.pop_front().map(|idle| idle.item));
-        }
-        released
     }
 
     /// Takes the idle reader of `file` in `scheduler` nearest to `offset`,
@@ -483,6 +527,43 @@ mod tests {
             "past the total limit, the oldest of all goes"
         );
         assert_eq!(pool.len(), 6);
+    }
+
+    /// SET-06: lowering the timeout and limits releases at once the idle
+    /// readers past the timeout, then the oldest of each torrent over the
+    /// per-torrent limit, then the oldest of all over the total.
+    #[test]
+    fn new_limits_release_idle_readers_at_once() {
+        let start = Instant::now();
+        let mut pool = pool(4, 16);
+        for (n, (scheduler, name)) in [(1, "a1"), (1, "a2"), (2, "b1"), (1, "a3"), (2, "b2")]
+            .into_iter()
+            .enumerate()
+        {
+            pool.park(later(start, n as u64 * 1000), scheduler, 0, 0, name);
+        }
+        assert_eq!(
+            pool.set_limits(later(start, 1500), Duration::from_secs(30), 4, 16),
+            Vec::<&str>::new(),
+            "limits as before release nothing"
+        );
+        let mut released = pool.set_limits(later(start, 2500), Duration::from_secs(2), 1, 2);
+        released.sort_unstable();
+        assert_eq!(
+            released,
+            ["a1", "a2", "b1"],
+            "a1 is past the new timeout, a2 over torrent 1's limit, b1 over torrent 2's"
+        );
+        assert_eq!(pool.len(), 2);
+        assert_eq!(
+            pool.set_limits(later(start, 2500), Duration::from_secs(2), 1, 1),
+            ["a3"],
+            "then the oldest of all over the total"
+        );
+        assert_eq!(
+            pool.next_deadline(),
+            Some(later(start, 4000) + Duration::from_secs(2))
+        );
     }
 
     /// RDR-02: idle readers expire after the idle timeout, oldest first.

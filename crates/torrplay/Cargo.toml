@@ -32,5 +32,6 @@ tracing-subscriber.workspace = true
 h2.workspace = true
 reqwest = { workspace = true, features = ["http2"] }
 serde_json.workspace = true
+torrplay-core.workspace = true
 torrplay-engine = { workspace = true, features = ["faults", "test-support"] }
 torrplay-fixtures.workspace = true
