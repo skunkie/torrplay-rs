@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT
 
 # 8. Database: SQLite through rusqlite
 
-- Status: proposed
+- Status: accepted on 2026-10-23.
 - Date: 2026-10-23
 
 ## Context
@@ -123,18 +123,34 @@ commits about five times as fast and files a third the size, and its
 command-line shell inspects, repairs, and backs up a database without
 TorrPlay.
 
+Both databases are transactional; they differ in their data model, and
+SQLite's relational one suits TorrPlay's data better. Uniqueness of info
+hashes and the listing order are declared once, as a constraint and an
+index the database maintains, where the spike's redb backend kept two index
+tables in step by hand in every write. Data a torrent owns, its metainfo now
+and its files and preloads later, goes with it through `ON DELETE CASCADE`.
+The filters, category facets, and counts the API conventions describe are
+queries rather than further hand-kept indexes.
+
 Its costs, accepted:
 
 - **A C dependency.** The amalgamation compiles on every target, adding
-  about 30 seconds to clean builds and about a megabyte to the binary. CI
-  builds it on Linux, Windows, and macOS; Android builds it with the NDK's
-  compiler when that platform arrives.
+  about 30 seconds to clean builds and about a megabyte to the binary.
+  TorrPlay already builds C through librqbit's AWS-LC, so no target needs a
+  toolchain it did not already need. CI builds it on Linux, Windows, and
+  macOS; Android builds it with the NDK's compiler when that platform
+  arrives.
 - **SQL in strings.** Queries are checked when the store's tests run, not
   when it compiles.
 - **Signed integers.** SQLite integers are 64-bit signed, so unsigned
   counters and times convert explicitly, failing rather than wrapping.
 - **Connections to manage.** Each SQLite connection is single-threaded; the
   threading model below assigns them.
+- **A local filesystem.** WAL mode shares memory between connections through
+  a file beside the database, which network filesystems such as NFS and SMB
+  do not support reliably. The data directory must be on a local
+  filesystem, which the documentation for running TorrPlay must state once
+  it exists.
 
 redb would have been the lighter dependency, with cheaper snapshots and no
 C toolchain. If its format stabilizes, nothing in the `Store` interface
@@ -175,6 +191,32 @@ prevents reconsidering.
   that wrote it.
 - Columns a migration adds carry defaults that describe existing rows, as
   the storage mode's `memory` does for torrents stored before it.
+
+## Schema conventions
+
+No name comes from Go TorrPlay's database. Names follow the glossary and
+the contract first, so one concept has one name across them and the
+database, and common SQL usage for the rest:
+
+- Lowercase `snake_case`, plural table names matching the API's
+  collections, such as `torrents`, and `STRICT` tables.
+- `id` for a table's primary key and `<singular>_id` for a foreign key,
+  such as `torrent_id`.
+- Columns named as the contract names the field, with units where the
+  contract has none: `created_at_ms` stores `created_at` as milliseconds
+  since the Unix epoch.
+- Enumerations as text with the contract's values, checked by the database,
+  such as `storage_mode TEXT NOT NULL CHECK (storage_mode IN ('memory',
+  'disk'))`; booleans as integers checked to 0 or 1, named `is_` or `has_`.
+- Indexes and constraints named by table and columns, such as
+  `torrents_created_at_ms_id_idx` and `torrents_info_hash_key`, so a
+  constraint's failure names what failed.
+- A one-row table, such as `settings`, keys on `id INTEGER PRIMARY KEY
+  CHECK (id = 1)`.
+
+A term the glossary lacks goes into the glossary before it names a table or
+column. The spike's schema predates these conventions; the store adopts
+them when it is wired in.
 
 ## Consequences
 
