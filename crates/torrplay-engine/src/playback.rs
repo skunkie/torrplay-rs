@@ -92,6 +92,8 @@ pub struct PlaybackStats {
 /// Readers across the torrents of one engine.
 pub struct Playback {
     config: PlaybackConfig,
+    // The readahead budget, which settings change with cache capacity.
+    readahead_bytes: AtomicU64,
     // Active and idle readers. Schedulers change it under their own lock,
     // so it never counts a reader twice or misses one.
     readers: AtomicU64,
@@ -112,6 +114,7 @@ impl Playback {
     /// Creates the playback state for one engine's schedulers.
     pub fn new(config: PlaybackConfig) -> Arc<Self> {
         Arc::new(Self {
+            readahead_bytes: AtomicU64::new(config.readahead_bytes),
             readers: AtomicU64::new(0),
             opened: AtomicU64::new(0),
             active: watch::Sender::new(false),
@@ -127,7 +130,15 @@ impl Playback {
 
     /// The readahead budget all readers share.
     pub fn readahead_bytes(&self) -> u64 {
-        self.config.readahead_bytes
+        self.readahead_bytes.load(Ordering::Acquire)
+    }
+
+    /// Sets the readahead budget all readers share and rebalances every
+    /// torrent's readahead to it.
+    pub fn set_readahead_bytes(&self, readahead_bytes: u64) {
+        self.readahead_bytes
+            .store(readahead_bytes, Ordering::Release);
+        self.replan_all();
     }
 
     /// The least a ramping reader reads ahead, or zero for no ramp.
@@ -218,6 +229,19 @@ impl Playback {
         } else {
             self.readers.fetch_sub(removed - added, Ordering::AcqRel);
         }
+        self.replan_all();
+        // The count is read under the channel's lock, so concurrent changes
+        // cannot publish a stale value last.
+        self.active.send_if_modified(|active| {
+            let now = self.readers.load(Ordering::Acquire) > 0;
+            let changed = *active != now;
+            *active = now;
+            changed
+        });
+    }
+
+    // Rebalances every torrent's readahead. Callers hold no scheduler lock.
+    fn replan_all(&self) {
         let schedulers: Vec<_> = self
             .lock()
             .schedulers
@@ -229,14 +253,6 @@ impl Playback {
             // reader change tries again.
             let _ = scheduler.replan();
         }
-        // The count is read under the channel's lock, so concurrent changes
-        // cannot publish a stale value last.
-        self.active.send_if_modified(|active| {
-            let now = self.readers.load(Ordering::Acquire) > 0;
-            let changed = *active != now;
-            *active = now;
-            changed
-        });
     }
 
     /// Keeps `reader` idle, releasing whichever idle readers the limits

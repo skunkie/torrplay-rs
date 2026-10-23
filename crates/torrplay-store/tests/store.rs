@@ -185,7 +185,7 @@ async fn a_newer_schema_is_refused() {
         Store::open(dir.path()),
         Err(StoreError::TooNew {
             found: 99,
-            supported: 2
+            supported: 3
         })
     ));
 }
@@ -325,6 +325,55 @@ async fn a_version_1_database_is_copied_then_migrated() {
         modified,
         "an existing copy is not replaced"
     );
+}
+
+#[tokio::test]
+async fn settings_from_version_2_keep_their_values_and_lack_the_cache_capacity() {
+    let dir = TempDir::new().unwrap();
+    {
+        let (store, _) = open(&dir);
+        store
+            .set_settings(StoredSettings {
+                explicit: Explicit {
+                    piece_wait_seconds: Some(90),
+                    ..Explicit::default()
+                },
+                version: 2,
+            })
+            .await
+            .unwrap();
+    }
+    // A database as version 2 left it.
+    {
+        let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE settings DROP COLUMN cache_capacity_bytes;
+                 PRAGMA user_version = 2;",
+            )
+            .unwrap();
+    }
+    let (store, contents) = Store::open(dir.path()).unwrap();
+    assert_eq!(
+        contents.settings.explicit,
+        Explicit {
+            piece_wait_seconds: Some(90),
+            ..Explicit::default()
+        },
+        "the cache capacity is unset, so it takes the current default"
+    );
+    let stored = StoredSettings {
+        explicit: Explicit {
+            cache_capacity_bytes: Some(64 << 30),
+            ..contents.settings.explicit
+        },
+        version: 3,
+    };
+    store.set_settings(stored).await.unwrap();
+    drop(store);
+    let (_store, contents) = Store::open(dir.path()).unwrap();
+    assert_eq!(contents.settings, stored);
+    assert!(dir.path().join(format!("{FILE_NAME}.v2.bak")).exists());
 }
 
 const CHILD: &str = "TORRPLAY_STORE_CHILD";

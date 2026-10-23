@@ -13,7 +13,7 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::response::Response;
 use serde_json::Value;
 use torrplay_api as api;
-use torrplay_core::engine::Engine;
+use torrplay_core::engine::{Engine, EngineError};
 use torrplay_core::lifecycle::EntityTag;
 use torrplay_core::settings::{self, Explicit, Stored};
 
@@ -35,9 +35,18 @@ fn settings_etag(stored: &Stored) -> EntityTag {
 }
 
 fn representation(stored: &Stored) -> api::Settings {
-    let [piece_wait, idle_timeout, per_torrent, total, drain, peers] = stored.explicit.values();
-    // Every value lies within its bounds, all far below i32::MAX.
-    let int = |value: u32| i32::try_from(value).unwrap_or(i32::MAX);
+    let [
+        piece_wait,
+        idle_timeout,
+        per_torrent,
+        total,
+        drain,
+        peers,
+        capacity,
+    ] = stored.explicit.values();
+    // Every value lies within its bounds: the counts and durations far below
+    // i32::MAX, the capacity below i64::MAX.
+    let int = |value: u64| i32::try_from(value).unwrap_or(i32::MAX);
     api::Settings {
         piece_wait_seconds: int(piece_wait),
         idle_timeout_seconds: int(idle_timeout),
@@ -45,6 +54,7 @@ fn representation(stored: &Stored) -> api::Settings {
         idle_readers_total: int(total),
         drain_period_seconds: int(drain),
         peer_limit: int(peers),
+        cache_capacity_bytes: i64::try_from(capacity).unwrap_or(i64::MAX),
         links: api::SettingsLinks {
             self_field: settings_path(),
         },
@@ -131,12 +141,23 @@ pub(crate) async fn update<E: Engine>(
             explicit,
             version: current.version + 1,
         };
-        app.store()
-            .set_settings(stored)
-            .await
-            .map_err(store_failed)?;
+        let previous = current.explicit.effective();
+        // Only a smaller cache capacity can be refused, so it is applied
+        // before it is stored, and anything else after.
+        let shrinks = effective.cache_capacity_bytes < previous.cache_capacity_bytes;
+        if shrinks {
+            apply(&app, &effective)?;
+        }
+        if let Err(error) = app.store().set_settings(stored).await {
+            if shrinks && let Err(error) = app.engine().apply_settings(&previous) {
+                tracing::error!(%error, "the previous settings could not be applied again");
+            }
+            return Err(store_failed(error));
+        }
         app.set_settings(stored);
-        app.engine().apply_settings(&effective);
+        if !shrinks {
+            apply(&app, &effective)?;
+        }
         stored
     };
     with_etag(
@@ -145,9 +166,31 @@ pub(crate) async fn update<E: Engine>(
     )
 }
 
+/// Gives the engine `settings`, which it refuses only for a cache capacity
+/// below a torrent's piece length.
+fn apply<E: Engine>(app: &App<E>, settings: &settings::Settings) -> Result<(), Problem> {
+    app.engine()
+        .apply_settings(settings)
+        .map_err(|error| match error {
+            EngineError::CapacityBelowPieceLength { piece_length_bytes } => {
+                Problem::invalid_body(vec![InvalidValue::pointer(
+                    pointer(settings::CACHE_CAPACITY_BYTES.name),
+                    format!(
+                        "Must be at least {piece_length_bytes}, the piece length of a torrent \
+                         the engine holds."
+                    ),
+                )])
+            }
+            error => {
+                tracing::error!(%error, "the engine did not apply the settings");
+                Problem::internal()
+            }
+        })
+}
+
 /// Reads a merge patch of the settings: each member's new value, or `None`
 /// to return it to its default. The patch must set at least one member.
-fn parse_patch(value: Value) -> Result<Vec<(&'static str, Option<u32>)>, Problem> {
+fn parse_patch(value: Value) -> Result<Vec<(&'static str, Option<u64>)>, Problem> {
     let members = object(value)?;
     let mut errors = Vec::new();
     let mut patch = Vec::new();
@@ -158,7 +201,7 @@ fn parse_patch(value: Value) -> Result<Vec<(&'static str, Option<u32>)>, Problem
         };
         match value {
             Value::Null => patch.push((bounds.name, None)),
-            value => match value.as_u64().and_then(|value| u32::try_from(value).ok()) {
+            value => match value.as_u64() {
                 Some(value) => patch.push((bounds.name, Some(value))),
                 None => errors.push(InvalidValue::pointer(
                     pointer(member),

@@ -60,9 +60,9 @@ async fn run(
     stop: Arc<Notify>,
 ) -> Result<(), CacheError> {
     loop {
-        let shortfall = cache.waiting_shortfall()?;
-        if shortfall > 0 {
-            let batches = cache.eviction_candidates(shortfall)?;
+        let needed = cache.room_needed()?;
+        if needed > 0 {
+            let batches = cache.eviction_candidates(needed)?;
             if batches.is_empty()
                 && playback
                     .as_ref()

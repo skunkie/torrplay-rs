@@ -113,7 +113,9 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 
 **Cache capacity**
 : The configured maximum number of bytes the piece cache may use across all
-  torrents. It does not bound total process memory.
+  torrents, set by the `cache_capacity_bytes` setting. Right after it
+  shrinks, cache usage can exceed it until eviction brings usage down. It
+  does not bound total process memory.
 
 **Cache usage**
 : The bytes counted against cache capacity: resident piece buffers, pending

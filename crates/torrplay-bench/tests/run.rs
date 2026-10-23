@@ -57,8 +57,7 @@ async fn a_trace_runs_against_torrplay_through_the_local_tracker() -> anyhow::Re
             trackers: true,
             initial_peers: Vec::new(),
         },
-    )
-    .with_cache_capacity(trace.cache_capacity_bytes);
+    );
     let (store, contents) = torrplay_store::Store::open(&session.path().join("data"))?;
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
     let base = format!("http://{}", listener.local_addr()?);
@@ -87,6 +86,8 @@ async fn a_trace_runs_against_torrplay_through_the_local_tracker() -> anyhow::Re
     .await?;
 
     let target = Arc::new(TorrPlay::new(client.clone(), base));
+    // As a benchmark run does, through the settings.
+    target.configure(trace.cache_capacity_bytes).await?;
     let record = tokio::time::timeout(
         Duration::from_secs(60),
         runner::run(target, client, std::process::id(), &trace, &fixtures),

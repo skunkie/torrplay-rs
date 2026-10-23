@@ -21,7 +21,7 @@ use torrplay_core::settings::{self, Explicit, Stored};
 use crate::{StoreError, StoredTorrent};
 
 /// The schema version this build creates and migrates to.
-pub(crate) const VERSION: u32 = 2;
+pub(crate) const VERSION: u32 = 3;
 
 /// The schema at each version, applied in order to reach the next one.
 const MIGRATIONS: [&str; VERSION as usize] = [
@@ -56,6 +56,9 @@ const MIGRATIONS: [&str; VERSION as usize] = [
         drain_period_seconds INTEGER CHECK (drain_period_seconds >= 0),
         peer_limit INTEGER CHECK (peer_limit >= 0)
     ) STRICT;",
+    // Version 3: the cache capacity.
+    "ALTER TABLE settings
+        ADD COLUMN cache_capacity_bytes INTEGER CHECK (cache_capacity_bytes >= 0);",
 ];
 
 /// Opens the database at `path`, takes its lock, and migrates it.
@@ -203,11 +206,11 @@ pub(crate) fn settings(connection: &Connection) -> Result<Stored, StoreError> {
     let row = connection
         .query_row(
             "SELECT version, piece_wait_seconds, idle_timeout_seconds, idle_readers_per_torrent,
-                    idle_readers_total, drain_period_seconds, peer_limit
+                    idle_readers_total, drain_period_seconds, peer_limit, cache_capacity_bytes
              FROM settings WHERE id = 1",
             [],
             |row| {
-                let mut values = [None; 6];
+                let mut values = [None; settings::ALL.len()];
                 for (index, value) in values.iter_mut().enumerate() {
                     *value = row.get::<_, Option<i64>>(index + 1)?;
                 }
@@ -226,7 +229,7 @@ pub(crate) fn settings(connection: &Connection) -> Result<Stored, StoreError> {
     let mut explicit = Explicit::default();
     for (bounds, value) in settings::ALL.iter().zip(values) {
         let value = value
-            .map(|value| u32::try_from(value).map_err(|_| corrupt(bounds.name)))
+            .map(|value| u64::try_from(value).map_err(|_| corrupt(bounds.name)))
             .transpose()?;
         if let Some(slot) = explicit.slot(bounds.name) {
             *slot = value;
@@ -239,19 +242,36 @@ pub(crate) fn settings(connection: &Connection) -> Result<Stored, StoreError> {
 pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(), StoreError> {
     let version = i64::try_from(stored.version)
         .map_err(|_| StoreError::Corrupt("the settings version is out of range".into()))?;
-    let [piece_wait, idle_timeout, per_torrent, total, drain, peers] = [
-        stored.explicit.piece_wait_seconds,
-        stored.explicit.idle_timeout_seconds,
-        stored.explicit.idle_readers_per_torrent,
-        stored.explicit.idle_readers_total,
-        stored.explicit.drain_period_seconds,
-        stored.explicit.peer_limit,
-    ];
+    let explicit = &stored.explicit;
+    let mut values = [None; settings::ALL.len()];
+    for (value, explicit) in values.iter_mut().zip([
+        explicit.piece_wait_seconds,
+        explicit.idle_timeout_seconds,
+        explicit.idle_readers_per_torrent,
+        explicit.idle_readers_total,
+        explicit.drain_period_seconds,
+        explicit.peer_limit,
+        explicit.cache_capacity_bytes,
+    ]) {
+        *value = explicit
+            .map(i64::try_from)
+            .transpose()
+            .map_err(|_| StoreError::Corrupt("a setting is out of range".into()))?;
+    }
+    let [
+        piece_wait,
+        idle_timeout,
+        per_torrent,
+        total,
+        drain,
+        peers,
+        capacity,
+    ] = values;
     connection.execute(
         "INSERT INTO settings (id, version, piece_wait_seconds, idle_timeout_seconds,
                                idle_readers_per_torrent, idle_readers_total,
-                               drain_period_seconds, peer_limit)
-         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                               drain_period_seconds, peer_limit, cache_capacity_bytes)
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT (id) DO UPDATE SET
              version = excluded.version,
              piece_wait_seconds = excluded.piece_wait_seconds,
@@ -259,7 +279,8 @@ pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(
              idle_readers_per_torrent = excluded.idle_readers_per_torrent,
              idle_readers_total = excluded.idle_readers_total,
              drain_period_seconds = excluded.drain_period_seconds,
-             peer_limit = excluded.peer_limit",
+             peer_limit = excluded.peer_limit,
+             cache_capacity_bytes = excluded.cache_capacity_bytes",
         rusqlite::params![
             version,
             piece_wait,
@@ -267,7 +288,8 @@ pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(
             per_torrent,
             total,
             drain,
-            peers
+            peers,
+            capacity
         ],
     )?;
     Ok(())

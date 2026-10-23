@@ -56,6 +56,8 @@ struct State {
     fault: Option<String>,
     /// The settings last applied.
     settings: Settings,
+    /// The piece length a smaller cache capacity is refused below.
+    longest_piece_bytes: u64,
     cache_statistics: CacheStatistics,
 }
 
@@ -99,6 +101,7 @@ impl FakeEngine {
                 readiness: Readiness::Ready,
                 fault: None,
                 settings: Settings::DEFAULT,
+                longest_piece_bytes: 0,
                 cache_statistics: CacheStatistics::default(),
             }),
         }
@@ -253,6 +256,12 @@ impl FakeEngine {
         self.lock().settings
     }
 
+    /// Makes the engine refuse a cache capacity smaller than its current
+    /// one and below `bytes`, as if a torrent had pieces of that length.
+    pub fn set_longest_piece(&self, bytes: u64) {
+        self.lock().longest_piece_bytes = bytes;
+    }
+
     /// Sets the engine's readiness.
     pub fn set_readiness(&self, readiness: Readiness) {
         self.lock().readiness = readiness;
@@ -367,8 +376,17 @@ impl Engine for FakeEngine {
         self.lock().readiness
     }
 
-    fn apply_settings(&self, settings: &Settings) {
-        self.lock().settings = *settings;
+    fn apply_settings(&self, settings: &Settings) -> Result<(), EngineError> {
+        let mut state = self.lock();
+        if settings.cache_capacity_bytes < state.settings.cache_capacity_bytes
+            && settings.cache_capacity_bytes < state.longest_piece_bytes
+        {
+            return Err(EngineError::CapacityBelowPieceLength {
+                piece_length_bytes: state.longest_piece_bytes,
+            });
+        }
+        state.settings = *settings;
+        Ok(())
     }
 
     async fn inspect(&self, source: &Source) -> Result<Inspection, EngineError> {

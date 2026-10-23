@@ -14,7 +14,9 @@ SPDX-License-Identifier: MIT
   gate. Milestone 5's benchmarks answer the [open questions](#open-questions)
   and may tune the defaults. One deviation remains, as ADR 2's gaps record:
   librqbit drops a failed torrent's storage, so its verified pieces leave
-  the cache instead of staying as eviction candidates.
+  the cache instead of staying as eviction candidates. Milestone 6 made
+  cache capacity a setting, decided how it changes at runtime, and
+  implemented [capacity changes](#capacity-changes).
 - Date: 2026-10-19
 
 ## Context
@@ -54,8 +56,8 @@ Earlier records constrain the design:
 All torrents in `memory` storage mode share one piece cache with one cache
 capacity. There are no per-torrent quotas: a single torrent being watched
 may use the whole capacity, and torrents nobody reads lose their pieces
-first. The prototype fixes cache capacity at startup; settings make it
-configurable in milestone 6.
+first. The `cache_capacity_bytes` setting sets the capacity, at runtime
+too, as [capacity changes](#capacity-changes) describes.
 
 The piece cache holds one piece buffer per resident piece, sized to the
 piece's length, and is the storage that librqbit reads and writes through
@@ -202,6 +204,43 @@ its current piece, readmits waiting pieces in piece priority order, and
 among pieces of equal priority in the order they started waiting, so no
 reader waits behind others indefinitely.
 
+### Capacity changes
+
+A change of cache capacity applies at once, to the piece cache and to the
+readahead budget, which stays half of the capacity, so every reader's
+readahead window and pins are rebalanced to the new budget.
+
+- **Growing** admits waiting pieces in the order the bounded fallback
+  readmits them.
+- **Shrinking** may leave cache usage above the new capacity. The evictor
+  then treats the excess like a waiting reservation: it releases retained
+  reusable buffers, evicts verified, unpinned pieces in eviction order, and
+  releases the oldest idle readers when nothing is evictable, until usage is
+  within capacity. Freed buffers are not retained while usage exceeds
+  capacity. Partial pieces and active readers' current pieces are never
+  evicted for a shrink, so usage can stay above capacity until they are
+  verified or their readers move on, which the evictor waits for. Meanwhile
+  no reservation is admitted, so usage only falls.
+
+Usage above capacity after a shrink is therefore expected and bounded by
+the usage at the moment of the change. Usage never rises above capacity:
+every reservation, write, and retained buffer is still checked against the
+capacity in effect.
+
+A capacity below the piece length of a torrent the engine holds is
+refused, so a shrink never leaves a torrent that cannot hold one of its
+pieces. The check and the change happen under the cache lock against the
+piece lengths the cache recorded when each torrent's storage was created. A
+torrent added concurrently is checked again against the capacity in effect
+once its storage exists, and refused or failed as [pieces longer than the
+cache](#pieces-longer-than-the-cache) describes, so neither order of the
+two leaves a torrent whose pieces exceed capacity.
+
+The application stores a shrink only after the engine accepted it, and
+other changes before applying them, since only a shrink can be refused; a
+failed write applies the previous settings again, as the lifecycle's
+Settings section describes.
+
 The cache never answers a write it cannot hold with a failure, because a
 failed write fails the whole torrent. Instead, capacity is reserved before
 the engine requests the piece, so the engine never receives blocks it cannot
@@ -226,9 +265,8 @@ a torrent is not accepted to wait forever:
 
 The check compares the piece length with cache capacity alone. A piece that
 fits the capacity but not the room left beside pinned pieces waits, as the
-bounded fallback describes. Once settings can change cache capacity
-(milestone 6), shrinking it below a torrent's piece length is a settings
-validation question that milestone decides.
+bounded fallback describes. Shrinking cache capacity below a torrent's piece
+length is refused, as [capacity changes](#capacity-changes) describes.
 
 ### Milestone 4 defaults
 
@@ -285,8 +323,9 @@ the first eviction.
   windows at their minimum, a reader waits for every piece in turn.
 - Paused torrents keep their verified pieces until the cache needs the
   room, so starting a paused torrent again can resume from memory.
-- Capacity changes at runtime, which settings add in milestone 6, follow the
-  same eviction order and fallback when capacity shrinks below usage.
+- Capacity changes at runtime follow the same eviction order and fallback
+  when capacity shrinks below usage, and usage reported right after a shrink
+  can exceed capacity until partial pieces and current pieces leave.
 
 ## Spike findings
 

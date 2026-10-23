@@ -169,11 +169,11 @@ target/release/torrplay-bench run --trace bench/traces/cold-start.jsonl --dir ta
 ```
 
 `fixtures` writes about 4 GiB of generated content once; `seed` and
-`tracker` run until interrupted. Each `run` starts a fresh server with the
-trace's cache capacity and without DHT, replays the trace once, stops the
-server with SIGTERM, and writes the run's requests, torrents, process and
-cache samples, and summary as JSON. Sampling reads `/proc`, so runs need
-Linux. Each run also records its environment as the protocol lists it,
+`tracker` run until interrupted. Each `run` starts a fresh server without
+DHT, sets its `cache_capacity_bytes` setting to the trace's cache capacity,
+replays the trace once, stops the server with SIGTERM, and writes the run's
+requests, torrents, process and cache samples, and summary as JSON.
+Sampling reads `/proc`, so runs need Linux. Each run also records its environment as the protocol lists it,
 detected rather than given: the OS, kernel, CPU, memory, frequency governor,
 and virtualization; the workspace's Rust toolchain and librqbit revision;
 the Go toolchain and commit a Go TorrPlay binary embeds; the seeder count,

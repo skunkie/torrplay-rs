@@ -203,7 +203,9 @@ impl StorageFactory for MemoryStorageFactory {
         shared: &ManagedTorrentShared,
         metadata: &TorrentMetadata,
     ) -> anyhow::Result<MemoryStorage> {
-        let key = self.cache.register_torrent()?;
+        let key = self
+            .cache
+            .register_torrent(metadata.lengths().default_piece_length())?;
         let health = Arc::new(Health::default());
         self.unattached
             .lock()

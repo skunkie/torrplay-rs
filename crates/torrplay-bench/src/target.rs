@@ -70,6 +70,47 @@ impl TorrPlay {
         Self { client, base }
     }
 
+    /// Sets the cache capacity setting and checks that the cache took it.
+    pub async fn configure(&self, cache_capacity_bytes: u64) -> anyhow::Result<()> {
+        let path = "/api/v1/settings";
+        let current = self
+            .client
+            .get(format!("{}{path}", self.base))
+            .send()
+            .await?;
+        let status = current.status();
+        anyhow::ensure!(status == StatusCode::OK, "GET {path}: {status}");
+        let etag = current
+            .headers()
+            .get(reqwest::header::ETAG)
+            .context("the settings have no ETag")?
+            .clone();
+        let response = self
+            .client
+            .patch(format!("{}{path}", self.base))
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                "application/merge-patch+json",
+            )
+            .header(reqwest::header::IF_MATCH, etag)
+            .body(serde_json::json!({ "cache_capacity_bytes": cache_capacity_bytes }).to_string())
+            .send()
+            .await?;
+        let status = response.status();
+        anyhow::ensure!(
+            status == StatusCode::OK,
+            "updating settings: {status}: {}",
+            response.text().await?
+        );
+        let cache = self.json("/api/v1/cache/statistics").await?;
+        anyhow::ensure!(
+            cache["capacity_bytes"].as_u64() == Some(cache_capacity_bytes),
+            "the cache capacity is {} rather than {cache_capacity_bytes}",
+            cache["capacity_bytes"]
+        );
+        Ok(())
+    }
+
     async fn json(&self, path: &str) -> anyhow::Result<Value> {
         let response = self
             .client

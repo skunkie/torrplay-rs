@@ -117,7 +117,10 @@ impl<E: Engine> App<E> {
             tracing::warn!("stored settings outside the current bounds take their defaults");
         }
         let stored = StoredSettings { explicit, ..stored };
-        self.engine.apply_settings(&explicit.effective());
+        // The engine holds no torrent yet, so it refuses nothing.
+        if let Err(error) = self.engine.apply_settings(&explicit.effective()) {
+            tracing::error!(%error, "the engine did not apply the stored settings");
+        }
         self.set_settings(stored);
         self
     }

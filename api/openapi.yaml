@@ -748,6 +748,7 @@ paths:
                     idle_readers_total: 16
                     drain_period_seconds: 10
                     peer_limit: 50
+                    cache_capacity_bytes: 268435456
                     links:
                       self: /api/v1/settings
         '304':
@@ -763,7 +764,9 @@ paths:
         returns to its default, which later releases may change; one omitted
         keeps its value. The whole patch is validated before anything
         changes, and the change is stored before this returns and survives
-        restarts. Each setting's description says when a change takes effect.
+        restarts. A change the engine refuses, or one that cannot be stored,
+        leaves every setting as it was. Each setting's description says when
+        a change takes effect.
       tags: [Settings]
       parameters:
         - $ref: '#/components/parameters/IfMatch'
@@ -803,6 +806,7 @@ paths:
                     idle_readers_total: 16
                     drain_period_seconds: 10
                     peer_limit: 50
+                    cache_capacity_bytes: 268435456
                     links:
                       self: /api/v1/settings
         '400':
@@ -1633,7 +1637,7 @@ components:
       description: >-
         The application's settings. Each value is the one set, or its default
         while it is unset.
-      required: [piece_wait_seconds, idle_timeout_seconds, idle_readers_per_torrent, idle_readers_total, drain_period_seconds, peer_limit, links]
+      required: [piece_wait_seconds, idle_timeout_seconds, idle_readers_per_torrent, idle_readers_total, drain_period_seconds, peer_limit, cache_capacity_bytes, links]
       properties:
         piece_wait_seconds:
           type: integer
@@ -1700,6 +1704,23 @@ components:
             included. Applies to torrents as they start: when created,
             started, or restored after a restart.
           examples: [50]
+        cache_capacity_bytes:
+          type: integer
+          format: int64
+          minimum: 4194304
+          maximum: 68719476736
+          default: 268435456
+          description: >-
+            The capacity of the global piece cache that every torrent in
+            memory storage mode shares; the readahead budget is half of it. It
+            must be at least the piece length of every torrent with metadata.
+            Applies at once. Growing it admits the pieces waiting for room.
+            Shrinking it evicts verified, unpinned pieces down to the new
+            capacity, releasing idle readers when nothing else can be evicted;
+            until partial pieces complete and active readers leave their
+            current pieces, cache usage may stay above the capacity, and no
+            new piece is admitted.
+          examples: [268435456]
         links:
           type: object
           readOnly: true
@@ -1762,6 +1783,13 @@ components:
           maximum: 500
           description: The new value, or null for the default, 50.
           examples: [50, null]
+        cache_capacity_bytes:
+          type: [integer, 'null']
+          format: int64
+          minimum: 4194304
+          maximum: 68719476736
+          description: The new value, or null for the default, 268435456.
+          examples: [268435456, null]
 
     TorrentFile:
       type: object
@@ -1921,7 +1949,9 @@ components:
           type: integer
           format: int64
           minimum: 0
-          description: The configured cache capacity.
+          description: >-
+            The cache capacity in effect, as the cache_capacity_bytes setting
+            sets it.
           examples: [268435456]
         usage_bytes:
           type: integer
@@ -1929,7 +1959,9 @@ components:
           minimum: 0
           description: >-
             The bytes counted against capacity, including pending allocations
-            and retained reusable buffers.
+            and retained reusable buffers. It stays within capacity_bytes,
+            except after the capacity shrinks, until eviction and readers
+            leaving their pieces bring it down.
           examples: [201326592]
         pinned_bytes:
           type: integer

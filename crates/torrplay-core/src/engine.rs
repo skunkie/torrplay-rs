@@ -110,6 +110,12 @@ pub enum EngineError {
     /// The byte range does not lie within the file.
     #[error("the byte range lies outside the file")]
     RangeOutOfBounds,
+    /// A new cache capacity is below a torrent's piece length.
+    #[error("a torrent's {piece_length_bytes}-byte pieces exceed the new cache capacity")]
+    CapacityBelowPieceLength {
+        /// The longest piece length among the engine's torrents.
+        piece_length_bytes: u64,
+    },
     /// An unexpected engine failure: `internal-error`.
     #[error("the torrent engine failed")]
     Internal(#[source] Box<dyn std::error::Error + Send + Sync>),
@@ -231,9 +237,15 @@ pub trait Engine: Send + Sync + 'static {
     /// Takes the settings the engine uses, before it starts or while it
     /// runs, as the lifecycle's Settings section describes: the piece wait
     /// bound for waits that begin afterward, the idle timeout and limits at
-    /// once, releasing idle readers past them, and the peer limit for
-    /// torrents that start afterward. The drain period is the application's.
-    fn apply_settings(&self, settings: &Settings);
+    /// once, releasing idle readers past them, the peer limit for torrents
+    /// that start afterward, and the cache capacity at once, evicting down
+    /// to a smaller one. The drain period is the application's.
+    ///
+    /// Only a smaller cache capacity can be refused: one below the piece
+    /// length of a torrent the engine holds is
+    /// [`EngineError::CapacityBelowPieceLength`], and a refused change
+    /// changes nothing.
+    fn apply_settings(&self, settings: &Settings) -> Result<(), EngineError>;
 
     /// Inspects a source without adding a torrent, contacting peers, or
     /// prefetching. Returns the v1 info hash and, for a torrent file, its

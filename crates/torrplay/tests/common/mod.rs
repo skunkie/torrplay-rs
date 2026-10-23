@@ -58,8 +58,8 @@ pub async fn eventually<T>(
 
 /// The settings that give an engine `config`'s tunable values.
 fn settings_of(config: &EngineConfig) -> torrplay_core::settings::Explicit {
-    let seconds = |duration: Duration| u32::try_from(duration.as_millis().div_ceil(1000)).ok();
-    let count = |count: usize| u32::try_from(count).ok();
+    let seconds = |duration: Duration| u64::try_from(duration.as_millis().div_ceil(1000)).ok();
+    let count = |count: usize| u64::try_from(count).ok();
     torrplay_core::settings::Explicit {
         piece_wait_seconds: seconds(config.piece_wait),
         idle_timeout_seconds: seconds(config.idle_timeout),
@@ -67,6 +67,7 @@ fn settings_of(config: &EngineConfig) -> torrplay_core::settings::Explicit {
         idle_readers_total: count(config.idle_readers_total),
         drain_period_seconds: None,
         peer_limit: count(config.peer_limit),
+        cache_capacity_bytes: Some(config.cache_capacity_bytes),
     }
 }
 

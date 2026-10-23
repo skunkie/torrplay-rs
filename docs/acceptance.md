@@ -175,9 +175,11 @@ engine can pass them, and memory storage (M4) must pass them.
 | SET-02 | PATCH explicit `0` and other values, restart | The values survive the restart, `0` included, and the ETag with them; `null` returns a setting to its default (M6) |
 | SET-03 | Start with stored settings that lack a setting, as from an earlier release | The stored values apply and the missing setting takes the current default (M6) |
 | SET-04 | PATCH a value out of bounds, an unknown member, a per-torrent idle reader limit above the total, or a stale ETag | `422 validation-failed` naming each member, or `412`; nothing changes, the valid members of the patch included (M6) |
-| SET-05 | A database write fails during a PATCH | `500 internal-error`; the settings, their ETag, and the engine's behavior are unchanged (M6) |
+| SET-05 | A database write fails during a PATCH, one that shrinks the cache capacity included | `500 internal-error`; the settings, their ETag, and the engine's behavior are unchanged, the cache capacity included (M6) |
 | SET-06 | Lower the idle reader limits and timeout with idle readers present | Idle readers over the new limits or past the new timeout are released, oldest first (M6) |
 | SET-07 | Change the piece wait bound and the peer limit | A wait that begins afterward uses the new bound; torrents started afterward use the new peer limit (M6) |
+| SET-08 | Shrink the cache capacity below cache usage while a reader streams, then grow it | Streams stay byte-correct; verified, unpinned pieces are evicted until usage is within the new capacity, which no reservation exceeds meanwhile; the statistics report the new capacity; growing admits waiting pieces (M6) |
+| SET-09 | PATCH a cache capacity below a torrent's piece length | `422 validation-failed` naming `cache_capacity_bytes`; nothing changes (M6) |
 
 ### Peers
 
