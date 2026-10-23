@@ -167,6 +167,23 @@ engine can pass them, and memory storage (M4) must pass them.
 | CAC-10 | Stream `multi-boundary` files under sustained eviction | The first and last pieces of each file being read stay pinned and resident while its readers exist |
 | CAC-11 | One local peer sends corrupt blocks for a piece, another sends valid ones | The piece fails its hash check and is downloaded again from the valid peer; corrupt bytes are never served |
 
+### Disk storage
+
+These scenarios accept [ADR 9](adr/0009-disk-storage.md)'s disk storage
+mode (M6).
+
+| ID | Scenario | Expected |
+|---|---|---|
+| DSK-01 | Create `multi-boundary` in `disk` storage, stream every file, restart | Byte-correct; the files sit at their API paths below a directory named by the torrent ID; after a clean restart the torrent starts from its resume bitfield without the full check and streams without downloading again |
+| DSK-02 | Switch a torrent from `memory` to `disk` while a reader streams, then back | The stream continues byte for byte across both transitions; the torrent resource reports `storage_transition` until each completes; memory to disk keeps the cache's verified pieces, and disk to memory deletes the torrent's directory |
+| DSK-03 | Make a transition fail in each step, in both directions | The torrent returns to its storage mode in effect, the configuration's `storage_mode` reverts with a new ETag, `storage_failure` names the target, readers continue, and no directory remains from a failed move to disk |
+| DSK-04 | Kill the process during each step of a transition, and during deletion, then start | The transition runs again from the start; no orphan directory or `.have` file remains; deletion leaves neither the record nor the data |
+| DSK-05 | Ask for `disk` with too little free space, with files that differ only in case or normalization, with a reserved or overlong name, or during another transition | `507 insufficient-storage`, `422 unsupported-torrent` naming the files, or `409 lifecycle-conflict`; nothing changes |
+| DSK-06 | Delete a disk torrent | `204`; its directory and resume bitfield are deleted; entries in the download directory not named like a torrent ID are untouched |
+| DSK-07 | Start after an unclean shutdown with a resume bitfield newer than the data | The full check runs and finds the missing pieces; they are downloaded again and no unverified byte is served |
+| DSK-08 | Delete a disk torrent's file from outside while it streams, then start the torrent again | The torrent fails with a `failure` detail; starting it runs the full check and downloads the file again |
+| DSK-09 | A disk torrent uploads to a local leecher, then switches to memory | The leecher receives the bitfield and blocks; after the switch its connection closes, and a reconnect receives no bitfield |
+
 ### Settings
 
 | ID | Scenario | Expected |

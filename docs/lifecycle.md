@@ -296,6 +296,7 @@ gives each one's bounds and default.
 Later milestones extend these rules before the behavior ships:
 
 - Disk storage adds the `disk` storage mode, uploading as ADR 3 describes,
-  and storage mode transitions with rollback and active-reader behavior.
+  and storage mode transitions with rollback and active-reader behavior, as
+  [ADR 9](adr/0009-disk-storage.md) decides.
 - Background downloads pause during active playback.
 - Preloads add pinned ranges with their own lifecycle.
