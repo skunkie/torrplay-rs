@@ -2501,15 +2501,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "redb"
-version = "4.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39178e0a867f9e3eaa6292a4ab1dd3613f2519c5b564341e1e7b29b270736cc4"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3414,6 +3405,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "directories",
  "h2",
  "reqwest",
  "serde_json",
@@ -3423,6 +3415,7 @@ dependencies = [
  "torrplay-engine",
  "torrplay-fixtures",
  "torrplay-server",
+ "torrplay-store",
  "tracing",
  "tracing-subscriber",
 ]
@@ -3455,6 +3448,7 @@ dependencies = [
  "torrplay",
  "torrplay-engine",
  "torrplay-fixtures",
+ "torrplay-store",
  "tracing",
  "tracing-subscriber",
 ]
@@ -3527,12 +3521,14 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "tokio",
  "tokio-util",
  "torrplay-api",
  "torrplay-contract",
  "torrplay-core",
  "torrplay-fixtures",
+ "torrplay-store",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -3542,12 +3538,12 @@ dependencies = [
 name = "torrplay-store"
 version = "0.1.0"
 dependencies = [
- "redb",
  "rusqlite",
- "serde",
- "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "tokio",
+ "torrplay-core",
+ "torrplay-store",
 ]
 
 [[package]]

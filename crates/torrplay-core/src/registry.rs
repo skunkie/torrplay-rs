@@ -10,6 +10,12 @@
 //! it returns as a guard; it returns snapshots. Checking the v1 info hash and
 //! registering a new torrent happen under the same lock, so concurrent
 //! creations of one info hash register exactly one torrent.
+//!
+//! A persisting caller splits registration in two: [`Registry::prepare`]
+//! checks the info hash and draws an ID without registering anything, the
+//! caller stores the record, and [`Registry::insert`] registers it. Callers
+//! serialize their writes, so nothing registers the info hash in between;
+//! `insert` still refuses a taken ID or info hash.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -75,6 +81,28 @@ pub enum Registration {
         metadata_supplied: bool,
     },
 }
+
+/// The result of [`Registry::prepare`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Prepared {
+    /// No torrent has the info hash; this record, with a newly drawn ID, is
+    /// not registered yet.
+    New(TorrentRecord),
+    /// A torrent with the same v1 info hash already exists, unchanged.
+    Duplicate {
+        /// The existing torrent's ID.
+        existing: TorrentId,
+        /// Whether the existing torrent has no metadata and the new one
+        /// brings it, so the caller should record it.
+        supplies_metadata: bool,
+    },
+}
+
+/// A record [`Registry::insert`] refused: a registered torrent has its ID or
+/// info hash.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("a registered torrent has this ID or info hash")]
+pub struct AlreadyRegistered;
 
 /// A registration that could not complete.
 #[derive(Debug, thiserror::Error)]
@@ -163,6 +191,44 @@ impl Registry {
         }
     }
 
+    /// Checks a new torrent's info hash and draws an ID for it, without
+    /// registering anything; see the [module documentation](self).
+    pub fn prepare(&self, new: NewTorrent) -> Result<Prepared, RegistryError> {
+        let mut state = self.lock();
+        if let Some(existing) = state.by_info_hash.get(&new.info_hash).cloned() {
+            let supplies_metadata = new.metadata.is_some()
+                && state
+                    .torrents
+                    .get(&existing)
+                    .is_some_and(|entry| entry.record.metadata.is_none());
+            return Ok(Prepared::Duplicate {
+                existing,
+                supplies_metadata,
+            });
+        }
+        let id = state.draw_unused_id()?;
+        Ok(Prepared::New(TorrentRecord {
+            id,
+            info_hash: new.info_hash,
+            created_at: new.created_at,
+            configuration: Configuration::new(new.desired_state),
+            metadata: new.metadata,
+        }))
+    }
+
+    /// Registers a prepared or restored record, after the torrents
+    /// registered before it in creation order.
+    pub fn insert(&self, record: TorrentRecord) -> Result<(), AlreadyRegistered> {
+        let mut state = self.lock();
+        if state.torrents.contains_key(&record.id)
+            || state.by_info_hash.contains_key(&record.info_hash)
+        {
+            return Err(AlreadyRegistered);
+        }
+        state.insert(record);
+        Ok(())
+    }
+
     /// Registers a torrent, or reports the registered torrent with the same
     /// v1 info hash. A duplicate changes nothing, except that an existing
     /// torrent without metadata takes `new.metadata` if it is present.
@@ -183,23 +249,13 @@ impl Registry {
         }
         let id = state.draw_unused_id()?;
         let record = TorrentRecord {
-            id: id.clone(),
+            id,
             info_hash: new.info_hash,
             created_at: new.created_at,
             configuration: Configuration::new(new.desired_state),
             metadata: new.metadata,
         };
-        let sequence = state.next_sequence;
-        state.next_sequence += 1;
-        state.creation_order.insert(sequence, id.clone());
-        state.by_info_hash.insert(new.info_hash, id.clone());
-        state.torrents.insert(
-            id,
-            Entry {
-                record: record.clone(),
-                sequence,
-            },
-        );
+        state.insert(record.clone());
         Ok(Registration::Created(record))
     }
 
@@ -259,30 +315,16 @@ impl Registry {
         Ok(true)
     }
 
-    /// Sets a torrent's desired state if `expected` is the configuration's
-    /// current entity tag, checking and updating atomically.
-    pub fn update_desired_state(
+    /// Replaces a torrent's configuration with one its caller stored.
+    pub fn set_configuration(
         &self,
         id: &str,
-        desired_state: DesiredState,
-        expected: &EntityTag,
-    ) -> Result<ConfigurationUpdate, ConfigurationError> {
+        configuration: Configuration,
+    ) -> Result<(), UnknownTorrent> {
         let mut state = self.lock();
-        let configuration = &mut state
-            .torrents
-            .get_mut(id)
-            .ok_or(ConfigurationError::NotFound)?
-            .record
-            .configuration;
-        let current = configuration.etag();
-        if &current != expected {
-            return Err(ConfigurationError::PreconditionFailed { current });
-        }
-        let changed = configuration.set_desired_state(desired_state);
-        Ok(ConfigurationUpdate {
-            configuration: configuration.clone(),
-            changed,
-        })
+        let entry = state.torrents.get_mut(id).ok_or(UnknownTorrent)?;
+        entry.record.configuration = configuration;
+        Ok(())
     }
 
     /// Locks the state. Every update leaves the state consistent before it
@@ -293,6 +335,17 @@ impl Registry {
 }
 
 impl State {
+    /// Registers a record whose ID and info hash are free.
+    fn insert(&mut self, record: TorrentRecord) {
+        let sequence = self.next_sequence;
+        self.next_sequence += 1;
+        self.creation_order.insert(sequence, record.id.clone());
+        self.by_info_hash
+            .insert(record.info_hash, record.id.clone());
+        self.torrents
+            .insert(record.id.clone(), Entry { record, sequence });
+    }
+
     fn draw_unused_id(&mut self) -> Result<TorrentId, RegistryError> {
         for _ in 0..ID_DRAWS {
             let id = TorrentId::from_random_bytes((self.id_source)()?);
@@ -508,37 +561,62 @@ mod tests {
     }
 
     #[test]
-    fn desired_state_updates_check_the_entity_tag() {
+    fn a_prepared_torrent_registers_only_when_inserted() {
         let registry = Registry::new();
-        let record = created(registry.register(new_torrent(1, None)).unwrap());
-        let id = record.id.as_str();
-        let initial = record.configuration.etag();
-
-        let same = registry
-            .update_desired_state(id, DesiredState::Started, &initial)
-            .unwrap();
-        assert!(!same.changed);
-        assert_eq!(same.configuration.etag(), initial);
-
-        let paused = registry
-            .update_desired_state(id, DesiredState::Paused, &initial)
-            .unwrap();
-        assert!(paused.changed);
-        assert_ne!(paused.configuration.etag(), initial);
-
+        let Prepared::New(record) = registry.prepare(new_torrent(1, None)).unwrap() else {
+            panic!("a new info hash");
+        };
+        assert!(registry.is_empty(), "preparing registers nothing");
+        assert!(matches!(
+            registry.prepare(new_torrent(1, None)).unwrap(),
+            Prepared::New(_)
+        ));
+        registry.insert(record.clone()).unwrap();
+        assert_eq!(registry.get(record.id.as_str()), Some(record.clone()));
+        assert_eq!(registry.insert(record.clone()), Err(AlreadyRegistered));
         assert_eq!(
-            registry.update_desired_state(id, DesiredState::Started, &initial),
-            Err(ConfigurationError::PreconditionFailed {
-                current: paused.configuration.etag()
+            registry.prepare(new_torrent(1, Some(metadata()))).unwrap(),
+            Prepared::Duplicate {
+                existing: record.id.clone(),
+                supplies_metadata: true,
+            }
+        );
+        assert!(
+            registry.get(record.id.as_str()).unwrap().metadata.is_none(),
+            "preparing a duplicate changes nothing"
+        );
+    }
+
+    #[test]
+    fn inserted_records_keep_their_configuration_and_order() {
+        let registry = Registry::new();
+        let mut paused = Configuration::new(DesiredState::Started);
+        paused.set_desired_state(DesiredState::Paused);
+        let records: Vec<TorrentRecord> = (1..=3)
+            .map(|n| TorrentRecord {
+                id: TorrentId::from_random_bytes([n; TORRENT_ID_RANDOM_BYTES]),
+                info_hash: info_hash(n),
+                created_at: SystemTime::UNIX_EPOCH + Duration::from_secs(u64::from(n)),
+                configuration: paused.clone(),
+                metadata: None,
             })
+            .collect();
+        for record in &records {
+            registry.insert(record.clone()).unwrap();
+        }
+        assert_eq!(registry.list(), records);
+        let mut started = paused.clone();
+        started.set_desired_state(DesiredState::Started);
+        registry
+            .set_configuration(records[0].id.as_str(), started.clone())
+            .unwrap();
+        assert_eq!(
+            registry.get(records[0].id.as_str()).unwrap().configuration,
+            started
         );
         assert_eq!(
-            registry.get(id).unwrap().configuration.desired_state(),
-            DesiredState::Paused
-        );
-        assert_eq!(
-            registry.update_desired_state("trr_01", DesiredState::Paused, &initial),
-            Err(ConfigurationError::NotFound)
+            registry.set_configuration("trr_01", started),
+            Err(UnknownTorrent)
         );
     }
 

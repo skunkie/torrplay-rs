@@ -27,8 +27,8 @@ so the database need not search text.
 
 Two embedded databases fit: SQLite, through rusqlite with the bundled
 amalgamation, and redb, a pure-Rust key-value store with ACID transactions.
-A spike in `crates/torrplay-store` implemented both behind one interface,
-`Store`, and ran the same cases against each.
+A spike in `crates/torrplay-store`, at commit `badb0e5`, implemented both
+behind one interface, `Store`, and ran the same cases against each.
 
 ## The spike
 
@@ -81,7 +81,7 @@ a physical disk's. Medians of the three runs' medians:
 | Clean release build of the crate, 6 cores, one build each | 40.3 s | 7.6 s |
 | Stripped example binary | 2.33 MiB | 1.44 MiB |
 
-The cases and the measurement run with:
+The cases and the measurement run, on a checkout of `badb0e5`, with:
 
 ```bash
 cargo test -p torrplay-store
@@ -91,6 +91,9 @@ cargo test -p torrplay-store
 cargo run --release -p torrplay-store --example measure -- target/store-measure
 ```
 
+The store that followed kept the SQLite backend and its cases, adapted to
+the domain's types, and removed the redb backend and the measurement.
+
 Every latency is far below a request's. The differences that matter are
 the files, almost three times as large with redb, and the build, where
 SQLite compiles its C amalgamation; incremental builds do not recompile it.
@@ -98,8 +101,8 @@ SQLite compiles its C amalgamation; incremental builds do not recompile it.
 ## Decision
 
 **SQLite**, through rusqlite with the bundled amalgamation, SQLite 3.53.2
-at the time of writing. The spike's SQLite backend becomes the store; the
-redb backend and the crate's backend features go when the store is wired
+at the time of writing. The spike's SQLite backend became the store; the
+redb backend and the crate's backend features went when the store was wired
 in.
 
 The deciding reason is the file format. A user's database lives for
@@ -161,10 +164,17 @@ prevents reconsidering.
 - One database worker thread owns the writing connection. Mutations reach
   it over a bounded channel and reply through a one-shot channel, so async
   tasks never block on disk I/O and writes are serialized in one place.
-- Reads use read-only connections from a small pool, each read in a
-  deferred transaction pinned to one state at its first statement, on
-  blocking worker threads. Opening a connection took about 80 µs in the
-  spike, so the pool keeps them open.
+- Requests read the application's own in-memory records, which the store
+  writes through to: each mutation commits before the records change. The
+  database is read once, at startup, on the writing connection before the
+  worker takes it. If requests come to read the database, read-only
+  connections from a small pool would serve them, each read in one deferred
+  transaction; opening a connection took about 80 µs in the spike, so the
+  pool would keep them open.
+- The connection holds the database file's lock exclusively for as long as
+  the store is open, so a second application on the same data directory
+  fails at startup, naming the database as in use, instead of interleaving
+  its writes.
 - The database runs in WAL mode, so readers never block the writer, with
   `synchronous=FULL`, so a returned commit survives power loss. With WAL,
   `NORMAL` would stay consistent but could lose the last commits; at a
@@ -188,7 +198,8 @@ prevents reconsidering.
   newer schema means.
 - Before migrating an existing database, the store copies it with
   `VACUUM INTO` beside the original, so a user can go back to the release
-  that wrote it.
+  that wrote it. Schema version 1 has no earlier version to migrate from,
+  so the copy comes with the first migration.
 - Columns a migration adds carry defaults that describe existing rows, as
   the storage mode's `memory` does for torrents stored before it.
 
@@ -203,13 +214,13 @@ database, and common SQL usage for the rest:
 - `id` for a table's primary key and `<singular>_id` for a foreign key,
   such as `torrent_id`.
 - Columns named as the contract names the field, with units where the
-  contract has none: `created_at_ms` stores `created_at` as milliseconds
-  since the Unix epoch.
+  contract has none: `created_at_ns` stores `created_at` as nanoseconds
+  since the Unix epoch, the precision listings sort by.
 - Enumerations as text with the contract's values, checked by the database,
   such as `storage_mode TEXT NOT NULL CHECK (storage_mode IN ('memory',
   'disk'))`; booleans as integers checked to 0 or 1, named `is_` or `has_`.
 - Indexes and constraints named by table and columns, such as
-  `torrents_created_at_ms_id_idx` and `torrents_info_hash_key`, so a
+  `torrents_created_at_ns_id_idx` and `torrents_info_hash_key`, so a
   constraint's failure names what failed.
 - A one-row table, such as `settings`, keys on `id INTEGER PRIMARY KEY
   CHECK (id = 1)`.

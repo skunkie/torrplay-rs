@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use http::{HeaderMap, Method, Request, Response, StatusCode, header};
 use serde_json::Value;
+use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
@@ -19,6 +20,7 @@ use torrplay_core::fake::FakeEngine;
 use torrplay_core::id::{TORRENT_ID_RANDOM_BYTES, TorrentId};
 use torrplay_core::registry::Registry;
 use torrplay_server::{App, router};
+use torrplay_store::{Store, StoredTorrent};
 
 /// A running server and its client.
 pub struct TestServer {
@@ -26,6 +28,11 @@ pub struct TestServer {
     pub app: Arc<App<FakeEngine>>,
     /// Every torrent ID the registry drew, in order.
     issued: Arc<Mutex<Vec<TorrentId>>>,
+    /// The data directory, which outlives restarts.
+    data: Arc<TempDir>,
+    /// Stored torrents not restored yet, for a server started without
+    /// restoring them.
+    unrestored: Mutex<Option<Vec<StoredTorrent>>>,
     addr: SocketAddr,
     base: String,
     client: reqwest::Client,
@@ -79,22 +86,58 @@ enum RequestCheck {
 impl TestServer {
     /// Starts a server over an engine with the catalog's small fixtures.
     pub async fn start() -> Self {
-        Self::start_with(true, None).await
+        Self::start_with(None).await
     }
 
     /// Starts a server whose request bodies must arrive within `timeout`.
     pub async fn start_with_body_timeout(timeout: Duration) -> Self {
-        Self::start_with(true, Some(timeout)).await
+        Self::start_with(Some(timeout)).await
     }
 
-    /// Starts a server that draws torrent IDs from the operating system's
-    /// random number generator, as a production server does.
-    pub async fn start_with_random_ids() -> Self {
-        Self::start_with(false, None).await
+    async fn start_with(body_timeout: Option<Duration>) -> Self {
+        let data = Arc::new(TempDir::new().expect("a data directory"));
+        let engine = FakeEngine::with_catalog();
+        Self::start_over(data, engine, body_timeout, true).await
     }
 
-    async fn start_with(sequential_ids: bool, body_timeout: Option<Duration>) -> Self {
-        let engine = Arc::new(FakeEngine::with_catalog());
+    /// Stops the server and starts another over the same data directory and
+    /// a new engine with the catalog's fixtures, as a restarted application
+    /// does.
+    pub async fn restart(self) -> Self {
+        self.restart_with(FakeEngine::with_catalog(), true).await
+    }
+
+    /// Restarts over `engine`, restoring the stored torrents only if
+    /// `restore`; [`finish_restore`](Self::finish_restore) restores them
+    /// later.
+    pub async fn restart_with(self, engine: FakeEngine, restore: bool) -> Self {
+        let data = Arc::clone(&self.data);
+        self.stop().await;
+        Self::start_over(data, engine, None, restore).await
+    }
+
+    /// Restores the torrents a server started without restoring holds.
+    pub async fn finish_restore(&self) {
+        let stored = self
+            .unrestored
+            .lock()
+            .expect("the pending torrents")
+            .take()
+            .expect("torrents left to restore");
+        self.app
+            .restore(stored)
+            .await
+            .expect("the stored torrents are restored");
+    }
+
+    async fn start_over(
+        data: Arc<TempDir>,
+        engine: FakeEngine,
+        body_timeout: Option<Duration>,
+        restore: bool,
+    ) -> Self {
+        let engine = Arc::new(engine);
+        let (store, stored) = Store::open(data.path()).expect("the store opens");
         // Sequential IDs, recorded so tests can address the engine's
         // torrents by the IDs the API reports.
         let issued = Arc::new(Mutex::new(Vec::new()));
@@ -109,15 +152,19 @@ impl TestServer {
                 .push(TorrentId::from_random_bytes(bytes));
             Ok(bytes)
         });
-        let mut app = if sequential_ids {
-            App::with_registry(Arc::clone(&engine), registry)
-        } else {
-            App::new(Arc::clone(&engine))
-        };
+        let mut app = App::with_registry(Arc::clone(&engine), registry, store);
         if let Some(timeout) = body_timeout {
             app = app.with_body_timeout(timeout);
         }
         let app = Arc::new(app);
+        let unrestored = if restore {
+            app.restore(stored)
+                .await
+                .expect("the stored torrents are restored");
+            None
+        } else {
+            Some(stored)
+        };
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("a loopback port");
@@ -139,6 +186,8 @@ impl TestServer {
             engine,
             app,
             issued,
+            data,
+            unrestored: Mutex::new(unrestored),
             addr,
             base,
             client,
@@ -155,6 +204,10 @@ impl TestServer {
             .await
             .expect("the server task does not panic")
             .expect("the server stops cleanly");
+        self.app
+            .close_store()
+            .await
+            .expect("the store closes cleanly");
     }
 
     /// Writes a request with `headers` and then `body` to a new connection,

@@ -5,7 +5,7 @@
 [package]
 name = "torrplay-store"
 version = "0.1.0"
-description = "TorrPlay's persistent store. During the ADR 8 spike it holds two candidate backends, SQLite and redb, behind one interface."
+description = "TorrPlay's persistent store of torrents, in SQLite as ADR 8 decides."
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
@@ -16,16 +16,16 @@ rust-version.workspace = true
 workspace = true
 
 [features]
-default = ["sqlite", "redb"]
-sqlite = ["dep:rusqlite"]
-redb = ["dep:redb"]
+# A switch that makes every write fail, for tests of failure paths.
+test-support = []
 
 [dependencies]
-redb = { workspace = true, optional = true }
-rusqlite = { workspace = true, optional = true }
-serde.workspace = true
-serde_json.workspace = true
+rusqlite.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
+torrplay-core.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# The crate itself with its test support, for its integration tests.
+torrplay-store = { path = ".", features = ["test-support"] }

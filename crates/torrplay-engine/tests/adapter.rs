@@ -13,7 +13,7 @@ use support::{
     MIB, Seeder, bounded, eventually, expected, futures_now, id, magnet, read, start, upload,
 };
 use tokio::io::AsyncReadExt;
-use torrplay_core::engine::{ByteRange, Engine, EngineError, SourceRejection};
+use torrplay_core::engine::{ByteRange, Engine, EngineError, Source, SourceRejection};
 use torrplay_core::lifecycle::{DesiredState, Readiness};
 use torrplay_core::metadata::FileIndex;
 use torrplay_engine::{EngineConfig, LibrqbitEngine, NetworkConfig};
@@ -38,6 +38,11 @@ async fn uploads_stream_every_file_and_range_byte_for_byte() -> anyhow::Result<(
         .await?;
     let status = engine.status(&id(1)).await?;
     assert!(status.metadata.is_some() && status.failure.is_none());
+    assert_eq!(
+        engine.torrent_file(&id(1)).await?,
+        Some(spec.metainfo().bytes),
+        "an upload's torrent file is its original bytes"
+    );
     for (index, file) in spec.files().iter().enumerate() {
         let bytes = read(engine, &id(1), index, 0, file.size_bytes).await?;
         assert_eq!(
@@ -72,7 +77,8 @@ async fn uploads_stream_every_file_and_range_byte_for_byte() -> anyhow::Result<(
 }
 
 /// LIF-02 through the facade: a magnet torrent's metadata arrives from a
-/// seeder, and its file then streams.
+/// seeder, and its file then streams. Its torrent file, built from the
+/// retrieved metadata, keeps the magnet URI's trackers.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn magnet_metadata_arrives_from_a_seeder() -> anyhow::Result<()> {
     let spec = catalog::single_small();
@@ -80,17 +86,46 @@ async fn magnet_metadata_arrives_from_a_seeder() -> anyhow::Result<()> {
     let started = start(vec![seeder.addr], 8 * MIB, Duration::from_secs(30)).await?;
     let engine = &started.engine;
 
-    let inspection = engine.inspect(&magnet(&spec)).await?;
+    // A tracker nothing answers on: peers come from the seeder.
+    let tracker = "http://127.0.0.1:9/announce";
+    let Source::MagnetUri(uri) = magnet(&spec) else {
+        unreachable!("a magnet URI");
+    };
+    let with_tracker = Source::MagnetUri(format!("{uri}&tr=http%3A%2F%2F127.0.0.1%3A9%2Fannounce"));
+    let inspection = engine.inspect(&with_tracker).await?;
     assert!(inspection.metadata.is_none());
+    assert_eq!(engine.torrent_file(&id(1)).await.ok(), None);
     engine
-        .add(&id(1), &magnet(&spec), DesiredState::Started)
+        .add(&id(1), &with_tracker, DesiredState::Started)
         .await?;
+    assert_eq!(
+        engine.torrent_file(&id(1)).await?,
+        None,
+        "no torrent file before metadata"
+    );
     let metadata = eventually("metadata arriving", || {
         let status = futures_now(engine.status(&id(1)))?;
         Ok(status.metadata)
     })
     .await?;
     assert_eq!(metadata.name, b"single-small.bin");
+    let built = engine
+        .torrent_file(&id(1))
+        .await?
+        .expect("a torrent file once metadata arrived");
+    assert_eq!(
+        engine
+            .inspect(&Source::TorrentFile(built.clone()))
+            .await?
+            .info_hash,
+        inspection.info_hash
+    );
+    assert!(
+        built
+            .windows(tracker.len())
+            .any(|window| window == tracker.as_bytes()),
+        "the built torrent file keeps the magnet URI's tracker"
+    );
     let size = spec.total_size_bytes();
     assert_eq!(
         read(engine, &id(1), 0, 0, size).await?,

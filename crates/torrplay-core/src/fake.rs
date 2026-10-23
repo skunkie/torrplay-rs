@@ -434,6 +434,19 @@ impl Engine for FakeEngine {
         })
     }
 
+    async fn torrent_file(&self, id: &TorrentId) -> Result<Option<Vec<u8>>, EngineError> {
+        let mut state = self.ready()?;
+        let torrent = state.torrent(id)?;
+        if torrent.metadata.is_none() {
+            return Ok(None);
+        }
+        let info_hash = torrent.info_hash;
+        Ok(state
+            .fixtures
+            .get(&info_hash)
+            .map(|fixture| fixture.metainfo.clone()))
+    }
+
     async fn open_reader(
         &self,
         id: &TorrentId,

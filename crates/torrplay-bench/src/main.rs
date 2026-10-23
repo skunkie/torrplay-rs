@@ -344,8 +344,9 @@ async fn run(options: &Options) -> anyhow::Result<()> {
     }
 
     let api = SocketAddr::from(([127, 0, 0, 1], free_port().await?));
-    // Go TorrPlay keeps its settings in its data directory; each run gets a
-    // fresh one, as each run gets a fresh process.
+    // Both keep their state in a data directory: Go TorrPlay its settings,
+    // TorrPlay its torrents. Each run gets a fresh one, as each run gets a
+    // fresh process.
     let data = tempfile::tempdir()?;
     let args = match implementation {
         Implementation::TorrPlay => vec![
@@ -356,6 +357,11 @@ async fn run(options: &Options) -> anyhow::Result<()> {
             "--cache-capacity".to_owned(),
             trace.cache_capacity_bytes.to_string(),
             "--no-dht".to_owned(),
+            "--data-dir".to_owned(),
+            data.path()
+                .to_str()
+                .context("temporary paths must be UTF-8")?
+                .to_owned(),
             "--log-level".to_owned(),
             "warn".to_owned(),
         ]

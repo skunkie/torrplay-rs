@@ -132,16 +132,18 @@ paths:
           $ref: '#/components/responses/MalformedRequest'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
     post:
       operationId: createTorrent
       summary: Create a torrent
       description: >-
         Creates a torrent from a magnet URI in JSON or from an uploaded torrent
-        file in a multipart form. The torrent exists as soon as this returns;
-        metadata for a magnet URI is retrieved in the background. Retrying is
-        safe: a client whose request timed out receives either 201 or a
-        duplicate-torrent problem that links to the torrent its first attempt
-        created.
+        file in a multipart form. The torrent exists as soon as this returns,
+        stored so that it survives restarts with its ID; metadata for a magnet
+        URI is retrieved in the background. Retrying is safe: a client whose
+        request timed out receives either 201 or a duplicate-torrent problem
+        that links to the torrent its first attempt created.
       tags: [Torrents]
       requestBody:
         description: >-
@@ -269,13 +271,16 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
     delete:
       operationId: deleteTorrent
       summary: Delete a torrent
       description: >-
-        Removes a torrent. Its streams in progress are canceled individually,
-        and its cached pieces are released in the background, which
-        /api/v1/cache/statistics reflects.
+        Removes a torrent, durably: it does not return after a restart. Its
+        streams in progress are canceled individually, and its cached pieces
+        are released in the background, which /api/v1/cache/statistics
+        reflects.
       tags: [Torrents]
       responses:
         '204':
@@ -323,12 +328,16 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
     patch:
       operationId: updateTorrentConfiguration
       summary: Change a torrent's configuration
       description: >-
         Applies a JSON merge patch to the configuration. The request must
-        carry If-Match with the configuration's current ETag. Pausing closes
+        carry If-Match with the configuration's current ETag. The change is
+        stored before this returns, and the configuration and its ETag survive
+        restarts. Pausing closes
         the torrent's peer connections and cancels its streams; pausing and
         then starting a failed torrent restarts it. The observed state follows
         once the engine applies the change.
@@ -372,6 +381,8 @@ paths:
           $ref: '#/components/responses/MalformedRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/LifecycleConflict'
         '408':
           $ref: '#/components/responses/RequestTimeout'
         '412':
@@ -433,6 +444,8 @@ paths:
           $ref: '#/components/responses/LifecycleConflict'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
 
   /api/v1/torrents/{torrent_id}/files/{file_id}:
     parameters:
@@ -468,6 +481,8 @@ paths:
           $ref: '#/components/responses/LifecycleConflict'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
 
   /api/v1/torrents/{torrent_id}/files/{file_id}/content:
     parameters:
@@ -629,6 +644,8 @@ paths:
           $ref: '#/components/responses/RangeNotSatisfiable'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
 
   /api/v1/torrents/{torrent_id}/statistics:
     parameters:
@@ -715,7 +732,8 @@ paths:
       summary: Check readiness
       description: >-
         Reports whether the application can serve API requests. It reports
-        unavailable while the engine is starting or shutting down.
+        unavailable while the engine is starting, while stored torrents are
+        restored after a start, and while the application shuts down.
       tags: [Health]
       responses:
         '200':
@@ -1006,6 +1024,15 @@ components:
                 title: Lifecycle conflict
                 status: 409
                 detail: The torrent is paused; start it to stream its files.
+            unrestored:
+              summary: A stored torrent the engine refused at startup
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/lifecycle-conflict
+                title: Lifecycle conflict
+                status: 409
+                detail: >-
+                  The torrent could not be restored: Must be a valid torrent
+                  file. Delete it.
     DuplicateTorrent:
       description: A torrent with the same info hash already exists.
       content:
@@ -1171,7 +1198,9 @@ components:
                 status: 500
                 detail: The request failed unexpectedly.
     EngineUnavailable:
-      description: The torrent engine cannot serve the request right now.
+      description: >-
+        The torrent engine cannot serve the request right now, or, after a
+        start, the stored torrents are still being restored.
       headers:
         Retry-After:
           $ref: '#/components/headers/RetryAfter'
@@ -1187,6 +1216,13 @@ components:
                 title: Engine unavailable
                 status: 503
                 detail: The torrent engine is shutting down.
+            restoring:
+              summary: The stored torrents are being restored
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/engine-unavailable
+                title: Engine unavailable
+                status: 503
+                detail: The stored torrents are being restored.
 
   schemas:
     EntryPoint:

@@ -158,12 +158,15 @@ async fn an_engine_that_cannot_start_stops_the_application() -> anyhow::Result<(
     let mut network = NetworkConfig::isolated(Vec::new());
     network.listen = taken.local_addr()?;
     let config = EngineConfig::new(folder.path().to_path_buf(), network);
+    let (store, stored) = torrplay_store::Store::open(&folder.path().join("data"))?;
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let result = bounded(
         "the failed start",
         torrplay::serve(
             listener,
             LibrqbitEngine::new(config),
+            store,
+            stored,
             ShutdownTimings::default(),
             std::future::pending(),
         ),

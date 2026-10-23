@@ -10,8 +10,8 @@ This document defines how a torrent and its readers change state in the
 prototype, and what the API returns at each point. Terms follow the
 [glossary](glossary.md), status codes and problem types follow the
 [API conventions](api-conventions.md), and `api/openapi.yaml` is the contract
-these rules constrain. The prototype has memory storage only and no
-persistence; [Planned changes](#planned-changes) lists what later milestones
+these rules constrain. Every torrent is a persisted torrent in memory
+storage; [Planned changes](#planned-changes) lists what later milestones
 add.
 
 ## State dimensions
@@ -43,7 +43,8 @@ at any moment. Clients must handle observed states added later.
 ## Creation
 
 - `POST /api/v1/torrents` registers the torrent and returns `201 Created`
-  before any network activity completes.
+  before any network activity completes, once the torrent is stored, as
+  [Persistence](#persistence) describes.
 - Metadata from an uploaded torrent file is available immediately, so the
   torrent starts in `downloading`, or in `paused` if the request asked for
   it.
@@ -82,12 +83,15 @@ at any moment. Clients must handle observed states added later.
   [ADR 5](adr/0005-storage.md) records why.
 - Until metadata is available, the files collection, its members, and their
   content return `lifecycle-conflict` (409).
+- When the server records retrieved metadata, it stores the torrent file the
+  engine builds from the retrieved info dictionary and the magnet URI's
+  trackers. A restart before then retrieves the metadata again.
 
 ## Desired state changes
 
 A PATCH of the configuration changes the desired state. The response
-returns once the configuration is stored; the observed state follows when
-the engine has applied the change.
+returns once the configuration is stored durably; the observed state follows
+when the engine has applied the change.
 
 - Setting the current value again changes nothing, and the configuration's
   ETag stays the same.
@@ -167,9 +171,9 @@ peers never fails a torrent.
 
 ## Deletion
 
-- `DELETE` unregisters the torrent and returns `204 No Content`. From then on
-  the torrent and all its subresources return `not-found`, including a
-  repeated `DELETE`.
+- `DELETE` unregisters the torrent and returns `204 No Content` once the
+  deletion is stored. From then on the torrent and all its subresources
+  return `not-found`, including a repeated `DELETE` and after a restart.
 - Streams in progress are canceled, readers released, metadata retrieval
   stopped, and peer connections closed.
 - Partial pieces are discarded and their reservations released. Verified
@@ -180,11 +184,12 @@ peers never fails a torrent.
 
 ## Engine availability
 
-- At startup the API listener opens before the engine is ready. Until it
-  is, `/readyz` returns `503`, and operations that read or change engine
-  state return `engine-unavailable`, with `Retry-After` when a retry time is
-  known. Operations answered from the application's own records are served
-  normally.
+- At startup the API listener opens before the engine is ready and before
+  stored torrents are restored, as [Restarts](#restarts) describes. Until
+  both are done, `/readyz` returns `503`, and operations that read or change
+  engine state return `engine-unavailable`, with `Retry-After` when a retry
+  time is known. Operations answered from the application's own records are
+  served normally.
 - If the engine stops unexpectedly, the same rules apply until it is ready
   again, and torrents it cannot resume become `failed`.
 
@@ -204,18 +209,48 @@ forces exit if it has not finished after 30 seconds:
 5. The engine closes its peer connections and stops.
 6. The process exits.
 
+## Persistence
+
+The application keeps a database in its data directory, which must be on a
+local filesystem, as [ADR 8](adr/0008-database.md) requires.
+
+- For each torrent it stores the ID, the v1 info hash, the creation time to
+  the nanosecond, the configuration with the version its ETag derives from,
+  the storage mode, and the source: an uploaded torrent file's original
+  bytes, or a magnet URI and, once metadata is recorded, the torrent file
+  built from it.
+- Creation, configuration changes, recorded metadata, and deletion are each
+  stored in one transaction before their response, so an interrupted write
+  leaves either the state before it or the state after it.
+- A write that fails is an `internal-error`, and nothing changes: the
+  application's own records change only after the database's.
+- Observed state, failures, statistics, readers, and the piece cache are not
+  stored.
+
 ## Restarts
 
-The prototype does not persist torrents. After a restart the torrents
-collection is empty and the piece cache starts empty. Clients must create
-torrents again.
+- At startup the application opens its database, migrating it to the
+  current schema, and restores every stored torrent in creation order before
+  `/readyz` reports ready.
+- A restored torrent keeps its ID, creation time, configuration, and ETag,
+  and its file IDs follow from its metadata, so links and content URLs saved
+  before the restart keep working. Listing order and cursors stay valid.
+- A torrent with stored metadata starts from it, without retrieving
+  metadata; one without starts retrieving it if its desired state is
+  `started`. The piece cache starts empty, so content is downloaded again.
+- A failure does not survive a restart: a started torrent that had failed
+  starts again, and fails again if its cause remains.
+- A stored torrent the engine no longer accepts, such as one whose piece
+  length exceeds a smaller cache capacity, is restored as `failed`, with a
+  `failure` detail naming the cause, rather than dropped.
+- If the database cannot be opened, for example because it is damaged or
+  was written by a newer schema, the application stops with an error naming
+  the cause instead of starting without its torrents.
 
 ## Planned changes
 
 Later milestones extend these rules before the behavior ships:
 
-- Persistence keeps torrents, metadata, and configuration across restarts,
-  and defines recovery of interrupted operations.
 - Disk storage adds the `disk` storage mode, uploading as ADR 3 describes,
   and storage mode transitions with rollback and active-reader behavior.
 - Background downloads pause during active playback.
