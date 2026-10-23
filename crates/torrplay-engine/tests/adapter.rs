@@ -254,14 +254,19 @@ async fn magnet_metadata_arrives_from_a_seeder() -> anyhow::Result<()> {
     let inspection = engine.inspect(&with_tracker).await?;
     assert!(inspection.metadata.is_none());
     assert_eq!(engine.torrent_file(&id(1)).await.ok(), None);
+    // Added paused, so a fast local seeder cannot deliver the metadata
+    // before the torrent file is checked.
     engine
-        .add(&id(1), &with_tracker, DesiredState::Started)
+        .add(&id(1), &with_tracker, DesiredState::Paused)
         .await?;
     assert_eq!(
         engine.torrent_file(&id(1)).await?,
         None,
         "no torrent file before metadata"
     );
+    engine
+        .set_desired_state(&id(1), DesiredState::Started)
+        .await?;
     let metadata = eventually("metadata arriving", || {
         let status = futures_now(engine.status(&id(1)))?;
         Ok(status.metadata)
