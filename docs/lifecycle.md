@@ -131,14 +131,15 @@ peers never fails a torrent.
   reader.
 - Response headers are sent without waiting for piece data. The stream then
   waits for each missing piece for at most the piece wait bound, 60 seconds
-  by default. A stream whose next piece does not arrive in time is canceled.
+  by default, as [Settings](#settings) describes. A stream whose next piece
+  does not arrive in time is canceled.
 - When a stream ends or its client disconnects, the reader becomes an idle
   reader for at most the idle timeout, 30 seconds by default, so the player's
   next range request can continue it. An idle reader keeps its readahead
   window and pins.
-- At most 4 idle readers exist per torrent and 16 in total. When a new idle
-  reader would exceed either limit, the oldest idle reader in that scope is
-  released first.
+- At most 4 idle readers exist per torrent and 16 in total, by default. When
+  a new idle reader would exceed either limit, the oldest idle reader in that
+  scope is released first.
 - No reader, active or idle, holds an engine stream or another bounded
   engine resource while it waits for a piece. Waiting readers therefore
   cannot block piece writes or exhaust the engine's capacity for concurrent
@@ -202,8 +203,8 @@ forces exit if it has not finished after 30 seconds:
    clients see that status rather than a refused connection.
 2. Requests that change state or start streams return `engine-unavailable`;
    other reads are still served.
-3. Streams in progress may finish during a drain period of 10 seconds;
-   streams still running afterward are canceled.
+3. Streams in progress may finish during the drain period, 10 seconds by
+   default; streams still running afterward are canceled.
 4. The listener closes, idle readers are released, and metadata retrieval
    is canceled.
 5. The engine closes its peer connections and stops.
@@ -247,6 +248,32 @@ local filesystem, as [ADR 8](adr/0008-database.md) requires.
   was written by a newer schema, the application stops with an error naming
   the cause instead of starting without its torrents.
 
+## Settings
+
+`/api/v1/settings` holds the application's settings: the piece wait bound,
+the idle timeout, the idle reader limits per torrent and in total, the drain
+period, and the peer limit per torrent. The contract gives each one's bounds
+and default.
+
+- A `PATCH` is an RFC 7396 merge patch with `If-Match`. A member set to
+  `null` returns to its default; an omitted member keeps its value; explicit
+  `0` is a value like any other.
+- The whole patch is validated, including that the per-torrent idle reader
+  limit does not exceed the total, before anything changes. Then the change
+  is stored, as [Persistence](#persistence) describes, and only then applied,
+  so a failed write is an `internal-error` that changes nothing.
+- The store keeps explicitly set values only. At startup they are merged
+  with the running release's defaults, so a setting a later release adds, or
+  whose default it changes, takes its default wherever it was never set.
+- The piece wait bound applies to waits that begin after the change. The
+  idle timeout and idle reader limits apply at once: idle readers past the
+  new timeout or over a new limit are released, oldest first. The drain
+  period applies to the next shutdown. The peer limit applies to torrents as
+  they start: when they are created, started, or restored after a restart.
+- Changing settings returns `engine-unavailable` while the engine is
+  unavailable, while stored torrents are being restored, and while the
+  application shuts down; reading them is always served.
+
 ## Planned changes
 
 Later milestones extend these rules before the behavior ships:
@@ -255,5 +282,5 @@ Later milestones extend these rules before the behavior ships:
   and storage mode transitions with rollback and active-reader behavior.
 - Background downloads pause during active playback.
 - Preloads add pinned ranges with their own lifecycle.
-- Settings make the piece wait bound, idle timeout, idle reader limits,
-  drain period, and cache capacity configurable.
+- Settings make the cache capacity configurable, with defined behavior when
+  it shrinks during playback.

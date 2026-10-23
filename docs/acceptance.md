@@ -167,6 +167,18 @@ engine can pass them, and memory storage (M4) must pass them.
 | CAC-10 | Stream `multi-boundary` files under sustained eviction | The first and last pieces of each file being read stay pinned and resident while its readers exist |
 | CAC-11 | One local peer sends corrupt blocks for a piece, another sends valid ones | The piece fails its hash check and is downloaded again from the valid peer; corrupt bytes are never served |
 
+### Settings
+
+| ID | Scenario | Expected |
+|---|---|---|
+| SET-01 | GET settings on a new data directory | Every setting at its documented default, with an ETag |
+| SET-02 | PATCH explicit `0` and other values, restart | The values survive the restart, `0` included, and the ETag with them; `null` returns a setting to its default (M6) |
+| SET-03 | Start with stored settings that lack a setting, as from an earlier release | The stored values apply and the missing setting takes the current default (M6) |
+| SET-04 | PATCH a value out of bounds, an unknown member, a per-torrent idle reader limit above the total, or a stale ETag | `422 validation-failed` naming each member, or `412`; nothing changes, the valid members of the patch included (M6) |
+| SET-05 | A database write fails during a PATCH | `500 internal-error`; the settings, their ETag, and the engine's behavior are unchanged (M6) |
+| SET-06 | Lower the idle reader limits and timeout with idle readers present | Idle readers over the new limits or past the new timeout are released, oldest first (M6) |
+| SET-07 | Change the piece wait bound and the peer limit | A wait that begins afterward uses the new bound; torrents started afterward use the new peer limit (M6) |
+
 ### Peers
 
 | ID | Scenario | Expected |
