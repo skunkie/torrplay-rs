@@ -49,6 +49,9 @@ Options:
   --peer-port <PORT>         The BitTorrent peer port on every interface [default: 4240]
   --data-dir <DIR>           Where the torrents database lives, on a local
                              filesystem [default: the platform's data directory]
+  --download-dir <DIR>       Where torrents in disk storage keep their files, a
+                             directory for TorrPlay alone [default: downloads in
+                             the data directory]
   --log-level <LEVEL>        error, warn, info, debug, or trace [default: info]
   --log-filter <TARGETS>     Per-target levels, as in librqbit=debug,torrplay=info,
                              replacing --log-level's filter, for diagnosing the engine
@@ -75,6 +78,9 @@ pub struct Config {
     /// The data directory, or `None` for the platform's; see
     /// [`Config::data_dir`].
     pub data_dir: Option<PathBuf>,
+    /// The download directory, or `None` for the data directory's; see
+    /// [`Config::download_dir`].
+    pub download_dir: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -86,6 +92,7 @@ impl Default for Config {
             log_filter: None,
             dht: true,
             data_dir: None,
+            download_dir: None,
         }
     }
 }
@@ -103,13 +110,24 @@ impl Config {
             .context("no home directory to put the data directory in; pass --data-dir")
     }
 
+    /// The download directory, where torrents in disk storage keep their
+    /// files: `--download-dir`, or else `downloads` in `data_dir`.
+    pub fn download_dir(&self, data_dir: &Path) -> PathBuf {
+        self.download_dir
+            .clone()
+            .unwrap_or_else(|| data_dir.join("downloads"))
+    }
+
     /// The engine configuration for this configuration, with `folder` as
-    /// the session's folder and ADR 2's public network configuration.
-    pub fn engine_config(&self, folder: &Path) -> EngineConfig {
+    /// the session's folder, `download_dir` as the download directory, and
+    /// ADR 2's public network configuration.
+    pub fn engine_config(&self, folder: &Path, download_dir: &Path) -> EngineConfig {
         let mut network = NetworkConfig::public();
         network.listen.set_port(self.peer_port);
         network.dht = self.dht;
-        EngineConfig::new(folder.to_path_buf(), network)
+        let mut config = EngineConfig::new(folder.to_path_buf(), network);
+        config.download_dir = download_dir.to_path_buf();
+        config
     }
 }
 
@@ -204,6 +222,13 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, Arg
                     return Err(invalid(value, "a directory"));
                 }
                 config.data_dir = Some(PathBuf::from(value));
+            }
+            "--download-dir" => {
+                let value = value()?;
+                if value.is_empty() {
+                    return Err(invalid(value, "a directory"));
+                }
+                config.download_dir = Some(PathBuf::from(value));
             }
             "--log-filter" => {
                 let value = value()?;
@@ -431,6 +456,11 @@ mod tests {
             Config::default().listen,
             "127.0.0.1:8080".parse::<SocketAddr>().unwrap()
         );
+        assert_eq!(
+            Config::default().download_dir(Path::new("/srv/torrplay")),
+            Path::new("/srv/torrplay/downloads"),
+            "the download directory defaults to one in the data directory"
+        );
     }
 
     #[test]
@@ -443,6 +473,8 @@ mod tests {
             "--log-filter",
             "librqbit=debug,torrplay_engine=trace",
             "--data-dir=/srv/torrplay",
+            "--download-dir",
+            "/media/torrplay",
             "--no-dht",
         ]) else {
             panic!("the options parse");
@@ -456,6 +488,7 @@ mod tests {
                 log_filter: Some("librqbit=debug,torrplay_engine=trace".into()),
                 dht: false,
                 data_dir: Some("/srv/torrplay".into()),
+                download_dir: Some("/media/torrplay".into()),
             }
         );
         assert_eq!(
@@ -489,6 +522,7 @@ mod tests {
             &["--log-level", "loud"],
             &["--log-filter", "librqbit=loud"],
             &["--data-dir="],
+            &["--download-dir="],
         ] {
             assert!(
                 matches!(parse(args), Err(ArgsError::InvalidValue { .. })),
@@ -516,7 +550,8 @@ mod tests {
             peer_port: 6881,
             ..Config::default()
         };
-        let engine = config.engine_config(Path::new("/session"));
+        let engine = config.engine_config(Path::new("/session"), Path::new("/media/torrplay"));
+        assert_eq!(engine.download_dir, Path::new("/media/torrplay"));
         assert_eq!(engine.network.listen.port(), 6881);
         assert!(engine.network.listen.ip().is_unspecified());
         assert!(engine.network.dht);

@@ -185,6 +185,10 @@ pub struct EngineConfig {
     pub peer_read_timeout: Duration,
     /// The session's folder. Memory storage writes nothing there.
     pub folder: PathBuf,
+    /// Where torrents in disk storage keep their files, one directory per
+    /// torrent named by its ID; ADR 9 gives TorrPlay every entry named like
+    /// a torrent ID.
+    pub download_dir: PathBuf,
     /// How the engine reaches peers.
     pub network: NetworkConfig,
 }
@@ -205,6 +209,7 @@ impl EngineConfig {
             peer_limit: DEFAULT_PEER_LIMIT,
             peer_keep_alive_interval: DEFAULT_PEER_KEEP_ALIVE_INTERVAL,
             peer_read_timeout: DEFAULT_PEER_READ_TIMEOUT,
+            download_dir: folder.join("downloads"),
             folder,
             network,
         }

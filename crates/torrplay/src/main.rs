@@ -77,6 +77,8 @@ async fn run(config: &Config) -> anyhow::Result<()> {
         torrents = contents.torrents.len(),
         "the store is open"
     );
+    let download_dir = config.download_dir(&data_dir);
+    tracing::info!(path = %download_dir.display(), "the download directory");
     // Memory storage writes nothing to the session folder, so it lives only
     // as long as the process; torrents persist in the store.
     let folder = tempfile::tempdir().context("creating the session folder")?;
@@ -86,7 +88,7 @@ async fn run(config: &Config) -> anyhow::Result<()> {
     tracing::info!(address = %listener.local_addr()?, "the API is listening");
     torrplay::serve(
         listener,
-        LibrqbitEngine::new(config.engine_config(folder.path())),
+        LibrqbitEngine::new(config.engine_config(folder.path(), &download_dir)),
         store,
         contents,
         ShutdownTimings::default(),
