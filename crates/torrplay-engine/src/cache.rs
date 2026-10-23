@@ -570,10 +570,12 @@ impl PieceCache {
         Ok(())
     }
 
-    /// Returns the bytes the waiting reservations need beyond the free
-    /// capacity, after releasing retained buffers toward them.
-    pub(crate) fn waiting_shortfall(&self) -> Result<u64, CacheError> {
-        let (shortfall, released) = {
+    /// Returns the bytes the waiting reservations need, for
+    /// [`eviction_candidates`](Self::eviction_candidates), after releasing
+    /// retained buffers toward them, or zero when they fit in the free
+    /// capacity.
+    pub(crate) fn room_needed(&self) -> Result<u64, CacheError> {
+        let (needed, released) = {
             let mut state = self.lock()?;
             let needed: u64 = state
                 .waiting
@@ -586,10 +588,10 @@ impl PieceCache {
                 Vec::new()
             };
             let free = self.capacity_bytes.saturating_sub(state.usage_bytes);
-            (needed.saturating_sub(free), released)
+            (if needed > free { needed } else { 0 }, released)
         };
         drop(released);
-        Ok(shortfall)
+        Ok(needed)
     }
 
     /// Readmits waiting reservations as far as the free capacity goes, in
@@ -1138,6 +1140,22 @@ mod tests {
             "the waiting torrent is woken"
         );
         assert_eq!(cache.stats().unwrap().waiting_pieces, 0);
+    }
+
+    #[test]
+    fn the_room_waiting_pieces_need_selects_enough_to_evict() {
+        let cache = PieceCache::new(100);
+        let small = evictable(&cache);
+        let large = evictable(&cache);
+        verified(&cache, small, 0, 30);
+        verified(&cache, small, 1, 30);
+        assert_eq!(cache.room_needed().unwrap(), 0, "nothing waits");
+        assert_eq!(cache.reserve(large, 0, 50).unwrap(), Reservation::Waiting);
+        assert_eq!(
+            candidates(&cache, cache.room_needed().unwrap()),
+            vec![vec![0]],
+            "40 bytes are free, so one 30-byte piece makes room for 50"
+        );
     }
 
     #[test]
