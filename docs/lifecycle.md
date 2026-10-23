@@ -252,16 +252,22 @@ local filesystem, as [ADR 8](adr/0008-database.md) requires.
 
 `/api/v1/settings` holds the application's settings: the piece wait bound,
 the idle timeout, the idle reader limits per torrent and in total, the drain
-period, and the peer limit per torrent. The contract gives each one's bounds
-and default.
+period, the peer limit per torrent, and the cache capacity. The contract
+gives each one's bounds and default.
 
 - A `PATCH` is an RFC 7396 merge patch with `If-Match`. A member set to
   `null` returns to its default; an omitted member keeps its value; explicit
   `0` is a value like any other.
 - The whole patch is validated, including that the per-torrent idle reader
-  limit does not exceed the total, before anything changes. Then the change
-  is stored, as [Persistence](#persistence) describes, and only then applied,
-  so a failed write is an `internal-error` that changes nothing.
+  limit does not exceed the total, before anything changes. A change that
+  shrinks the cache capacity is then applied before it is stored, since the
+  engine refuses a capacity below the piece length of a torrent it holds,
+  which is `422 validation-failed` naming `cache_capacity_bytes`. Any other
+  change is stored first, as [Persistence](#persistence) describes, and
+  then applied, since applying it cannot be refused. A failed write is an
+  `internal-error` that leaves the settings as they were: a change already
+  applied is undone, although the pieces it evicted and the idle readers it
+  released stay gone.
 - The store keeps explicitly set values only. At startup they are merged
   with the running release's defaults, so a setting a later release adds, or
   whose default it changes, takes its default wherever it was never set.
@@ -270,6 +276,17 @@ and default.
   new timeout or over a new limit are released, oldest first. The drain
   period applies to the next shutdown. The peer limit applies to torrents as
   they start: when they are created, started, or restored after a restart.
+- The cache capacity applies at once, and the readahead budget becomes half
+  of it, which rebalances every reader's readahead. Growing it admits the
+  pieces waiting for room. Shrinking it evicts verified, unpinned pieces in
+  [ADR 5](adr/0005-storage.md)'s eviction order down to the new capacity,
+  releasing the oldest idle readers when nothing else can be evicted, as its
+  bounded fallback does. Partial pieces and active readers' current pieces
+  stay, so cache usage may remain above the capacity until they complete or
+  their readers move on; meanwhile no new piece is admitted, and streams stay
+  byte-correct. A torrent added or retrieving metadata while the capacity
+  shrinks is checked against the new capacity, as
+  [Creation](#creation) describes for pieces longer than the cache.
 - Changing settings returns `engine-unavailable` while the engine is
   unavailable, while stored torrents are being restored, and while the
   application shuts down; reading them is always served.
@@ -282,5 +299,3 @@ Later milestones extend these rules before the behavior ships:
   and storage mode transitions with rollback and active-reader behavior.
 - Background downloads pause during active playback.
 - Preloads add pinned ranges with their own lifecycle.
-- Settings make the cache capacity configurable, with defined behavior when
-  it shrinks during playback.
