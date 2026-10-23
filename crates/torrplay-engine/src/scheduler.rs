@@ -224,6 +224,15 @@ struct State {
     closed: bool,
     // Canceled when the scheduler closes; readers hold its child tokens.
     streams: CancellationToken,
+    // Advances each time the torrent is added again with other storage;
+    // a reader whose stream belongs to an earlier torrent reopens it.
+    epoch: u64,
+    // Present while the torrent is being added again, and canceled once it
+    // has been, which wakes the readers waiting for it.
+    swapping: Option<CancellationToken>,
+    // Canceled when the next swap begins, waking readers waiting in their
+    // stream.
+    swap_begun: CancellationToken,
 }
 
 /// Why a reader could not be opened.
@@ -265,6 +274,9 @@ impl TorrentScheduler {
                 shared: Vec::new(),
                 closed: false,
                 streams: CancellationToken::new(),
+                epoch: 0,
+                swapping: None,
+                swap_begun: CancellationToken::new(),
             }),
         });
         playback.register(Arc::downgrade(&scheduler));
@@ -284,7 +296,7 @@ impl TorrentScheduler {
         cached: &CachedTorrent,
         torrent: &Arc<ManagedTorrent>,
     ) -> anyhow::Result<()> {
-        self.cached.store(true, Ordering::Release);
+        self.set_cached(true)?;
         self.lock()?.binding = Some(Binding {
             cache: Some((cached.cache.clone(), cached.key)),
             layout: cached.layout.clone(),
@@ -301,13 +313,48 @@ impl TorrentScheduler {
         layout: Layout,
         torrent: &Arc<ManagedTorrent>,
     ) -> anyhow::Result<()> {
-        self.cached.store(false, Ordering::Release);
+        self.set_cached(false)?;
         self.lock()?.binding = Some(Binding {
             cache: None,
             layout,
             torrent: Arc::downgrade(torrent),
         });
         self.replan()
+    }
+
+    // Records whether the torrent is in memory storage, moving its readers'
+    // share of the readahead budget when that changes.
+    fn set_cached(&self, cached: bool) -> anyhow::Result<()> {
+        if self.cached.swap(cached, Ordering::AcqRel) != cached {
+            let readers = self.lock()?.readers.len() as u64;
+            self.playback.move_cache_readers(readers, cached);
+        }
+        Ok(())
+    }
+
+    /// Starts adding the torrent again with other storage: its readers stop
+    /// reading from the old torrent and wait until
+    /// [`end_swap`](Self::end_swap), then reopen their streams on the torrent
+    /// bound by then, at their positions.
+    pub(crate) fn begin_swap(&self) -> anyhow::Result<()> {
+        let begun = {
+            let mut state = self.lock()?;
+            state.epoch += 1;
+            state.swapping = Some(CancellationToken::new());
+            std::mem::take(&mut state.swap_begun)
+        };
+        begun.cancel();
+        Ok(())
+    }
+
+    /// Ends a swap [`begin_swap`](Self::begin_swap) started, waking its
+    /// readers. Call it once the torrent is bound again, or failed to be.
+    pub(crate) fn end_swap(&self) -> anyhow::Result<()> {
+        let done = self.lock()?.swapping.take();
+        if let Some(done) = done {
+            done.cancel();
+        }
+        Ok(())
     }
 
     fn readers_changed(&self, added: u64, removed: u64) {
@@ -323,7 +370,7 @@ impl TorrentScheduler {
         file: usize,
     ) -> Result<Reader, OpenError> {
         let stream = torrent.clone().stream(file).await?;
-        let (id, streams) = {
+        let (id, streams, epoch, swap_begun) = {
             let mut state = self.lock()?;
             if state.closed {
                 return Err(OpenError::Closed);
@@ -331,7 +378,12 @@ impl TorrentScheduler {
             let id = state.next_reader;
             state.next_reader += 1;
             state.readers.insert(id, ReaderPosition::new(file, 0));
-            (id, state.streams.child_token())
+            (
+                id,
+                state.streams.child_token(),
+                state.epoch,
+                state.swap_begun.clone(),
+            )
         };
         self.playback.opened();
         self.readers_changed(1, 0);
@@ -342,6 +394,10 @@ impl TorrentScheduler {
             piece: None,
             canceled: Box::pin(streams.clone().cancelled_owned()),
             streams,
+            epoch,
+            swap_begun: Box::pin(swap_begun.cancelled_owned()),
+            swap_done: None,
+            reopening: None,
             scheduler: self.clone(),
         })
     }
@@ -540,7 +596,33 @@ pub struct Reader {
     piece: Option<u64>,
     streams: CancellationToken,
     canceled: Pin<Box<WaitForCancellationFutureOwned>>,
+    // The scheduler's epoch the stream belongs to.
+    epoch: u64,
+    // Completes when the next swap begins, so a reader waiting in its
+    // stream stops waiting on the old torrent.
+    swap_begun: Pin<Box<WaitForCancellationFutureOwned>>,
+    // Completes when the swap the reader waits for ends; kept, since
+    // dropping it would forget the waker it registered.
+    swap_done: Option<Pin<Box<WaitForCancellationFutureOwned>>>,
+    // The stream being reopened on the new torrent after a swap.
+    reopening: Option<Reopening>,
     scheduler: Arc<TorrentScheduler>,
+}
+
+type Reopening = Pin<Box<dyn Future<Output = std::io::Result<FileStream>> + Send>>;
+
+/// What a reader does before reading after a swap.
+enum Swap {
+    /// Nothing: its stream belongs to the torrent bound now.
+    Current,
+    /// Wait until the torrent is bound again.
+    Wait(CancellationToken),
+    /// Reopen its stream on `torrent`, as of `epoch`.
+    Reopen {
+        epoch: u64,
+        torrent: Option<Arc<ManagedTorrent>>,
+        swap_begun: CancellationToken,
+    },
 }
 
 impl Reader {
@@ -570,6 +652,70 @@ impl Reader {
 
     pub(crate) fn scheduler_id(&self) -> u64 {
         self.scheduler.id
+    }
+
+    fn swap(&self) -> Swap {
+        let Ok(state) = self.scheduler.state.lock() else {
+            return Swap::Current;
+        };
+        if state.epoch == self.epoch {
+            return Swap::Current;
+        }
+        if let Some(done) = &state.swapping {
+            return Swap::Wait(done.clone());
+        }
+        Swap::Reopen {
+            epoch: state.epoch,
+            torrent: state
+                .binding
+                .as_ref()
+                .and_then(|binding| binding.torrent.upgrade()),
+            swap_begun: state.swap_begun.clone(),
+        }
+    }
+
+    /// Readies the reader's stream after a swap: waits for the swap to end,
+    /// then reopens the stream on the new torrent at the reader's position.
+    fn poll_swapped(&mut self, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        loop {
+            if let Some(reopening) = self.reopening.as_mut() {
+                let stream = std::task::ready!(reopening.as_mut().poll(cx));
+                self.reopening = None;
+                self.stream = stream?;
+            }
+            match self.swap() {
+                Swap::Current => return Poll::Ready(Ok(())),
+                Swap::Wait(done) => {
+                    let waiting = self
+                        .swap_done
+                        .get_or_insert_with(|| Box::pin(done.cancelled_owned()));
+                    std::task::ready!(waiting.as_mut().poll(cx));
+                    self.swap_done = None;
+                }
+                Swap::Reopen {
+                    epoch,
+                    torrent,
+                    swap_begun,
+                } => {
+                    self.epoch = epoch;
+                    self.swap_begun = Box::pin(swap_begun.cancelled_owned());
+                    let torrent = torrent.ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::ConnectionAborted,
+                            "the torrent left the session",
+                        )
+                    })?;
+                    let (file, position) = (self.file, self.stream.position());
+                    self.reopening = Some(Box::pin(async move {
+                        let mut stream =
+                            torrent.stream(file).await.map_err(std::io::Error::other)?;
+                        tokio::io::AsyncSeekExt::seek(&mut stream, SeekFrom::Start(position))
+                            .await?;
+                        Ok(stream)
+                    }));
+                }
+            }
+        }
     }
 
     fn canceled_error() -> std::io::Error {
@@ -621,14 +767,34 @@ impl AsyncRead for Reader {
         if self.is_canceled() {
             return Poll::Ready(Err(Self::canceled_error()));
         }
-        let result = Pin::new(&mut self.stream).poll_read(cx, buf);
+        let this = &mut *self;
+        if this.poll_swapped(cx)?.is_pending() {
+            // Registers for cancellation while the swap goes on.
+            if this.canceled.as_mut().poll(cx).is_ready() {
+                return Poll::Ready(Err(Self::canceled_error()));
+            }
+            return Poll::Pending;
+        }
+        let result = Pin::new(&mut this.stream).poll_read(cx, buf);
         match result {
-            Poll::Ready(Ok(())) => self.moved(),
+            Poll::Ready(Ok(())) => this.moved(),
             Poll::Pending => {
                 // Registers for cancellation while the stream waits.
-                if self.canceled.as_mut().poll(cx).is_ready() {
+                if this.canceled.as_mut().poll(cx).is_ready() {
                     return Poll::Ready(Err(Self::canceled_error()));
                 }
+                // And for a swap, which leaves the old torrent's stream
+                // waiting for good.
+                if this.swap_begun.as_mut().poll(cx).is_ready() {
+                    cx.waker().wake_by_ref();
+                }
+            }
+            // A swap that began after the check above deletes the old
+            // torrent, failing its stream's reads; the reader reopens the
+            // stream instead.
+            Poll::Ready(Err(_)) if !matches!(this.swap(), Swap::Current) => {
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
             }
             Poll::Ready(Err(_)) => {}
         }
@@ -640,6 +806,10 @@ impl AsyncSeek for Reader {
     fn start_seek(mut self: Pin<&mut Self>, position: SeekFrom) -> std::io::Result<()> {
         if self.is_canceled() {
             return Err(Self::canceled_error());
+        }
+        if self.reopening.take().is_some() {
+            // The stream reopens again, at the new position.
+            self.epoch = self.epoch.wrapping_sub(1);
         }
         let before = self.stream.position();
         Pin::new(&mut self.stream).start_seek(position)?;

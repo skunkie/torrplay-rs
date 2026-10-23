@@ -21,7 +21,7 @@ use std::time::Duration;
 use tokio::sync::MutexGuard as LaneGuard;
 use torrplay_core::engine::{CacheStatistics, Engine, EngineError, Source};
 use torrplay_core::id::TorrentId;
-use torrplay_core::lifecycle::{Failure, ObservedState, Readiness};
+use torrplay_core::lifecycle::{Failure, ObservedState, Readiness, StorageMode};
 use torrplay_core::metadata::Metadata;
 use torrplay_core::registry::{Registry, TorrentRecord};
 use torrplay_store::{Store, StoreError, StoredSettings, StoredTorrent};
@@ -67,6 +67,11 @@ struct Observation {
     /// Why the engine refused the stored torrent at startup; only deletion
     /// clears it.
     restore_failure: Option<Failure>,
+    /// The target of the storage mode transition in progress.
+    transition: Option<StorageMode>,
+    /// The target of the last failed transition and why it failed, until
+    /// the next change of storage mode.
+    storage_failure: Option<(StorageMode, String)>,
 }
 
 /// A torrent as the API presents it: its record and its effective failure.
@@ -74,6 +79,8 @@ struct Observation {
 pub(crate) struct TorrentView {
     pub(crate) record: TorrentRecord,
     pub(crate) failure: Option<Failure>,
+    pub(crate) transition: Option<StorageMode>,
+    pub(crate) storage_failure: Option<(StorageMode, String)>,
 }
 
 impl TorrentView {
@@ -352,18 +359,22 @@ impl<E: Engine> App<E> {
             Err(EngineError::Unavailable { .. } | EngineError::UnknownTorrent) => {}
             Err(error) => return Err(error.into()),
         }
-        let failure = self
+        let observation = self
             .observations()
             .torrents
             .get(&record.id)
-            .and_then(|observation| {
-                observation
-                    .restore_failure
-                    .clone()
-                    .or_else(|| observation.metadata_failure.clone())
-                    .or_else(|| observation.engine_failure.clone())
-            });
-        Ok(TorrentView { record, failure })
+            .cloned()
+            .unwrap_or_default();
+        let failure = observation
+            .restore_failure
+            .or(observation.metadata_failure)
+            .or(observation.engine_failure);
+        Ok(TorrentView {
+            record,
+            failure,
+            transition: observation.transition,
+            storage_failure: observation.storage_failure,
+        })
     }
 
     /// Stores the torrent file of metadata the engine retrieved, then records
@@ -407,6 +418,74 @@ impl<E: Engine> App<E> {
         if let Some(observation) = self.observations().torrents.get_mut(id) {
             observation.metadata_failure = None;
         }
+    }
+
+    /// Whether torrent `id` has a storage mode transition in progress.
+    pub(crate) fn in_transition(&self, id: &TorrentId) -> bool {
+        self.observations()
+            .torrents
+            .get(id)
+            .is_some_and(|observation| observation.transition.is_some())
+    }
+
+    /// Runs torrent `id`'s transition to `target` in the background, the
+    /// configuration already stored, and records its outcome: the storage
+    /// mode in effect when it completes; the configuration returned to the
+    /// storage mode in effect, and `storage_failure`, when it fails. One the
+    /// engine's shutdown interrupts changes nothing, so the next start runs
+    /// it again.
+    pub(crate) fn start_transition(self: &Arc<Self>, id: TorrentId, target: StorageMode) {
+        {
+            let mut observations = self.observations();
+            let observation = observations.torrents.entry(id.clone()).or_default();
+            observation.transition = Some(target);
+            observation.storage_failure = None;
+        }
+        let app = Arc::clone(self);
+        tokio::spawn(async move {
+            let result = app.engine.change_storage_mode(&id, target).await;
+            let _lane = app.write_lane().await;
+            let failure = match result {
+                Ok(()) => {
+                    if let Err(error) = app.store.set_storage_mode(&id, target).await {
+                        // The next start runs the transition again.
+                        tracing::error!(%error, %id, "a completed transition could not be stored");
+                    }
+                    let _ = app.registry.set_storage_mode(id.as_str(), target);
+                    None
+                }
+                Err(EngineError::TransitionFailed { detail }) => {
+                    app.revert_storage_mode(&id).await;
+                    Some((target, detail))
+                }
+                Err(error) => {
+                    tracing::warn!(%error, %id, "a storage mode transition was interrupted");
+                    None
+                }
+            };
+            if let Some(observation) = app.observations().torrents.get_mut(&id) {
+                observation.transition = None;
+                observation.storage_failure = failure;
+            }
+        });
+    }
+
+    /// Returns torrent `id`'s configured storage mode to the one in effect,
+    /// after a failed transition, under the write lane.
+    async fn revert_storage_mode(&self, id: &TorrentId) {
+        let Some(record) = self.registry.get(id.as_str()) else {
+            return;
+        };
+        let mut configuration = record.configuration;
+        if !configuration.set_storage_mode(record.storage_mode) {
+            return;
+        }
+        if let Err(error) = self.store.set_configuration(id, &configuration).await {
+            // The next start runs the transition again.
+            tracing::error!(%error, %id, "a failed transition's configuration could not be reverted");
+            return;
+        }
+        let _ = self.registry.set_configuration(id.as_str(), configuration);
     }
 
     /// Forgets a deleted torrent.

@@ -124,6 +124,7 @@ type Reply<T> = oneshot::Sender<Result<T, StoreError>>;
 enum Command {
     Insert(StoredTorrent, Reply<()>),
     SetConfiguration(TorrentId, Configuration, Reply<()>),
+    SetStorageMode(TorrentId, StorageMode, Reply<()>),
     SetSettings(StoredSettings, Reply<()>),
     SetTorrentFile(TorrentId, Vec<u8>, Reply<()>),
     Delete(TorrentId, Reply<()>),
@@ -195,6 +196,18 @@ impl Store {
     ) -> Result<(), StoreError> {
         let (id, configuration) = (id.clone(), configuration.clone());
         self.send(|reply| Command::SetConfiguration(id, configuration, reply))
+            .await
+    }
+
+    /// Records the storage mode in effect for a torrent, once a transition
+    /// to it completed.
+    pub async fn set_storage_mode(
+        &self,
+        id: &TorrentId,
+        storage_mode: StorageMode,
+    ) -> Result<(), StoreError> {
+        let id = id.clone();
+        self.send(|reply| Command::SetStorageMode(id, storage_mode, reply))
             .await
     }
 

@@ -218,6 +218,17 @@ impl Configuration {
         EntityTag(self.version.to_string())
     }
 
+    /// Sets the storage mode and returns whether it changed, as
+    /// [`set_desired_state`](Self::set_desired_state) does.
+    pub fn set_storage_mode(&mut self, storage_mode: StorageMode) -> bool {
+        if self.storage_mode == storage_mode {
+            return false;
+        }
+        self.storage_mode = storage_mode;
+        self.version = self.version.wrapping_add(1);
+        true
+    }
+
     /// Sets the desired state and returns whether it changed. Setting the
     /// current value again keeps the entity tag.
     pub fn set_desired_state(&mut self, desired_state: DesiredState) -> bool {

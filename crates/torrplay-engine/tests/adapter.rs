@@ -463,6 +463,114 @@ async fn a_disk_torrent_streams_again_from_its_files_after_a_restart() -> anyhow
     Ok(())
 }
 
+/// DSK-02 through the facade: a stream continues byte for byte while its
+/// torrent moves from memory to disk storage and back; the move back
+/// deletes the torrent's directory.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_stream_continues_across_storage_mode_transitions() -> anyhow::Result<()> {
+    let spec = catalog::large(4 * MIB);
+    let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
+    let started = start(vec![seeder.addr], 8 * MIB, Duration::from_secs(30)).await?;
+    let engine = &started.engine;
+    engine
+        .add(&id(1), &upload(&spec), DesiredState::Started)
+        .await?;
+    let size = spec.total_size_bytes();
+    let third = size / 3;
+    let mut reader = engine
+        .open_reader(&id(1), FileIndex(0), range(0, size))
+        .await?;
+    let mut read_until = async |end: u64, from: u64| -> anyhow::Result<()> {
+        let mut bytes = vec![0; usize::try_from(end - from)?];
+        bounded("reading", async {
+            Ok(reader.read_exact(&mut bytes).await?)
+        })
+        .await?;
+        assert!(
+            bytes == expected(&spec, 0, from, end),
+            "bytes {from}..{end}"
+        );
+        Ok(())
+    };
+    read_until(third, 0).await?;
+
+    let directory = engine.download_dir().join(id(1).as_str());
+    // The reader reads while the torrent moves, waiting through the swap.
+    let (moved, read) = tokio::join!(
+        bounded("moving to disk", async {
+            Ok(engine
+                .change_storage_mode(&id(1), StorageMode::Disk)
+                .await?)
+        }),
+        read_until(2 * third, third),
+    );
+    moved?;
+    read?;
+    assert!(directory.is_dir());
+
+    bounded("moving to memory", async {
+        Ok(engine
+            .change_storage_mode(&id(1), StorageMode::Memory)
+            .await?)
+    })
+    .await?;
+    assert!(!directory.exists(), "memory storage keeps nothing on disk");
+    read_until(size, 2 * third).await?;
+    drop(read_until);
+    engine.cache().expect("a started cache").audit()?;
+
+    engine.shutdown().await?;
+    seeder.stop().await;
+    Ok(())
+}
+
+/// DSK-03 through the facade: a move to disk that cannot create the
+/// torrent's directory fails, the torrent stays in memory storage, and its
+/// stream continues.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_failed_transition_leaves_the_torrent_and_its_stream() -> anyhow::Result<()> {
+    let spec = catalog::single_small();
+    let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
+    let blocked = tempfile::NamedTempFile::new()?;
+    let blocked_path = blocked.path().to_path_buf();
+    let started = start_with(vec![seeder.addr], |config| {
+        // A file where the download directory should be.
+        config.download_dir = blocked_path.clone();
+    })
+    .await?;
+    let engine = &started.engine;
+    engine
+        .add(&id(1), &upload(&spec), DesiredState::Started)
+        .await?;
+    let size = spec.total_size_bytes();
+    let mut reader = engine
+        .open_reader(&id(1), FileIndex(0), range(0, size))
+        .await?;
+    let mut first = vec![0; 1000];
+    bounded("reading the first bytes", async {
+        Ok(reader.read_exact(&mut first).await?)
+    })
+    .await?;
+
+    let result = engine.change_storage_mode(&id(1), StorageMode::Disk).await;
+    assert!(
+        matches!(result, Err(EngineError::TransitionFailed { .. })),
+        "{result:?}"
+    );
+    let mut rest = Vec::new();
+    bounded("reading the rest", async {
+        Ok(reader.read_to_end(&mut rest).await?)
+    })
+    .await?;
+    first.extend(rest);
+    assert!(first == expected(&spec, 0, 0, size), "the whole file");
+    assert!(blocked_path.is_file(), "the blocking file is untouched");
+
+    engine.shutdown().await?;
+    seeder.stop().await;
+    Ok(())
+}
+
 /// A paused torrent opens no reader, and a reader whose piece never comes
 /// fails after the piece wait bound.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

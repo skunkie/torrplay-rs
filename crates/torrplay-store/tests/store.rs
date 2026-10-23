@@ -428,9 +428,22 @@ async fn a_configured_storage_mode_is_stored_apart_from_the_one_in_effect() {
         disk.storage_mode = StorageMode::Disk;
         store.insert(disk).await.unwrap();
     }
-    let (_store, stored) = open(&dir);
+    let (store, stored) = open(&dir);
     assert_eq!(stored[0].configuration.storage_mode(), StorageMode::Disk);
     assert_eq!(stored[0].storage_mode, StorageMode::Disk);
+    // A completed transition records the mode in effect alone.
+    store
+        .set_storage_mode(&stored[0].id, StorageMode::Memory)
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.set_storage_mode(&id(99), StorageMode::Memory).await,
+        Err(StoreError::UnknownTorrent)
+    ));
+    drop(store);
+    let (_store, stored) = open(&dir);
+    assert_eq!(stored[0].storage_mode, StorageMode::Memory);
+    assert_eq!(stored[0].configuration.storage_mode(), StorageMode::Disk);
 }
 
 const CHILD: &str = "TORRPLAY_STORE_CHILD";

@@ -52,6 +52,18 @@ impl Worker {
                         Ok(())
                     }));
                 }
+                Command::SetStorageMode(id, storage_mode, reply) => {
+                    let _ = reply.send(self.write(|connection| {
+                        let updated = connection.execute(
+                            "UPDATE torrents SET storage_mode = ?2 WHERE id = ?1",
+                            params![id.as_str(), storage_mode.as_str()],
+                        )?;
+                        if updated == 0 {
+                            return Err(StoreError::UnknownTorrent);
+                        }
+                        Ok(())
+                    }));
+                }
                 Command::SetSettings(settings, reply) => {
                     let _ = reply
                         .send(self.write(|connection| schema::set_settings(connection, &settings)));

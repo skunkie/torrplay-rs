@@ -105,9 +105,15 @@ pub(crate) fn torrent(view: &TorrentView) -> api::Torrent {
         observed_state: observed_state(view.observed_state()),
         size_bytes: metadata.map(|metadata| count(metadata.size_bytes())),
         storage_mode: storage_mode(record.storage_mode),
-        // Transitions are not implemented yet.
-        storage_transition: None,
-        storage_failure: None,
+        storage_transition: view.transition.map(|target| api::TorrentStorageTransition {
+            target_storage_mode: storage_mode(target),
+        }),
+        storage_failure: view.storage_failure.as_ref().map(|(target, detail)| {
+            api::TorrentStorageFailure {
+                target_storage_mode: storage_mode(*target),
+                detail: detail.clone(),
+            }
+        }),
     }
 }
 

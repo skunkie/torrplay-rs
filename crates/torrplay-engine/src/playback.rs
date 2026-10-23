@@ -213,6 +213,17 @@ impl Playback {
         self.next_scheduler.fetch_add(1, Ordering::Relaxed)
     }
 
+    /// Moves `readers` of a torrent into the readers that share the
+    /// readahead budget, when it moves to memory storage, or out of them.
+    pub(crate) fn move_cache_readers(&self, readers: u64, cached: bool) {
+        if cached {
+            self.cache_readers.fetch_add(readers, Ordering::AcqRel);
+        } else {
+            self.cache_readers.fetch_sub(readers, Ordering::AcqRel);
+        }
+        self.replan_all();
+    }
+
     /// The number of active and idle readers of torrents in memory storage,
     /// which share the readahead budget.
     pub(crate) fn cache_readers(&self) -> u64 {

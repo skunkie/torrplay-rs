@@ -248,6 +248,8 @@ struct Live {
     handle: Arc<ManagedTorrent>,
     // Its pieces in the cache; `None` in disk storage.
     cached: Option<CachedTorrent>,
+    // Its files; `None` in memory storage.
+    files: Option<Arc<DiskFiles>>,
     scheduler: Arc<TorrentScheduler>,
 }
 
@@ -710,7 +712,7 @@ impl LibrqbitEngine {
             piece_selector: Some(scheduler.clone()),
             // ADR 3: only disk torrents upload, since memory evicts.
             disable_upload: !disk,
-            initial_pieces: initial_pieces.filter(|_| disk),
+            initial_pieces,
             paused: true,
             overwrite: true,
             initial_peers: Some(self.config.network.initial_peers.clone()),
@@ -738,9 +740,31 @@ impl LibrqbitEngine {
         desired: DesiredState,
         initial_pieces: Option<Vec<u8>>,
     ) -> Result<Live, AddFailure> {
+        self.add_with_scheduler(running, torrent, add, desired, initial_pieces, None)
+            .await
+    }
+
+    /// Adds a torrent as [`add_to_session`](Self::add_to_session) does, with
+    /// `scheduler` and its readers when a transition keeps them.
+    async fn add_with_scheduler(
+        &self,
+        running: &Running,
+        torrent: &Torrent,
+        add: AddTorrent<'_>,
+        desired: DesiredState,
+        initial_pieces: Option<Vec<u8>>,
+        scheduler: Option<Arc<TorrentScheduler>>,
+    ) -> Result<Live, AddFailure> {
         let storage_mode = torrent.state().storage_mode;
         let live = self
-            .join_session(running, torrent, add, storage_mode, initial_pieces)
+            .join_session(
+                running,
+                torrent,
+                add,
+                storage_mode,
+                initial_pieces,
+                scheduler,
+            )
             .await
             .map_err(AddFailure::from_engine)?;
         let piece_length = live
@@ -776,6 +800,7 @@ impl LibrqbitEngine {
         add: AddTorrent<'_>,
         storage_mode: StorageMode,
         initial_pieces: Option<Vec<u8>>,
+        scheduler: Option<Arc<TorrentScheduler>>,
     ) -> anyhow::Result<Live> {
         let info_hash = librqbit_core::hash_id::Id20::new(*torrent.info_hash.as_bytes());
         if storage_mode == StorageMode::Disk {
@@ -783,7 +808,7 @@ impl LibrqbitEngine {
                 .disk
                 .expect(info_hash, torrent.directory.clone(), initial_pieces.clone())?;
         }
-        let scheduler = TorrentScheduler::new(&running.playback);
+        let scheduler = scheduler.unwrap_or_else(|| TorrentScheduler::new(&running.playback));
         let options = self.add_options(running, &scheduler, storage_mode, initial_pieces);
         let handle = running
             .session
@@ -814,6 +839,7 @@ impl LibrqbitEngine {
         Ok(Live {
             handle,
             cached,
+            files,
             scheduler,
         })
     }
@@ -893,6 +919,13 @@ impl LibrqbitEngine {
 
     async fn delete_live(&self, running: &Running, live: Live) -> anyhow::Result<()> {
         live.scheduler.close()?;
+        self.leave_session(running, live).await
+    }
+
+    /// Deletes a live torrent from the session, releasing its cache usage
+    /// and closing its files, but keeps its scheduler and readers, for a
+    /// transition that adds it again.
+    async fn leave_session(&self, running: &Running, live: Live) -> anyhow::Result<()> {
         let result = running
             .session
             .delete(TorrentIdOrHash::Id(live.handle.id()), false)
@@ -901,6 +934,270 @@ impl LibrqbitEngine {
             cached.release()?;
         }
         result
+    }
+
+    /// Moves a live torrent into disk storage: copies the cache's verified
+    /// pieces of it into its files, then adds it again with them, its
+    /// readers waiting meanwhile. A failure returns it to memory storage,
+    /// with its directory deleted.
+    async fn move_to_disk(
+        &self,
+        running: &Running,
+        torrent: &Torrent,
+        live: Live,
+        metadata: &ReportedMetadata,
+    ) -> Result<(), EngineError> {
+        let failed = |detail: String| EngineError::TransitionFailed { detail };
+        let (bytes, layout, pieces) = live
+            .handle
+            .with_metadata(|metadata| {
+                (
+                    metadata.torrent_bytes.to_vec(),
+                    Layout::of(metadata),
+                    metadata.lengths().total_pieces(),
+                )
+            })
+            .map_err(internal)?;
+        let directory = torrent.directory.clone();
+        let copied = match disk::check(&directory, metadata) {
+            Err(refusal) => Err(anyhow::Error::new(refusal)),
+            Ok(()) => {
+                let cached = live
+                    .cached
+                    .as_ref()
+                    .map(|cached| (cached.cache.clone(), cached.key));
+                let metadata = metadata.clone();
+                let directory = directory.clone();
+                let layout = layout.clone();
+                tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
+                    let zeros = vec![0; bitfield::bitfield_bytes(pieces)];
+                    let files = DiskFiles::open(&directory, &metadata, &zeros)?;
+                    if let Some((cache, key)) = cached {
+                        for piece in cache.verified_pieces(key)? {
+                            let Some(length) = layout.piece_length(piece) else {
+                                continue;
+                            };
+                            let mut buf = vec![0; length];
+                            // A piece evicted meanwhile, even one requested
+                            // again since, is downloaded again.
+                            if cache.read_verified(key, piece, &mut buf).is_ok() {
+                                files.write_piece(&layout, piece, &buf)?;
+                            }
+                        }
+                    }
+                    files.flush()?;
+                    Ok(files.bitfield().bits())
+                })
+                .await
+                .map_err(anyhow::Error::new)
+                .and_then(|copied| copied)
+            }
+        };
+        let bits = match copied {
+            Ok(bits) => bits,
+            Err(error) => {
+                torrent.state().live = Some(live);
+                delete_disk_data(directory).await;
+                return Err(failed(format!(
+                    "The torrent's files could not be prepared: {}",
+                    redact(&format!("{error:#}"))
+                )));
+            }
+        };
+        self.swap(
+            running,
+            torrent,
+            live,
+            bytes,
+            StorageMode::Disk,
+            Some(bits),
+            Some(directory),
+        )
+        .await
+    }
+
+    /// Moves a live torrent into memory storage: seeds the cache with the
+    /// pieces its readers need first, then adds it again, its readers
+    /// waiting meanwhile, and deletes its directory once it is in memory. A
+    /// failure returns it to disk storage, its files kept.
+    async fn move_to_memory(
+        &self,
+        running: &Running,
+        torrent: &Torrent,
+        live: Live,
+    ) -> Result<(), EngineError> {
+        let (bytes, layout, piece_length, info_hash) = live
+            .handle
+            .with_metadata(|metadata| {
+                (
+                    metadata.torrent_bytes.to_vec(),
+                    Layout::of(metadata),
+                    metadata.info.info().piece_length,
+                    live.handle.info_hash(),
+                )
+            })
+            .map_err(internal)?;
+        if let Some(detail) = self.too_large(piece_length) {
+            torrent.state().live = Some(live);
+            return Err(EngineError::TransitionFailed { detail });
+        }
+        let Some(files) = live.files.clone() else {
+            torrent.state().live = Some(live);
+            return Err(internal(anyhow::anyhow!("a disk torrent has no files")));
+        };
+        // The pieces the readers need first, as far as the readahead budget
+        // goes and the files hold them.
+        let have = files.bitfield().bits();
+        let budget = running.playback.readahead_bytes();
+        let priorities = live.scheduler.priorities().map_err(internal)?;
+        let seeded = {
+            let files = files.clone();
+            let layout = layout.clone();
+            tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<(u32, Vec<u8>)>> {
+                let mut seeds = Vec::new();
+                let mut bytes = 0;
+                for piece in priorities {
+                    let held = have
+                        .get((piece / 8) as usize)
+                        .is_some_and(|byte| byte & (0x80 >> (piece % 8)) != 0);
+                    let Some(length) = layout.piece_length(piece) else {
+                        continue;
+                    };
+                    if !held || bytes + length as u64 > budget {
+                        continue;
+                    }
+                    let mut buf = vec![0; length];
+                    files.read_piece(&layout, piece, &mut buf)?;
+                    bytes += length as u64;
+                    seeds.push((piece, buf));
+                }
+                Ok(seeds)
+            })
+            .await
+            .map_err(anyhow::Error::new)
+            .and_then(|seeds| seeds)
+        };
+        let seeds = match seeded {
+            Ok(seeds) => seeds,
+            Err(error) => {
+                torrent.state().live = Some(live);
+                return Err(EngineError::TransitionFailed {
+                    detail: format!(
+                        "The torrent's files could not be read: {}",
+                        redact(&format!("{error:#}"))
+                    ),
+                });
+            }
+        };
+        let mut bits = vec![0; files.bitfield().bits().len()];
+        for (piece, _) in &seeds {
+            bits[(*piece / 8) as usize] |= 0x80 >> (piece % 8);
+        }
+        running.factory.seed(info_hash, seeds).map_err(internal)?;
+        drop(files);
+        let directory = torrent.directory.clone();
+        let result = self
+            .swap(
+                running,
+                torrent,
+                live,
+                bytes,
+                StorageMode::Memory,
+                Some(bits),
+                None,
+            )
+            .await;
+        // A failed move to memory keeps the torrent's files, and drops the
+        // seeds a failed addition left unused.
+        match &result {
+            Ok(()) => delete_disk_data(directory).await,
+            Err(_) => running
+                .factory
+                .seed(info_hash, Vec::new())
+                .map_err(internal)?,
+        }
+        result
+    }
+
+    /// Deletes a live torrent from the session and adds it again from
+    /// `bytes` in `storage_mode`, starting from `initial_pieces`, with its
+    /// scheduler, whose readers wait meanwhile and then continue. If that
+    /// fails, it adds the torrent again in the storage mode it had, with the
+    /// pieces that storage records, and deletes `discard`, the directory a
+    /// failed move to disk prepared. If that fails too, the torrent fails.
+    #[allow(clippy::too_many_arguments)]
+    async fn swap(
+        &self,
+        running: &Running,
+        torrent: &Torrent,
+        live: Live,
+        bytes: Vec<u8>,
+        storage_mode: StorageMode,
+        initial_pieces: Option<Vec<u8>>,
+        discard: Option<PathBuf>,
+    ) -> Result<(), EngineError> {
+        let scheduler = live.scheduler.clone();
+        let previous = torrent.state().storage_mode;
+        let previous_bits = live.files.as_ref().map(|files| files.bitfield().bits());
+        let desired = torrent.state().desired;
+        scheduler.begin_swap().map_err(internal)?;
+        let result = async {
+            self.leave_session(running, live)
+                .await
+                .map_err(|error| redact(&format!("{error:#}")))?;
+            torrent.state().storage_mode = storage_mode;
+            match self
+                .add_with_scheduler(
+                    running,
+                    torrent,
+                    AddTorrent::from_bytes(bytes.clone()),
+                    desired,
+                    initial_pieces,
+                    Some(scheduler.clone()),
+                )
+                .await
+            {
+                Ok(added) => {
+                    torrent.state().live = Some(added);
+                    Ok(())
+                }
+                Err(failure) => {
+                    let detail = failure
+                        .detail()
+                        .unwrap_or_else(|| "The engine could not add the torrent again.".into());
+                    torrent.state().storage_mode = previous;
+                    let restored = self
+                        .add_with_scheduler(
+                            running,
+                            torrent,
+                            AddTorrent::from_bytes(bytes.clone()),
+                            desired,
+                            previous_bits,
+                            Some(scheduler.clone()),
+                        )
+                        .await;
+                    match restored {
+                        Ok(added) => torrent.state().live = Some(added),
+                        Err(_) => {
+                            let _ = scheduler.close();
+                            torrent.state().failure = Some(Failure {
+                                detail: format!(
+                                    "The torrent could not return to {} storage.",
+                                    previous.as_str()
+                                ),
+                            });
+                        }
+                    }
+                    if let Some(directory) = discard {
+                        delete_disk_data(directory).await;
+                    }
+                    Err(detail)
+                }
+            }
+        }
+        .await;
+        scheduler.end_swap().map_err(internal)?;
+        result.map_err(|detail| EngineError::TransitionFailed { detail })
     }
 
     /// Cancels a torrent's metadata retrieval and removes anything it added
@@ -1178,6 +1475,56 @@ impl Engine for LibrqbitEngine {
             }
         }
         Ok(())
+    }
+
+    async fn check_storage_mode(
+        &self,
+        id: &TorrentId,
+        storage_mode: StorageMode,
+    ) -> Result<(), EngineError> {
+        self.running()?;
+        let torrent = self.torrent(id)?;
+        let bytes = {
+            let state = torrent.state();
+            match &state.live {
+                Some(live) => live
+                    .handle
+                    .with_metadata(|metadata| metadata.torrent_bytes.to_vec())
+                    .map_err(internal)?,
+                None => return Ok(()),
+            }
+        };
+        let inspected = inspect::torrent_file(&bytes)?;
+        self.check_storage(&inspected, storage_mode, &torrent.directory)
+    }
+
+    async fn change_storage_mode(
+        &self,
+        id: &TorrentId,
+        storage_mode: StorageMode,
+    ) -> Result<(), EngineError> {
+        let running = self.running()?;
+        let torrent = self.torrent(id)?;
+        let _operations = torrent.operations.lock().await;
+        let (live, metadata) = {
+            let mut state = torrent.state();
+            if state.storage_mode == storage_mode {
+                return Ok(());
+            }
+            if state.live.is_none() {
+                // Metadata retrieval adds it in the new storage mode.
+                state.storage_mode = storage_mode;
+                return Ok(());
+            }
+            (state.live.take(), state.metadata.clone())
+        };
+        let (Some(live), Some(metadata)) = (live, metadata) else {
+            return Err(internal(anyhow::anyhow!("a live torrent has no metadata")));
+        };
+        match storage_mode {
+            StorageMode::Disk => self.move_to_disk(&running, &torrent, live, &metadata).await,
+            StorageMode::Memory => self.move_to_memory(&running, &torrent, live).await,
+        }
     }
 
     async fn supply_metadata(

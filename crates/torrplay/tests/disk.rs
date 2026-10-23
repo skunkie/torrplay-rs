@@ -13,7 +13,7 @@ mod common;
 
 use std::path::PathBuf;
 
-use common::{Running, expected, json};
+use common::{MIB, Running, eventually, expected, json, upload};
 use reqwest::{Client, StatusCode};
 use torrplay::ShutdownTimings;
 use torrplay_engine::EngineConfig;
@@ -114,5 +114,74 @@ async fn a_disk_torrent_streams_survives_a_restart_and_deletes_its_data() -> any
     );
     assert!(!directory.with_extension("have").exists());
     running.stop().await?;
+    Ok(())
+}
+
+/// Changes the storage mode of the torrent at `path` with a merge patch.
+async fn patch_storage_mode(
+    running: &Running,
+    client: &Client,
+    path: &str,
+    mode: &str,
+) -> anyhow::Result<()> {
+    let configuration = running.url(&format!("{path}/configuration"));
+    let current = client.get(&configuration).send().await?;
+    let etag = current.headers()["etag"].clone();
+    let patched = client
+        .patch(&configuration)
+        .header("content-type", "application/merge-patch+json")
+        .header("if-match", etag)
+        .body(format!(r#"{{"storage_mode":"{mode}"}}"#))
+        .send()
+        .await?;
+    assert_eq!(patched.status(), StatusCode::OK);
+    Ok(())
+}
+
+/// DSK-02 end to end: an HTTP stream continues byte for byte while its
+/// torrent moves from memory to disk storage and back, and the move back
+/// deletes the torrent's directory.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_stream_continues_while_its_torrent_changes_storage() -> anyhow::Result<()> {
+    let spec = catalog::large(4 * MIB);
+    let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
+    let downloads = tempfile::tempdir()?;
+    let download_dir: PathBuf = downloads.path().to_path_buf();
+    let tune = |config: &mut EngineConfig| {
+        *config = config.clone().with_cache_capacity(8 * MIB);
+        config.download_dir = download_dir.clone();
+    };
+    let client = Client::new();
+    let running = Running::start(vec![seeder.addr], ShutdownTimings::default(), tune).await?;
+    let created = upload(&running, &client, &spec).await?;
+    let size = spec.total_size_bytes();
+
+    let mut response = client.get(running.url(&created.content[0])).send().await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut received = Vec::new();
+    let directory = download_dir.join(&created.id);
+    for (mode, from) in [("disk", size / 3), ("memory", 2 * size / 3)] {
+        while (received.len() as u64) < from {
+            let chunk = response.chunk().await?.expect("more of the body");
+            received.extend_from_slice(&chunk);
+        }
+        patch_storage_mode(&running, &client, &created.path, mode).await?;
+        eventually(&format!("{mode} storage"), async || {
+            let torrent = json(client.get(running.url(&created.path)).send().await?).await?;
+            Ok(
+                (torrent["storage_mode"] == mode && torrent["storage_transition"].is_null())
+                    .then_some(()),
+            )
+        })
+        .await?;
+        assert_eq!(directory.exists(), mode == "disk");
+    }
+    while let Some(chunk) = response.chunk().await? {
+        received.extend_from_slice(&chunk);
+    }
+    assert!(received == expected(&spec, 0, 0, size), "the whole file");
+
+    running.stop().await?;
+    seeder.stop().await;
     Ok(())
 }

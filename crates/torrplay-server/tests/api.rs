@@ -75,6 +75,23 @@ fn merge_patch(path: &str, if_match: &str, body: &Value) -> http::Request<Vec<u8
     )
 }
 
+/// Polls torrent `path` until `done` holds for its representation.
+async fn torrent_until(
+    server: &TestServer,
+    path: &str,
+    what: &str,
+    done: impl Fn(&Value) -> bool,
+) -> Value {
+    for _ in 0..500 {
+        let torrent = server.get(path).await.json();
+        if done(&torrent) {
+            return torrent;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the torrent never showed {what}");
+}
+
 fn expected_bytes(spec: &FixtureSpec, index: usize, start: u64, end: u64) -> Vec<u8> {
     let mut bytes = vec![0; usize::try_from(end - start).unwrap()];
     generator::fill(spec.file_seed(index), start, &mut bytes);
@@ -284,6 +301,124 @@ mod scenario {
             server.engine.storage_mode(&id),
             Some(StorageMode::Disk),
             "restored in disk storage"
+        );
+        server.stop().await;
+    }
+
+    /// DSK-02, DSK-03, and DSK-05 through the API: a change of storage mode
+    /// is answered at once and completes in the background; one in
+    /// progress shows in the torrent and refuses another; one that fails
+    /// reverts the configuration with a new ETag and reports
+    /// `storage_failure`; too little free space is `507`.
+    pub async fn storage_transitions() {
+        let server = TestServer::start().await;
+        let spec = catalog::single_small();
+        let created = server.upload(&spec.metainfo().bytes, None).await;
+        let id = server.id_of(&created);
+        let path = created.json()["links"]["self"].as_str().unwrap().to_owned();
+        let configuration = format!("{path}/configuration");
+        let tag = |exchange: &Exchange| exchange.header(header::ETAG).unwrap().to_owned();
+        let current = tag(&server.get(&configuration).await);
+
+        let disk = server
+            .send(merge_patch(
+                &configuration,
+                &current,
+                &json!({ "storage_mode": "disk" }),
+            ))
+            .await;
+        assert_eq!(disk.status, StatusCode::OK);
+        assert_eq!(disk.json()["storage_mode"], "disk");
+        let torrent = torrent_until(&server, &path, "disk storage", |torrent| {
+            torrent["storage_mode"] == "disk"
+        })
+        .await;
+        assert_eq!(torrent["storage_transition"], Value::Null);
+        assert_eq!(server.engine.storage_mode(&id), Some(StorageMode::Disk));
+
+        server.engine.fail_transitions(Some("The disk filled up."));
+        let failing = server
+            .send(merge_patch(
+                &configuration,
+                &tag(&disk),
+                &json!({ "storage_mode": "memory" }),
+            ))
+            .await;
+        assert_eq!(failing.json()["storage_mode"], "memory");
+        let torrent = torrent_until(&server, &path, "a storage failure", |torrent| {
+            !torrent["storage_failure"].is_null()
+        })
+        .await;
+        assert_eq!(
+            torrent["storage_failure"],
+            json!({ "target_storage_mode": "memory", "detail": "The disk filled up." })
+        );
+        assert_eq!(torrent["storage_mode"], "disk");
+        let reverted = server.get(&configuration).await;
+        assert_eq!(
+            reverted.json()["storage_mode"],
+            "disk",
+            "the configuration reverts"
+        );
+        assert_ne!(tag(&reverted), tag(&failing), "with a new ETag");
+        server.engine.fail_transitions(None);
+
+        let gate = server.engine.hold_transitions();
+        let held = server
+            .send(merge_patch(
+                &configuration,
+                &tag(&reverted),
+                &json!({ "storage_mode": "memory" }),
+            ))
+            .await;
+        assert_eq!(held.status, StatusCode::OK);
+        let torrent = server.get(&path).await.json();
+        assert_eq!(
+            torrent["storage_transition"],
+            json!({ "target_storage_mode": "memory" })
+        );
+        assert_eq!(
+            torrent["storage_mode"], "disk",
+            "the mode in effect until it completes"
+        );
+        assert_eq!(
+            torrent["storage_failure"],
+            Value::Null,
+            "a new change clears the failure"
+        );
+        assert_problem(
+            &server
+                .send(merge_patch(
+                    &configuration,
+                    &tag(&held),
+                    &json!({ "storage_mode": "disk" }),
+                ))
+                .await,
+            StatusCode::CONFLICT,
+            "lifecycle-conflict",
+        );
+        gate.notify_one();
+        torrent_until(&server, &path, "memory storage", |torrent| {
+            torrent["storage_mode"] == "memory" && torrent["storage_transition"].is_null()
+        })
+        .await;
+
+        server.engine.set_disk_free_bytes(1);
+        let full = server
+            .send(merge_patch(
+                &configuration,
+                &tag(&held),
+                &json!({ "storage_mode": "disk" }),
+            ))
+            .await;
+        assert_problem(
+            &full,
+            StatusCode::INSUFFICIENT_STORAGE,
+            "insufficient-storage",
+        );
+        assert_eq!(
+            server.get(&configuration).await.json()["storage_mode"],
+            "memory"
         );
         server.stop().await;
     }
@@ -2030,9 +2165,6 @@ const EXEMPT: &[(&str, u16)] = &[
     ("getSettings", 500),
     // A process that answers is live.
     ("getLiveness", 503),
-    // Storage mode transitions are specified ahead of their
-    // implementation, which removes this.
-    ("updateTorrentConfiguration", 507),
 ];
 
 macro_rules! scenarios {
@@ -2083,5 +2215,6 @@ scenarios!(
     settings,
     stored_settings,
     disk_creation,
+    storage_transitions,
     cache_capacity_settings,
 );

@@ -119,6 +119,13 @@ pub enum EngineError {
         /// The free space where its files would go.
         available_bytes: u64,
     },
+    /// A storage mode transition failed and the torrent returned to the
+    /// storage mode in effect; the detail names the cause.
+    #[error("the storage mode transition failed: {detail}")]
+    TransitionFailed {
+        /// Why, for the torrent resource's `storage_failure`.
+        detail: String,
+    },
     /// A new cache capacity is below a torrent's piece length.
     #[error("a torrent's {piece_length_bytes}-byte pieces exceed the new cache capacity")]
     CapacityBelowPieceLength {
@@ -308,6 +315,31 @@ pub trait Engine: Send + Sync + 'static {
         &self,
         id: &TorrentId,
         torrent_file: &[u8],
+    ) -> impl Future<Output = Result<(), EngineError>> + Send;
+
+    /// Checks that a torrent can move to `storage_mode` without changing
+    /// anything: disk storage for files the download directory cannot hold
+    /// is [`SourceRejection::Unsupported`], too little free space for them
+    /// [`EngineError::InsufficientStorage`], and memory storage for pieces
+    /// longer than cache capacity [`SourceRejection::Unsupported`]. A
+    /// torrent without metadata passes; it is checked once metadata arrives.
+    fn check_storage_mode(
+        &self,
+        id: &TorrentId,
+        storage_mode: StorageMode,
+    ) -> impl Future<Output = Result<(), EngineError>> + Send;
+
+    /// Moves a torrent to `storage_mode`, as ADR 9 decides, and returns once
+    /// it is in effect. Its streams and readers continue across it. A
+    /// transition that fails returns the torrent to the storage mode it had
+    /// and is [`EngineError::TransitionFailed`]; one the engine's shutdown
+    /// interrupts is [`EngineError::Unavailable`] and is not undone. A
+    /// torrent without metadata changes at once, and uses the storage mode
+    /// once metadata arrives.
+    fn change_storage_mode(
+        &self,
+        id: &TorrentId,
+        storage_mode: StorageMode,
     ) -> impl Future<Output = Result<(), EngineError>> + Send;
 
     /// Applies a desired state and returns once the engine accepted it; the

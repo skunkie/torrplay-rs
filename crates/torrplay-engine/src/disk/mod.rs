@@ -35,6 +35,7 @@ use torrplay_core::metadata::ReportedMetadata;
 use self::bitfield::ResumeBitfield;
 use self::io::FileAt;
 use crate::inspect;
+use crate::storage::Layout;
 
 /// Why a torrent cannot use disk storage where it would go.
 #[derive(Debug, thiserror::Error)]
@@ -250,6 +251,33 @@ impl DiskFiles {
     pub fn set_length(&self, file_id: usize, length: u64) -> anyhow::Result<()> {
         if let Some(file) = self.file(file_id)? {
             file.set_len(length)?;
+        }
+        Ok(())
+    }
+
+    /// Writes the bytes of verified piece `piece` of a torrent laid out as
+    /// `layout` to the files it spans, and records it in the bitfield.
+    pub(crate) fn write_piece(
+        &self,
+        layout: &Layout,
+        piece: u32,
+        bytes: &[u8],
+    ) -> anyhow::Result<()> {
+        for (file_id, offset, range) in layout.piece_spans(piece)? {
+            self.write(file_id, offset, &bytes[range])?;
+        }
+        Ok(self.bitfield.set(piece)?)
+    }
+
+    /// Reads piece `piece` of a torrent laid out as `layout` into `buf`.
+    pub(crate) fn read_piece(
+        &self,
+        layout: &Layout,
+        piece: u32,
+        buf: &mut [u8],
+    ) -> anyhow::Result<()> {
+        for (file_id, offset, range) in layout.piece_spans(piece)? {
+            self.read(file_id, offset, &mut buf[range])?;
         }
         Ok(())
     }

@@ -336,6 +336,18 @@ impl Registry {
         Ok(())
     }
 
+    /// Records the storage mode in effect for torrent `id`.
+    pub fn set_storage_mode(
+        &self,
+        id: &str,
+        storage_mode: StorageMode,
+    ) -> Result<(), UnknownTorrent> {
+        let mut state = self.lock();
+        let entry = state.torrents.get_mut(id).ok_or(UnknownTorrent)?;
+        entry.record.storage_mode = storage_mode;
+        Ok(())
+    }
+
     /// Locks the state. Every update leaves the state consistent before it
     /// can panic, so a poisoned lock's state is still usable.
     fn lock(&self) -> MutexGuard<'_, State> {
