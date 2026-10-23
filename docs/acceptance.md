@@ -113,8 +113,14 @@ milestones. Later milestones keep every scenario passing.
 | LIF-08 | Create the same info hash after deletion | New torrent with a new ID |
 | LIF-09 | Requests before the engine is ready | `/readyz` `503`; engine-backed operations `503 engine-unavailable`; others served (M3) |
 | LIF-10 | Termination signal with streams in progress | `/readyz` `503` while connections are accepted; new streams and state changes `503`; streams finish or are canceled after the drain period; exit within 30 seconds with all tasks joined (M4) |
-| LIF-11 | Restart | Torrents collection empty; IDs from before the restart never reappear |
+| LIF-11 | Restart with an uploaded torrent, a paused torrent, and a magnet torrent whose metadata was recorded | The same IDs, creation times, order, and configuration ETags; content URLs from before the restart stream; the magnet torrent has its metadata without retrieving it (M6) |
 | LIF-12 | One local peer sends metadata that does not match the info hash, another sends valid metadata | The mismatched metadata is discarded, the torrent never fails, and metadata from the valid peer is used (M2) |
+| LIF-13 | Delete a torrent, then restart | The torrent stays `not-found`, and its info hash creates a new torrent (M6) |
+| LIF-14 | A database write fails during creation, a configuration change, and deletion | `500 internal-error`; the collection, the configuration, and its ETag are unchanged (M6) |
+| LIF-15 | Requests while stored torrents are being restored | `/readyz` and torrent operations `503`, the latter `engine-unavailable` (M6) |
+| LIF-16 | Restart with a stored torrent the engine refuses | Restored as `failed` with a failure detail; content and configuration changes `409 lifecycle-conflict`; deletion works (M6) |
+| LIF-17 | A process writing torrents is killed at moments spread across its commits | The database opens with whole torrents only, keeping every insert reported before the kill (M6) |
+| LIF-18 | A second application opens the same data directory | It fails at startup, naming the database as in use (M6) |
 
 ### Streaming
 

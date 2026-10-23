@@ -106,8 +106,15 @@ options set the API address, the BitTorrent peer port (4240), the cache
 capacity in bytes (256 MiB), and the log level of TorrPlay's own logs, which
 go to standard error; other crates log warnings and errors only. The engine
 uses ADR 2's network configuration, so a running instance reaches the public
-swarm through DHT and trackers. Nothing is persisted: the session folder is
-temporary, and the torrents are gone after a restart.
+swarm through DHT and trackers.
+
+Torrents persist in `torrplay.db`, a SQLite database in the data directory,
+which `--data-dir` sets. It defaults to the platform's data directory for
+applications: `~/.local/share/torrplay` on Linux, or `$XDG_DATA_HOME/torrplay`
+when that is set, `~/Library/Application Support/torrplay` on macOS, and
+`%APPDATA%\torrplay\data` on Windows. It must be on a local filesystem, as
+ADR 8 requires. Tests and benchmark runs pass a temporary directory so that
+they never share a database.
 
 The listener serves HTTP/1.1 and cleartext HTTP/2 to clients with prior
 knowledge, and it opens before the engine is ready, so `/readyz` answers

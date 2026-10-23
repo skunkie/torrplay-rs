@@ -85,6 +85,13 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 : A torrent whose identity, metadata, and configuration survive application
   restarts. Only persisted torrents may use disk storage.
 
+**Torrent file**
+: A metainfo file ([BEP 3](https://www.bittorrent.org/beps/bep_0003.html)):
+  the bencoded dictionary of a torrent's metadata and trackers. A persisted
+  torrent keeps an uploaded torrent file's original bytes, or, for a magnet
+  link, the torrent file the engine builds from the retrieved metadata and
+  the link's trackers.
+
 ## Pieces and the cache
 
 **Piece**
