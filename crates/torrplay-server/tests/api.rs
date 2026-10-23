@@ -1958,6 +1958,10 @@ const EXEMPT: &[(&str, u16)] = &[
     ("getSettings", 500),
     // A process that answers is live.
     ("getLiveness", 503),
+    // Disk storage is specified ahead of its implementation, which removes
+    // these.
+    ("createTorrent", 507),
+    ("updateTorrentConfiguration", 507),
 ];
 
 macro_rules! scenarios {

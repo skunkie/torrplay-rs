@@ -252,10 +252,11 @@ The initial problem types, by name, each appended to the base above:
 | `unsupported-media-type` | 415 | The request's `Content-Type` is not accepted by the operation. |
 | `range-not-satisfiable` | 416 | No requested range overlaps the content. |
 | `validation-failed` | 422 | The body parses but violates its schema or a documented rule, including unknown and read-only members, invalid torrent metainfo, and an unparsable magnet URI. |
-| `unsupported-torrent` | 422 | A valid torrent's version or features are not supported, such as a v2-only torrent, or its pieces are longer than cache capacity. |
+| `unsupported-torrent` | 422 | A valid torrent's version or features are not supported, such as a v2-only torrent, pieces longer than cache capacity in memory storage, or files the download directory cannot hold in disk storage. |
 | `precondition-required` | 428 | A PATCH omits `If-Match`. |
 | `internal-error` | 500 | An unexpected failure. |
 | `engine-unavailable` | 503 | The torrent engine cannot serve the request right now; `Retry-After` is sent when a retry time is known. |
+| `insufficient-storage` | 507 | The download directory's filesystem has less free space than a torrent in disk storage needs. |
 
 Adding a problem type is an additive change; changing a type's meaning or
 status is not.

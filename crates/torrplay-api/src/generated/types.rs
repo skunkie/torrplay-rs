@@ -109,6 +109,8 @@ pub struct TorrentPageLinks {
 pub struct TorrentFileUpload {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub desired_state: Option<CreationDesiredState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub storage_mode: Option<CreationStorageMode>,
     ///The torrent file, at most 10485760 bytes.
     pub torrent_file: String,
 }
@@ -165,6 +167,8 @@ pub struct TorrentCreation {
     ///A magnet URI with a BitTorrent v1 or hybrid info hash, at most 8192 characters.
     ///Constraint: maxLength=8192
     pub magnet_uri: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub storage_mode: Option<CreationStorageMode>,
 }
 impl TorrentCreation {
     /// Construct this request with every required wire field.
@@ -172,6 +176,7 @@ impl TorrentCreation {
         Self {
             magnet_uri,
             desired_state: None,
+            storage_mode: None,
         }
     }
     /// Start a dependency-free builder with every required wire field.
@@ -198,9 +203,42 @@ impl TorrentCreationBuilder {
         self.value.desired_state = Some(desired_state);
         self
     }
+    #[doc = concat!("Set the optional `", "storage_mode", "` request field.")]
+    #[must_use]
+    pub fn storage_mode(mut self, storage_mode: CreationStorageMode) -> Self {
+        self.value.storage_mode = Some(storage_mode);
+        self
+    }
     /// Finish building the request model.
     pub fn build(self) -> TorrentCreation {
         self.value
+    }
+}
+///The storage mode a new torrent uses. It defaults to memory. A torrent file created in disk storage is checked as a change to disk storage is; a magnet URI is checked once its metadata arrives.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum CreationStorageMode {
+    #[default]
+    #[serde(rename = "memory")]
+    Memory,
+    #[serde(rename = "disk")]
+    Disk,
+}
+impl CreationStorageMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Memory => "memory",
+            Self::Disk => "disk",
+        }
+    }
+}
+impl ::std::fmt::Display for CreationStorageMode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for CreationStorageMode {
+    fn as_ref(&self) -> &str {
+        self.as_str()
     }
 }
 ///The state a new torrent starts in. It defaults to started.
@@ -235,13 +273,16 @@ impl AsRef<str> for CreationDesiredState {
 pub struct TorrentConfigurationPatch {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub desired_state: Option<DesiredState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub storage_mode: Option<StorageMode>,
 }
-///The writable configuration of a torrent.
+///The writable configuration of a torrent. Its storage_mode is the one the client asked for; while a transition runs, the torrent resource's storage_mode is still the previous one.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TorrentConfiguration {
     pub desired_state: DesiredState,
     ///Links from a configuration.
     pub links: TorrentConfigurationLinks,
+    pub storage_mode: StorageMode,
 }
 ///Links from a configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -279,7 +320,7 @@ impl AsRef<str> for DesiredState {
         self.as_str()
     }
 }
-///A torrent the application tracks.
+///A torrent the application tracks. Its storage_mode is the storage mode in effect, which changes when a transition to the configuration's storage_mode completes.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Torrent {
     ///When the torrent was created, in UTC.
@@ -302,32 +343,23 @@ pub struct Torrent {
     ///The total size of the torrent's files, or null until metadata is available.
     ///Constraint: minimum=0
     pub size_bytes: Option<i64>,
-    ///Where the torrent keeps piece data. The prototype has only memory storage, in which a torrent downloads the pieces its readers need but never uploads, because evicted pieces cannot be served.
-    pub storage_mode: TorrentStorageMode,
+    ///Why the last storage mode transition failed, or null. It clears with the next change of storage mode and with a restart.
+    pub storage_failure: Option<TorrentStorageFailure>,
+    pub storage_mode: StorageMode,
+    ///The storage mode transition in progress, or null when there is none.
+    pub storage_transition: Option<TorrentStorageTransition>,
 }
-///Where the torrent keeps piece data. The prototype has only memory storage, in which a torrent downloads the pieces its readers need but never uploads, because evicted pieces cannot be served.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
-pub enum TorrentStorageMode {
-    #[default]
-    #[serde(rename = "memory")]
-    Memory,
+///The storage mode transition in progress, or null when there is none.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TorrentStorageTransition {
+    pub target_storage_mode: StorageMode,
 }
-impl TorrentStorageMode {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Memory => "memory",
-        }
-    }
-}
-impl ::std::fmt::Display for TorrentStorageMode {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-impl AsRef<str> for TorrentStorageMode {
-    fn as_ref(&self) -> &str {
-        self.as_str()
-    }
+///Why the last storage mode transition failed, or null. It clears with the next change of storage mode and with a restart.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TorrentStorageFailure {
+    ///Why the transition failed.
+    pub detail: String,
+    pub target_storage_mode: StorageMode,
 }
 ///Links from a torrent to its related resources.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -347,6 +379,33 @@ pub struct TorrentLinks {
 pub struct TorrentFailure {
     ///An explanation of the failure.
     pub detail: String,
+}
+///Where a torrent keeps piece data. In memory storage it holds pieces in the global piece cache, which evicts them, downloads the pieces its readers need, and never uploads, because evicted pieces cannot be served. In disk storage it keeps verified pieces in files below the download directory and uploads them, and deleting the torrent deletes the files. Clients must handle values added later.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum StorageMode {
+    #[default]
+    #[serde(rename = "memory")]
+    Memory,
+    #[serde(rename = "disk")]
+    Disk,
+}
+impl StorageMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Memory => "memory",
+            Self::Disk => "disk",
+        }
+    }
+}
+impl ::std::fmt::Display for StorageMode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for StorageMode {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
 }
 ///The state the engine reports for a torrent. Clients must handle values added later.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]

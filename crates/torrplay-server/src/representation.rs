@@ -97,7 +97,10 @@ pub(crate) fn torrent(view: &TorrentView) -> api::Torrent {
         name: metadata.map(|metadata| metadata.display_name()),
         observed_state: observed_state(view.observed_state()),
         size_bytes: metadata.map(|metadata| count(metadata.size_bytes())),
-        storage_mode: api::TorrentStorageMode::Memory,
+        // Disk storage is specified but not implemented yet.
+        storage_mode: api::StorageMode::Memory,
+        storage_transition: None,
+        storage_failure: None,
     }
 }
 
@@ -122,6 +125,7 @@ pub(crate) fn configuration(id: &TorrentId, value: &Configuration) -> api::Torre
     let torrent = torrent_path(id);
     api::TorrentConfiguration {
         desired_state: desired_state(value.desired_state()),
+        storage_mode: api::StorageMode::Memory,
         links: api::TorrentConfigurationLinks {
             self_field: format!("{torrent}/configuration"),
             torrent,

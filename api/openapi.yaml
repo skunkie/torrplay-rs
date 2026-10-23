@@ -124,6 +124,8 @@ paths:
                         file_count: 1
                         created_at: '2026-10-19T12:00:00Z'
                         failure: null
+                        storage_transition: null
+                        storage_failure: null
                         links:
                           self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
                           configuration: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/configuration
@@ -146,7 +148,9 @@ paths:
         stored so that it survives restarts with its ID; metadata for a magnet
         URI is retrieved in the background. Retrying is safe: a client whose
         request timed out receives either 201 or a duplicate-torrent problem
-        that links to the torrent its first attempt created.
+        that links to the torrent its first attempt created. A torrent created
+        in disk storage keeps its files in the download directory, as
+        docs/adr/0009-disk-storage.md describes.
       tags: [Torrents]
       requestBody:
         description: >-
@@ -201,6 +205,8 @@ paths:
                     file_count: null
                     created_at: '2026-10-19T12:00:00Z'
                     failure: null
+                    storage_transition: null
+                    storage_failure: null
                     links:
                       self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
                       configuration: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/configuration
@@ -222,6 +228,8 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/EngineUnavailable'
+        '507':
+          $ref: '#/components/responses/InsufficientStorage'
 
   /api/v1/torrents/{torrent_id}:
     parameters:
@@ -263,6 +271,8 @@ paths:
                     file_count: 1
                     created_at: '2026-10-19T12:00:00Z'
                     failure: null
+                    storage_transition: null
+                    storage_failure: null
                     links:
                       self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
                       configuration: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/configuration
@@ -283,7 +293,9 @@ paths:
         Removes a torrent, durably: it does not return after a restart. Its
         streams in progress are canceled individually, and its cached pieces
         are released in the background, which /api/v1/cache/statistics
-        reflects.
+        reflects. A torrent in disk storage, or in a transition to or from it,
+        also loses its data: its directory in the download directory is
+        deleted, files included. Copy files out first to keep them.
       tags: [Torrents]
       responses:
         '204':
@@ -322,6 +334,7 @@ paths:
                   summary: A started torrent
                   value:
                     desired_state: started
+                    storage_mode: memory
                     links:
                       self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/configuration
                       torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
@@ -342,7 +355,13 @@ paths:
         stored before this returns, and the configuration and its ETag survive
         restarts. Pausing closes the torrent's peer connections and cancels its
         streams; pausing and then starting a failed torrent restarts it. The
-        observed state follows once the engine applies the change.
+        observed state follows once the engine applies the change. A change of
+        storage_mode starts a storage mode transition, which the torrent
+        resource's storage_transition shows; streams continue across it. A
+        transition that fails returns storage_mode to the storage mode in
+        effect, with a new ETag, and the torrent resource's storage_failure
+        says why. Changing storage_mode during a transition is
+        lifecycle-conflict.
       tags: [Torrents]
       parameters:
         - $ref: '#/components/parameters/IfMatch'
@@ -361,6 +380,10 @@ paths:
                 summary: Pause the torrent
                 value:
                   desired_state: paused
+              disk:
+                summary: Keep the torrent's data on disk
+                value:
+                  storage_mode: disk
       responses:
         '200':
           description: The updated configuration.
@@ -376,6 +399,7 @@ paths:
                   summary: A paused torrent
                   value:
                     desired_state: paused
+                    storage_mode: memory
                     links:
                       self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/configuration
                       torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
@@ -394,13 +418,15 @@ paths:
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
         '422':
-          $ref: '#/components/responses/ValidationFailed'
+          $ref: '#/components/responses/UnprocessableConfiguration'
         '428':
           $ref: '#/components/responses/PreconditionRequired'
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/EngineUnavailable'
+        '507':
+          $ref: '#/components/responses/InsufficientStorage'
 
   /api/v1/torrents/{torrent_id}/files:
     parameters:
@@ -1153,6 +1179,13 @@ components:
                 detail: >-
                   The torrent could not be restored: Must be a valid torrent
                   file. Delete it.
+            transition:
+              summary: A storage mode change during a transition
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/lifecycle-conflict
+                title: Lifecycle conflict
+                status: 409
+                detail: The torrent's storage mode transition is in progress.
     DuplicateTorrent:
       description: A torrent with the same info hash already exists.
       content:
@@ -1272,8 +1305,9 @@ components:
     UnprocessableTorrent:
       description: >-
         The torrent input is invalid, or it is a valid torrent the engine
-        cannot handle: a v2-only torrent, or one whose piece length exceeds
-        cache capacity.
+        cannot handle: a v2-only torrent, one in memory storage whose piece
+        length exceeds cache capacity, or one in disk storage whose files the
+        download directory cannot hold.
       content:
         application/problem+json:
           schema:
@@ -1303,6 +1337,53 @@ components:
                 title: Unsupported torrent
                 status: 422
                 detail: The torrent's 16777216-byte pieces exceed the 8388608-byte cache capacity.
+    UnprocessableConfiguration:
+      description: >-
+        The configuration patch is invalid, or it asks for a storage mode the
+        torrent cannot use: disk storage for files the download directory
+        cannot hold, or memory storage for pieces longer than cache capacity.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ValidationProblem'
+          examples:
+            invalid:
+              summary: An unknown desired state
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/validation-failed
+                title: Validation failed
+                status: 422
+                detail: The body is invalid.
+                errors:
+                  - detail: Must be started or paused.
+                    pointer: /desired_state
+            colliding_files:
+              summary: Files that differ only in case
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/unsupported-torrent
+                title: Unsupported torrent
+                status: 422
+                detail: >-
+                  Disk storage cannot hold the files Example/a.mkv and
+                  Example/A.mkv, which differ only in case.
+    InsufficientStorage:
+      description: >-
+        The download directory's filesystem has less free space than the
+        torrent's files need. Nothing changed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            full:
+              summary: Too little free space
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/insufficient-storage
+                title: Insufficient storage
+                status: 507
+                detail: >-
+                  The torrent's files need 1073740800 bytes, and the download
+                  directory has 52428800 free.
     PreconditionRequired:
       description: The PATCH request omits If-Match.
       content:
@@ -1424,6 +1505,8 @@ components:
           examples: ['magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567']
         desired_state:
           $ref: '#/components/schemas/CreationDesiredState'
+        storage_mode:
+          $ref: '#/components/schemas/CreationStorageMode'
 
     TorrentFileUpload:
       type: object
@@ -1438,6 +1521,8 @@ components:
           examples: ['d8:announce20:http://tracker.test/4:infod6:lengthi1024e4:name8:file.bin12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaaee']
         desired_state:
           $ref: '#/components/schemas/CreationDesiredState'
+        storage_mode:
+          $ref: '#/components/schemas/CreationStorageMode'
 
     CreationDesiredState:
       type: string
@@ -1446,9 +1531,34 @@ components:
       default: started
       examples: [paused]
 
+    CreationStorageMode:
+      type: string
+      description: >-
+        The storage mode a new torrent uses. It defaults to memory. A torrent
+        file created in disk storage is checked as a change to disk storage
+        is; a magnet URI is checked once its metadata arrives.
+      enum: [memory, disk]
+      default: memory
+      examples: [disk]
+
+    StorageMode:
+      type: string
+      description: >-
+        Where a torrent keeps piece data. In memory storage it holds pieces in
+        the global piece cache, which evicts them, downloads the pieces its
+        readers need, and never uploads, because evicted pieces cannot be
+        served. In disk storage it keeps verified pieces in files below the
+        download directory and uploads them, and deleting the torrent deletes
+        the files. Clients must handle values added later.
+      enum: [memory, disk]
+      examples: [memory]
+
     Torrent:
       type: object
-      description: A torrent the application tracks.
+      description: >-
+        A torrent the application tracks. Its storage_mode is the storage mode
+        in effect, which changes when a transition to the configuration's
+        storage_mode completes.
       required:
         - id
         - name
@@ -1459,6 +1569,8 @@ components:
         - file_count
         - created_at
         - failure
+        - storage_transition
+        - storage_failure
         - links
       properties:
         id:
@@ -1484,14 +1596,7 @@ components:
         observed_state:
           $ref: '#/components/schemas/ObservedState'
         storage_mode:
-          type: string
-          readOnly: true
-          description: >-
-            Where the torrent keeps piece data. The prototype has only memory
-            storage, in which a torrent downloads the pieces its readers need
-            but never uploads, because evicted pieces cannot be served.
-          enum: [memory]
-          examples: [memory]
+          $ref: '#/components/schemas/StorageMode'
         size_bytes:
           type: [integer, 'null']
           format: int64
@@ -1524,6 +1629,32 @@ components:
               type: string
               description: An explanation of the failure.
               examples: [A piece could not be written to storage.]
+          examples: [null]
+        storage_transition:
+          type: [object, 'null']
+          readOnly: true
+          description: >-
+            The storage mode transition in progress, or null when there is
+            none.
+          required: [target_storage_mode]
+          properties:
+            target_storage_mode:
+              $ref: '#/components/schemas/StorageMode'
+          examples: [null]
+        storage_failure:
+          type: [object, 'null']
+          readOnly: true
+          description: >-
+            Why the last storage mode transition failed, or null. It clears with
+            the next change of storage mode and with a restart.
+          required: [target_storage_mode, detail]
+          properties:
+            target_storage_mode:
+              $ref: '#/components/schemas/StorageMode'
+            detail:
+              type: string
+              description: Why the transition failed.
+              examples: [The torrent's directory could not be created.]
           examples: [null]
         links:
           type: object
@@ -1599,11 +1730,16 @@ components:
 
     TorrentConfiguration:
       type: object
-      description: The writable configuration of a torrent.
-      required: [desired_state, links]
+      description: >-
+        The writable configuration of a torrent. Its storage_mode is the one
+        the client asked for; while a transition runs, the torrent resource's
+        storage_mode is still the previous one.
+      required: [desired_state, storage_mode, links]
       properties:
         desired_state:
           $ref: '#/components/schemas/DesiredState'
+        storage_mode:
+          $ref: '#/components/schemas/StorageMode'
         links:
           type: object
           readOnly: true
@@ -1631,6 +1767,8 @@ components:
       properties:
         desired_state:
           $ref: '#/components/schemas/DesiredState'
+        storage_mode:
+          $ref: '#/components/schemas/StorageMode'
 
     Settings:
       type: object
