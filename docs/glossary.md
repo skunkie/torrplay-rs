@@ -198,6 +198,20 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 : Where a torrent keeps piece data: `memory` (the piece cache, subject to
   eviction) or `disk` (persisted torrents only).
 
+**Storage mode transition**
+: Moving a torrent from one storage mode to the other while it keeps its
+  identity, metadata, and readers. A failed transition rolls back to the
+  storage mode in effect.
+
+**Download directory**
+: The directory that holds disk torrents' data, one directory per torrent
+  named by its torrent ID. TorrPlay owns everything in it named like a
+  torrent ID.
+
+**Resume bitfield**
+: The record of a disk torrent's verified pieces, kept beside its data, so
+  that it starts without rereading the data.
+
 **Desired state**
 : The client-writable target state of a torrent, such as started or paused,
   part of its configuration resource.

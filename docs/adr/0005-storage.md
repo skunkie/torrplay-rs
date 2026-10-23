@@ -296,9 +296,9 @@ benchmarks may tune them, and milestone 6 makes them settings.
   saved bitfields.
 - **Disk.** Milestone 6 adds the `disk` storage mode for persisted torrents
   only. Disk storage keeps verified pieces in files and does not evict, so it
-  does not count toward cache usage. Storage mode transitions preserve the
-  torrent's original metadata bytes, define rollback and active-reader
-  behavior, and are specified with persistence before they ship.
+  does not count toward cache usage. [ADR 9](0009-disk-storage.md) decides
+  its data ownership, retention, transitions with rollback and active
+  readers, and recovery.
 
 ### Upload
 
