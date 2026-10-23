@@ -155,9 +155,10 @@ storage, which writes the metadata's paths as they are:
 - The same mapping applies on every platform, so a download directory moved
   between platforms keeps working.
 - Two files whose mapped paths are equal after Unicode normalization (NFC)
-  and case folding would be one file on macOS and Windows. A torrent with
+  and lowercasing would be one file on macOS and Windows. A torrent with
   such files cannot use disk storage anywhere, and neither can one with a
-  mapped component longer than 255 bytes.
+  file where another file needs a directory, with an empty component, or
+  with a mapped component longer than 255 bytes.
 
 A torrent that cannot use disk storage for these reasons is
 `unsupported-torrent` when a request asks for disk storage, and its detail

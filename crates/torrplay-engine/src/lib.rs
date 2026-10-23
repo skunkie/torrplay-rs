@@ -16,6 +16,7 @@
 
 mod adapter;
 pub mod cache;
+pub mod disk;
 pub mod evictor;
 mod inspect;
 pub mod playback;

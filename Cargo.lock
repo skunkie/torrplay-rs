@@ -3482,6 +3482,7 @@ name = "torrplay-engine"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "icu_normalizer",
  "librqbit",
  "librqbit-bencode",
  "librqbit-core",
