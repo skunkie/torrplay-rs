@@ -39,6 +39,9 @@ bencode = { package = "librqbit-bencode", git = "https://github.com/skunkie/rqbi
 bytes = "1"
 # Without default features it does not read the system clock or time zone.
 chrono = { version = "0.4", default-features = false, features = ["serde", "std"] }
+# The platform's data directory, the default for the database; librqbit
+# already depends on it.
+directories = "6"
 form_urlencoded = "1"
 # Only for TryStreamExt, which axum already depends on.
 futures-util = { version = "0.3", default-features = false }
@@ -57,11 +60,10 @@ jsonschema = { version = "0.59", default-features = false }
 librqbit = { git = "https://github.com/skunkie/rqbit", rev = "a36c202223e704f0866beaf22ed15cc69eeb7439", default-features = false, features = ["rust-tls"] }
 librqbit-core = { git = "https://github.com/skunkie/rqbit", rev = "a36c202223e704f0866beaf22ed15cc69eeb7439", default-features = false }
 memchr = "2"
-# The two candidate databases of the ADR 8 spike. SQLite is compiled from
-# the bundled amalgamation, so builds do not depend on a system library.
-redb = "4.4"
 # Tests reach the server over loopback HTTP only, so they need no TLS.
 reqwest = { version = "0.13", default-features = false }
+# The database ADR 8 chose, compiled from the bundled amalgamation so builds
+# do not depend on a system library.
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde-saphyr = "2"
@@ -77,6 +79,7 @@ torrplay-core = { path = "crates/torrplay-core" }
 torrplay-engine = { path = "crates/torrplay-engine" }
 torrplay-fixtures = { path = "crates/torrplay-fixtures" }
 torrplay-server = { path = "crates/torrplay-server" }
+torrplay-store = { path = "crates/torrplay-store" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
 url = { version = "2", features = ["serde"] }

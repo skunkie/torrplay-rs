@@ -48,6 +48,18 @@ impl TorrentId {
         Self(id)
     }
 
+    /// Reads an ID the server issued and stored: `None` unless it has the
+    /// shape [`from_random_bytes`](Self::from_random_bytes) produces, `trr_`
+    /// and 26 lowercase base32 characters.
+    pub fn from_stored(text: &str) -> Option<Self> {
+        let encoded = text.strip_prefix(Self::PREFIX)?;
+        let shaped = encoded.len() == 26
+            && encoded
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || (b'2'..=b'7').contains(&byte));
+        shaped.then(|| Self(text.to_owned()))
+    }
+
     /// Returns the ID's text.
     pub fn as_str(&self) -> &str {
         &self.0
@@ -212,6 +224,22 @@ mod tests {
                 .all(|byte| matches!(byte, b'a'..=b'z' | b'2'..=b'7')),
             "{id} must match ^trr_[a-z2-7]{{26}}$"
         );
+    }
+
+    #[test]
+    fn stored_ids_are_read_only_in_the_issued_shape() {
+        let issued = TorrentId::from_random_bytes(random_torrent_id_bytes().unwrap());
+        assert_eq!(TorrentId::from_stored(issued.as_str()), Some(issued));
+        for malformed in [
+            "trr_",
+            "trr_aaaaaaaaaaaaaaaaaaaaaaaaa",
+            "trr_aaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "trr_aaaaaaaaaaaaaaaaaaaaaaaaa1",
+            "trr_aaaaaaaaaaaaaaaaaaaaaaaaaA",
+            "fil_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ] {
+            assert_eq!(TorrentId::from_stored(malformed), None, "{malformed}");
+        }
     }
 
     #[test]

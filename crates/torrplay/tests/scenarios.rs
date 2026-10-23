@@ -50,6 +50,71 @@ fn without_date(headers: &HeaderMap) -> HeaderMap {
     headers
 }
 
+/// LIF-11 end to end: after a restart, an uploaded torrent and a magnet
+/// torrent whose metadata was retrieved stream again under their IDs, the
+/// engine adding them from the torrent files the store kept. The API
+/// scenarios check, with an engine that cannot retrieve it, that the
+/// metadata comes from the store.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn torrents_stream_again_after_a_restart() -> anyhow::Result<()> {
+    let small = catalog::single_small();
+    let multi = catalog::multi_boundary();
+    let (small_seeder, multi_seeder) = (seeded(&small).await?, seeded(&multi).await?);
+    let peers = vec![small_seeder.addr, multi_seeder.addr];
+    let running = Running::start(peers, ShutdownTimings::default(), eight_mib).await?;
+    let client = Client::new();
+    let uploaded = upload(&running, &client, &small).await?;
+    let retrieved = magnet(&running, &client, &multi).await?;
+    let name = eventually("the magnet torrent's metadata", async || {
+        let torrent = json(client.get(running.url(&retrieved)).send().await?).await?;
+        Ok(torrent["name"].as_str().map(str::to_owned))
+    })
+    .await?;
+    let listed = json(client.get(running.url("/api/v1/torrents")).send().await?).await?;
+
+    let running = running.restart(eight_mib).await?;
+    let after = json(client.get(running.url("/api/v1/torrents")).send().await?).await?;
+    let ids = |listing: &Value| -> Vec<Value> {
+        listing["items"]
+            .as_array()
+            .map(|items| items.iter().map(|item| item["id"].clone()).collect())
+            .unwrap_or_default()
+    };
+    assert_eq!(ids(&after), ids(&listed), "the same torrents, in order");
+    let torrent = json(client.get(running.url(&retrieved)).send().await?).await?;
+    assert_eq!(
+        torrent["name"].as_str(),
+        Some(name.as_str()),
+        "the same metadata"
+    );
+    for (path, spec) in [(&uploaded.path, &small), (&retrieved, &multi)] {
+        let files = json(
+            client
+                .get(running.url(&format!("{path}/files")))
+                .send()
+                .await?,
+        )
+        .await?;
+        let content = format!(
+            "{}/content",
+            files["items"][0]["links"]["self"]
+                .as_str()
+                .expect("a file link")
+        );
+        let response = client.get(running.url(&content)).send().await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        let size = spec.files()[0].size_bytes;
+        let (bytes, error) = read_body(response).await;
+        assert!(error.is_none(), "{error:?}");
+        assert_eq!(bytes, expected(spec, 0, 0, size), "{path}");
+    }
+
+    running.stop().await?;
+    small_seeder.stop().await;
+    multi_seeder.stop().await;
+    Ok(())
+}
+
 /// STR-05: HEAD answers as GET would, without a body, a reader, or a piece.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn head_answers_like_get_without_reading() -> anyhow::Result<()> {

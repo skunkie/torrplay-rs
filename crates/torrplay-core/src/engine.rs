@@ -291,6 +291,16 @@ pub trait Engine: Send + Sync + 'static {
         id: &TorrentId,
     ) -> impl Future<Output = Result<TorrentStatus, EngineError>> + Send;
 
+    /// Returns a torrent's torrent file once its metadata is available: an
+    /// uploaded one's original bytes, or, for a magnet URI, the one built from
+    /// the retrieved info dictionary and the URI's trackers, which the
+    /// application stores. `None` while metadata is unavailable, or while the
+    /// engine cannot produce the bytes yet.
+    fn torrent_file(
+        &self,
+        id: &TorrentId,
+    ) -> impl Future<Output = Result<Option<Vec<u8>>, EngineError>> + Send;
+
     /// Opens a reader for `range` of the file at `file` in the engine's file
     /// list, continuing an idle reader of the file where one exists. The
     /// reader yields exactly the range's bytes, waiting for each missing

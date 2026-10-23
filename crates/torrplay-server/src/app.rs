@@ -2,19 +2,29 @@
 //
 // SPDX-License-Identifier: MIT
 
-//! The application state the handlers share: the engine, the registry,
-//! and what the server last learned from the engine about each torrent.
+//! The application state the handlers share: the engine, the registry, the
+//! store, and what the server last learned from the engine about each
+//! torrent.
+//!
+//! The registry is the application's own record; the store makes it
+//! durable. Every mutation takes the write lane, an async mutex, stores its
+//! change, and only then changes the registry, so a failed write leaves the
+//! records as they were and nothing registers in between. The lane is never
+//! taken while a synchronous lock is held, and engine calls stay outside it
+//! wherever their order allows.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use torrplay_core::engine::{CacheStatistics, Engine, EngineError};
+use tokio::sync::MutexGuard as LaneGuard;
+use torrplay_core::engine::{CacheStatistics, Engine, EngineError, Source};
 use torrplay_core::id::TorrentId;
 use torrplay_core::lifecycle::{Failure, ObservedState, Readiness};
 use torrplay_core::metadata::Metadata;
 use torrplay_core::registry::{Registry, TorrentRecord};
+use torrplay_store::{Store, StoreError, StoredTorrent};
 
 use crate::problem::Problem;
 
@@ -26,8 +36,13 @@ const DEFAULT_BODY_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct App<E> {
     engine: Arc<E>,
     registry: Registry,
+    store: Store,
+    /// Serializes mutations; see the [module documentation](self).
+    writes: tokio::sync::Mutex<()>,
     body_timeout: Duration,
     observations: Mutex<Observations>,
+    /// Set until [`App::restore`] has registered the stored torrents.
+    restoring: AtomicBool,
     shutting_down: AtomicBool,
 }
 
@@ -47,6 +62,9 @@ struct Observation {
     /// Why retrieved metadata cannot be served. Pausing and starting the
     /// torrent clears it.
     metadata_failure: Option<Failure>,
+    /// Why the engine refused the stored torrent at startup; only deletion
+    /// clears it.
+    restore_failure: Option<Failure>,
 }
 
 /// A torrent as the API presents it: its record and its effective failure.
@@ -68,20 +86,101 @@ impl TorrentView {
 
 impl<E: Engine> App<E> {
     /// Creates a server over `engine` with an empty registry.
-    pub fn new(engine: Arc<E>) -> Self {
-        Self::with_registry(engine, Registry::new())
+    pub fn new(engine: Arc<E>, store: Store) -> Self {
+        Self::with_registry(engine, Registry::new(), store)
     }
 
     /// Creates a server over `engine` with `registry`, so tests can choose
     /// the torrent IDs it issues.
-    pub fn with_registry(engine: Arc<E>, registry: Registry) -> Self {
+    pub fn with_registry(engine: Arc<E>, registry: Registry, store: Store) -> Self {
         Self {
             engine,
             registry,
+            store,
+            writes: tokio::sync::Mutex::new(()),
             body_timeout: DEFAULT_BODY_TIMEOUT,
             observations: Mutex::new(Observations::default()),
+            restoring: AtomicBool::new(true),
             shutting_down: AtomicBool::new(false),
         }
+    }
+
+    /// Registers the torrents the store held at startup, in creation order,
+    /// and adds them to the engine, which must be ready. Until this returns,
+    /// `/readyz` answers `503` and torrent operations `engine-unavailable`,
+    /// since the records are incomplete. A torrent the engine refuses stays
+    /// registered as failed, with the refusal as its failure.
+    pub async fn restore(&self, torrents: Vec<StoredTorrent>) -> Result<(), EngineError> {
+        for stored in torrents {
+            let source = match (&stored.torrent_file, &stored.magnet_uri) {
+                (Some(bytes), _) => Source::TorrentFile(bytes.clone()),
+                (None, Some(uri)) => Source::MagnetUri(uri.clone()),
+                // The store returns no torrent without either.
+                (None, None) => continue,
+            };
+            let mut refusal = None;
+            let metadata = match self.engine.inspect(&source).await {
+                Ok(inspection) if inspection.info_hash != stored.info_hash => {
+                    refusal = Some(
+                        "The stored torrent file does not match the torrent's info hash."
+                            .to_owned(),
+                    );
+                    None
+                }
+                Ok(inspection) => match inspection
+                    .metadata
+                    .map(|reported| Metadata::identify(&reported))
+                {
+                    Some(Ok(metadata)) => Some(Arc::new(metadata)),
+                    Some(Err(error)) => {
+                        refusal = Some(error.to_string());
+                        None
+                    }
+                    None => None,
+                },
+                Err(EngineError::Rejected(rejection)) => {
+                    refusal = Some(rejection.to_string());
+                    None
+                }
+                Err(error) => return Err(error),
+            };
+            let desired_state = stored.configuration.desired_state();
+            let record = TorrentRecord {
+                id: stored.id.clone(),
+                info_hash: stored.info_hash,
+                created_at: stored.created_at,
+                configuration: stored.configuration,
+                metadata,
+            };
+            if self.registry.insert(record).is_err() {
+                // The store's keys are unique; a second record is skipped.
+                tracing::error!(id = %stored.id, "a stored torrent was registered twice");
+                continue;
+            }
+            if refusal.is_none() {
+                match self.engine.add(&stored.id, &source, desired_state).await {
+                    Ok(()) => {}
+                    Err(EngineError::Rejected(rejection)) => refusal = Some(rejection.to_string()),
+                    Err(error) => return Err(error),
+                }
+            }
+            if let Some(detail) = refusal {
+                tracing::warn!(id = %stored.id, %detail, "a stored torrent could not be restored");
+                self.observations()
+                    .torrents
+                    .entry(stored.id)
+                    .or_default()
+                    .restore_failure = Some(Failure { detail });
+            }
+        }
+        self.restoring.store(false, Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// Closes the store after the server has stopped writing.
+    pub async fn close_store(&self) -> Result<(), StoreError> {
+        let _lane = self.writes.lock().await;
+        self.store.close().await
     }
 
     /// Sets how long a request body may take to arrive, 30 seconds by
@@ -107,8 +206,34 @@ impl<E: Engine> App<E> {
         &self.engine
     }
 
-    pub(crate) fn registry(&self) -> &Registry {
-        &self.registry
+    /// The registry, once the stored torrents are restored: until then,
+    /// `engine-unavailable`.
+    pub(crate) fn registry(&self) -> Result<&Registry, Problem> {
+        if self.restoring.load(Ordering::SeqCst) {
+            return Err(Problem::engine_unavailable(
+                "The stored torrents are being restored.",
+                None,
+            ));
+        }
+        Ok(&self.registry)
+    }
+
+    /// The store the server writes through to.
+    pub fn store(&self) -> &Store {
+        &self.store
+    }
+
+    /// Takes the write lane; see the [module documentation](self).
+    pub(crate) async fn write_lane(&self) -> LaneGuard<'_, ()> {
+        self.writes.lock().await
+    }
+
+    /// Why the torrent could not be restored at startup, if it could not.
+    pub(crate) fn restore_failure(&self, id: &TorrentId) -> Option<Failure> {
+        self.observations()
+            .torrents
+            .get(id)
+            .and_then(|observation| observation.restore_failure.clone())
     }
 
     /// Fails with `engine-unavailable` unless the engine can serve requests
@@ -117,6 +242,12 @@ impl<E: Engine> App<E> {
         if self.shutting_down.load(Ordering::SeqCst) {
             return Err(Problem::engine_unavailable(
                 "The application is shutting down.",
+                None,
+            ));
+        }
+        if self.restoring.load(Ordering::SeqCst) {
+            return Err(Problem::engine_unavailable(
+                "The stored torrents are being restored.",
                 None,
             ));
         }
@@ -145,15 +276,13 @@ impl<E: Engine> App<E> {
                     match Metadata::identify(&reported) {
                         Ok(metadata) => {
                             let metadata = Arc::new(metadata);
-                            // A concurrent delete leaves nothing to record.
-                            let _ = self
-                                .registry
-                                .record_metadata(record.id.as_str(), Arc::clone(&metadata));
-                            record.metadata = self
-                                .registry
-                                .get(record.id.as_str())
-                                .and_then(|current| current.metadata)
-                                .or(Some(metadata));
+                            if self.record_metadata(&record.id, &metadata).await? {
+                                record.metadata = self
+                                    .registry
+                                    .get(record.id.as_str())
+                                    .and_then(|current| current.metadata)
+                                    .or(Some(metadata));
+                            }
                         }
                         Err(error) => {
                             metadata_failure = Some(Failure {
@@ -185,11 +314,47 @@ impl<E: Engine> App<E> {
             .get(&record.id)
             .and_then(|observation| {
                 observation
-                    .metadata_failure
+                    .restore_failure
                     .clone()
+                    .or_else(|| observation.metadata_failure.clone())
                     .or_else(|| observation.engine_failure.clone())
             });
         Ok(TorrentView { record, failure })
+    }
+
+    /// Stores the torrent file of metadata the engine retrieved, then records
+    /// the metadata. Returns whether it was recorded: not while the engine
+    /// has no torrent file to give, nor for a torrent deleted meanwhile, nor
+    /// when the store fails, which a later observation retries rather than
+    /// failing the read that observed it.
+    async fn record_metadata(
+        &self,
+        id: &TorrentId,
+        metadata: &Arc<Metadata>,
+    ) -> Result<bool, Problem> {
+        let torrent_file = match self.engine.torrent_file(id).await {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) | Err(EngineError::Unavailable { .. } | EngineError::UnknownTorrent) => {
+                return Ok(false);
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let _lane = self.write_lane().await;
+        if self
+            .registry
+            .get(id.as_str())
+            .is_none_or(|current| current.metadata.is_some())
+        {
+            return Ok(false);
+        }
+        if let Err(error) = self.store.set_torrent_file(id, torrent_file).await {
+            tracing::error!(%error, %id, "retrieved metadata could not be stored");
+            return Ok(false);
+        }
+        Ok(self
+            .registry
+            .record_metadata(id.as_str(), Arc::clone(metadata))
+            .unwrap_or(false))
     }
 
     /// Clears a failure the server derived from retrieved metadata, when a
@@ -225,4 +390,10 @@ impl<E: Engine> App<E> {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+/// Maps a failed store write to `internal-error`, logging its cause.
+pub(crate) fn store_failed(error: StoreError) -> Problem {
+    tracing::error!(%error, "a change could not be stored");
+    Problem::internal()
 }

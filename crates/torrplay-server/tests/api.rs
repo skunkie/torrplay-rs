@@ -1222,7 +1222,6 @@ mod scenario {
                 .await,
             server.get(&format!("{path}/statistics")).await,
             server.get("/api/v1/cache/statistics").await,
-            server.send(empty(Method::DELETE, &path)).await,
         ];
         for exchange in failed {
             assert_eq!(exchange.status, StatusCode::INTERNAL_SERVER_ERROR);
@@ -1244,8 +1243,18 @@ mod scenario {
         assert_eq!(
             listed["items"].as_array().unwrap().len(),
             1,
-            "nothing was created or deleted"
+            "nothing was created"
         );
+
+        // A deletion is stored before the engine removes the torrent, so a
+        // fault in the engine does not undo it.
+        server.engine.inject_fault(Some("the engine failed"));
+        assert_eq!(
+            server.send(empty(Method::DELETE, &path)).await.status,
+            StatusCode::NO_CONTENT
+        );
+        server.engine.inject_fault(None);
+        assert_problem(&server.get(&path).await, StatusCode::NOT_FOUND, "not-found");
         server.stop().await;
     }
 
@@ -1355,18 +1364,251 @@ mod scenario {
         server.stop().await;
     }
 
-    /// LIF-11: a restarted server has no torrents, and new IDs differ.
+    /// LIF-11 and LIF-13: a restarted server keeps its torrents' IDs,
+    /// creation times, order, configuration ETags, and recorded metadata;
+    /// content URLs keep working, and deletion lasts.
     pub async fn restart() {
-        let metainfo = catalog::single_small().metainfo().bytes;
-        let first = TestServer::start_with_random_ids().await;
-        let before = first.upload(&metainfo, None).await.json()["id"].clone();
-        first.stop().await;
-        let second = TestServer::start_with_random_ids().await;
-        let listed = second.get("/api/v1/torrents").await.json();
-        assert!(listed["items"].as_array().unwrap().is_empty());
-        let after = second.upload(&metainfo, None).await.json()["id"].clone();
-        assert_ne!(after, before, "IDs from before the restart do not reappear");
-        second.stop().await;
+        let server = TestServer::start().await;
+        let small = catalog::single_small();
+        let multi = catalog::multi_boundary();
+        let many = catalog::many_files();
+        let media = catalog::media_names();
+        let upload = server.upload(&small.metainfo().bytes, None).await.json();
+        let paused = server
+            .upload(&multi.metainfo().bytes, Some("paused"))
+            .await
+            .json();
+        server.engine.set_metadata_retrievable(
+            torrplay_core::id::InfoHashV1::from_bytes(many.metainfo().info_hash),
+            true,
+        );
+        let magnet_path = server.create_magnet(&magnet(&many)).await.json()["links"]["self"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(
+            !server.get(&magnet_path).await.json()["name"].is_null(),
+            "the server records the retrieved metadata"
+        );
+        let deleted = server.upload(&media.metainfo().bytes, None).await.json();
+        let deleted_path = deleted["links"]["self"].as_str().unwrap().to_owned();
+        assert_eq!(
+            server
+                .send(empty(Method::DELETE, &deleted_path))
+                .await
+                .status,
+            StatusCode::NO_CONTENT
+        );
+        let paused_configuration = format!(
+            "{}/configuration",
+            paused["links"]["self"].as_str().unwrap()
+        );
+        let etag = server
+            .get(&paused_configuration)
+            .await
+            .header(header::ETAG)
+            .unwrap()
+            .to_owned();
+        let upload_path = upload["links"]["self"].as_str().unwrap().to_owned();
+        let content = format!(
+            "{}/content",
+            files_of(&server, &upload_path).await[0]["links"]["self"]
+                .as_str()
+                .unwrap()
+        );
+        let before = server.get("/api/v1/torrents").await.json()["items"].clone();
+        assert_eq!(before.as_array().unwrap().len(), 3);
+
+        // The new engine cannot retrieve the magnet torrent's metadata.
+        let server = server.restart().await;
+        assert_eq!(
+            server.get("/api/v1/torrents").await.json()["items"],
+            before,
+            "the same torrents, in the same order, with their metadata"
+        );
+        assert_eq!(
+            server.get(&paused_configuration).await.header(header::ETAG),
+            Some(etag.as_str())
+        );
+        let streamed = server.get(&content).await;
+        assert_eq!(streamed.status, StatusCode::OK);
+        let size = small.total_size_bytes();
+        assert_eq!(streamed.body, expected_bytes(&small, 0, 0, size));
+        assert_problem(
+            &server.get(&deleted_path).await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        let again = server.upload(&media.metainfo().bytes, None).await;
+        assert_eq!(again.status, StatusCode::CREATED, "its info hash is free");
+        server.stop().await;
+    }
+
+    /// LIF-14: a failed database write is an internal error and changes
+    /// nothing, and the change succeeds once writes work again.
+    pub async fn store_failures() {
+        let server = TestServer::start().await;
+        let small = catalog::single_small();
+        let created = server.upload(&small.metainfo().bytes, None).await.json();
+        let path = created["links"]["self"].as_str().unwrap().to_owned();
+        let configuration = format!("{path}/configuration");
+        let etag = server
+            .get(&configuration)
+            .await
+            .header(header::ETAG)
+            .unwrap()
+            .to_owned();
+        let listed = || async { server.get("/api/v1/torrents").await.json()["items"].clone() };
+        let before = listed().await;
+
+        server.app.store().fail_writes(true);
+        let multi = catalog::multi_boundary();
+        assert_problem(
+            &server.upload(&multi.metainfo().bytes, None).await,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal-error",
+        );
+        assert_problem(
+            &server
+                .send(merge_patch(
+                    &configuration,
+                    &etag,
+                    &json!({ "desired_state": "paused" }),
+                ))
+                .await,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal-error",
+        );
+        assert_problem(
+            &server.send(empty(Method::DELETE, &path)).await,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal-error",
+        );
+        assert_eq!(listed().await, before, "nothing changed");
+        assert_eq!(
+            server.get(&configuration).await.header(header::ETAG),
+            Some(etag.as_str())
+        );
+
+        server.app.store().fail_writes(false);
+        let paused = server
+            .send(merge_patch(
+                &configuration,
+                &etag,
+                &json!({ "desired_state": "paused" }),
+            ))
+            .await;
+        assert_eq!(paused.status, StatusCode::OK);
+        let server = server.restart().await;
+        assert_eq!(
+            server.get(&configuration).await.json()["desired_state"],
+            "paused",
+            "the change that succeeded was stored"
+        );
+        assert_eq!(listed_len(&server).await, 1, "the failed creation was not");
+        server.stop().await;
+    }
+
+    /// LIF-15: until the stored torrents are restored, the server is not
+    /// ready and torrent operations are unavailable.
+    pub async fn restoring() {
+        let server = TestServer::start().await;
+        let small = catalog::single_small();
+        let path = server.upload(&small.metainfo().bytes, None).await.json()["links"]["self"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let file = files_of(&server, &path).await[0]["links"]["self"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let server = server
+            .restart_with(torrplay_core::fake::FakeEngine::with_catalog(), false)
+            .await;
+        assert_eq!(
+            server.get("/readyz").await.status,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        for exchange in [
+            server.get("/api/v1/torrents").await,
+            server.get(&path).await,
+            server.get(&format!("{path}/configuration")).await,
+            server.get(&format!("{path}/files")).await,
+            server.get(&file).await,
+        ] {
+            assert_problem(
+                &exchange,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "engine-unavailable",
+            );
+        }
+        let head = server
+            .send(empty(Method::HEAD, &format!("{file}/content")))
+            .await;
+        assert_eq!(head.status, StatusCode::SERVICE_UNAVAILABLE);
+        server.finish_restore().await;
+        assert_eq!(server.get("/readyz").await.status, StatusCode::OK);
+        assert_eq!(server.get(&path).await.status, StatusCode::OK);
+        server.stop().await;
+    }
+
+    /// LIF-16: a stored torrent the engine refuses at startup is restored as
+    /// failed, refuses content and configuration changes, and can be
+    /// deleted.
+    pub async fn refused_on_restore() {
+        let server = TestServer::start().await;
+        let small = catalog::single_small();
+        let created = server.upload(&small.metainfo().bytes, None).await.json();
+        let path = created["links"]["self"].as_str().unwrap().to_owned();
+        let content = format!(
+            "{}/content",
+            files_of(&server, &path).await[0]["links"]["self"]
+                .as_str()
+                .unwrap()
+        );
+        // An engine without the fixture rejects its torrent file.
+        let server = server
+            .restart_with(torrplay_core::fake::FakeEngine::new(), true)
+            .await;
+        let torrent = server.get(&path).await.json();
+        assert_eq!(torrent["observed_state"], "failed");
+        assert!(torrent["failure"]["detail"].is_string());
+        assert_problem(
+            &server.get(&content).await,
+            StatusCode::CONFLICT,
+            "lifecycle-conflict",
+        );
+        let configuration = format!("{path}/configuration");
+        let etag = server
+            .get(&configuration)
+            .await
+            .header(header::ETAG)
+            .unwrap()
+            .to_owned();
+        assert_problem(
+            &server
+                .send(merge_patch(
+                    &configuration,
+                    &etag,
+                    &json!({ "desired_state": "paused" }),
+                ))
+                .await,
+            StatusCode::CONFLICT,
+            "lifecycle-conflict",
+        );
+        assert_eq!(
+            server.send(empty(Method::DELETE, &path)).await.status,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(listed_len(&server).await, 0);
+        server.stop().await;
+    }
+
+    async fn listed_len(server: &TestServer) -> usize {
+        server.get("/api/v1/torrents").await.json()["items"]
+            .as_array()
+            .unwrap()
+            .len()
     }
 }
 
@@ -1423,4 +1665,7 @@ scenarios!(
     slow_bodies_time_out,
     engine_faults,
     restart,
+    store_failures,
+    restoring,
+    refused_on_restore,
 );

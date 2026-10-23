@@ -21,9 +21,10 @@ use torrplay_core::metadata::Metadata;
 use torrplay_core::pagination::{
     CURSOR_PARAMETER, PAGE_SIZE_PARAMETER, PageRequest, TorrentFilter, TorrentSortKey, paginate,
 };
-use torrplay_core::registry::{ConfigurationError, NewTorrent, Registration};
+use torrplay_core::registry::{ConfigurationError, ConfigurationUpdate, NewTorrent, Prepared};
+use torrplay_store::StoredTorrent;
 
-use crate::app::{App, TorrentView};
+use crate::app::{App, TorrentView, store_failed};
 use crate::body::{
     FORM_LIMIT_BYTES, JSON_LIMIT_BYTES, TORRENT_FILE_LIMIT_BYTES, parse_form, read_limited,
 };
@@ -83,7 +84,7 @@ pub(crate) async fn list<E: Engine>(
             .map_err(|error| Problem::malformed(vec![page_error(error)]))?;
 
     let mut views = Vec::new();
-    for record in app.registry().list() {
+    for record in app.registry()?.list() {
         let view = app.observe(record).await?;
         if filter.matches(view.observed_state()) {
             views.push(view);
@@ -180,35 +181,65 @@ pub(crate) async fn create<E: Engine>(
                 })
         })
         .transpose()?;
-    let registration = app
-        .registry()
-        .register(NewTorrent {
-            info_hash: inspection.info_hash,
-            metadata,
-            desired_state,
-            created_at: SystemTime::now(),
-        })
-        .map_err(|error| {
+    let new = NewTorrent {
+        info_hash: inspection.info_hash,
+        metadata: metadata.clone(),
+        desired_state,
+        created_at: SystemTime::now(),
+    };
+    let record = {
+        let _lane = app.write_lane().await;
+        let prepared = app.registry()?.prepare(new).map_err(|error| {
             tracing::error!(%error, "a torrent could not be registered");
             Problem::internal()
         })?;
-    let record = match registration {
-        Registration::Duplicate {
-            existing,
-            metadata_supplied,
-        } => {
-            if metadata_supplied && let Source::TorrentFile(bytes) = &source {
-                app.engine()
-                    .supply_metadata(&existing, bytes)
-                    .await
-                    .map_err(|error| source_problem(error, &source))?;
+        match prepared {
+            Prepared::Duplicate {
+                existing,
+                supplies_metadata,
+            } => {
+                let supplied = match (&source, &metadata) {
+                    (Source::TorrentFile(bytes), Some(metadata)) if supplies_metadata => {
+                        app.store()
+                            .set_torrent_file(&existing, bytes.clone())
+                            .await
+                            .map_err(store_failed)?;
+                        app.registry()?
+                            .record_metadata(existing.as_str(), Arc::clone(metadata))
+                            .unwrap_or(false)
+                    }
+                    _ => false,
+                };
+                drop(_lane);
+                if supplied && let Source::TorrentFile(bytes) = &source {
+                    app.engine()
+                        .supply_metadata(&existing, bytes)
+                        .await
+                        .map_err(|error| source_problem(error, &source))?;
+                }
+                return Err(Problem::duplicate(torrent_path(&existing)));
             }
-            return Err(Problem::duplicate(torrent_path(&existing)));
+            Prepared::New(record) => {
+                app.store()
+                    .insert(stored(&record, &source))
+                    .await
+                    .map_err(store_failed)?;
+                app.registry()?.insert(record.clone()).map_err(|error| {
+                    tracing::error!(%error, "a stored torrent could not be registered");
+                    Problem::internal()
+                })?;
+                record
+            }
         }
-        Registration::Created(record) => record,
     };
     if let Err(error) = app.engine().add(&record.id, &source, desired_state).await {
-        app.registry().remove(record.id.as_str());
+        let _lane = app.write_lane().await;
+        if let Err(error) = app.store().delete(&record.id).await {
+            // The next start restores the torrent, and its engine refusal
+            // with it, until it is deleted.
+            tracing::error!(%error, id = %record.id, "a refused torrent could not be unstored");
+        }
+        app.registry()?.remove(record.id.as_str());
         return Err(source_problem(error, &source));
     }
     let view = TorrentView {
@@ -220,6 +251,22 @@ pub(crate) async fn create<E: Engine>(
     let location = HeaderValue::try_from(location).map_err(|_| Problem::internal())?;
     response.headers_mut().insert(header::LOCATION, location);
     Ok(response)
+}
+
+/// The record to store for a new torrent from `source`.
+fn stored(record: &torrplay_core::registry::TorrentRecord, source: &Source) -> StoredTorrent {
+    let (magnet_uri, torrent_file) = match source {
+        Source::TorrentFile(bytes) => (None, Some(bytes.clone())),
+        Source::MagnetUri(uri) => (Some(uri.clone()), None),
+    };
+    StoredTorrent {
+        id: record.id.clone(),
+        info_hash: record.info_hash,
+        created_at: record.created_at,
+        configuration: record.configuration.clone(),
+        magnet_uri,
+        torrent_file,
+    }
 }
 
 /// Maps an engine failure about a source, naming the request member that
@@ -375,7 +422,7 @@ pub(crate) async fn get<E: Engine>(
     headers: HeaderMap,
 ) -> Result<Response, Problem> {
     negotiate(&headers, JSON)?;
-    let record = app.registry().get(&id).ok_or_else(not_found)?;
+    let record = app.registry()?.get(&id).ok_or_else(not_found)?;
     let view = app.observe(record).await?;
     let torrent = representation::torrent(&view);
     let etag = torrent_etag(&torrent)?;
@@ -393,16 +440,28 @@ pub(crate) async fn delete<E: Engine>(
     State(app): State<Arc<App<E>>>,
     Path(id): Path<String>,
 ) -> Result<Response, Problem> {
-    let record = app.registry().get(&id).ok_or_else(not_found)?;
+    let record = app.registry()?.get(&id).ok_or_else(not_found)?;
     app.require_engine()?;
+    // The deletion is stored and the torrent unregistered first, so a write
+    // that fails leaves the torrent whole, in the engine too.
+    {
+        let _lane = app.write_lane().await;
+        app.store().delete(&record.id).await.map_err(store_failed)?;
+        app.registry()?.remove(&id).ok_or_else(not_found)?;
+    }
+    app.forget(&record.id);
     match app.engine().remove(&record.id).await {
         // The engine may not hold a torrent whose creation is still adding
         // it; unregistering makes that creation's torrent unreachable.
         Ok(()) | Err(EngineError::UnknownTorrent) => {}
-        Err(error) => return Err(error.into()),
+        // The torrent is deleted and unreachable; the engine releases what
+        // it still holds of it when it stops.
+        Err(error) => tracing::error!(
+            error = %torrplay_core::redact::redact(&error.to_string()),
+            id = %record.id,
+            "the engine did not remove a deleted torrent"
+        ),
     }
-    app.registry().remove(&id).ok_or_else(not_found)?;
-    app.forget(&record.id);
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -412,7 +471,7 @@ pub(crate) async fn get_configuration<E: Engine>(
     headers: HeaderMap,
 ) -> Result<Response, Problem> {
     negotiate(&headers, JSON)?;
-    let record = app.registry().get(&id).ok_or_else(not_found)?;
+    let record = app.registry()?.get(&id).ok_or_else(not_found)?;
     let etag = configuration_etag(&record.configuration);
     if let Some(response) = not_modified(&headers, &etag) {
         return Ok(response);
@@ -432,7 +491,7 @@ pub(crate) async fn update_configuration<E: Engine>(
     body: Body,
 ) -> Result<Response, Problem> {
     negotiate(&headers, JSON)?;
-    let record = app.registry().get(&id).ok_or_else(not_found)?;
+    let record = app.registry()?.get(&id).ok_or_else(not_found)?;
     if MediaType::of_request(&headers).is_none_or(|media| media.essence != MERGE_PATCH) {
         return Err(Problem::new(
             ProblemType::UnsupportedMediaType,
@@ -469,6 +528,15 @@ pub(crate) async fn update_configuration<E: Engine>(
         return Err(stale());
     }
     app.require_engine()?;
+    if let Some(failure) = app.restore_failure(&record.id) {
+        return Err(Problem::new(
+            ProblemType::LifecycleConflict,
+            format!(
+                "The torrent could not be restored: {} Delete it.",
+                failure.detail
+            ),
+        ));
+    }
 
     // The engine takes the change before it is stored, so a change the
     // engine refuses leaves the configuration and its ETag untouched.
@@ -478,26 +546,30 @@ pub(crate) async fn update_configuration<E: Engine>(
             .set_desired_state(&record.id, desired_state)
             .await?;
     }
-    let update =
-        match app
-            .registry()
-            .update_desired_state(&id, desired_state, &record.configuration.etag())
-        {
-            Ok(update) => update,
-            Err(error) => {
-                // A concurrent change won; the engine follows the stored value.
-                if let Some(current) = app.registry().get(&id) {
-                    let _ = app
-                        .engine()
-                        .set_desired_state(&record.id, current.configuration.desired_state())
-                        .await;
-                }
-                return Err(match error {
-                    ConfigurationError::NotFound => not_found(),
-                    ConfigurationError::PreconditionFailed { .. } => stale(),
-                });
+    let stored = {
+        let _lane = app.write_lane().await;
+        store_desired_state(&app, &id, desired_state, &record.configuration.etag()).await
+    };
+    let update = match stored {
+        Ok(update) => update,
+        Err(error) => {
+            // A concurrent change won or the store failed; the engine
+            // follows the stored value.
+            if let Ok(registry) = app.registry()
+                && let Some(current) = registry.get(&id)
+            {
+                let _ = app
+                    .engine()
+                    .set_desired_state(&record.id, current.configuration.desired_state())
+                    .await;
             }
-        };
+            return Err(match error {
+                Stored::Registry(ConfigurationError::NotFound) => not_found(),
+                Stored::Registry(ConfigurationError::PreconditionFailed { .. }) => stale(),
+                Stored::Failed(problem) => problem,
+            });
+        }
+    };
     if update.changed && previous == DesiredState::Paused && desired_state == DesiredState::Started
     {
         app.clear_metadata_failure(&record.id);
@@ -507,6 +579,47 @@ pub(crate) async fn update_configuration<E: Engine>(
         json(StatusCode::OK, &body)?,
         &configuration_etag(&update.configuration),
     )
+}
+
+/// Why a desired state was not stored.
+enum Stored {
+    Registry(ConfigurationError),
+    Failed(Problem),
+}
+
+/// Sets and stores a desired state if `expected` is still the current entity
+/// tag, under the write lane: the store first, then the registry.
+async fn store_desired_state<E: Engine>(
+    app: &App<E>,
+    id: &str,
+    desired_state: DesiredState,
+    expected: &EntityTag,
+) -> Result<ConfigurationUpdate, Stored> {
+    let registry = app.registry().map_err(Stored::Failed)?;
+    let current = registry
+        .get(id)
+        .ok_or(Stored::Registry(ConfigurationError::NotFound))?;
+    let etag = current.configuration.etag();
+    if &etag != expected {
+        return Err(Stored::Registry(ConfigurationError::PreconditionFailed {
+            current: etag,
+        }));
+    }
+    let mut configuration = current.configuration;
+    let changed = configuration.set_desired_state(desired_state);
+    if changed {
+        app.store()
+            .set_configuration(&current.id, &configuration)
+            .await
+            .map_err(|error| Stored::Failed(store_failed(error)))?;
+        registry
+            .set_configuration(id, configuration.clone())
+            .map_err(|_| Stored::Registry(ConfigurationError::NotFound))?;
+    }
+    Ok(ConfigurationUpdate {
+        configuration,
+        changed,
+    })
 }
 
 /// Reads the desired state a merge patch sets. The patch must change at
@@ -540,7 +653,7 @@ pub(crate) async fn statistics<E: Engine>(
     headers: HeaderMap,
 ) -> Result<Response, Problem> {
     negotiate(&headers, JSON)?;
-    let record = app.registry().get(&id).ok_or_else(not_found)?;
+    let record = app.registry()?.get(&id).ok_or_else(not_found)?;
     app.require_engine()?;
     let statistics = app.engine().torrent_statistics(&record.id).await?;
     let body = representation::torrent_statistics(&record.id, &statistics);

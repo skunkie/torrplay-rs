@@ -140,9 +140,24 @@ impl Configuration {
         }
     }
 
+    /// Rebuilds a stored configuration: `None` for version 0, which no
+    /// configuration has.
+    pub fn from_stored(desired_state: DesiredState, version: u64) -> Option<Self> {
+        (version >= 1).then_some(Self {
+            desired_state,
+            version,
+        })
+    }
+
     /// Returns the desired state.
     pub fn desired_state(&self) -> DesiredState {
         self.desired_state
+    }
+
+    /// Returns the version the entity tag derives from, which starts at 1 and
+    /// grows with every change of a writable member.
+    pub fn version(&self) -> u64 {
+        self.version
     }
 
     /// Returns the strong entity tag, which changes only when a writable
@@ -240,6 +255,18 @@ mod tests {
                 failure.is_some()
             );
         }
+    }
+
+    #[test]
+    fn a_stored_configuration_keeps_its_entity_tag() {
+        let mut configuration = Configuration::new(DesiredState::Started);
+        configuration.set_desired_state(DesiredState::Paused);
+        let stored = Configuration::from_stored(DesiredState::Paused, configuration.version());
+        assert_eq!(
+            stored.as_ref().map(Configuration::etag),
+            Some(configuration.etag())
+        );
+        assert_eq!(Configuration::from_stored(DesiredState::Paused, 0), None);
     }
 
     #[test]

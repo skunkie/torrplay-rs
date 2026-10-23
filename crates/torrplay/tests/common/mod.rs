@@ -64,6 +64,10 @@ pub struct Running {
     shutdown: Option<oneshot::Sender<()>>,
     task: JoinHandle<anyhow::Result<()>>,
     _folder: TempDir,
+    /// The data directory, which a restart keeps.
+    data: Arc<TempDir>,
+    peers: Vec<SocketAddr>,
+    timings: ShutdownTimings,
 }
 
 impl Running {
@@ -85,6 +89,25 @@ impl Running {
         timings: ShutdownTimings,
         tune: impl FnOnce(&mut EngineConfig),
     ) -> anyhow::Result<Self> {
+        Self::spawn_in(Arc::new(tempfile::tempdir()?), peers, timings, tune).await
+    }
+
+    /// Stops the application and starts it again over a new engine and the
+    /// same data directory, as a restart does, and waits until it is ready.
+    pub async fn restart(self, tune: impl FnOnce(&mut EngineConfig)) -> anyhow::Result<Self> {
+        let (data, peers, timings) = (Arc::clone(&self.data), self.peers.clone(), self.timings);
+        self.stop().await?;
+        let running = Self::spawn_in(data, peers, timings, tune).await?;
+        running.ready(&Client::new()).await?;
+        Ok(running)
+    }
+
+    async fn spawn_in(
+        data: Arc<TempDir>,
+        peers: Vec<SocketAddr>,
+        timings: ShutdownTimings,
+        tune: impl FnOnce(&mut EngineConfig),
+    ) -> anyhow::Result<Self> {
         // Server logs go to the test's captured output, which libtest shows
         // when the test fails.
         let _ = tracing_subscriber::fmt()
@@ -92,16 +115,26 @@ impl Running {
             .with_max_level(tracing::Level::INFO)
             .try_init();
         let folder = tempfile::tempdir()?;
-        let mut config =
-            EngineConfig::new(folder.path().to_path_buf(), NetworkConfig::isolated(peers));
+        let mut config = EngineConfig::new(
+            folder.path().to_path_buf(),
+            NetworkConfig::isolated(peers.clone()),
+        );
         tune(&mut config);
         let engine = LibrqbitEngine::new(config);
+        let (store, stored) = torrplay_store::Store::open(data.path())?;
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let address = listener.local_addr()?;
         let (shutdown, triggered) = oneshot::channel::<()>();
-        let task = tokio::spawn(torrplay::serve(listener, engine.clone(), timings, async {
-            let _ = triggered.await;
-        }));
+        let task = tokio::spawn(torrplay::serve(
+            listener,
+            engine.clone(),
+            store,
+            stored,
+            timings,
+            async {
+                let _ = triggered.await;
+            },
+        ));
         Ok(Self {
             engine,
             address,
@@ -109,6 +142,9 @@ impl Running {
             shutdown: Some(shutdown),
             task,
             _folder: folder,
+            data,
+            peers,
+            timings,
         })
     }
 

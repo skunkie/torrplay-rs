@@ -47,7 +47,7 @@ async fn with_metadata<E: Engine>(
     app: &App<E>,
     id: &str,
 ) -> Result<(TorrentView, Arc<Metadata>), Problem> {
-    let record = app.registry().get(id).ok_or_else(torrents::not_found)?;
+    let record = app.registry()?.get(id).ok_or_else(torrents::not_found)?;
     let view = app.observe(record).await?;
     let metadata = view
         .record

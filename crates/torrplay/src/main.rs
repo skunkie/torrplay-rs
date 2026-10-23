@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: MIT
 
 //! The `torrplay` executable: parses the command line, starts logging and
-//! the runtime, binds the API's loopback listener, and serves until a
-//! termination signal.
+//! the runtime, opens the store in the data directory, binds the API's
+//! loopback listener, and serves until a termination signal.
 
 use std::process::ExitCode;
 use std::time::Duration;
@@ -13,6 +13,7 @@ use anyhow::Context;
 use tokio::net::TcpListener;
 use torrplay::{Command, Config, ShutdownTimings, USAGE};
 use torrplay_engine::LibrqbitEngine;
+use torrplay_store::Store;
 
 /// How long exiting waits for blocking tasks still running after shutdown.
 const RUNTIME_SHUTDOWN: Duration = Duration::from_secs(1);
@@ -65,8 +66,15 @@ fn main() -> ExitCode {
 }
 
 async fn run(config: &Config) -> anyhow::Result<()> {
-    // Memory storage writes nothing to the session folder, and the
-    // prototype persists nothing, so it lives only as long as the process.
+    let data_dir = config.data_dir()?;
+    let opening = data_dir.clone();
+    let (store, stored) = tokio::task::spawn_blocking(move || Store::open(&opening))
+        .await
+        .context("opening the store")?
+        .with_context(|| format!("opening the store in {}", data_dir.display()))?;
+    tracing::info!(path = %store.path().display(), torrents = stored.len(), "the store is open");
+    // Memory storage writes nothing to the session folder, so it lives only
+    // as long as the process; torrents persist in the store.
     let folder = tempfile::tempdir().context("creating the session folder")?;
     let listener = TcpListener::bind(config.listen)
         .await
@@ -75,6 +83,8 @@ async fn run(config: &Config) -> anyhow::Result<()> {
     torrplay::serve(
         listener,
         LibrqbitEngine::new(config.engine_config(folder.path())),
+        store,
+        stored,
         ShutdownTimings::default(),
         termination(),
     )

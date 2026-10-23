@@ -967,6 +967,25 @@ impl Engine for LibrqbitEngine {
         })
     }
 
+    async fn torrent_file(&self, id: &TorrentId) -> Result<Option<Vec<u8>>, EngineError> {
+        self.running()?;
+        let torrent = self.torrent(id)?;
+        let state = torrent.state();
+        if state.metadata.is_none() {
+            return Ok(None);
+        }
+        // librqbit builds a magnet URI's torrent file from the retrieved info
+        // dictionary and the URI's trackers when the metadata arrives; while a
+        // failed torrent is being restarted it has no live handle.
+        let Some(live) = &state.live else {
+            return Ok(None);
+        };
+        live.handle
+            .with_metadata(|metadata| metadata.torrent_bytes.to_vec())
+            .map(Some)
+            .map_err(internal)
+    }
+
     async fn open_reader(
         &self,
         id: &TorrentId,

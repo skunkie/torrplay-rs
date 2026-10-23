@@ -17,7 +17,7 @@
 
 use std::future::{Future, IntoFuture};
 use std::net::{Ipv4Addr, SocketAddr};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -28,6 +28,7 @@ use torrplay_engine::{
     DEFAULT_CACHE_CAPACITY_BYTES, DEFAULT_PEER_PORT, EngineConfig, LibrqbitEngine, NetworkConfig,
 };
 use torrplay_server::App;
+use torrplay_store::{Store, StoredTorrent};
 use tracing::Level;
 
 /// The default API port, as the contract's server URL documents.
@@ -52,6 +53,8 @@ Options:
   --listen <ADDRESS>         The API's loopback address [default: 127.0.0.1:8080]
   --peer-port <PORT>         The BitTorrent peer port on every interface [default: 4240]
   --cache-capacity <BYTES>   The piece cache capacity [default: 268435456]
+  --data-dir <DIR>           Where the torrents database lives, on a local
+                             filesystem [default: the platform's data directory]
   --log-level <LEVEL>        error, warn, info, debug, or trace [default: info]
   --log-filter <TARGETS>     Per-target levels, as in librqbit=debug,torrplay=info,
                              replacing --log-level's filter, for diagnosing the engine
@@ -77,6 +80,9 @@ pub struct Config {
     pub log_filter: Option<String>,
     /// Whether DHT finds peers.
     pub dht: bool,
+    /// The data directory, or `None` for the platform's; see
+    /// [`Config::data_dir`].
+    pub data_dir: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -88,11 +94,24 @@ impl Default for Config {
             log_level: Level::INFO,
             log_filter: None,
             dht: true,
+            data_dir: None,
         }
     }
 }
 
 impl Config {
+    /// The data directory: `--data-dir`, or else the platform's data
+    /// directory for applications, such as `~/.local/share/torrplay` on
+    /// Linux.
+    pub fn data_dir(&self) -> anyhow::Result<PathBuf> {
+        if let Some(directory) = &self.data_dir {
+            return Ok(directory.clone());
+        }
+        directories::ProjectDirs::from_path(PathBuf::from("torrplay"))
+            .map(|directories| directories.data_dir().to_owned())
+            .context("no home directory to put the data directory in; pass --data-dir")
+    }
+
     /// The engine configuration for this configuration, with `folder` as
     /// the session's folder and ADR 2's public network configuration.
     pub fn engine_config(&self, folder: &Path) -> EngineConfig {
@@ -197,6 +216,13 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, Arg
                     .parse()
                     .map_err(|_| invalid(value.clone(), "error, warn, info, debug, or trace"))?;
             }
+            "--data-dir" => {
+                let value = value()?;
+                if value.is_empty() {
+                    return Err(invalid(value, "a directory"));
+                }
+                config.data_dir = Some(PathBuf::from(value));
+            }
             "--log-filter" => {
                 let value = value()?;
                 if value
@@ -263,19 +289,21 @@ impl Default for ShutdownTimings {
 }
 
 /// Serves the API on `listener` over `engine`, which must not be started
-/// yet, until `shutdown` completes, then shuts down in the lifecycle's
-/// order.
+/// yet, and `store` with the torrents it held, until `shutdown` completes,
+/// then shuts down in the lifecycle's order.
 ///
-/// The listener serves before the engine starts. Fails if the engine
-/// cannot start, if the server fails, or if shutdown takes longer than
-/// `timings.limit`.
+/// The listener serves before the engine starts, and the stored torrents are
+/// restored once it has. Fails if the engine cannot start, if restoring or
+/// the server fails, or if shutdown takes longer than `timings.limit`.
 pub async fn serve(
     listener: TcpListener,
     engine: Arc<LibrqbitEngine>,
+    store: Store,
+    stored: Vec<StoredTorrent>,
     timings: ShutdownTimings,
     shutdown: impl Future<Output = ()>,
 ) -> anyhow::Result<()> {
-    let app = Arc::new(App::new(engine.clone()));
+    let app = Arc::new(App::new(engine.clone(), store));
     let (close_listener, listener_closed) = oneshot::channel::<()>();
     let mut server = tokio::spawn(
         axum::serve(listener, torrplay_server::router(app.clone()))
@@ -292,15 +320,36 @@ pub async fn serve(
         () = &mut shutdown => Ok(()),
         served = &mut server => Err(server_ended(served)),
     };
-    let result = match started {
+    // Whether the engine started and the stored torrents were restored, so
+    // the application runs until shutdown.
+    let ready = match started {
         Ok(()) if engine.playback().is_some() => {
-            tracing::info!("the engine is ready");
+            let count = stored.len();
+            tokio::select! {
+                restored = app.restore(stored) => match restored {
+                    Ok(()) => {
+                        tracing::info!(torrents = count, "the engine is ready, with the stored torrents");
+                        Ok(true)
+                    }
+                    Err(error) => {
+                        Err(anyhow::Error::new(error).context("restoring the stored torrents"))
+                    }
+                },
+                () = &mut shutdown => Ok(false),
+                served = &mut server => Err(server_ended(served)),
+            }
+        }
+        other => other.map(|()| false),
+    };
+    let result = match ready {
+        Ok(true) => {
             tokio::select! {
                 () = &mut shutdown => Ok(()),
                 served = &mut server => Err(server_ended(served)),
             }
         }
-        other => other,
+        Ok(false) => Ok(()),
+        Err(error) => Err(error),
     };
     if let Err(error) = &result {
         tracing::error!(error = %format!("{error:#}"), "stopping after a failure");
@@ -315,7 +364,8 @@ pub async fn serve(
         if !server.is_finished() {
             server_result(server.await)?;
         }
-        engine.shutdown().await
+        engine.shutdown().await?;
+        app.close_store().await.context("closing the store")
     };
     let stopped = tokio::time::timeout(timings.limit, sequence)
         .await
@@ -386,6 +436,7 @@ mod tests {
             "--log-level=debug",
             "--log-filter",
             "librqbit=debug,torrplay_engine=trace",
+            "--data-dir=/srv/torrplay",
             "--no-dht",
         ]) else {
             panic!("the options parse");
@@ -399,7 +450,13 @@ mod tests {
                 log_level: Level::DEBUG,
                 log_filter: Some("librqbit=debug,torrplay_engine=trace".into()),
                 dht: false,
+                data_dir: Some("/srv/torrplay".into()),
             }
+        );
+        assert_eq!(
+            config.data_dir().unwrap(),
+            PathBuf::from("/srv/torrplay"),
+            "an explicit data directory is used as given"
         );
         assert_eq!(parse(&["--version"]), Ok(Command::Version));
         assert_eq!(parse(&["--listen=x", "-h"]).ok(), None);
@@ -428,6 +485,7 @@ mod tests {
             &["--cache-capacity", "1GiB"],
             &["--log-level", "loud"],
             &["--log-filter", "librqbit=loud"],
+            &["--data-dir="],
         ] {
             assert!(
                 matches!(parse(args), Err(ArgsError::InvalidValue { .. })),
