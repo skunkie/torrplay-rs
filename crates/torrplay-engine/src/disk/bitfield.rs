@@ -109,6 +109,24 @@ impl ResumeBitfield {
             .write_all_at(&[*byte], (MAGIC.len() + index) as u64)
     }
 
+    /// Replaces the recorded pieces with `bits`, of the same length, as
+    /// after a full check.
+    pub fn replace(&self, bits: &[u8]) -> io::Result<()> {
+        let mut current = self
+            .bits
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if bits.len() != current.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the bitfield has another length",
+            ));
+        }
+        self.file.write_all_at(bits, MAGIC.len() as u64)?;
+        current.copy_from_slice(bits);
+        Ok(())
+    }
+
     /// Makes every recorded piece durable.
     pub fn flush(&self) -> io::Result<()> {
         self.file.sync_all()
@@ -165,6 +183,17 @@ mod tests {
         let bitfield = ResumeBitfield::create(&dir.path().join("trr_x.have"), &[0]).unwrap();
         assert!(bitfield.set(8).is_err());
         assert_eq!(bitfield.bits(), [0]);
+    }
+
+    #[test]
+    fn replacing_rewrites_every_piece() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("trr_x.have");
+        let bitfield = ResumeBitfield::create(&path, &[0xff, 0x00]).unwrap();
+        bitfield.replace(&[0x0f, 0x80]).unwrap();
+        assert!(bitfield.replace(&[0]).is_err(), "another length");
+        drop(bitfield);
+        assert_eq!(load(&path, 9).unwrap(), Some(vec![0x0f, 0x80]));
     }
 
     #[test]

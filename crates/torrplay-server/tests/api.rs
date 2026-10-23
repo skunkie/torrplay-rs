@@ -23,7 +23,7 @@ use http::{Method, StatusCode, header};
 use serde_json::{Value, json};
 use torrplay_core::engine::{CacheStatistics, Ratio, TorrentStatistics};
 use torrplay_core::id::FileId;
-use torrplay_core::lifecycle::Readiness;
+use torrplay_core::lifecycle::{Readiness, StorageMode};
 use torrplay_core::settings::{Explicit, Settings};
 use torrplay_fixtures::{FixtureSpec, catalog, generator, hex};
 use torrplay_store::StoredSettings;
@@ -213,6 +213,78 @@ mod scenario {
             ))
             .await;
         assert_eq!(magnet_paused.json()["observed_state"], "paused");
+        server.stop().await;
+    }
+
+    /// DSK-01 and DSK-05 at creation: a torrent created in disk storage
+    /// reports it, in the torrent and its configuration, and keeps it across
+    /// a restart; too little free space is `507`, and nothing is created.
+    pub async fn disk_creation() {
+        let server = TestServer::start().await;
+        let spec = catalog::single_small();
+        let created = server
+            .send(form(&[
+                (
+                    "torrent_file",
+                    Some("application/x-bittorrent"),
+                    spec.metainfo().bytes,
+                ),
+                ("storage_mode", None, b"disk".to_vec()),
+            ]))
+            .await;
+        assert_eq!(created.status, StatusCode::CREATED);
+        assert_eq!(created.json()["storage_mode"], "disk");
+        assert_eq!(created.json()["storage_transition"], Value::Null);
+        let id = server.id_of(&created);
+        assert_eq!(server.engine.storage_mode(&id), Some(StorageMode::Disk));
+        let path = created.json()["links"]["configuration"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(server.get(&path).await.json()["storage_mode"], "disk");
+
+        let magnet = server
+            .send(json_request(
+                Method::POST,
+                "/api/v1/torrents",
+                &json!({ "magnet_uri": unknown_magnet(1), "storage_mode": "disk" }),
+            ))
+            .await;
+        assert_eq!(magnet.json()["storage_mode"], "disk");
+        let invalid = server
+            .send_unchecked(json_request(
+                Method::POST,
+                "/api/v1/torrents",
+                &json!({ "magnet_uri": unknown_magnet(2), "storage_mode": "tape" }),
+            ))
+            .await;
+        assert_eq!(errors(&invalid, "pointer"), ["/storage_mode"]);
+
+        server.engine.set_disk_free_bytes(1);
+        let full = server
+            .send(form(&[
+                (
+                    "torrent_file",
+                    Some("application/x-bittorrent"),
+                    catalog::multi_boundary().metainfo().bytes,
+                ),
+                ("storage_mode", None, b"disk".to_vec()),
+            ]))
+            .await;
+        assert_problem(
+            &full,
+            StatusCode::INSUFFICIENT_STORAGE,
+            "insufficient-storage",
+        );
+        assert_eq!(listed_len(&server).await, 2, "nothing was created");
+
+        let server = server.restart().await;
+        assert_eq!(server.get(&path).await.json()["storage_mode"], "disk");
+        assert_eq!(
+            server.engine.storage_mode(&id),
+            Some(StorageMode::Disk),
+            "restored in disk storage"
+        );
         server.stop().await;
     }
 
@@ -1958,9 +2030,8 @@ const EXEMPT: &[(&str, u16)] = &[
     ("getSettings", 500),
     // A process that answers is live.
     ("getLiveness", 503),
-    // Disk storage is specified ahead of its implementation, which removes
-    // these.
-    ("createTorrent", 507),
+    // Storage mode transitions are specified ahead of their
+    // implementation, which removes this.
     ("updateTorrentConfiguration", 507),
 ];
 
@@ -2011,5 +2082,6 @@ scenarios!(
     refused_on_restore,
     settings,
     stored_settings,
+    disk_creation,
     cache_capacity_settings,
 );

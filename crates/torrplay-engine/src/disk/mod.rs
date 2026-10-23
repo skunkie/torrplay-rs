@@ -36,18 +36,73 @@ use self::bitfield::ResumeBitfield;
 use self::io::FileAt;
 use crate::inspect;
 
+/// Why a torrent cannot use disk storage where it would go.
+#[derive(Debug, thiserror::Error)]
+pub enum DiskRefusal {
+    /// Its files cannot be laid out on disk.
+    #[error(transparent)]
+    Unmappable(#[from] paths::UnmappablePaths),
+    /// The filesystem has too little free space for its files.
+    #[error("the torrent's files need {needed_bytes} bytes, and {available_bytes} are free")]
+    InsufficientStorage {
+        /// The files' total size.
+        needed_bytes: u64,
+        /// The free space.
+        available_bytes: u64,
+    },
+    /// The free space could not be read.
+    #[error("the free space could not be read")]
+    Io(#[from] std::io::Error),
+}
+
+/// Checks that a torrent with `metadata` can keep its files in `directory`:
+/// that they map to file names, and, unless the directory already holds
+/// data, that its filesystem has room for them.
+pub fn check(directory: &Path, metadata: &ReportedMetadata) -> Result<(), DiskRefusal> {
+    paths::map_files(metadata)?;
+    if directory.exists() {
+        return Ok(());
+    }
+    let needed_bytes = metadata
+        .files
+        .iter()
+        .filter(|file| !file.padding)
+        .map(|file| file.size_bytes)
+        .sum();
+    // The directory does not exist yet, so its nearest existing ancestor's
+    // filesystem is the one its files go to.
+    let existing = directory
+        .ancestors()
+        .find(|ancestor| ancestor.exists())
+        .unwrap_or(directory);
+    let available_bytes = fs4::available_space(existing)?;
+    if available_bytes < needed_bytes {
+        return Err(DiskRefusal::InsufficientStorage {
+            needed_bytes,
+            available_bytes,
+        });
+    }
+    Ok(())
+}
+
 /// Creates a [`DiskStorage`] for each torrent added with it, in the
 /// directory [`expect`](Self::expect) named for the torrent.
 #[derive(Clone, Default)]
 pub struct DiskStorageFactory {
     // Torrents about to be added, by info hash.
     expected: Arc<Mutex<HashMap<Id20, Expected>>>,
+    // Torrents whose storage opened, until the engine takes their files.
+    opened: Arc<Mutex<HashMap<Id20, Arc<DiskFiles>>>>,
 }
 
 /// Where a torrent about to be added keeps its files, and its bitfield.
 struct Expected {
+    info_hash: Id20,
     directory: PathBuf,
-    bits: Vec<u8>,
+    // `None` for the pieces the bitfield beside the directory records, or
+    // none for a new directory.
+    bits: Option<Vec<u8>>,
+    opened: Arc<Mutex<HashMap<Id20, Arc<DiskFiles>>>>,
 }
 
 impl DiskStorageFactory {
@@ -57,14 +112,35 @@ impl DiskStorageFactory {
     }
 
     /// Makes the next torrent added with `info_hash` keep its files in
-    /// `directory`, with `bits` as its resume bitfield: the pieces the files
-    /// hold, which the torrent's first check samples.
-    pub fn expect(&self, info_hash: Id20, directory: PathBuf, bits: Vec<u8>) -> anyhow::Result<()> {
+    /// `directory`, with `bits` as its resume bitfield, or the pieces it
+    /// already records for `None`.
+    pub fn expect(
+        &self,
+        info_hash: Id20,
+        directory: PathBuf,
+        bits: Option<Vec<u8>>,
+    ) -> anyhow::Result<()> {
+        let expected = Expected {
+            info_hash,
+            directory,
+            bits,
+            opened: self.opened.clone(),
+        };
         self.expected
             .lock()
             .map_err(|_| anyhow::anyhow!("the factory was poisoned"))?
-            .insert(info_hash, Expected { directory, bits });
+            .insert(info_hash, expected);
         Ok(())
+    }
+
+    /// Takes the files of the torrent with `info_hash` once its storage
+    /// opened them.
+    pub fn take_opened(&self, info_hash: Id20) -> anyhow::Result<Option<Arc<DiskFiles>>> {
+        Ok(self
+            .opened
+            .lock()
+            .map_err(|_| anyhow::anyhow!("the factory was poisoned"))?
+            .remove(&info_hash))
     }
 
     /// The factory boxed for librqbit.
@@ -216,16 +292,30 @@ impl TorrentStorage for DiskStorage {
         _shared: &ManagedTorrentShared,
         metadata: &TorrentMetadata,
     ) -> anyhow::Result<()> {
-        let Expected { directory, bits } = self
+        let expected = self
             .pending
             .take()
             .context("the storage was opened already")?;
         let reported = inspect::reported_metadata(&metadata.info);
-        let files = DiskFiles::open(&directory, &reported, &bits)?;
+        // A magnet URI's files are checked only now that its metadata
+        // arrived; the error says why, for the engine to report.
+        check(&expected.directory, &reported)?;
+        let pieces = metadata.lengths().total_pieces();
+        let bits = match expected.bits {
+            Some(bits) => bits,
+            None => bitfield::load(&bitfield::path_for(&expected.directory), pieces)?
+                .unwrap_or_else(|| vec![0; bitfield::bitfield_bytes(pieces)]),
+        };
+        let files = Arc::new(DiskFiles::open(&expected.directory, &reported, &bits)?);
+        expected
+            .opened
+            .lock()
+            .map_err(|_| anyhow::anyhow!("the factory was poisoned"))?
+            .insert(expected.info_hash, files.clone());
         *self
             .files
             .lock()
-            .map_err(|_| anyhow::anyhow!("the storage was poisoned"))? = Some(Arc::new(files));
+            .map_err(|_| anyhow::anyhow!("the storage was poisoned"))? = Some(files);
         Ok(())
     }
 

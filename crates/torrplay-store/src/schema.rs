@@ -15,13 +15,13 @@ use std::time::{Duration, SystemTime};
 
 use rusqlite::{Connection, ErrorCode, OptionalExtension, TransactionBehavior};
 use torrplay_core::id::{InfoHashV1, TorrentId};
-use torrplay_core::lifecycle::{Configuration, DesiredState};
+use torrplay_core::lifecycle::{Configuration, DesiredState, StorageMode};
 use torrplay_core::settings::{self, Explicit, Stored};
 
 use crate::{StoreError, StoredTorrent};
 
 /// The schema version this build creates and migrates to.
-pub(crate) const VERSION: u32 = 3;
+pub(crate) const VERSION: u32 = 4;
 
 /// The schema at each version, applied in order to reach the next one.
 const MIGRATIONS: [&str; VERSION as usize] = [
@@ -59,6 +59,11 @@ const MIGRATIONS: [&str; VERSION as usize] = [
     // Version 3: the cache capacity.
     "ALTER TABLE settings
         ADD COLUMN cache_capacity_bytes INTEGER CHECK (cache_capacity_bytes >= 0);",
+    // Version 4: the storage mode the configuration asks for, beside
+    // storage_mode, the one in effect, which a transition changes.
+    "ALTER TABLE torrents
+        ADD COLUMN desired_storage_mode TEXT NOT NULL DEFAULT 'memory'
+            CHECK (desired_storage_mode IN ('memory', 'disk'));",
 ];
 
 /// Opens the database at `path`, takes its lock, and migrates it.
@@ -136,7 +141,7 @@ pub(crate) fn torrents(connection: &mut Connection) -> Result<Vec<StoredTorrent>
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let mut statement = transaction.prepare(
         "SELECT t.id, t.info_hash, t.created_at_ns, t.desired_state, t.configuration_version,
-                t.magnet_uri, f.bytes
+                t.magnet_uri, f.bytes, t.desired_storage_mode, t.storage_mode
          FROM torrents t LEFT JOIN torrent_files f ON f.torrent_id = t.id
          ORDER BY t.created_at_ns, t.id",
     )?;
@@ -149,11 +154,23 @@ pub(crate) fn torrents(connection: &mut Connection) -> Result<Vec<StoredTorrent>
             row.get::<_, i64>(4)?,
             row.get::<_, Option<String>>(5)?,
             row.get::<_, Option<Vec<u8>>>(6)?,
+            row.get::<_, String>(7)?,
+            row.get::<_, String>(8)?,
         ))
     })?;
     let mut torrents = Vec::new();
     for row in rows {
-        let (id, info_hash, created_at_ns, desired_state, version, magnet_uri, torrent_file) = row?;
+        let (
+            id,
+            info_hash,
+            created_at_ns,
+            desired_state,
+            version,
+            magnet_uri,
+            torrent_file,
+            desired_storage_mode,
+            storage_mode,
+        ) = row?;
         let corrupt = |what: &str| StoreError::Corrupt(format!("torrent {id}: {what}"));
         let info_hash: [u8; 20] = info_hash
             .try_into()
@@ -164,9 +181,15 @@ pub(crate) fn torrents(connection: &mut Connection) -> Result<Vec<StoredTorrent>
             .ok_or_else(|| corrupt("the creation time is out of range"))?;
         let desired_state =
             DesiredState::parse(&desired_state).ok_or_else(|| corrupt("unknown desired state"))?;
+        let parse_mode =
+            |mode: &str| StorageMode::parse(mode).ok_or_else(|| corrupt("unknown storage mode"));
+        let desired_storage_mode = parse_mode(&desired_storage_mode)?;
+        let storage_mode = parse_mode(&storage_mode)?;
         let configuration = u64::try_from(version)
             .ok()
-            .and_then(|version| Configuration::from_stored(desired_state, version))
+            .and_then(|version| {
+                Configuration::from_stored(desired_state, desired_storage_mode, version)
+            })
             .ok_or_else(|| corrupt("the configuration version is out of range"))?;
         if magnet_uri.is_none() && torrent_file.is_none() {
             return Err(corrupt("neither a magnet URI nor a torrent file"));
@@ -176,6 +199,7 @@ pub(crate) fn torrents(connection: &mut Connection) -> Result<Vec<StoredTorrent>
             info_hash: InfoHashV1::from_bytes(info_hash),
             created_at,
             configuration,
+            storage_mode,
             magnet_uri,
             torrent_file,
         });

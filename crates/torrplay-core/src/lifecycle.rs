@@ -37,6 +37,37 @@ impl DesiredState {
     }
 }
 
+/// Where a torrent keeps piece data.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum StorageMode {
+    /// The global piece cache, which evicts pieces; the torrent never
+    /// uploads.
+    #[default]
+    Memory,
+    /// Files in the torrent's directory in the download directory; the
+    /// torrent uploads.
+    Disk,
+}
+
+impl StorageMode {
+    /// Returns the contract's enum value.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Memory => "memory",
+            Self::Disk => "disk",
+        }
+    }
+
+    /// Parses the contract's enum value.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "memory" => Some(Self::Memory),
+            "disk" => Some(Self::Disk),
+            _ => None,
+        }
+    }
+}
+
 /// The read-only state the engine reports for a torrent, derived from the
 /// other state dimensions by [`ObservedState::derive`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -128,23 +159,38 @@ impl fmt::Display for EntityTag {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Configuration {
     desired_state: DesiredState,
+    storage_mode: StorageMode,
     version: u64,
 }
 
 impl Configuration {
-    /// Creates the configuration of a new torrent.
+    /// Creates the configuration of a new torrent in memory storage.
     pub fn new(desired_state: DesiredState) -> Self {
         Self {
             desired_state,
+            storage_mode: StorageMode::Memory,
             version: 1,
+        }
+    }
+
+    /// The configuration with `storage_mode` instead, for a new torrent.
+    pub fn with_storage_mode(self, storage_mode: StorageMode) -> Self {
+        Self {
+            storage_mode,
+            ..self
         }
     }
 
     /// Rebuilds a stored configuration: `None` for version 0, which no
     /// configuration has.
-    pub fn from_stored(desired_state: DesiredState, version: u64) -> Option<Self> {
+    pub fn from_stored(
+        desired_state: DesiredState,
+        storage_mode: StorageMode,
+        version: u64,
+    ) -> Option<Self> {
         (version >= 1).then_some(Self {
             desired_state,
+            storage_mode,
             version,
         })
     }
@@ -152,6 +198,12 @@ impl Configuration {
     /// Returns the desired state.
     pub fn desired_state(&self) -> DesiredState {
         self.desired_state
+    }
+
+    /// Returns the storage mode the client asked for, which a transition
+    /// reaches.
+    pub fn storage_mode(&self) -> StorageMode {
+        self.storage_mode
     }
 
     /// Returns the version the entity tag derives from, which starts at 1 and
@@ -261,12 +313,19 @@ mod tests {
     fn a_stored_configuration_keeps_its_entity_tag() {
         let mut configuration = Configuration::new(DesiredState::Started);
         configuration.set_desired_state(DesiredState::Paused);
-        let stored = Configuration::from_stored(DesiredState::Paused, configuration.version());
+        let stored = Configuration::from_stored(
+            DesiredState::Paused,
+            StorageMode::Memory,
+            configuration.version(),
+        );
         assert_eq!(
             stored.as_ref().map(Configuration::etag),
             Some(configuration.etag())
         );
-        assert_eq!(Configuration::from_stored(DesiredState::Paused, 0), None);
+        assert_eq!(
+            Configuration::from_stored(DesiredState::Paused, StorageMode::Disk, 0),
+            None
+        );
     }
 
     #[test]

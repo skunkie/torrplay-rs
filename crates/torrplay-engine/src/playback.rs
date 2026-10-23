@@ -97,6 +97,8 @@ pub struct Playback {
     // Active and idle readers. Schedulers change it under their own lock,
     // so it never counts a reader twice or misses one.
     readers: AtomicU64,
+    // Those of torrents in memory storage, which share the readahead budget.
+    cache_readers: AtomicU64,
     opened: AtomicU64,
     active: watch::Sender<bool>,
     next_scheduler: AtomicU64,
@@ -116,6 +118,7 @@ impl Playback {
         Arc::new(Self {
             readahead_bytes: AtomicU64::new(config.readahead_bytes),
             readers: AtomicU64::new(0),
+            cache_readers: AtomicU64::new(0),
             opened: AtomicU64::new(0),
             active: watch::Sender::new(false),
             next_scheduler: AtomicU64::new(0),
@@ -210,24 +213,32 @@ impl Playback {
         self.next_scheduler.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// The number of active and idle readers across torrents.
-    pub(crate) fn readers(&self) -> u64 {
-        self.readers.load(Ordering::Acquire)
+    /// The number of active and idle readers of torrents in memory storage,
+    /// which share the readahead budget.
+    pub(crate) fn cache_readers(&self) -> u64 {
+        self.cache_readers.load(Ordering::Acquire)
     }
 
     pub(crate) fn opened(&self) {
         self.opened.fetch_add(1, Ordering::AcqRel);
     }
 
-    /// Records readers added or removed, rebalances every torrent's
-    /// readahead, and then publishes active playback, so a receiver that sees
-    /// it end also sees the released pins gone. Callers hold no scheduler
-    /// lock.
-    pub(crate) fn readers_changed(&self, added: u64, removed: u64) {
-        if added >= removed {
-            self.readers.fetch_add(added - removed, Ordering::AcqRel);
+    /// Records readers added or removed, of a torrent in memory storage if
+    /// `cached`, rebalances every torrent's readahead, and then publishes
+    /// active playback, so a receiver that sees it end also sees the released
+    /// pins gone. Callers hold no scheduler lock.
+    pub(crate) fn readers_changed(&self, cached: bool, added: u64, removed: u64) {
+        let counts = if cached {
+            &[&self.readers, &self.cache_readers][..]
         } else {
-            self.readers.fetch_sub(removed - added, Ordering::AcqRel);
+            &[&self.readers][..]
+        };
+        for count in counts {
+            if added >= removed {
+                count.fetch_add(added - removed, Ordering::AcqRel);
+            } else {
+                count.fetch_sub(removed - added, Ordering::AcqRel);
+            }
         }
         self.replan_all();
         // The count is read under the channel's lock, so concurrent changes

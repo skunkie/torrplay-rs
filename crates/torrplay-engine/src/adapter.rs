@@ -41,7 +41,7 @@
 use std::collections::HashMap;
 use std::io::SeekFrom;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 
@@ -58,13 +58,14 @@ use torrplay_core::engine::{
     TorrentStatistics, TorrentStatus,
 };
 use torrplay_core::id::{InfoHashV1, TorrentId};
-use torrplay_core::lifecycle::{DesiredState, Failure, Readiness};
+use torrplay_core::lifecycle::{DesiredState, Failure, Readiness, StorageMode};
 use torrplay_core::metadata::{FileIndex, ReportedMetadata};
 use torrplay_core::redact::redact;
 use torrplay_core::settings::Settings;
 
 use crate::cache::TorrentKey;
 use crate::cache::{CacheError, PieceCache};
+use crate::disk::{self, DiskFiles, DiskRefusal, DiskStorageFactory, bitfield};
 use crate::evictor::Evictor;
 use crate::inspect;
 use crate::playback::{
@@ -73,7 +74,7 @@ use crate::playback::{
 };
 use crate::reader::RangeReader;
 use crate::scheduler::{OpenError, TorrentScheduler};
-use crate::storage::{CachedTorrent, MemoryStorageFactory};
+use crate::storage::{CachedTorrent, Layout, MemoryStorageFactory};
 
 const MIB: u64 = 1024 * 1024;
 
@@ -228,6 +229,7 @@ struct Running {
     session: Arc<Session>,
     cache: Arc<PieceCache>,
     factory: MemoryStorageFactory,
+    disk: DiskStorageFactory,
     playback: Arc<Playback>,
     evictor: Mutex<Option<Evictor>>,
     reaper: Mutex<Option<Reaper>>,
@@ -241,15 +243,17 @@ enum Phase {
     Stopped,
 }
 
-/// A torrent in the session, with its pieces in the cache.
+/// A torrent in the session, with its pieces in the cache or on disk.
 struct Live {
     handle: Arc<ManagedTorrent>,
-    cached: CachedTorrent,
+    // Its pieces in the cache; `None` in disk storage.
+    cached: Option<CachedTorrent>,
     scheduler: Arc<TorrentScheduler>,
 }
 
 struct TorrentState {
     desired: DesiredState,
+    storage_mode: StorageMode,
     metadata: Option<Arc<ReportedMetadata>>,
     // A failure the adapter decided, such as pieces longer than the cache.
     failure: Option<Failure>,
@@ -265,6 +269,8 @@ struct TorrentState {
 struct Torrent {
     info_hash: InfoHashV1,
     magnet_uri: Option<String>,
+    // Its directory in the download directory, in disk storage.
+    directory: PathBuf,
     // Serializes operations on the torrent; held across awaits.
     operations: tokio::sync::Mutex<()>,
     state: Mutex<TorrentState>,
@@ -310,21 +316,101 @@ struct Tunables {
 
 /// Why a torrent did not join the session.
 enum AddFailure {
-    /// Its pieces are longer than the cache capacity in effect; the detail
-    /// names both.
-    TooLarge(String),
+    /// Its storage cannot hold it: in memory, pieces longer than the cache
+    /// capacity in effect; on disk, files that do not map to file names.
+    /// The detail names the cause.
+    Unsupported(String),
+    /// Its files need more free space than their filesystem has.
+    InsufficientStorage {
+        needed_bytes: u64,
+        available_bytes: u64,
+    },
     /// librqbit or the cache failed.
     Engine(anyhow::Error),
 }
 
 impl AddFailure {
-    /// The error for an addition the API requested: a torrent file whose
-    /// pieces are too long is unsupported.
+    /// The failure for `error` from adding a torrent, which names a disk
+    /// refusal when a magnet URI's storage opened only once its metadata
+    /// arrived.
+    fn from_engine(error: anyhow::Error) -> Self {
+        match error.downcast_ref::<DiskRefusal>() {
+            Some(DiskRefusal::Unmappable(paths)) => Self::Unsupported(paths.to_string()),
+            Some(&DiskRefusal::InsufficientStorage {
+                needed_bytes,
+                available_bytes,
+            }) => Self::InsufficientStorage {
+                needed_bytes,
+                available_bytes,
+            },
+            Some(DiskRefusal::Io(_)) | None => Self::Engine(error),
+        }
+    }
+
+    /// The error for an addition the API requested.
     fn into_engine_error(self) -> EngineError {
         match self {
-            Self::TooLarge(detail) => SourceRejection::Unsupported { detail }.into(),
+            Self::Unsupported(detail) => SourceRejection::Unsupported { detail }.into(),
+            Self::InsufficientStorage {
+                needed_bytes,
+                available_bytes,
+            } => EngineError::InsufficientStorage {
+                needed_bytes,
+                available_bytes,
+            },
             Self::Engine(error) => internal(error),
         }
+    }
+
+    /// The failure detail of a torrent that cannot continue, for a magnet
+    /// URI whose metadata showed its storage cannot hold it.
+    fn detail(&self) -> Option<String> {
+        match self {
+            Self::Unsupported(detail) => Some(detail.clone()),
+            Self::InsufficientStorage {
+                needed_bytes,
+                available_bytes,
+            } => Some(format!(
+                "The torrent's files need {needed_bytes} bytes, and the download directory has {available_bytes} free."
+            )),
+            Self::Engine(_) => None,
+        }
+    }
+}
+
+/// The resume bitfield a torrent file in disk storage starts from: the
+/// recorded one, or none for a new directory, or `None` for a directory
+/// whose pieces are unknown, which the full check finds.
+fn initial_pieces(directory: &Path, piece_count: u32) -> anyhow::Result<Option<Vec<u8>>> {
+    if let Some(bits) = bitfield::load(&bitfield::path_for(directory), piece_count)? {
+        return Ok(Some(bits));
+    }
+    Ok((!directory.exists()).then(|| vec![0; bitfield::bitfield_bytes(piece_count)]))
+}
+
+/// Deletes a disk torrent's directory and resume bitfield. What it cannot
+/// delete, such as a file another process holds open on Windows, is left
+/// for the startup sweep.
+async fn delete_disk_data(directory: PathBuf) {
+    let deleted = tokio::task::spawn_blocking(move || {
+        let bitfield = bitfield::path_for(&directory);
+        for result in [
+            std::fs::remove_dir_all(&directory),
+            std::fs::remove_file(&bitfield),
+        ] {
+            match result {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    })
+    .await;
+    match deleted {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => tracing::error!(%error, "a deleted torrent's data could not be deleted"),
+        Err(error) => tracing::error!(%error, "deleting a torrent's data panicked"),
     }
 }
 
@@ -391,6 +477,7 @@ impl LibrqbitEngine {
         let (failures, failed) = mpsc::unbounded_channel();
         let running = Arc::new(Running {
             factory: MemoryStorageFactory::new(cache.clone()).with_failure_reports(failures),
+            disk: DiskStorageFactory::new(),
             evictor: Mutex::new(Some(Evictor::spawn_with_fallback(
                 cache.clone(),
                 playback.clone(),
@@ -495,11 +582,12 @@ impl LibrqbitEngine {
             .cloned()
             .ok_or(EngineError::UnknownTorrent)?;
         let state = torrent.state();
-        let live = state
+        let cached = state
             .live
             .as_ref()
+            .and_then(|live| live.cached.as_ref())
             .ok_or(EngineError::MetadataUnavailable)?;
-        live.cached.fail_writes();
+        cached.fail_writes();
         Ok(())
     }
 
@@ -509,6 +597,12 @@ impl LibrqbitEngine {
             Phase::Ready(running) => running.session.listen_addr(),
             Phase::Starting | Phase::Stopped => None,
         }
+    }
+
+    /// The download directory, where torrents in disk storage keep their
+    /// files.
+    pub fn download_dir(&self) -> &Path {
+        &self.config.download_dir
     }
 
     /// The piece cache, once started, for tests that audit its accounting.
@@ -565,24 +659,58 @@ impl LibrqbitEngine {
         })
     }
 
-    fn inspect_file(&self, bytes: &[u8]) -> Result<inspect::InspectedFile, EngineError> {
-        let inspected = inspect::torrent_file(bytes)?;
-        if let Some(detail) = self.too_large(inspected.piece_length) {
-            return Err(SourceRejection::Unsupported { detail }.into());
+    /// Checks that a torrent file's torrent can use `storage_mode`, in
+    /// `directory` for disk storage.
+    fn check_storage(
+        &self,
+        inspected: &inspect::InspectedFile,
+        storage_mode: StorageMode,
+        directory: &Path,
+    ) -> Result<(), EngineError> {
+        match storage_mode {
+            StorageMode::Memory => match self.too_large(inspected.piece_length) {
+                Some(detail) => Err(SourceRejection::Unsupported { detail }.into()),
+                None => Ok(()),
+            },
+            StorageMode::Disk => match disk::check(directory, &inspected.metadata) {
+                Ok(()) => Ok(()),
+                Err(DiskRefusal::Unmappable(paths)) => Err(SourceRejection::Unsupported {
+                    detail: paths.to_string(),
+                }
+                .into()),
+                Err(DiskRefusal::InsufficientStorage {
+                    needed_bytes,
+                    available_bytes,
+                }) => Err(EngineError::InsufficientStorage {
+                    needed_bytes,
+                    available_bytes,
+                }),
+                Err(DiskRefusal::Io(error)) => Err(internal(error)),
+            },
         }
-        Ok(inspected)
     }
 
+    /// The options that add a torrent with `scheduler`, in memory storage,
+    /// or in disk storage starting from `initial_pieces`.
     fn add_options(
         &self,
         running: &Running,
         scheduler: &Arc<TorrentScheduler>,
+        storage_mode: StorageMode,
+        initial_pieces: Option<Vec<u8>>,
     ) -> AddTorrentOptions {
         let tunables = self.tunables();
+        let disk = storage_mode == StorageMode::Disk;
         AddTorrentOptions {
-            storage_factory: Some(running.factory.clone().into_boxed()),
+            storage_factory: Some(if disk {
+                running.disk.clone().into_boxed()
+            } else {
+                running.factory.clone().into_boxed()
+            }),
             piece_selector: Some(scheduler.clone()),
-            disable_upload: true,
+            // ADR 3: only disk torrents upload, since memory evicts.
+            disable_upload: !disk,
+            initial_pieces: initial_pieces.filter(|_| disk),
             paused: true,
             overwrite: true,
             initial_peers: Some(self.config.network.initial_peers.clone()),
@@ -605,47 +733,84 @@ impl LibrqbitEngine {
     async fn add_to_session(
         &self,
         running: &Running,
+        torrent: &Torrent,
         add: AddTorrent<'_>,
         desired: DesiredState,
+        initial_pieces: Option<Vec<u8>>,
     ) -> Result<Live, AddFailure> {
+        let storage_mode = torrent.state().storage_mode;
         let live = self
-            .join_session(running, add)
+            .join_session(running, torrent, add, storage_mode, initial_pieces)
             .await
-            .map_err(AddFailure::Engine)?;
+            .map_err(AddFailure::from_engine)?;
         let piece_length = live
             .handle
             .with_metadata(|metadata| metadata.info.info().piece_length)
             .map_err(AddFailure::Engine)?;
-        if let Some(detail) = self.too_large(piece_length) {
+        if storage_mode == StorageMode::Memory
+            && let Some(detail) = self.too_large(piece_length)
+        {
             self.delete_live(running, live)
                 .await
                 .map_err(AddFailure::Engine)?;
-            return Err(AddFailure::TooLarge(detail));
+            return Err(AddFailure::Unsupported(detail));
         }
         let started = match desired {
             DesiredState::Started => running.session.unpause(&live.handle).await,
-            DesiredState::Paused => live
-                .scheduler
-                .close()
-                .and_then(|()| live.cached.set_started(false).map_err(Into::into)),
+            DesiredState::Paused => live.scheduler.close().and_then(|()| match &live.cached {
+                Some(cached) => cached.set_started(false).map_err(Into::into),
+                None => Ok(()),
+            }),
         };
         started.map_err(AddFailure::Engine)?;
         Ok(live)
     }
 
-    /// Adds `add` to the session paused, attaches it to the cache, and waits
-    /// for its initial check.
-    async fn join_session(&self, running: &Running, add: AddTorrent<'_>) -> anyhow::Result<Live> {
+    /// Adds `add` to the session paused, in `storage_mode`, binds its
+    /// scheduler, and waits for its initial check. A disk torrent's resume
+    /// bitfield then records what the check found.
+    async fn join_session(
+        &self,
+        running: &Running,
+        torrent: &Torrent,
+        add: AddTorrent<'_>,
+        storage_mode: StorageMode,
+        initial_pieces: Option<Vec<u8>>,
+    ) -> anyhow::Result<Live> {
+        let info_hash = librqbit_core::hash_id::Id20::new(*torrent.info_hash.as_bytes());
+        if storage_mode == StorageMode::Disk {
+            running
+                .disk
+                .expect(info_hash, torrent.directory.clone(), initial_pieces.clone())?;
+        }
         let scheduler = TorrentScheduler::new(&running.playback);
+        let options = self.add_options(running, &scheduler, storage_mode, initial_pieces);
         let handle = running
             .session
-            .add_torrent(add, Some(self.add_options(running, &scheduler)))
+            .add_torrent(add, Some(options))
             .await?
             .into_handle()
             .ok_or_else(|| anyhow::anyhow!("the session did not add the torrent"))?;
-        let cached = running.factory.attach(&handle)?;
-        scheduler.bind(&cached, &handle)?;
+        let (cached, files): (_, Option<Arc<DiskFiles>>) = match storage_mode {
+            StorageMode::Memory => {
+                let cached = running.factory.attach(&handle)?;
+                scheduler.bind(&cached, &handle)?;
+                (Some(cached), None)
+            }
+            StorageMode::Disk => {
+                let files = running
+                    .disk
+                    .take_opened(info_hash)?
+                    .ok_or_else(|| anyhow::anyhow!("the torrent's disk storage did not open"))?;
+                let layout = handle.with_metadata(|metadata| Layout::of(metadata))?;
+                scheduler.bind_disk(layout, &handle)?;
+                (None, Some(files))
+            }
+        };
         handle.wait_until_initialized().await?;
+        if let Some(files) = &files {
+            files.bitfield().replace(&handle.have_pieces()?)?;
+        }
         Ok(Live {
             handle,
             cached,
@@ -674,18 +839,25 @@ impl LibrqbitEngine {
             };
             let desired = torrent.state().desired;
             match self
-                .add_to_session(&running, AddTorrent::from_url(magnet_uri), desired)
+                .add_to_session(
+                    &running,
+                    torrent,
+                    AddTorrent::from_url(magnet_uri),
+                    desired,
+                    None,
+                )
                 .await
             {
                 Ok(live) => {
                     self.retrieved(&running, torrent, live).await;
                     return;
                 }
-                // Peers would send the same metadata again.
-                Err(AddFailure::TooLarge(detail)) => {
-                    torrent.state().failure = Some(Failure { detail });
+                Err(failure) if failure.detail().is_some() => {
+                    // Peers would send the same metadata again.
+                    torrent.state().failure = failure.detail().map(|detail| Failure { detail });
                     return;
                 }
+                Err(AddFailure::Unsupported(_) | AddFailure::InsufficientStorage { .. }) => return,
                 Err(AddFailure::Engine(error)) => {
                     tracing::debug!(
                         error = %redact(&format!("{error:#}")),
@@ -725,7 +897,9 @@ impl LibrqbitEngine {
             .session
             .delete(TorrentIdOrHash::Id(live.handle.id()), false)
             .await;
-        live.cached.release()?;
+        if let Some(cached) = &live.cached {
+            cached.release()?;
+        }
         result
     }
 
@@ -760,7 +934,7 @@ impl LibrqbitEngine {
         let failure = Failure {
             detail: ENGINE_FAILURE.to_owned(),
         };
-        if live.cached.has_failed() {
+        if live.cached.as_ref().is_some_and(CachedTorrent::has_failed) {
             return Some(failure);
         }
         let stats = live.handle.stats();
@@ -784,7 +958,7 @@ impl LibrqbitEngine {
         let scheduler = torrents.iter().find_map(|torrent| {
             let state = torrent.state();
             let live = state.live.as_ref()?;
-            (live.cached.key == key).then(|| live.scheduler.clone())
+            (live.cached.as_ref()?.key == key).then(|| live.scheduler.clone())
         });
         if let Some(scheduler) = scheduler {
             tracing::error!("a torrent's storage failed a write; its streams are canceled");
@@ -817,18 +991,25 @@ impl LibrqbitEngine {
             .map_err(internal)?;
         // A failed torrent's storage left the cache, so the capacity may
         // have shrunk below its pieces; it stays failed until it grows.
-        if let Some(detail) = self.too_large(piece_length) {
+        let storage_mode = torrent.state().storage_mode;
+        if storage_mode == StorageMode::Memory
+            && let Some(detail) = self.too_large(piece_length)
+        {
             let mut state = torrent.state();
             state.live = Some(live);
             state.failure = Some(Failure { detail });
             return Ok(());
         }
         self.delete_live(running, live).await.map_err(internal)?;
+        // A disk torrent checks its data in full, since a failed read or
+        // write may have left it unlike its bitfield.
         let live = self
             .add_to_session(
                 running,
+                torrent,
                 AddTorrent::from_bytes(bytes),
                 DesiredState::Started,
+                None,
             )
             .await
             .map_err(AddFailure::into_engine_error)?;
@@ -906,7 +1087,7 @@ impl Engine for LibrqbitEngine {
         self.running()?;
         match source {
             Source::TorrentFile(bytes) => {
-                let inspected = self.inspect_file(bytes)?;
+                let inspected = inspect::torrent_file(bytes)?;
                 Ok(Inspection {
                     info_hash: inspected.info_hash,
                     metadata: Some(Arc::new(inspected.metadata)),
@@ -919,30 +1100,42 @@ impl Engine for LibrqbitEngine {
         }
     }
 
-    async fn add(
+    async fn add_in(
         &self,
         id: &TorrentId,
         source: &Source,
         desired_state: DesiredState,
+        storage_mode: StorageMode,
     ) -> Result<(), EngineError> {
         let running = self.running()?;
-        let (info_hash, metadata, magnet_uri) = match source {
+        let directory = self.config.download_dir.join(id.as_str());
+        let (info_hash, metadata, magnet_uri, initial) = match source {
             Source::TorrentFile(bytes) => {
-                let inspected = self.inspect_file(bytes)?;
+                let inspected = inspect::torrent_file(bytes)?;
+                self.check_storage(&inspected, storage_mode, &directory)?;
+                let initial = match storage_mode {
+                    StorageMode::Memory => None,
+                    StorageMode::Disk => {
+                        initial_pieces(&directory, inspected.piece_count).map_err(internal)?
+                    }
+                };
                 (
                     inspected.info_hash,
                     Some(Arc::new(inspected.metadata)),
                     None,
+                    initial,
                 )
             }
-            Source::MagnetUri(uri) => (inspect::magnet_uri(uri)?, None, Some(uri.clone())),
+            Source::MagnetUri(uri) => (inspect::magnet_uri(uri)?, None, Some(uri.clone()), None),
         };
         let torrent = Arc::new(Torrent {
             info_hash,
             magnet_uri,
+            directory,
             operations: tokio::sync::Mutex::new(()),
             state: Mutex::new(TorrentState {
                 desired: desired_state,
+                storage_mode,
                 metadata,
                 failure: None,
                 engine_error_logged: false,
@@ -964,8 +1157,10 @@ impl Engine for LibrqbitEngine {
                 match self
                     .add_to_session(
                         &running,
+                        &torrent,
                         AddTorrent::from_bytes(bytes.clone()),
                         desired_state,
+                        initial,
                     )
                     .await
                 {
@@ -992,10 +1187,12 @@ impl Engine for LibrqbitEngine {
     ) -> Result<(), EngineError> {
         let running = self.running()?;
         let torrent = self.torrent(id)?;
-        let inspected = self.inspect_file(torrent_file)?;
+        let inspected = inspect::torrent_file(torrent_file)?;
         if inspected.info_hash != torrent.info_hash {
             return Err(EngineError::MetadataMismatch);
         }
+        let storage_mode = torrent.state().storage_mode;
+        self.check_storage(&inspected, storage_mode, &torrent.directory)?;
         let _operations = torrent.operations.lock().await;
         if torrent.state().metadata.is_some() {
             return Ok(());
@@ -1005,8 +1202,10 @@ impl Engine for LibrqbitEngine {
         let live = self
             .add_to_session(
                 &running,
+                &torrent,
                 AddTorrent::from_bytes(torrent_file.to_vec()),
                 desired,
+                None,
             )
             .await
             .map_err(AddFailure::into_engine_error)?;
@@ -1044,8 +1243,8 @@ impl Engine for LibrqbitEngine {
                             .live
                             .map_or(0, |stats| stats.snapshot.fetched_bytes);
                         let mut closed = live.scheduler.close();
-                        if !failed {
-                            closed = closed.and(live.cached.set_started(false).map_err(Into::into));
+                        if !failed && let Some(cached) = &live.cached {
+                            closed = closed.and(cached.set_started(false).map_err(Into::into));
                         }
                         (live.handle.clone(), closed, fetched)
                     });
@@ -1084,7 +1283,10 @@ impl Engine for LibrqbitEngine {
                     let reopened = live.scheduler.reopen();
                     (
                         live.handle.clone(),
-                        reopened.and(live.cached.set_started(true).map_err(Into::into)),
+                        reopened.and(match &live.cached {
+                            Some(cached) => cached.set_started(true).map_err(Into::into),
+                            None => Ok(()),
+                        }),
                     )
                 });
                 match live {
@@ -1104,10 +1306,16 @@ impl Engine for LibrqbitEngine {
         let torrent = self.torrent(id)?;
         let _operations = torrent.operations.lock().await;
         self.cancel_retrieval(&running, &torrent).await;
-        let live = torrent.state().live.take();
+        let (live, storage_mode) = {
+            let mut state = torrent.state();
+            (state.live.take(), state.storage_mode)
+        };
         self.lock_torrents().remove(id);
         if let Some(live) = live {
             self.delete_live(&running, live).await.map_err(internal)?;
+        }
+        if storage_mode == StorageMode::Disk {
+            delete_disk_data(torrent.directory.clone()).await;
         }
         Ok(())
     }

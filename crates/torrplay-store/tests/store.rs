@@ -15,7 +15,7 @@ use std::time::{Duration, SystemTime};
 
 use tempfile::TempDir;
 use torrplay_core::id::{InfoHashV1, TORRENT_ID_RANDOM_BYTES, TorrentId};
-use torrplay_core::lifecycle::{Configuration, DesiredState};
+use torrplay_core::lifecycle::{Configuration, DesiredState, StorageMode};
 use torrplay_core::settings::Explicit;
 use torrplay_store::{FILE_NAME, Store, StoreError, StoredSettings, StoredTorrent};
 
@@ -39,7 +39,16 @@ fn torrent(n: u32, nanos: u64) -> StoredTorrent {
         id: id(n),
         info_hash: info_hash(n),
         created_at: SystemTime::UNIX_EPOCH + Duration::from_nanos(nanos),
-        configuration: Configuration::new(DesiredState::Started),
+        // Every third asks for disk storage that is not in effect yet, as
+        // after an interrupted transition, so both modes must round-trip.
+        configuration: Configuration::new(DesiredState::Started).with_storage_mode(
+            if n.is_multiple_of(3) {
+                StorageMode::Disk
+            } else {
+                StorageMode::Memory
+            },
+        ),
+        storage_mode: StorageMode::Memory,
         magnet_uri: (!file).then(|| format!("magnet:?xt=urn:btih:{}", info_hash(n))),
         torrent_file: file.then(|| vec![(n % 251) as u8; 1000 + n as usize]),
     }
@@ -185,7 +194,7 @@ async fn a_newer_schema_is_refused() {
         Store::open(dir.path()),
         Err(StoreError::TooNew {
             found: 99,
-            supported: 3
+            supported: 4
         })
     ));
 }
@@ -284,7 +293,11 @@ async fn a_version_1_database_is_copied_then_migrated() {
     {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
-            .execute_batch("DROP TABLE settings; PRAGMA user_version = 1;")
+            .execute_batch(
+                "DROP TABLE settings;
+                 ALTER TABLE torrents DROP COLUMN desired_storage_mode;
+                 PRAGMA user_version = 1;",
+            )
             .unwrap();
     }
     let (store, contents) = Store::open(dir.path()).unwrap();
@@ -316,7 +329,11 @@ async fn a_version_1_database_is_copied_then_migrated() {
     {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
-            .execute_batch("DROP TABLE settings; PRAGMA user_version = 1;")
+            .execute_batch(
+                "DROP TABLE settings;
+                 ALTER TABLE torrents DROP COLUMN desired_storage_mode;
+                 PRAGMA user_version = 1;",
+            )
             .unwrap();
     }
     drop(Store::open(dir.path()).unwrap());
@@ -349,6 +366,7 @@ async fn settings_from_version_2_keep_their_values_and_lack_the_cache_capacity()
         connection
             .execute_batch(
                 "ALTER TABLE settings DROP COLUMN cache_capacity_bytes;
+                 ALTER TABLE torrents DROP COLUMN desired_storage_mode;
                  PRAGMA user_version = 2;",
             )
             .unwrap();
@@ -374,6 +392,45 @@ async fn settings_from_version_2_keep_their_values_and_lack_the_cache_capacity()
     let (_store, contents) = Store::open(dir.path()).unwrap();
     assert_eq!(contents.settings, stored);
     assert!(dir.path().join(format!("{FILE_NAME}.v2.bak")).exists());
+}
+
+#[tokio::test]
+async fn torrents_from_version_3_use_memory_storage() {
+    let dir = TempDir::new().unwrap();
+    {
+        let (store, _) = open(&dir);
+        store.insert(torrent(1, 10)).await.unwrap();
+    }
+    // A database as version 3 left it.
+    {
+        let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE torrents DROP COLUMN desired_storage_mode;
+                 PRAGMA user_version = 3;",
+            )
+            .unwrap();
+    }
+    let (_store, stored) = open(&dir);
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].configuration.storage_mode(), StorageMode::Memory);
+    assert_eq!(stored[0].storage_mode, StorageMode::Memory);
+    assert!(dir.path().join(format!("{FILE_NAME}.v3.bak")).exists());
+}
+
+#[tokio::test]
+async fn a_configured_storage_mode_is_stored_apart_from_the_one_in_effect() {
+    let dir = TempDir::new().unwrap();
+    {
+        let (store, _) = open(&dir);
+        let mut disk = torrent(2, 20);
+        disk.configuration = disk.configuration.with_storage_mode(StorageMode::Disk);
+        disk.storage_mode = StorageMode::Disk;
+        store.insert(disk).await.unwrap();
+    }
+    let (_store, stored) = open(&dir);
+    assert_eq!(stored[0].configuration.storage_mode(), StorageMode::Disk);
+    assert_eq!(stored[0].storage_mode, StorageMode::Disk);
 }
 
 const CHILD: &str = "TORRPLAY_STORE_CHILD";

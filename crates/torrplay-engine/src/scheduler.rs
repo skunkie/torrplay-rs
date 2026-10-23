@@ -50,6 +50,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::future::Future;
 use std::io::SeekFrom;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::task::{Context, Poll};
 
@@ -206,8 +207,9 @@ pub(crate) fn plan(
 }
 
 struct Binding {
-    cache: Arc<PieceCache>,
-    key: TorrentKey,
+    // The torrent's pieces in the cache; `None` in disk storage, which pins
+    // nothing.
+    cache: Option<(Arc<PieceCache>, TorrentKey)>,
     layout: Layout,
     torrent: Weak<ManagedTorrent>,
 }
@@ -240,6 +242,9 @@ pub enum OpenError {
 pub struct TorrentScheduler {
     id: u64,
     playback: Arc<Playback>,
+    // Whether the torrent is in memory storage, so its readers share the
+    // readahead budget. Readers open only once the scheduler is bound.
+    cached: AtomicBool,
     state: Mutex<State>,
 }
 
@@ -251,6 +256,7 @@ impl TorrentScheduler {
         let scheduler = Arc::new(Self {
             id: playback.next_scheduler_id(),
             playback: playback.clone(),
+            cached: AtomicBool::new(true),
             state: Mutex::new(State {
                 binding: None,
                 readers: BTreeMap::new(),
@@ -278,13 +284,35 @@ impl TorrentScheduler {
         cached: &CachedTorrent,
         torrent: &Arc<ManagedTorrent>,
     ) -> anyhow::Result<()> {
+        self.cached.store(true, Ordering::Release);
         self.lock()?.binding = Some(Binding {
-            cache: cached.cache.clone(),
-            key: cached.key,
+            cache: Some((cached.cache.clone(), cached.key)),
             layout: cached.layout.clone(),
             torrent: Arc::downgrade(torrent),
         });
         self.replan()
+    }
+
+    /// Connects the scheduler to its torrent in disk storage, laid out as
+    /// `layout`. Its readers pin nothing and take the whole readahead budget
+    /// rather than a share, since the cache never holds their pieces.
+    pub(crate) fn bind_disk(
+        &self,
+        layout: Layout,
+        torrent: &Arc<ManagedTorrent>,
+    ) -> anyhow::Result<()> {
+        self.cached.store(false, Ordering::Release);
+        self.lock()?.binding = Some(Binding {
+            cache: None,
+            layout,
+            torrent: Arc::downgrade(torrent),
+        });
+        self.replan()
+    }
+
+    fn readers_changed(&self, added: u64, removed: u64) {
+        self.playback
+            .readers_changed(self.cached.load(Ordering::Acquire), added, removed);
     }
 
     /// Opens a reader at the start of file `file`, failing with
@@ -306,7 +334,7 @@ impl TorrentScheduler {
             (id, state.streams.child_token())
         };
         self.playback.opened();
-        self.playback.readers_changed(1, 0);
+        self.readers_changed(1, 0);
         Ok(Reader {
             stream,
             id,
@@ -339,7 +367,7 @@ impl TorrentScheduler {
         // nothing again.
         self.playback.release_idle_of(self.id);
         let result = if removed > 0 {
-            self.playback.readers_changed(0, removed);
+            self.readers_changed(0, removed);
             Ok(())
         } else {
             self.replan()
@@ -386,7 +414,7 @@ impl TorrentScheduler {
     fn remove_reader(&self, id: u64) -> anyhow::Result<()> {
         let removed = self.lock()?.readers.remove(&id).is_some();
         if removed {
-            self.playback.readers_changed(0, 1);
+            self.readers_changed(0, 1);
         }
         Ok(())
     }
@@ -413,10 +441,15 @@ impl TorrentScheduler {
                 return Ok(());
             };
             let readers: Vec<_> = state.readers.values().copied().collect();
+            let all_readers = if binding.cache.is_some() {
+                self.playback.cache_readers()
+            } else {
+                readers.len() as u64
+            };
             let budget = torrent_budget(
                 self.playback.readahead_bytes(),
                 readers.len() as u64,
-                self.playback.readers(),
+                all_readers,
             );
             let plan = plan(
                 &binding.layout,
@@ -446,14 +479,13 @@ impl TorrentScheduler {
                 shared = ?plan.shared,
                 "replanned"
             );
-            match binding
-                .cache
-                .set_plan(binding.key, plan.pins, &plan.priorities)
-            {
-                // The torrent's storage left the cache, as librqbit's failure
-                // or deletion does; there is nothing left to pin.
-                Ok(()) | Err(CacheError::UnknownTorrent(_)) => {}
-                Err(error) => return Err(error.into()),
+            if let Some((cache, key)) = &binding.cache {
+                match cache.set_plan(*key, plan.pins, &plan.priorities) {
+                    // The torrent's storage left the cache, as librqbit's
+                    // failure or deletion does; there is nothing left to pin.
+                    Ok(()) | Err(CacheError::UnknownTorrent(_)) => {}
+                    Err(error) => return Err(error.into()),
+                }
             }
             binding.torrent.clone()
         };
@@ -661,7 +693,7 @@ mod tests {
             state.readers.insert(0, ReaderPosition::new(0, 0));
             state.streams.child_token()
         };
-        playback.readers_changed(1, 0);
+        playback.readers_changed(true, 1, 0);
         let mut canceled = Box::pin(streams.cancelled_owned());
         let wake = Arc::new(CountOnWake {
             playback: playback.clone(),

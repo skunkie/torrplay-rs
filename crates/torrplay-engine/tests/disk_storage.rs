@@ -31,7 +31,7 @@ async fn add(
     factory.expect(
         Id20::new(spec.metainfo().info_hash),
         directory.to_path_buf(),
-        bits.clone(),
+        Some(bits.clone()),
     )?;
     let handle = session
         .add_torrent(

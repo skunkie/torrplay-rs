@@ -24,7 +24,7 @@ use std::time::SystemTime;
 use crate::id::{
     InfoHashV1, RandomnessError, TORRENT_ID_RANDOM_BYTES, TorrentId, random_torrent_id_bytes,
 };
-use crate::lifecycle::{Configuration, DesiredState, EntityTag};
+use crate::lifecycle::{Configuration, DesiredState, EntityTag, StorageMode};
 use crate::metadata::Metadata;
 
 /// The number of torrent IDs drawn before registration gives up. A 128-bit
@@ -46,6 +46,9 @@ pub struct TorrentRecord {
     pub created_at: SystemTime,
     /// The writable configuration.
     pub configuration: Configuration,
+    /// The storage mode in effect, which the configuration's becomes when a
+    /// transition to it completes.
+    pub storage_mode: StorageMode,
     /// The metadata, once an upload supplied it or the server recorded it
     /// after retrieval.
     pub metadata: Option<Arc<Metadata>>,
@@ -61,6 +64,8 @@ pub struct NewTorrent {
     pub metadata: Option<Arc<Metadata>>,
     /// The state the torrent starts in.
     pub desired_state: DesiredState,
+    /// The storage mode the torrent uses.
+    pub storage_mode: StorageMode,
     /// The creation time.
     pub created_at: SystemTime,
 }
@@ -211,7 +216,9 @@ impl Registry {
             id,
             info_hash: new.info_hash,
             created_at: new.created_at,
-            configuration: Configuration::new(new.desired_state),
+            configuration: Configuration::new(new.desired_state)
+                .with_storage_mode(new.storage_mode),
+            storage_mode: new.storage_mode,
             metadata: new.metadata,
         }))
     }
@@ -252,7 +259,9 @@ impl Registry {
             id,
             info_hash: new.info_hash,
             created_at: new.created_at,
-            configuration: Configuration::new(new.desired_state),
+            configuration: Configuration::new(new.desired_state)
+                .with_storage_mode(new.storage_mode),
+            storage_mode: new.storage_mode,
             metadata: new.metadata,
         };
         state.insert(record.clone());
@@ -379,6 +388,7 @@ mod tests {
             info_hash: info_hash(n),
             metadata,
             desired_state: DesiredState::Started,
+            storage_mode: StorageMode::Memory,
             created_at: SystemTime::UNIX_EPOCH + Duration::from_secs(u64::from(n)),
         }
     }
@@ -598,6 +608,7 @@ mod tests {
                 info_hash: info_hash(n),
                 created_at: SystemTime::UNIX_EPOCH + Duration::from_secs(u64::from(n)),
                 configuration: paused.clone(),
+                storage_mode: StorageMode::Memory,
                 metadata: None,
             })
             .collect();

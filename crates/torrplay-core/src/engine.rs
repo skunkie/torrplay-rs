@@ -23,7 +23,7 @@ use std::time::Duration;
 use tokio::io::AsyncRead;
 
 use crate::id::{InfoHashV1, TorrentId};
-use crate::lifecycle::{DesiredState, Failure, Readiness};
+use crate::lifecycle::{DesiredState, Failure, Readiness, StorageMode};
 use crate::metadata::{FileIndex, ReportedMetadata};
 use crate::settings::Settings;
 
@@ -110,6 +110,15 @@ pub enum EngineError {
     /// The byte range does not lie within the file.
     #[error("the byte range lies outside the file")]
     RangeOutOfBounds,
+    /// The download directory's filesystem has too little free space for a
+    /// torrent in disk storage: `insufficient-storage`.
+    #[error("the torrent's files need {needed_bytes} bytes, and {available_bytes} are free")]
+    InsufficientStorage {
+        /// The torrent's total size.
+        needed_bytes: u64,
+        /// The free space where its files would go.
+        available_bytes: u64,
+    },
     /// A new cache capacity is below a torrent's piece length.
     #[error("a torrent's {piece_length_bytes}-byte pieces exceed the new cache capacity")]
     CapacityBelowPieceLength {
@@ -270,6 +279,23 @@ pub trait Engine: Send + Sync + 'static {
         id: &TorrentId,
         source: &Source,
         desired_state: DesiredState,
+    ) -> impl Future<Output = Result<(), EngineError>> + Send {
+        self.add_in(id, source, desired_state, StorageMode::Memory)
+    }
+
+    /// Adds a torrent as [`add`](Self::add) does, in `storage_mode`. A
+    /// torrent file in disk storage whose files the download directory
+    /// cannot hold is [`SourceRejection::Unsupported`], and one with too
+    /// little free space for them [`EngineError::InsufficientStorage`];
+    /// nothing is added then. A disk torrent with data from before starts
+    /// from its resume bitfield. A magnet URI in disk storage is checked once
+    /// its metadata arrives.
+    fn add_in(
+        &self,
+        id: &TorrentId,
+        source: &Source,
+        desired_state: DesiredState,
+        storage_mode: StorageMode,
     ) -> impl Future<Output = Result<(), EngineError>> + Send;
 
     /// Gives a torrent without metadata the metadata of an uploaded torrent
@@ -300,7 +326,8 @@ pub trait Engine: Send + Sync + 'static {
     /// closes its peer connections, and releases its cache usage, partial
     /// and verified pieces alike, without counting evictions. The release
     /// happens before this returns, not when the engine's own tasks end, as
-    /// ADR 5 requires.
+    /// ADR 5 requires. A torrent in disk storage also loses its directory
+    /// and resume bitfield, once its files are closed.
     fn remove(&self, id: &TorrentId) -> impl Future<Output = Result<(), EngineError>> + Send;
 
     /// Returns a torrent's metadata, once available, and failure. Retrieved

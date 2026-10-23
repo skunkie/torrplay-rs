@@ -184,6 +184,7 @@ impl<E: Engine> App<E> {
                 info_hash: stored.info_hash,
                 created_at: stored.created_at,
                 configuration: stored.configuration,
+                storage_mode: stored.storage_mode,
                 metadata,
             };
             if self.registry.insert(record).is_err() {
@@ -192,9 +193,18 @@ impl<E: Engine> App<E> {
                 continue;
             }
             if refusal.is_none() {
-                match self.engine.add(&stored.id, &source, desired_state).await {
+                // The storage mode in effect: one that a crash kept a
+                // transition from reaching is not in effect yet.
+                match self
+                    .engine
+                    .add_in(&stored.id, &source, desired_state, stored.storage_mode)
+                    .await
+                {
                     Ok(()) => {}
                     Err(EngineError::Rejected(rejection)) => refusal = Some(rejection.to_string()),
+                    Err(error @ EngineError::InsufficientStorage { .. }) => {
+                        refusal = Some(error.to_string());
+                    }
                     Err(error) => return Err(error),
                 }
             }

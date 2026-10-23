@@ -73,6 +73,20 @@ pub(crate) struct Layout {
     pub(crate) files: Vec<(u64, u64)>,
 }
 
+impl Layout {
+    /// The layout of a torrent with `metadata`.
+    pub(crate) fn of(metadata: &TorrentMetadata) -> Self {
+        Self {
+            lengths: *metadata.lengths(),
+            files: metadata
+                .file_infos
+                .iter()
+                .map(|file| (file.offset_in_torrent, file.len))
+                .collect(),
+        }
+    }
+}
+
 impl MemoryStorageFactory {
     /// Creates a factory whose torrents share `cache`.
     pub fn new(cache: Arc<PieceCache>) -> Self {
@@ -214,14 +228,7 @@ impl StorageFactory for MemoryStorageFactory {
                 shared.id,
                 Unattached {
                     key,
-                    layout: Layout {
-                        lengths: *metadata.lengths(),
-                        files: metadata
-                            .file_infos
-                            .iter()
-                            .map(|file| (file.offset_in_torrent, file.len))
-                            .collect(),
-                    },
+                    layout: Layout::of(metadata),
                     health: health.clone(),
                 },
             );

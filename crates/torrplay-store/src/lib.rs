@@ -28,7 +28,7 @@ use std::time::SystemTime;
 
 use tokio::sync::{mpsc, oneshot};
 use torrplay_core::id::{InfoHashV1, TorrentId};
-use torrplay_core::lifecycle::Configuration;
+use torrplay_core::lifecycle::{Configuration, StorageMode};
 pub use torrplay_core::settings::Stored as StoredSettings;
 
 mod schema;
@@ -51,6 +51,9 @@ pub struct StoredTorrent {
     pub created_at: SystemTime,
     /// The configuration, whose version gives its entity tag.
     pub configuration: Configuration,
+    /// The storage mode in effect, which differs from the configuration's
+    /// while a transition is unfinished.
+    pub storage_mode: StorageMode,
     /// The magnet URI the torrent was created from, if it was.
     pub magnet_uri: Option<String>,
     /// The torrent file: an uploaded one's original bytes, or the one built
