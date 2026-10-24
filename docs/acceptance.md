@@ -324,6 +324,7 @@ These scenarios accept [the DLNA contract](dlna.md) (M7).
 | DLNA-12 | Browse and search with `-dc:date`, `+dc:title`, and an unknown sort property | Newest first; titles ignoring case; `709` |
 | DLNA-13 | Subscribe to ContentDirectory, change a torrent's title, renew, and unsubscribe | `200` with `SID` and `TIMEOUT`; an initial event with `SEQ: 0`, then one with the new update ID and `SEQ: 1`; `200`; `200`, and no more events |
 | DLNA-14 | Subscribe with a callback on another address, without `NT`, with both `SID` and `CALLBACK`, and renew an unknown `SID` | `412`, `412`, `400`, `412` |
+| DLNA-15 | Read the device description, each icon it lists, and an unlisted icon, with the media server on and off | Four icons, PNG then JPEG at 48 and 120 pixels, each served with its media type and the size listed; an unlisted icon, and every icon while off, is `404` |
 
 ### Peers
 

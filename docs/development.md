@@ -72,6 +72,25 @@ the fixtures, or the vacuum version.
 Keep HTTP behavior tests separate from engine tests so lifecycle and protocol
 semantics can be verified with a fake engine and controlled payloads.
 
+## Logo
+
+`scripts/render-logo.py` draws the logo from one geometry in a dark and a
+light palette: `brand/logo-dark.svg`, `brand/logo-light.svg`, the adaptive
+`brand/logo.svg` that follows the viewer's color scheme, and the DLNA media
+server's PNG and JPEG icons in `crates/torrplay-server/assets/dlna/`. Never
+edit those files by hand. After changing the script, run it from the
+repository root with Pillow 11.3.0 and commit what it writes; it writes the
+same bytes on every run.
+
+A virtual environment under the ignored `target/` keeps Pillow out of the
+system Python:
+
+```sh
+python3 -m venv target/logo-venv
+target/logo-venv/bin/pip install pillow==11.3.0
+target/logo-venv/bin/python scripts/render-logo.py
+```
+
 ## Generated wire types
 
 `crates/torrplay-api/src/generated/` holds the API's wire types, which

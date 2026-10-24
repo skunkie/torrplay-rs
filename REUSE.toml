@@ -40,3 +40,10 @@ SPDX-FileCopyrightText = [
   "The authors of the libraries Scalar bundles",
 ]
 SPDX-License-Identifier = "MIT AND Apache-2.0 AND ISC AND BSD-3-Clause AND BSD-2-Clause AND 0BSD"
+
+# The DLNA media server's icons, which scripts/render-logo.py draws; image
+# formats have no place for a header.
+[[annotations]]
+path = "crates/torrplay-server/assets/dlna/icon-*"
+SPDX-FileCopyrightText = "2026 TorrPlay"
+SPDX-License-Identifier = "MIT"
