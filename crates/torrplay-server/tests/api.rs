@@ -3058,13 +3058,20 @@ mod scenario {
             "validation-failed",
         );
         assert_eq!(errors(&mismatched, "pointer"), [""]);
-        let mut large = PNG.to_vec();
-        large.resize((1 << 20) + 1, 0);
-        assert_problem(
-            &server.send(put_poster(&poster, "image/png", &large)).await,
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "content-too-large",
-        );
+        // Refused from its declared length, before any of the body.
+        let declared = ((1 << 20) + 1).to_string();
+        let large = server
+            .send_before_body_ends(
+                Method::PUT,
+                &poster,
+                &[
+                    ("Content-Type", "image/png"),
+                    ("Content-Length", declared.as_str()),
+                ],
+                Vec::new(),
+            )
+            .await;
+        assert_problem(&large, StatusCode::PAYLOAD_TOO_LARGE, "content-too-large");
         assert_problem(
             &server
                 .send(put_poster(
