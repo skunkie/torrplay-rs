@@ -126,8 +126,12 @@ const ENGINE_FAILURE: &str = "The torrent engine stopped the torrent after an er
 pub struct NetworkConfig {
     /// The address the peer listener binds.
     pub listen: SocketAddr,
-    /// Whether DHT finds peers. Its state is never persisted.
+    /// Whether DHT finds peers when the engine starts;
+    /// [`Engine::set_dht`] changes it. Its state is never persisted.
     pub dht: bool,
+    /// The nodes the DHT bootstraps from, or `None` for librqbit's public
+    /// routers.
+    pub dht_bootstrap: Option<Vec<String>>,
     /// Whether trackers named by torrents and magnet URIs are contacted.
     pub trackers: bool,
     /// Peers every torrent connects to, besides those DHT and trackers
@@ -142,17 +146,20 @@ impl NetworkConfig {
         Self {
             listen: (std::net::Ipv6Addr::UNSPECIFIED, DEFAULT_PEER_PORT).into(),
             dht: true,
+            dht_bootstrap: None,
             trackers: true,
             initial_peers: Vec::new(),
         }
     }
 
     /// An ephemeral loopback port without DHT or trackers, reaching only
-    /// `peers`, for tests that must never touch a public swarm.
+    /// `peers`, for tests that must never touch a public swarm. A DHT
+    /// turned on later bootstraps from no node.
     pub fn isolated(peers: Vec<SocketAddr>) -> Self {
         Self {
             listen: (std::net::Ipv4Addr::LOCALHOST, 0).into(),
             dht: false,
+            dht_bootstrap: Some(Vec::new()),
             trackers: false,
             initial_peers: peers,
         }
@@ -309,6 +316,9 @@ pub struct LibrqbitEngine {
     // Whether disk torrents start from their resume bitfields; not after an
     // unclean shutdown, when a bitfield may be newer than its data.
     trust_bitfields: std::sync::atomic::AtomicBool,
+    /// Whether the session runs a DHT, which `start` reads and `set_dht`
+    /// changes; the lock serializes them, since both await the session.
+    dht_enabled: tokio::sync::Mutex<bool>,
 }
 
 /// The values [`Engine::apply_settings`] changes.
@@ -424,6 +434,16 @@ async fn delete_disk_data(directory: PathBuf) {
     }
 }
 
+/// The DHT's configuration: an ephemeral routing table, since torrents
+/// persist in the store and the DHT bootstraps within seconds.
+fn dht_config(network: &NetworkConfig) -> librqbit::DhtSessionConfig {
+    librqbit::DhtSessionConfig {
+        bootstrap_addrs: network.dht_bootstrap.clone(),
+        persistence: None,
+        ..Default::default()
+    }
+}
+
 fn internal(error: impl Into<anyhow::Error>) -> EngineError {
     let error: anyhow::Error = error.into();
     EngineError::Internal(error.into())
@@ -445,21 +465,29 @@ impl LibrqbitEngine {
                 readahead_bytes: config.readahead_bytes,
                 background_downloads: true,
             }),
-            config,
             phase: Mutex::new(Phase::Starting),
             torrents: Mutex::new(HashMap::new()),
             trust_bitfields: std::sync::atomic::AtomicBool::new(true),
+            dht_enabled: tokio::sync::Mutex::new(config.network.dht),
+            config,
         })
+    }
+
+    /// The DHT's local address while it runs.
+    pub fn dht_address(&self) -> Option<SocketAddr> {
+        match &*self.lock_phase() {
+            Phase::Ready(running) => running.session.get_dht().map(|dht| dht.listen_addr()),
+            Phase::Starting | Phase::Stopped => None,
+        }
     }
 
     /// Starts the session, the piece cache, and its evictor.
     pub async fn start(&self) -> anyhow::Result<()> {
         let network = &self.config.network;
+        // Held until the session exists, so set_dht waits for it.
+        let dht_enabled = self.dht_enabled.lock().await;
         let options = SessionOptions {
-            dht: network.dht.then(|| librqbit::DhtSessionConfig {
-                persistence: None,
-                ..Default::default()
-            }),
+            dht: dht_enabled.then(|| dht_config(network)),
             disable_trackers: !network.trackers,
             disable_local_service_discovery: true,
             fastresume: false,
@@ -1495,6 +1523,27 @@ impl Engine for LibrqbitEngine {
             Phase::Ready(_) => Readiness::Ready,
             Phase::Starting | Phase::Stopped => Readiness::Unavailable { retry_after: None },
         }
+    }
+
+    async fn set_dht(&self, enabled: bool) -> Result<(), EngineError> {
+        let mut current = self.dht_enabled.lock().await;
+        if *current == enabled {
+            return Ok(());
+        }
+        let running = match &*self.lock_phase() {
+            Phase::Ready(running) => Some(Arc::clone(running)),
+            Phase::Starting | Phase::Stopped => None,
+        };
+        // Before the engine starts, start reads the switch.
+        if let Some(running) = running {
+            running
+                .session
+                .set_dht(enabled.then(|| dht_config(&self.config.network)))
+                .await
+                .map_err(internal)?;
+        }
+        *current = enabled;
+        Ok(())
     }
 
     async fn inspect(&self, source: &Source) -> Result<Inspection, EngineError> {

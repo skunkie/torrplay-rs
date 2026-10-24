@@ -276,7 +276,8 @@ pub(crate) async fn device<E: Engine>(
     client: Option<Extension<ConnectInfo<SocketAddr>>>,
 ) -> Result<Response, Problem> {
     let server = gate(&app, client)?;
-    Ok(xml(StatusCode::OK, server.device.description()))
+    let name = app.settings().explicit.dlna_name().to_owned();
+    Ok(xml(StatusCode::OK, server.device.description(&name)))
 }
 
 pub(crate) async fn content_directory_description<E: Engine>(

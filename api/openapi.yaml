@@ -2124,7 +2124,8 @@ paths:
       summary: Read the settings
       description: >-
         Returns the application's settings: each value as set, or its default
-        while it is unset.
+        while it is unset, and the settings command-line options override in
+        this run.
       tags: [Settings]
       parameters:
         - $ref: '#/components/parameters/IfNoneMatch'
@@ -2153,6 +2154,30 @@ paths:
                     cache_capacity_bytes: 268435456
                     background_downloads: true
                     dlna_enabled: false
+                    dlna_name: TorrPlay
+                    dht_enabled: true
+                    log_level: info
+                    overrides: {}
+                    links:
+                      self: /api/v1/settings
+                overridden:
+                  summary: Settings while --no-dht and --log-level debug are given
+                  value:
+                    piece_wait_seconds: 60
+                    idle_timeout_seconds: 30
+                    idle_readers_per_torrent: 4
+                    idle_readers_total: 16
+                    drain_period_seconds: 10
+                    peer_limit: 50
+                    cache_capacity_bytes: 268435456
+                    background_downloads: true
+                    dlna_enabled: true
+                    dlna_name: Living room
+                    dht_enabled: true
+                    log_level: info
+                    overrides:
+                      dht_enabled: false
+                      log_level: debug
                     links:
                       self: /api/v1/settings
         '304':
@@ -2213,6 +2238,10 @@ paths:
                     cache_capacity_bytes: 268435456
                     background_downloads: true
                     dlna_enabled: false
+                    dlna_name: TorrPlay
+                    dht_enabled: true
+                    log_level: info
+                    overrides: {}
                     links:
                       self: /api/v1/settings
         '400':
@@ -2888,7 +2917,9 @@ components:
         type: string
       example: '"cfg-3"'
     SettingsETag:
-      description: A strong validator that changes only when a setting changes.
+      description: >-
+        A strong validator that changes only when a setting or the
+        command-line options that override settings change.
       required: true
       schema:
         type: string
@@ -4207,8 +4238,9 @@ components:
       type: object
       description: >-
         The application's settings. Each value is the one set, or its default
-        while it is unset.
-      required: [piece_wait_seconds, idle_timeout_seconds, idle_readers_per_torrent, idle_readers_total, drain_period_seconds, peer_limit, cache_capacity_bytes, background_downloads, dlna_enabled, links]
+        while it is unset. Command-line options may override some of them for
+        one run, which overrides lists.
+      required: [piece_wait_seconds, idle_timeout_seconds, idle_readers_per_torrent, idle_readers_total, drain_period_seconds, peer_limit, cache_capacity_bytes, background_downloads, dlna_enabled, dlna_name, dht_enabled, log_level, overrides, links]
       properties:
         piece_wait_seconds:
           type: integer
@@ -4312,6 +4344,59 @@ components:
             playable files and posters without a token, even while a
             password is set. Applies at once.
           examples: [false]
+        dlna_name:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[^\x00-\x1F\x7F]+$'
+          default: TorrPlay
+          description: >-
+            The name televisions show for the DLNA media server: 1 to 64
+            characters, none of them control characters. Applies at once: a
+            running media server announces itself again under the new name.
+          examples: [TorrPlay]
+        dht_enabled:
+          type: boolean
+          default: true
+          description: >-
+            Whether torrents find peers through the BitTorrent DHT; private
+            torrents never do. Turning it off applies at once: every torrent's
+            DHT search ends, while its trackers and connected peers remain.
+            Turning it on applies to torrents as they start: when created,
+            started, or restored after a restart. The --no-dht option
+            overrides it.
+          examples: [true]
+        log_level:
+          type: string
+          enum: [error, warn, info, debug, trace]
+          default: info
+          description: >-
+            The least severe level of TorrPlay's own log messages; other
+            components log only warnings and errors. Applies at once. The
+            --log-level and --log-filter options override it.
+          examples: [info]
+        overrides:
+          type: object
+          readOnly: true
+          additionalProperties: false
+          description: >-
+            The settings that command-line options override in this run, each
+            with the value in effect; empty when none are. The members above
+            keep the stored values, which a PATCH still changes and which
+            apply once the application runs without those options.
+          properties:
+            dht_enabled:
+              type: boolean
+              const: false
+              description: Present while --no-dht keeps the DHT off.
+              examples: [false]
+            log_level:
+              type: string
+              enum: [error, warn, info, debug, trace, custom]
+              description: >-
+                The level --log-level sets, or custom while --log-filter sets
+                levels per component.
+              examples: [debug]
         links:
           type: object
           readOnly: true
@@ -4389,6 +4474,22 @@ components:
           type: [boolean, 'null']
           description: The new value, or null for the default, false.
           examples: [true, null]
+        dlna_name:
+          type: [string, 'null']
+          minLength: 1
+          maxLength: 64
+          pattern: '^[^\x00-\x1F\x7F]+$'
+          description: The new value, or null for the default, TorrPlay.
+          examples: [Living room, null]
+        dht_enabled:
+          type: [boolean, 'null']
+          description: The new value, or null for the default, true, which turns the DHT on.
+          examples: [false, null]
+        log_level:
+          type: [string, 'null']
+          enum: [error, warn, info, debug, trace, null]
+          description: The new value, or null for the default, info.
+          examples: [debug, null]
 
     TorrentFile:
       type: object

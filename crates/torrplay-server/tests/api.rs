@@ -25,7 +25,7 @@ use torrplay_core::engine::{CacheStatistics, Ratio, TorrentStatistics};
 use torrplay_core::id::FileId;
 use torrplay_core::lifecycle::{Readiness, StorageMode};
 use torrplay_core::preload::PreloadState;
-use torrplay_core::settings::{Explicit, Settings};
+use torrplay_core::settings::{Explicit, LogLevel, LogOverride, Overrides, Settings};
 use torrplay_fixtures::{FixtureSpec, catalog, generator, hex};
 use torrplay_store::StoredSettings;
 
@@ -2271,6 +2271,126 @@ mod scenario {
         server.stop().await;
     }
 
+    /// SET-10, SET-11, and SET-12: the DLNA name, DHT, and log level
+    /// settings validate, reach the engine and the application's tasks, and
+    /// yield to command-line overrides for one run.
+    pub async fn named_dht_and_log_settings() {
+        let server = TestServer::start().await;
+        let path = "/api/v1/settings";
+        let tag = |exchange: &Exchange| exchange.header(header::ETAG).unwrap().to_owned();
+        let first = tag(&server.get(path).await);
+        assert!(server.engine.dht_enabled());
+
+        let invalid = server
+            .send_unchecked(merge_patch(
+                path,
+                &first,
+                &json!({ "dlna_name": 7, "dht_enabled": "no", "log_level": "verbose" }),
+            ))
+            .await;
+        assert_problem(
+            &invalid,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation-failed",
+        );
+        let mut pointers = errors(&invalid, "pointer");
+        pointers.sort();
+        assert_eq!(pointers, ["/dht_enabled", "/dlna_name", "/log_level"]);
+        for name in ["", "Living\nroom", &"x".repeat(65)] {
+            let invalid = server
+                .send_unchecked(merge_patch(path, &first, &json!({ "dlna_name": name })))
+                .await;
+            assert_problem(
+                &invalid,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation-failed",
+            );
+            assert_eq!(errors(&invalid, "pointer"), ["/dlna_name"], "{name:?}");
+        }
+
+        let mut levels = server.app.log_level();
+        let mut media_server = server.app.media_server_setting();
+        let changed = server
+            .send(merge_patch(
+                path,
+                &first,
+                &json!({
+                    "dlna_name": "Кино: living room",
+                    "dht_enabled": false,
+                    "log_level": "debug",
+                }),
+            ))
+            .await;
+        assert_eq!(changed.status, StatusCode::OK);
+        let body = changed.json();
+        assert_eq!(body["dlna_name"], "Кино: living room");
+        assert_eq!(body["dht_enabled"], false);
+        assert_eq!(body["log_level"], "debug");
+        assert_eq!(body["overrides"], json!({}));
+        assert!(
+            !server.engine.dht_enabled(),
+            "turning the DHT off applies at once"
+        );
+        assert!(levels.has_changed().unwrap());
+        assert_eq!(*levels.borrow_and_update(), LogLevel::Debug);
+        assert!(media_server.has_changed().unwrap());
+        assert_eq!(media_server.borrow_and_update().name, "Кино: living room");
+
+        let reset = server
+            .send(merge_patch(
+                path,
+                &tag(&changed),
+                &json!({ "dht_enabled": null }),
+            ))
+            .await;
+        assert_eq!(reset.json()["dht_enabled"], true);
+        assert!(server.engine.dht_enabled(), "the default turns it on again");
+        let stored = tag(&reset);
+
+        // SET-12: a run with overrides reports them and keeps them in
+        // effect while PATCH changes the stored values.
+        let server = server
+            .restart_overriding(Overrides {
+                dht_enabled: Some(false),
+                log_level: Some(LogOverride::Level(LogLevel::Trace)),
+            })
+            .await;
+        let read = server.get(path).await;
+        assert_eq!(
+            read.json()["overrides"],
+            json!({ "dht_enabled": false, "log_level": "trace" })
+        );
+        assert_eq!(read.json()["dht_enabled"], true, "the stored value");
+        assert_eq!(read.json()["dlna_name"], "Кино: living room");
+        assert_ne!(tag(&read), stored, "the overrides are part of the ETag");
+        assert!(!server.engine.dht_enabled(), "--no-dht keeps the DHT off");
+        let patched = server
+            .send(merge_patch(
+                path,
+                &tag(&read),
+                &json!({ "dht_enabled": true, "log_level": "warn" }),
+            ))
+            .await;
+        assert_eq!(patched.status, StatusCode::OK);
+        assert_eq!(patched.json()["log_level"], "warn");
+        assert_eq!(
+            patched.json()["overrides"],
+            json!({ "dht_enabled": false, "log_level": "trace" })
+        );
+        assert!(!server.engine.dht_enabled());
+
+        let server = server.restart().await;
+        let read = server.get(path).await;
+        assert_eq!(read.json()["overrides"], json!({}));
+        assert_eq!(read.json()["log_level"], "warn");
+        assert!(
+            server.engine.dht_enabled(),
+            "the stored value applies again"
+        );
+        assert_eq!(*server.app.log_level().borrow(), LogLevel::Warn);
+        server.stop().await;
+    }
+
     /// SET-01, SET-02, SET-04, and SET-05: settings start at their
     /// defaults, change with validated merge patches, reach the engine, and
     /// survive a restart; a failed write changes nothing.
@@ -2291,6 +2411,10 @@ mod scenario {
                 "cache_capacity_bytes": 268_435_456,
                 "background_downloads": true,
                 "dlna_enabled": false,
+                "dlna_name": "TorrPlay",
+                "dht_enabled": true,
+                "log_level": "info",
+                "overrides": {},
                 "links": { "self": path },
             })
         );
@@ -5526,6 +5650,7 @@ macro_rules! scenarios {
 
 scenarios!(
     service_endpoints,
+    named_dht_and_log_settings,
     api_reference,
     magnet_creation,
     upload_creation,

@@ -22,10 +22,16 @@ use torrplay_core::image::{ImageInfo, ImageType};
 use torrplay_core::library::{Kind, Library};
 use torrplay_core::lifecycle::{Configuration, DesiredState, StorageMode};
 use torrplay_core::profiles::{Profile, Progress};
-use torrplay_core::settings::Explicit;
+use torrplay_core::settings::{Explicit, LogLevel};
 use torrplay_store::{
     FILE_NAME, Store, StoreError, StoredDismissal, StoredProgress, StoredSettings, StoredTorrent,
 };
+
+/// Turns a database back into version 10, before the name, DHT, and log
+/// level settings.
+const UNDO_VERSION_11: &str = "ALTER TABLE settings DROP COLUMN log_level;
+    ALTER TABLE settings DROP COLUMN dht_enabled;
+    ALTER TABLE settings DROP COLUMN dlna_name;";
 
 /// Turns a database back into version 9, before the media server.
 const UNDO_VERSION_10: &str = "DROP TABLE media_server;
@@ -226,7 +232,7 @@ async fn a_newer_schema_is_refused() {
         Store::open(dir.path()),
         Err(StoreError::TooNew {
             found: 99,
-            supported: 10
+            supported: 11
         })
     ));
 }
@@ -292,7 +298,7 @@ async fn settings_keep_explicit_values_and_their_version() {
             },
             version: 4,
         };
-        store.set_settings(stored).await.unwrap();
+        store.set_settings(stored.clone()).await.unwrap();
         store
             .set_settings(StoredSettings {
                 version: 5,
@@ -332,7 +338,7 @@ async fn a_version_1_database_is_copied_then_migrated() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  DROP TABLE settings;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
@@ -371,7 +377,7 @@ async fn a_version_1_database_is_copied_then_migrated() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  DROP TABLE settings;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
@@ -409,7 +415,7 @@ async fn settings_from_version_2_keep_their_values_and_lack_the_cache_capacity()
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  ALTER TABLE settings DROP COLUMN cache_capacity_bytes;
                  ALTER TABLE settings DROP COLUMN background_downloads;
@@ -435,7 +441,7 @@ async fn settings_from_version_2_keep_their_values_and_lack_the_cache_capacity()
         },
         version: 3,
     };
-    store.set_settings(stored).await.unwrap();
+    store.set_settings(stored.clone()).await.unwrap();
     drop(store);
     let (_store, contents) = Store::open(dir.path()).unwrap();
     assert_eq!(contents.settings, stored);
@@ -463,7 +469,7 @@ async fn settings_from_version_5_lack_the_background_downloads_switch() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  ALTER TABLE settings DROP COLUMN background_downloads;
                  PRAGMA user_version = 5;",
@@ -494,7 +500,7 @@ async fn torrents_from_version_3_use_memory_storage() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  ALTER TABLE settings DROP COLUMN background_downloads;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
@@ -748,7 +754,7 @@ async fn torrents_from_version_6_have_empty_library_members() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7} PRAGMA user_version = 6;"
             ))
             .unwrap();
@@ -894,7 +900,7 @@ async fn a_version_7_database_gains_empty_profiles() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8} PRAGMA user_version = 7;"
+                "{UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8} PRAGMA user_version = 7;"
             ))
             .unwrap();
     }
@@ -1054,7 +1060,7 @@ async fn a_version_8_database_gains_credentials_without_a_password() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_10} {UNDO_VERSION_9} PRAGMA user_version = 8;"
+                "{UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} PRAGMA user_version = 8;"
             ))
             .unwrap();
     }
@@ -1094,10 +1100,91 @@ async fn a_version_9_database_gains_the_media_server_switch_unset() {
     {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
-            .execute_batch(&format!("{UNDO_VERSION_10} PRAGMA user_version = 9;"))
+            .execute_batch(&format!(
+                "{UNDO_VERSION_11} {UNDO_VERSION_10} PRAGMA user_version = 9;"
+            ))
             .unwrap();
     }
     let (_store, contents) = Store::open(dir.path()).unwrap();
     assert_eq!(contents.settings.explicit.dlna_enabled, None);
     assert_eq!(contents.media_server_udn.len(), 36);
+}
+
+#[tokio::test]
+async fn the_name_dht_and_log_settings_survive_a_restart() {
+    let dir = TempDir::new().unwrap();
+    let explicit = Explicit {
+        dlna_name: Some("Кино: living room".into()),
+        dht_enabled: Some(false),
+        log_level: Some(LogLevel::Trace),
+        ..Explicit::default()
+    };
+    {
+        let (store, contents) = Store::open(dir.path()).unwrap();
+        assert_eq!(contents.settings.explicit, Explicit::default());
+        store
+            .set_settings(StoredSettings {
+                explicit: explicit.clone(),
+                version: 2,
+            })
+            .await
+            .unwrap();
+    }
+    let (store, contents) = Store::open(dir.path()).unwrap();
+    assert_eq!(
+        contents.settings.explicit, explicit,
+        "explicit false is kept"
+    );
+    store
+        .set_settings(StoredSettings {
+            explicit: Explicit::default(),
+            version: 3,
+        })
+        .await
+        .unwrap();
+    drop(store);
+    let (_store, contents) = Store::open(dir.path()).unwrap();
+    assert_eq!(
+        contents.settings.explicit,
+        Explicit::default(),
+        "unset again"
+    );
+}
+
+#[tokio::test]
+async fn a_version_10_database_gains_the_new_settings_unset() {
+    let dir = TempDir::new().unwrap();
+    {
+        let (store, _) = Store::open(dir.path()).unwrap();
+        store
+            .set_settings(StoredSettings {
+                explicit: Explicit {
+                    dlna_enabled: Some(true),
+                    peer_limit: Some(7),
+                    ..Explicit::default()
+                },
+                version: 4,
+            })
+            .await
+            .unwrap();
+    }
+    {
+        let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
+        connection
+            .execute_batch(&format!("{UNDO_VERSION_11} PRAGMA user_version = 10;"))
+            .unwrap();
+    }
+    let (_store, contents) = Store::open(dir.path()).unwrap();
+    let explicit = &contents.settings.explicit;
+    assert_eq!(explicit.dlna_enabled, Some(true));
+    assert_eq!(explicit.peer_limit, Some(7));
+    assert_eq!(
+        (
+            explicit.dlna_name.as_deref(),
+            explicit.dht_enabled,
+            explicit.log_level
+        ),
+        (None, None, None)
+    );
+    assert_eq!(contents.settings.version, 4);
 }

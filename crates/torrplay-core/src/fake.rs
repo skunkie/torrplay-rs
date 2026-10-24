@@ -57,6 +57,8 @@ struct State {
     fault: Option<String>,
     /// The settings last applied.
     settings: Settings,
+    /// Whether the DHT is on, as last set.
+    dht_enabled: bool,
     /// The piece length a smaller cache capacity is refused below.
     longest_piece_bytes: u64,
     /// The free space a torrent in disk storage may use.
@@ -111,6 +113,7 @@ impl FakeEngine {
                 readiness: Readiness::Ready,
                 fault: None,
                 settings: Settings::DEFAULT,
+                dht_enabled: true,
                 longest_piece_bytes: 0,
                 disk_free_bytes: u64::MAX,
                 transition_failure: None,
@@ -262,6 +265,11 @@ impl FakeEngine {
     /// `None`. Readiness is unaffected: the engine is ready but failing.
     pub fn inject_fault(&self, detail: Option<&str>) {
         self.lock().fault = detail.map(str::to_owned);
+    }
+
+    /// Whether the DHT is on, as last set.
+    pub fn dht_enabled(&self) -> bool {
+        self.lock().dht_enabled
     }
 
     /// The settings last applied, or the defaults.
@@ -457,6 +465,11 @@ impl Engine for FakeEngine {
             });
         }
         state.settings = *settings;
+        Ok(())
+    }
+
+    async fn set_dht(&self, enabled: bool) -> Result<(), EngineError> {
+        self.lock().dht_enabled = enabled;
         Ok(())
     }
 

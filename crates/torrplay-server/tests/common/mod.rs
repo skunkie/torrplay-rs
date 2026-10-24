@@ -21,6 +21,7 @@ use torrplay_core::credentials::AllowedHosts;
 use torrplay_core::fake::FakeEngine;
 use torrplay_core::id::{TORRENT_ID_RANDOM_BYTES, TorrentId};
 use torrplay_core::registry::Registry;
+use torrplay_core::settings::Overrides;
 use torrplay_server::{App, router};
 use torrplay_store::{Store, StoredTorrent};
 
@@ -102,7 +103,15 @@ impl TestServer {
     async fn start_with(body_timeout: Option<Duration>) -> Self {
         let data = Arc::new(TempDir::new().expect("a data directory"));
         let engine = FakeEngine::with_catalog();
-        Self::start_over(data, engine, body_timeout, true, AllowedHosts::default()).await
+        Self::start_over(
+            data,
+            engine,
+            body_timeout,
+            true,
+            AllowedHosts::default(),
+            Overrides::default(),
+        )
+        .await
     }
 
     /// Starts a server that also allows requests to name `hosts`.
@@ -114,7 +123,15 @@ impl TestServer {
                 .map(|host| AllowedHosts::normalize(host).expect("a host name"))
                 .collect(),
         );
-        Self::start_over(data, FakeEngine::with_catalog(), None, true, hosts).await
+        Self::start_over(
+            data,
+            FakeEngine::with_catalog(),
+            None,
+            true,
+            hosts,
+            Overrides::default(),
+        )
+        .await
     }
 
     /// Runs the application's clock `by` further ahead, for credentials'
@@ -137,7 +154,23 @@ impl TestServer {
         let data = Arc::clone(&self.data);
         let hosts = self.allowed_hosts.clone();
         self.stop().await;
-        Self::start_over(data, engine, None, restore, hosts).await
+        Self::start_over(data, engine, None, restore, hosts, Overrides::default()).await
+    }
+
+    /// Restarts as a command line with `overrides` does.
+    pub async fn restart_overriding(self, overrides: Overrides) -> Self {
+        let data = Arc::clone(&self.data);
+        let hosts = self.allowed_hosts.clone();
+        self.stop().await;
+        Self::start_over(
+            data,
+            FakeEngine::with_catalog(),
+            None,
+            true,
+            hosts,
+            overrides,
+        )
+        .await
     }
 
     /// Restores the torrents a server started without restoring holds.
@@ -160,6 +193,7 @@ impl TestServer {
         body_timeout: Option<Duration>,
         restore: bool,
         allowed_hosts: AllowedHosts,
+        overrides: Overrides,
     ) -> Self {
         let engine = Arc::new(engine);
         let (store, contents) = Store::open(data.path()).expect("the store opens");
@@ -179,12 +213,12 @@ impl TestServer {
             Ok(bytes)
         });
         let mut app = App::with_registry(Arc::clone(&engine), registry, store)
+            .with_overrides(overrides)
             .with_settings(contents.settings)
             .with_viewing(contents.profiles, contents.progress, contents.dismissals)
             .with_credentials(contents.credentials)
             .with_allowed_hosts(allowed_hosts.clone())
             .with_media_server(torrplay_dlna::description::Device {
-                friendly_name: "TorrPlay test".into(),
                 uuid: contents.media_server_udn.clone(),
                 version: "0.1.0".into(),
             });
@@ -197,6 +231,9 @@ impl TestServer {
             app = app.with_body_timeout(timeout);
         }
         let app = Arc::new(app);
+        app.apply_dht()
+            .await
+            .expect("the fake engine takes the DHT switch");
         let unrestored = if restore {
             app.restore(stored)
                 .await

@@ -118,11 +118,13 @@ cargo run -p torrplay -- --help
 name any address, and the application warns when one beyond loopback is
 served while authentication is off. `/api/v1/reference` shows the API in a
 browser. `--allowed-host` adds a host name
-requests may give, such as a reverse proxy's, and `--dlna-name` the DLNA
-media server's name, which the `dlna_enabled` setting turns on
-([the DLNA contract](dlna.md)). Its other options set the
-BitTorrent peer port (4240) and the log level of TorrPlay's own logs, which
-go to standard error; other crates log warnings and errors only.
+requests may give, such as a reverse proxy's. Its other options set the
+BitTorrent peer port (4240), and override settings for one run, as
+[the lifecycle](lifecycle.md#settings) describes: `--no-dht` turns the DHT
+off, and `--log-level` and `--log-filter` set the level of TorrPlay's own
+logs, which go to standard error; other crates log warnings and errors
+only. The DLNA media server, its name, and the DHT are settings
+([the DLNA contract](dlna.md)).
 
 Authentication is off until a password is set through the API or on the
 command line of the stopped application:

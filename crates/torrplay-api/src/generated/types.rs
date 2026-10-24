@@ -806,7 +806,142 @@ impl AsRef<str> for ObservedState {
 }
 ///A plain-text synopsis, or null. Normalized on write to 1 to 4096 characters, keeping line feeds and tabs and no other control characters. It defaults to null.
 pub type Description = String;
-///The application's settings. Each value is the one set, or its default while it is unset.
+///A JSON merge patch of the settings. Omitted members keep their values; a member set to null returns to its default.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct SettingsPatch {
+    ///The new value, or null for the default, true.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub background_downloads: Option<Option<bool>>,
+    ///The new value, or null for the default, 268435456.
+    ///Constraint: minimum=4194304, maximum=68719476736
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub cache_capacity_bytes: Option<Option<i64>>,
+    ///The new value, or null for the default, true, which turns the DHT on.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub dht_enabled: Option<Option<bool>>,
+    ///The new value, or null for the default, false.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub dlna_enabled: Option<Option<bool>>,
+    ///The new value, or null for the default, TorrPlay.
+    ///Constraint: minLength=1, maxLength=64, pattern=`^[^\x00-\x1F\x7F]+$`
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub dlna_name: Option<Option<String>>,
+    ///The new value, or null for the default, 10.
+    ///Constraint: minimum=0, maximum=25
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub drain_period_seconds: Option<Option<i32>>,
+    ///The new value, or null for the default, 4.
+    ///Constraint: minimum=0, maximum=64
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub idle_readers_per_torrent: Option<Option<i32>>,
+    ///The new value, or null for the default, 16.
+    ///Constraint: minimum=0, maximum=256
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub idle_readers_total: Option<Option<i32>>,
+    ///The new value, or null for the default, 30.
+    ///Constraint: minimum=0, maximum=3600
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub idle_timeout_seconds: Option<Option<i32>>,
+    ///The new value, or null for the default, info.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub log_level: Option<Option<SettingsPatchLogLevel>>,
+    ///The new value, or null for the default, 50.
+    ///Constraint: minimum=1, maximum=500
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub peer_limit: Option<Option<i32>>,
+    ///The new value, or null for the default, 60.
+    ///Constraint: minimum=1, maximum=600
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub piece_wait_seconds: Option<Option<i32>>,
+}
+///The new value, or null for the default, info.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum SettingsPatchLogLevel {
+    #[default]
+    #[serde(rename = "error")]
+    Error,
+    #[serde(rename = "warn")]
+    Warn,
+    #[serde(rename = "info")]
+    Info,
+    #[serde(rename = "debug")]
+    Debug,
+    #[serde(rename = "trace")]
+    Trace,
+    #[serde(rename = "null")]
+    NullValue,
+}
+impl SettingsPatchLogLevel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Warn => "warn",
+            Self::Info => "info",
+            Self::Debug => "debug",
+            Self::Trace => "trace",
+            Self::NullValue => "null",
+        }
+    }
+}
+impl ::std::fmt::Display for SettingsPatchLogLevel {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for SettingsPatchLogLevel {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+///The application's settings. Each value is the one set, or its default while it is unset. Command-line options may override some of them for one run, which overrides lists.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Settings {
     ///Whether started torrents in disk storage download the pieces they lack while no reader exists. Applies at once: turned off, torrents request only the pieces readers need, and requests already sent finish; turned on, background downloads resume unless playback is active.
@@ -816,9 +951,16 @@ pub struct Settings {
     ///Constraint: minimum=4194304, maximum=68719476736
     #[serde(default)]
     pub cache_capacity_bytes: i64,
+    ///Whether torrents find peers through the BitTorrent DHT; private torrents never do. Turning it off applies at once: every torrent's DHT search ends, while its trackers and connected peers remain. Turning it on applies to torrents as they start: when created, started, or restored after a restart. The --no-dht option overrides it.
+    #[serde(default)]
+    pub dht_enabled: bool,
     ///Whether the DLNA media server announces the library to the local network, as docs/dlna.md describes. Turning it on grants every client with a private address read-only access to torrents' playable files and posters without a token, even while a password is set. Applies at once.
     #[serde(default)]
     pub dlna_enabled: bool,
+    ///The name televisions show for the DLNA media server: 1 to 64 characters, none of them control characters. Applies at once: a running media server announces itself again under the new name.
+    ///Constraint: minLength=1, maxLength=64, pattern=`^[^\x00-\x1F\x7F]+$`
+    #[serde(default)]
+    pub dlna_name: String,
     ///How long streams in progress may continue after a termination signal before they are canceled, within the 30-second shutdown limit. Applies to the next shutdown.
     ///Constraint: minimum=0, maximum=25
     #[serde(default)]
@@ -837,6 +979,11 @@ pub struct Settings {
     pub idle_timeout_seconds: i32,
     ///Links from the settings.
     pub links: SettingsLinks,
+    ///The least severe level of TorrPlay's own log messages; other components log only warnings and errors. Applies at once. The --log-level and --log-filter options override it.
+    #[serde(default)]
+    pub log_level: SettingsLogLevel,
+    ///The settings that command-line options override in this run, each with the value in effect; empty when none are. The members above keep the stored values, which a PATCH still changes and which apply once the application runs without those options.
+    pub overrides: SettingsOverrides,
     ///The most peers one torrent connects to at a time, connecting ones included. Applies to torrents as they start: when created, started, or restored after a restart.
     ///Constraint: minimum=1, maximum=500
     #[serde(default)]
@@ -845,6 +992,91 @@ pub struct Settings {
     ///Constraint: minimum=1, maximum=600
     #[serde(default)]
     pub piece_wait_seconds: i32,
+}
+///The settings that command-line options override in this run, each with the value in effect; empty when none are. The members above keep the stored values, which a PATCH still changes and which apply once the application runs without those options.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct SettingsOverrides {
+    ///Present while --no-dht keeps the DHT off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dht_enabled: Option<bool>,
+    ///The level --log-level sets, or custom while --log-filter sets levels per component.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_level: Option<SettingsOverridesLogLevel>,
+}
+///The level --log-level sets, or custom while --log-filter sets levels per component.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum SettingsOverridesLogLevel {
+    #[default]
+    #[serde(rename = "error")]
+    Error,
+    #[serde(rename = "warn")]
+    Warn,
+    #[serde(rename = "info")]
+    Info,
+    #[serde(rename = "debug")]
+    Debug,
+    #[serde(rename = "trace")]
+    Trace,
+    #[serde(rename = "custom")]
+    Custom,
+}
+impl SettingsOverridesLogLevel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Warn => "warn",
+            Self::Info => "info",
+            Self::Debug => "debug",
+            Self::Trace => "trace",
+            Self::Custom => "custom",
+        }
+    }
+}
+impl ::std::fmt::Display for SettingsOverridesLogLevel {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for SettingsOverridesLogLevel {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+///The least severe level of TorrPlay's own log messages; other components log only warnings and errors. Applies at once. The --log-level and --log-filter options override it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum SettingsLogLevel {
+    #[serde(rename = "error")]
+    Error,
+    #[serde(rename = "warn")]
+    Warn,
+    #[default]
+    #[serde(rename = "info")]
+    Info,
+    #[serde(rename = "debug")]
+    Debug,
+    #[serde(rename = "trace")]
+    Trace,
+}
+impl SettingsLogLevel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Warn => "warn",
+            Self::Info => "info",
+            Self::Debug => "debug",
+            Self::Trace => "trace",
+        }
+    }
+}
+impl ::std::fmt::Display for SettingsLogLevel {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for SettingsLogLevel {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
 }
 ///Links from the settings.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1629,78 +1861,4 @@ pub struct ProgressUpdate {
     pub position_seconds: f64,
     ///Whether the file is viewed. Marking a file viewed that was not resets its position to 0, as reaching 90% does; a viewed file keeps the positions saved for it, so it can be watched again. False clears the mark.
     pub viewed: bool,
-}
-///A JSON merge patch of the settings. Omitted members keep their values; a member set to null returns to its default.
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
-pub struct SettingsPatch {
-    ///The new value, or null for the default, true.
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        default,
-        deserialize_with = "tri_state_serde::deserialize"
-    )]
-    pub background_downloads: Option<Option<bool>>,
-    ///The new value, or null for the default, 268435456.
-    ///Constraint: minimum=4194304, maximum=68719476736
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        default,
-        deserialize_with = "tri_state_serde::deserialize"
-    )]
-    pub cache_capacity_bytes: Option<Option<i64>>,
-    ///The new value, or null for the default, false.
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        default,
-        deserialize_with = "tri_state_serde::deserialize"
-    )]
-    pub dlna_enabled: Option<Option<bool>>,
-    ///The new value, or null for the default, 10.
-    ///Constraint: minimum=0, maximum=25
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        default,
-        deserialize_with = "tri_state_serde::deserialize"
-    )]
-    pub drain_period_seconds: Option<Option<i32>>,
-    ///The new value, or null for the default, 4.
-    ///Constraint: minimum=0, maximum=64
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        default,
-        deserialize_with = "tri_state_serde::deserialize"
-    )]
-    pub idle_readers_per_torrent: Option<Option<i32>>,
-    ///The new value, or null for the default, 16.
-    ///Constraint: minimum=0, maximum=256
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        default,
-        deserialize_with = "tri_state_serde::deserialize"
-    )]
-    pub idle_readers_total: Option<Option<i32>>,
-    ///The new value, or null for the default, 30.
-    ///Constraint: minimum=0, maximum=3600
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        default,
-        deserialize_with = "tri_state_serde::deserialize"
-    )]
-    pub idle_timeout_seconds: Option<Option<i32>>,
-    ///The new value, or null for the default, 50.
-    ///Constraint: minimum=1, maximum=500
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        default,
-        deserialize_with = "tri_state_serde::deserialize"
-    )]
-    pub peer_limit: Option<Option<i32>>,
-    ///The new value, or null for the default, 60.
-    ///Constraint: minimum=1, maximum=600
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        default,
-        deserialize_with = "tri_state_serde::deserialize"
-    )]
-    pub piece_wait_seconds: Option<Option<i32>>,
 }

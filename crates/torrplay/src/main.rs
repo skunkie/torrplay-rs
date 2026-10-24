@@ -37,7 +37,10 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    torrplay::init_logging(config.log_level, config.log_filter.as_deref());
+    let log = torrplay::init_logging(
+        config.log_level.unwrap_or_default(),
+        config.log_filter.as_deref(),
+    );
     match torrplay_engine::raise_open_file_limit() {
         Ok(limit) => tracing::info!(limit, "open file limit"),
         Err(error) => tracing::warn!(
@@ -55,7 +58,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let result = runtime.block_on(run(&config));
+    let result = runtime.block_on(run(&config, log));
     // Shutdown has stopped the engine; blocking work still running must not
     // hold the process.
     runtime.shutdown_timeout(RUNTIME_SHUTDOWN);
@@ -68,7 +71,7 @@ fn main() -> ExitCode {
     }
 }
 
-async fn run(config: &Config) -> anyhow::Result<()> {
+async fn run(config: &Config, log: torrplay::LogControl) -> anyhow::Result<()> {
     let data_dir = config.data_dir()?;
     let opening = data_dir.clone();
     let (store, contents) = tokio::task::spawn_blocking(move || Store::open(&opening))
@@ -96,7 +99,8 @@ async fn run(config: &Config) -> anyhow::Result<()> {
         contents,
         torrplay::ServeOptions {
             allowed_hosts: AllowedHosts::new(config.allowed_hosts.clone()),
-            dlna_name: config.dlna_name.clone(),
+            overrides: config.overrides(),
+            log: Some(log),
         },
         ShutdownTimings::default(),
         termination(),

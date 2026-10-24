@@ -908,6 +908,36 @@ async fn removing_releases_the_torrent_and_its_cache_usage() -> anyhow::Result<(
     Ok(())
 }
 
+/// The DHT starts with the engine only when turned on beforehand, and
+/// turning it on or off later starts or stops it without restarting the
+/// engine.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_dht_turns_on_and_off_while_the_engine_runs() -> anyhow::Result<()> {
+    let folder = tempfile::tempdir()?;
+    let engine = LibrqbitEngine::new(EngineConfig::new(
+        folder.path().to_path_buf(),
+        NetworkConfig::isolated(Vec::new()),
+    ));
+    engine.set_dht(true).await?;
+    bounded("starting the engine", engine.start()).await?;
+    let first = engine
+        .dht_address()
+        .expect("the DHT started with the engine");
+    engine.set_dht(true).await?;
+    assert_eq!(
+        engine.dht_address(),
+        Some(first),
+        "unchanged, it keeps running"
+    );
+    engine.set_dht(false).await?;
+    assert_eq!(engine.dht_address(), None);
+    assert_eq!(engine.readiness(), Readiness::Ready);
+    engine.set_dht(true).await?;
+    assert!(engine.dht_address().is_some(), "started again");
+    bounded("stopping the engine", engine.shutdown()).await?;
+    Ok(())
+}
+
 /// The engine is unavailable until it starts and after it shuts down.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn readiness_follows_start_and_shutdown() -> anyhow::Result<()> {
