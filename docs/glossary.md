@@ -190,7 +190,8 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 
 **Background download**
 : Downloading torrent content that no reader needs, for later playback.
-  Background downloads pause during active playback.
+  Background downloads pause during active playback, and a setting turns
+  them off.
 
 ## Lifecycle and storage
 

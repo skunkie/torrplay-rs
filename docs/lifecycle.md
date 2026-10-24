@@ -216,12 +216,13 @@ them is unsupported.
 A background download fetches the pieces of a torrent that no reader needs,
 so that the whole torrent is there for later playback.
 
-- Every started torrent in disk storage with metadata downloads the pieces
-  it lacks in the background, after the pieces its readers need, until it
-  holds the whole torrent; it then keeps uploading. Paused and failed
-  torrents, and torrents still retrieving metadata, download nothing in the
-  background. Torrents in memory storage never do, since the piece cache
-  would evict what they fetch.
+- While background downloads are on, as they are by default
+  ([Settings](#settings)), every started torrent in disk storage with
+  metadata downloads the pieces it lacks in the background, after the
+  pieces its readers need, until it holds the whole torrent; it then keeps
+  uploading. Paused and failed torrents, and torrents still retrieving
+  metadata, download nothing in the background. Torrents in memory storage
+  never do, since the piece cache would evict what they fetch.
 - All such torrents download at once, sharing peers and bandwidth, each in
   the order of its files. There is no queue across torrents, so a torrent
   without peers holds no other back.
@@ -343,12 +344,12 @@ local filesystem, as [ADR 8](adr/0008-database.md) requires.
 
 `/api/v1/settings` holds the application's settings: the piece wait bound,
 the idle timeout, the idle reader limits per torrent and in total, the drain
-period, the peer limit per torrent, and the cache capacity. The contract
-gives each one's bounds and default.
+period, the peer limit per torrent, the cache capacity, and whether
+background downloads run. The contract gives each one's bounds and default.
 
 - A `PATCH` is an RFC 7396 merge patch with `If-Match`. A member set to
   `null` returns to its default; an omitted member keeps its value; explicit
-  `0` is a value like any other.
+  `0` and `false` are values like any other.
 - The whole patch is validated, including that the per-torrent idle reader
   limit does not exceed the total, before anything changes. A change that
   shrinks the cache capacity is then applied before it is stored, since the
@@ -378,6 +379,9 @@ gives each one's bounds and default.
   byte-correct. A torrent added or retrieving metadata while the capacity
   shrinks is checked against the new capacity, as
   [Creation](#creation) describes for pieces longer than the cache.
+- Turning background downloads off applies at once: torrents then request
+  only the pieces readers need, and requests already sent finish. Turning
+  them on resumes them at once unless playback is active.
 - Changing settings returns `engine-unavailable` while the engine is
   unavailable, while stored torrents are being restored, and while the
   application shuts down; reading them is always served.
