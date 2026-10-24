@@ -267,3 +267,29 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 **Listing version**
 : An opaque digest of the torrents a listing's facets describe, which
   changes whenever one of them is added, removed, or changes.
+
+## Profiles and progress
+
+**Profile**
+: A person's viewing identity, with its own progress and up next. It is
+  independent of authentication, which decides only who may use it.
+
+**Avatar**
+: An image a client uploads to show a profile, under a poster's rules.
+
+**Progress**
+: A profile's playback position in a file, in seconds, with the file's
+  duration and whether the file was viewed. A file is **in progress** while
+  its position is at least 1% of its duration.
+
+**Viewed**
+: The mark of a file a profile watched to 90% of its duration or marked as
+  viewed.
+
+**Up next**
+: The list of what a profile can resume or watch next: files in progress,
+  and the next unviewed episode of a series after a viewed one.
+
+**Dismissal**
+: A profile's choice to hide an up next entry until it saves progress for
+  that entry again.

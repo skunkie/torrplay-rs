@@ -53,6 +53,74 @@ pub struct ValidationError {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pointer: Option<String>,
 }
+///A page of up next entries.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UpNextPage {
+    ///The entries on this page.
+    pub items: Vec<UpNextEntry>,
+    ///Links from a page of entries.
+    pub links: UpNextPageLinks,
+}
+///Links from a page of entries.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UpNextPageLinks {
+    ///The next page of entries, omitted on the last page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+    ///This page of entries.
+    #[serde(rename = "self")]
+    pub self_field: String,
+}
+///Something a profile can resume or watch next.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UpNextEntry {
+    ///When progress that put the entry here was last saved.
+    pub activity_at: chrono::DateTime<chrono::Utc>,
+    pub file: TorrentFile,
+    ///The entry's opaque ID, the same for a series, or for a file of any other torrent, while the entry is listed again.
+    pub id: String,
+    ///Links from an entry.
+    pub links: UpNextEntryLinks,
+    ///The file's progress, or null for a next episode not yet started.
+    pub progress: Option<Progress>,
+    ///resume for a file in progress, or next_episode for the next unviewed episode of a series after a viewed one. Clients must handle values added later.
+    pub reason: UpNextEntryReason,
+    pub torrent: Torrent,
+}
+///resume for a file in progress, or next_episode for the next unviewed episode of a series after a viewed one. Clients must handle values added later.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum UpNextEntryReason {
+    #[default]
+    #[serde(rename = "resume")]
+    Resume,
+    #[serde(rename = "next_episode")]
+    NextEpisode,
+}
+impl UpNextEntryReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Resume => "resume",
+            Self::NextEpisode => "next_episode",
+        }
+    }
+}
+impl ::std::fmt::Display for UpNextEntryReason {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for UpNextEntryReason {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+///Links from an entry.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UpNextEntryLinks {
+    ///This entry.
+    #[serde(rename = "self")]
+    pub self_field: String,
+}
 ///Transfer and peer measurements for a torrent.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TorrentStatistics {
@@ -616,7 +684,7 @@ pub struct TorrentStorageFailure {
 ///The torrent's poster, or null if it has none.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TorrentPoster {
-    pub media_type: PosterMediaType,
+    pub media_type: ImageMediaType,
     ///The image's size.
     ///Constraint: minimum=1, maximum=1048576
     pub size_bytes: i64,
@@ -703,42 +771,6 @@ impl AsRef<str> for StorageMode {
         self.as_str()
     }
 }
-///The media type of a poster image. Clients must handle values added later.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
-pub enum PosterMediaType {
-    #[default]
-    #[serde(rename = "image/avif")]
-    ImageAvif,
-    #[serde(rename = "image/gif")]
-    ImageGif,
-    #[serde(rename = "image/jpeg")]
-    ImageJpeg,
-    #[serde(rename = "image/png")]
-    ImagePng,
-    #[serde(rename = "image/webp")]
-    ImageWebp,
-}
-impl PosterMediaType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::ImageAvif => "image/avif",
-            Self::ImageGif => "image/gif",
-            Self::ImageJpeg => "image/jpeg",
-            Self::ImagePng => "image/png",
-            Self::ImageWebp => "image/webp",
-        }
-    }
-}
-impl ::std::fmt::Display for PosterMediaType {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-impl AsRef<str> for PosterMediaType {
-    fn as_ref(&self) -> &str {
-        self.as_str()
-    }
-}
 ///The state the engine reports for a torrent. Clients must handle values added later.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum ObservedState {
@@ -817,6 +849,183 @@ pub struct SettingsLinks {
     ///These settings.
     #[serde(rename = "self")]
     pub self_field: String,
+}
+///A page of a torrent's progress for a profile.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProgressPage {
+    ///The progress on this page, in metadata order.
+    pub items: Vec<Progress>,
+    ///Links from a page of progress.
+    pub links: ProgressPageLinks,
+}
+///Links from a page of progress.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProgressPageLinks {
+    ///The next page of progress, omitted on the last page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+    ///This page of progress.
+    #[serde(rename = "self")]
+    pub self_field: String,
+}
+///Where a profile is in a file. A file is in progress while its position is at least 1% of its duration.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Progress {
+    ///The position as a fraction of the duration, from 0.0 to 1.0.
+    ///Constraint: minimum=0, maximum=1
+    pub completion_ratio: f64,
+    ///The file's playback duration, to the millisecond.
+    ///Constraint: maximum=1000000, exclusiveMinimum=0
+    pub duration_seconds: f64,
+    ///The file's ID.
+    pub file_id: String,
+    ///Links from a file's progress.
+    pub links: ProgressLinks,
+    ///The playback position, to the millisecond.
+    ///Constraint: minimum=0
+    pub position_seconds: f64,
+    ///When the progress was last saved, in UTC.
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    ///Whether the file was viewed to 90% or marked viewed.
+    pub viewed: bool,
+    ///When the file was last marked viewed, or null if it is not.
+    pub viewed_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+///Links from a file's progress.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProgressLinks {
+    ///The file's content, to resume streaming.
+    pub content: String,
+    ///The file the progress is of.
+    pub file: String,
+    ///The profile the progress belongs to.
+    pub profile: String,
+    ///This progress.
+    #[serde(rename = "self")]
+    pub self_field: String,
+    ///The torrent of the file.
+    pub torrent: String,
+}
+///A JSON merge patch of a profile. The name cannot be removed.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct ProfilePatch {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<ProfileName>,
+}
+///A page of profiles.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProfilePage {
+    ///The profiles on this page.
+    pub items: Vec<Profile>,
+    ///Links from a page of profiles.
+    pub links: ProfilePageLinks,
+}
+///Links from a page of profiles.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProfilePageLinks {
+    ///The next page of profiles, omitted on the last page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+    ///This page of profiles.
+    #[serde(rename = "self")]
+    pub self_field: String,
+}
+///The input that creates a profile.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProfileCreation {
+    pub name: ProfileName,
+}
+///A duplicate-profile problem, which links to the profile with the name, or a too-many-profiles problem, which does not.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProfileConflictProblem {
+    ///An explanation of this occurrence, omitted when there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    ///An identifier of this occurrence, omitted when there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance: Option<String>,
+    ///The profile that has the name, present only in a duplicate-profile problem.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    ///The HTTP status code of the response.
+    ///Constraint: minimum=400, maximum=599
+    pub status: i32,
+    ///A short summary that is the same for every occurrence of the type.
+    pub title: String,
+    ///The problem type, a tag URI under tag:skunkie.github.io,2026:torrplay/problems/.
+    pub r#type: url::Url,
+}
+///A person's viewing identity.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Profile {
+    ///The profile's avatar, or null if it has none.
+    pub avatar: Option<ProfileAvatar>,
+    ///When the profile was created, in UTC.
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    ///The profile's opaque, stable ID.
+    pub id: String,
+    ///Links from a profile.
+    pub links: ProfileLinks,
+    pub name: ProfileName,
+}
+///A profile's name, normalized as a category is to 1 to 64 characters without control characters, and unique among profiles after normalization, case included.
+pub type ProfileName = String;
+///Links from a profile.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProfileLinks {
+    ///The profile's avatar, not-found while it has none.
+    pub avatar: String,
+    ///This profile.
+    #[serde(rename = "self")]
+    pub self_field: String,
+    ///What the profile can resume or watch next.
+    pub up_next: String,
+}
+///The profile's avatar, or null if it has none.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProfileAvatar {
+    pub media_type: ImageMediaType,
+    ///The avatar image's size.
+    ///Constraint: minimum=1, maximum=1048576
+    pub size_bytes: i64,
+    ///When the avatar was uploaded, in UTC.
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+///The media type of a poster or avatar image. Clients must handle values added later.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum ImageMediaType {
+    #[default]
+    #[serde(rename = "image/avif")]
+    ImageAvif,
+    #[serde(rename = "image/gif")]
+    ImageGif,
+    #[serde(rename = "image/jpeg")]
+    ImageJpeg,
+    #[serde(rename = "image/png")]
+    ImagePng,
+    #[serde(rename = "image/webp")]
+    ImageWebp,
+}
+impl ImageMediaType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ImageAvif => "image/avif",
+            Self::ImageGif => "image/gif",
+            Self::ImageJpeg => "image/jpeg",
+            Self::ImagePng => "image/png",
+            Self::ImageWebp => "image/webp",
+        }
+    }
+}
+impl ::std::fmt::Display for ImageMediaType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for ImageMediaType {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
 }
 ///A file's preloads.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1004,6 +1213,8 @@ pub struct EntryPoint {
 pub struct EntryPointLinks {
     ///The piece cache's statistics.
     pub cache_statistics: String,
+    ///The profiles collection.
+    pub profiles: String,
     ///The entry point.
     #[serde(rename = "self")]
     pub self_field: String,
@@ -1091,6 +1302,18 @@ pub struct PreloadCreation {
     ///Constraint: minimum=10, maximum=3600
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ttl_seconds: Option<i32>,
+}
+///A file's progress as a player saves it, replacing the saved progress. The position must not exceed the duration.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProgressUpdate {
+    ///The file's playback duration, rounded to the millisecond.
+    ///Constraint: maximum=1000000, exclusiveMinimum=0
+    pub duration_seconds: f64,
+    ///The playback position, rounded to the millisecond.
+    ///Constraint: minimum=0, maximum=1000000
+    pub position_seconds: f64,
+    ///Whether the file is viewed. Marking a file viewed that was not resets its position to 0, as reaching 90% does; a viewed file keeps the positions saved for it, so it can be watched again. False clears the mark.
+    pub viewed: bool,
 }
 ///A JSON merge patch of the settings. Omitted members keep their values; a member set to null returns to its default.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]

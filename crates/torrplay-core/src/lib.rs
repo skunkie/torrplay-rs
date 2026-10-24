@@ -14,8 +14,10 @@
 //! - [`lifecycle`]: desired and observed state, failures, the configuration
 //!   and its entity tag, and engine readiness, as `docs/lifecycle.md`
 //!   defines them.
-//! - [`library`]: a torrent's library members, their normalization, the
-//!   kind inferred from file names, and poster images.
+//! - [`library`]: a torrent's library members, their normalization, and
+//!   the kind inferred from file names.
+//! - [`image`]: uploaded images, posters and avatars.
+//! - [`profiles`]: profiles, their progress, and up next.
 //! - [`registry`]: the registered torrents, with atomic duplicate detection.
 //! - [`pagination`]: page sizes and opaque cursors for collections.
 //! - [`search`]: matching and ranking searches, shared by every interface.
@@ -34,11 +36,13 @@ pub mod engine;
 #[cfg(feature = "fake")]
 pub mod fake;
 pub mod id;
+pub mod image;
 pub mod library;
 pub mod lifecycle;
 pub mod metadata;
 pub mod pagination;
 pub mod preload;
+pub mod profiles;
 pub mod redact;
 pub mod registry;
 pub mod search;

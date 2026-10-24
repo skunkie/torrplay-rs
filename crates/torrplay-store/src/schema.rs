@@ -17,14 +17,15 @@ use rusqlite::{Connection, ErrorCode, OptionalExtension, TransactionBehavior};
 use std::collections::HashMap;
 
 use torrplay_core::id::{InfoHashV1, TorrentId};
-use torrplay_core::library::{Kind, Library, PosterInfo, PosterType};
+use torrplay_core::library::{Kind, Library};
 use torrplay_core::lifecycle::{Configuration, DesiredState, StorageMode};
 use torrplay_core::settings::{self, Explicit, Stored};
 
+use crate::images::{self, Images};
 use crate::{StoreError, StoredTorrent};
 
 /// The schema version this build creates and migrates to.
-pub(crate) const VERSION: u32 = 7;
+pub(crate) const VERSION: u32 = 8;
 
 /// The schema at each version, applied in order to reach the next one.
 const MIGRATIONS: [&str; VERSION as usize] = [
@@ -107,6 +108,42 @@ const MIGRATIONS: [&str; VERSION as usize] = [
         updated_at_ns INTEGER NOT NULL CHECK (updated_at_ns >= 0),
         bytes BLOB NOT NULL
     ) STRICT;",
+    // Version 8: profiles, their avatars, their progress of torrents'
+    // files, and their dismissals of up next entries. Progress and
+    // dismissals go with their profile and their torrent.
+    "CREATE TABLE profiles (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_at_ns INTEGER NOT NULL CHECK (created_at_ns >= 0),
+        CONSTRAINT profiles_name_key UNIQUE (name)
+    ) STRICT;
+    CREATE TABLE profile_avatars (
+        profile_id TEXT PRIMARY KEY REFERENCES profiles (id) ON DELETE CASCADE,
+        media_type TEXT NOT NULL CHECK (media_type IN
+            ('image/avif', 'image/gif', 'image/jpeg', 'image/png', 'image/webp')),
+        digest BLOB NOT NULL CHECK (length(digest) = 32),
+        updated_at_ns INTEGER NOT NULL CHECK (updated_at_ns >= 0),
+        bytes BLOB NOT NULL
+    ) STRICT;
+    CREATE TABLE progress (
+        profile_id TEXT NOT NULL REFERENCES profiles (id) ON DELETE CASCADE,
+        torrent_id TEXT NOT NULL REFERENCES torrents (id) ON DELETE CASCADE,
+        file_id TEXT NOT NULL,
+        position_ms INTEGER NOT NULL CHECK (position_ms >= 0),
+        duration_ms INTEGER NOT NULL CHECK (duration_ms > 0 AND position_ms <= duration_ms),
+        viewed_at_ns INTEGER CHECK (viewed_at_ns >= 0),
+        updated_at_ns INTEGER NOT NULL CHECK (updated_at_ns >= 0),
+        PRIMARY KEY (profile_id, torrent_id, file_id)
+    ) STRICT;
+    CREATE INDEX progress_torrent_id_idx ON progress (torrent_id);
+    CREATE TABLE up_next_dismissals (
+        profile_id TEXT NOT NULL REFERENCES profiles (id) ON DELETE CASCADE,
+        entry_id TEXT NOT NULL,
+        torrent_id TEXT NOT NULL REFERENCES torrents (id) ON DELETE CASCADE,
+        dismissed_at_ns INTEGER NOT NULL CHECK (dismissed_at_ns >= 0),
+        PRIMARY KEY (profile_id, entry_id)
+    ) STRICT;
+    CREATE INDEX up_next_dismissals_torrent_id_idx ON up_next_dismissals (torrent_id);",
 ];
 
 /// Opens the database at `path`, takes its lock, and migrates it.
@@ -184,7 +221,7 @@ pub(crate) fn torrents(connection: &mut Connection) -> Result<Vec<StoredTorrent>
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let mut categories = labels(&transaction, "torrent_categories")?;
     let mut genres = labels(&transaction, "torrent_genres")?;
-    let mut posters = posters(&transaction)?;
+    let mut posters = images::all(&transaction, Images::Posters)?;
     let mut statement = transaction.prepare(
         "SELECT t.id, t.info_hash, t.created_at_ns, t.desired_state, t.configuration_version,
                 t.magnet_uri, f.bytes, t.desired_storage_mode, t.storage_mode,
@@ -288,66 +325,6 @@ fn labels(
         labels.entry(id).or_default().push(name);
     }
     Ok(labels)
-}
-
-/// A poster's row: its description's columns, then the image's length.
-type PosterRow = (String, Vec<u8>, i64, i64);
-
-fn poster_row(row: &rusqlite::Row<'_>, from: usize) -> rusqlite::Result<PosterRow> {
-    Ok((
-        row.get(from)?,
-        row.get(from + 1)?,
-        row.get(from + 2)?,
-        row.get(from + 3)?,
-    ))
-}
-
-fn poster_info(id: &str, row: PosterRow) -> Result<PosterInfo, StoreError> {
-    let (media_type, digest, updated_at_ns, size) = row;
-    let corrupt = |what: &str| StoreError::Corrupt(format!("poster of {id}: {what}"));
-    Ok(PosterInfo {
-        poster_type: PosterType::parse(&media_type).ok_or_else(|| corrupt("unknown media type"))?,
-        size_bytes: u64::try_from(size).map_err(|_| corrupt("negative size"))?,
-        digest: digest
-            .try_into()
-            .map_err(|_| corrupt("the digest is not 32 bytes"))?,
-        updated_at: from_ns(updated_at_ns).ok_or_else(|| corrupt("the time is out of range"))?,
-    })
-}
-
-/// Reads every poster's description, without its image.
-fn posters(connection: &Connection) -> Result<HashMap<String, PosterInfo>, StoreError> {
-    let mut statement = connection.prepare(
-        "SELECT torrent_id, media_type, digest, updated_at_ns, length(bytes)
-         FROM torrent_posters",
-    )?;
-    let rows = statement.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, poster_row(row, 1)?))
-    })?;
-    let mut posters = HashMap::new();
-    for row in rows {
-        let (id, row) = row?;
-        let poster = poster_info(&id, row)?;
-        posters.insert(id, poster);
-    }
-    Ok(posters)
-}
-
-/// Reads torrent `id`'s poster with its image.
-pub(crate) fn poster(
-    connection: &Connection,
-    id: &TorrentId,
-) -> Result<Option<(PosterInfo, Vec<u8>)>, StoreError> {
-    let row = connection
-        .query_row(
-            "SELECT media_type, digest, updated_at_ns, length(bytes), bytes
-             FROM torrent_posters WHERE torrent_id = ?1",
-            [id.as_str()],
-            |row| Ok((poster_row(row, 0)?, row.get::<_, Vec<u8>>(4)?)),
-        )
-        .optional()?;
-    row.map(|(row, bytes)| Ok((poster_info(id.as_str(), row)?, bytes)))
-        .transpose()
 }
 
 /// A time from SQLite's signed integer of nanoseconds since the Unix epoch.

@@ -26,15 +26,19 @@ mod body;
 mod content;
 mod files;
 mod headers;
+mod images;
 mod library;
 mod posters;
 mod preloads;
 mod problem;
+mod profiles;
+mod progress;
 mod query;
 mod representation;
 mod service;
 mod settings;
 mod torrents;
+mod up_next;
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -104,6 +108,41 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
         .route(
             "/api/v1/settings",
             get(settings::get::<E>).patch(settings::update::<E>),
+        )
+        .route(
+            "/api/v1/profiles",
+            get(profiles::list::<E>).post(profiles::create::<E>),
+        )
+        .route(
+            "/api/v1/profiles/{profile_id}",
+            get(profiles::get::<E>)
+                .patch(profiles::update::<E>)
+                .delete(profiles::delete::<E>),
+        )
+        .route(
+            "/api/v1/profiles/{profile_id}/avatar",
+            get(profiles::get_avatar::<E>)
+                .head(profiles::head_avatar::<E>)
+                .put(profiles::put_avatar::<E>)
+                .delete(profiles::delete_avatar::<E>),
+        )
+        .route(
+            "/api/v1/profiles/{profile_id}/torrents/{torrent_id}/progress",
+            get(progress::list::<E>),
+        )
+        .route(
+            "/api/v1/profiles/{profile_id}/torrents/{torrent_id}/progress/{file_id}",
+            get(progress::get::<E>)
+                .put(progress::put::<E>)
+                .delete(progress::delete::<E>),
+        )
+        .route(
+            "/api/v1/profiles/{profile_id}/up-next",
+            get(up_next::list::<E>),
+        )
+        .route(
+            "/api/v1/profiles/{profile_id}/up-next/{entry_id}",
+            get(up_next::get::<E>).delete(up_next::delete::<E>),
         )
         .route("/livez", get(service::liveness))
         .route("/readyz", get(service::readiness::<E>))

@@ -248,6 +248,8 @@ The initial problem types, by name, each appended to the base above:
 | `lifecycle-conflict` | 409 | The resource's current state does not allow the request, such as reading files before metadata is available. |
 | `duplicate-torrent` | 409 | A torrent with the same info hash already exists; the `torrent` extension member holds its URI. |
 | `too-many-preloads` | 409 | Creating a preload would exceed the limit of active preloads per file or in total. |
+| `duplicate-profile` | 409 | Another profile has the name; the `profile` extension member holds its URI. |
+| `too-many-profiles` | 409 | Creating a profile would exceed the limit of profiles. |
 | `precondition-failed` | 412 | `If-Match` does not match the current ETag. |
 | `content-too-large` | 413 | The request body exceeds its documented limit. |
 | `unsupported-media-type` | 415 | The request's `Content-Type` is not accepted by the operation. |

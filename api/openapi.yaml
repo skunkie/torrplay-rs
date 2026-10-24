@@ -32,6 +32,10 @@ tags:
     description: Images uploaded to show torrents in a library.
   - name: Files
     description: Files listed in torrent metadata and their content.
+  - name: Profiles
+    description: People's viewing identities, each with its own progress.
+  - name: Progress
+    description: Where a profile is in each file, and what is up next.
   - name: Preloads
     description: Parts of files fetched before playback starts.
   - name: Settings
@@ -64,6 +68,7 @@ paths:
                     links:
                       self: /api/v1
                       torrents: /api/v1/torrents
+                      profiles: /api/v1/profiles
                       cache_statistics: /api/v1/cache/statistics
                       settings: /api/v1/settings
                       service-desc: /api/v1/openapi.yaml
@@ -675,7 +680,7 @@ paths:
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
         '422':
-          $ref: '#/components/responses/UnprocessablePoster'
+          $ref: '#/components/responses/UnprocessableImage'
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
@@ -1215,6 +1220,767 @@ paths:
         '503':
           $ref: '#/components/responses/EngineUnavailable'
 
+  /api/v1/profiles:
+    get:
+      operationId: listProfiles
+      summary: List profiles
+      description: >-
+        Returns a page of profiles, oldest first by creation time, with the
+        profile ID as the tie-breaker. The application keeps at least one
+        profile and at most 32.
+      tags: [Profiles]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: The requested page of profiles.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfilePage'
+              examples:
+                default:
+                  summary: The default profile alone
+                  value:
+                    items:
+                      - id: prf_3kq7xw2mzb6hnd4rjpt5yc4ula
+                        name: Default
+                        created_at: '2026-10-19T12:00:00Z'
+                        avatar: null
+                        links:
+                          self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula
+                          avatar: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/avatar
+                          up_next: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next
+                    links:
+                      self: /api/v1/profiles
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+    post:
+      operationId: createProfile
+      summary: Create a profile
+      description: >-
+        Creates a profile: a person's viewing identity, whose progress and up
+        next are its own. Names are normalized as categories are and unique
+        among profiles. The profile is stored before this returns.
+      tags: [Profiles]
+      requestBody:
+        description: >-
+          The profile's name, in a JSON body of at most 16384 bytes. Larger
+          bodies are content-too-large, and a body that does not arrive within
+          30 seconds is request-timeout.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileCreation'
+            examples:
+              named:
+                summary: A named profile
+                value:
+                  name: Alex
+      responses:
+        '201':
+          description: The profile was created.
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+            ETag:
+              $ref: '#/components/headers/ProfileETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+              examples:
+                created:
+                  summary: A new profile
+                  value:
+                    id: prf_3kq7xw2mzb6hnd4rjpt5yc4ula
+                    name: Alex
+                    created_at: '2026-10-19T12:00:00Z'
+                    avatar: null
+                    links:
+                      self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula
+                      avatar: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/avatar
+                      up_next: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
+        '409':
+          $ref: '#/components/responses/ProfileConflict'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
+  /api/v1/profiles/{profile_id}:
+    parameters:
+      - $ref: '#/components/parameters/ProfileId'
+    get:
+      operationId: getProfile
+      summary: Read a profile
+      tags: [Profiles]
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The profile.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ProfileETag'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+              examples:
+                profile:
+                  summary: A profile without an avatar
+                  value:
+                    id: prf_3kq7xw2mzb6hnd4rjpt5yc4ula
+                    name: Alex
+                    created_at: '2026-10-19T12:00:00Z'
+                    avatar: null
+                    links:
+                      self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula
+                      avatar: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/avatar
+                      up_next: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+    patch:
+      operationId: updateProfile
+      summary: Rename a profile
+      description: >-
+        Applies a JSON merge patch to the profile. The request must carry
+        If-Match with the profile's current ETag, which changes with its
+        representation, avatar included.
+      tags: [Profiles]
+      parameters:
+        - $ref: '#/components/parameters/ProfileIfMatch'
+      requestBody:
+        description: >-
+          The members to change, in a body of at most 16384 bytes. Larger
+          bodies are content-too-large, and a body that does not arrive within
+          30 seconds is request-timeout.
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/ProfilePatch'
+            examples:
+              rename:
+                summary: Rename the profile
+                value:
+                  name: Sam
+      responses:
+        '200':
+          description: The updated profile.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ProfileETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+              examples:
+                renamed:
+                  summary: A renamed profile
+                  value:
+                    id: prf_3kq7xw2mzb6hnd4rjpt5yc4ula
+                    name: Sam
+                    created_at: '2026-10-19T12:00:00Z'
+                    avatar: null
+                    links:
+                      self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula
+                      avatar: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/avatar
+                      up_next: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
+        '409':
+          $ref: '#/components/responses/ProfileConflict'
+        '412':
+          $ref: '#/components/responses/ProfilePreconditionFailed'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+    delete:
+      operationId: deleteProfile
+      summary: Delete a profile
+      description: >-
+        Removes a profile durably, with its avatar, progress, and dismissals.
+        Deleting the last profile is lifecycle-conflict.
+      tags: [Profiles]
+      responses:
+        '204':
+          description: The profile was removed.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/LifecycleConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
+  /api/v1/profiles/{profile_id}/avatar:
+    parameters:
+      - $ref: '#/components/parameters/ProfileId'
+    get:
+      operationId: getProfileAvatar
+      summary: Read a profile's avatar
+      description: >-
+        Returns the profile's avatar image as it was uploaded, with its media type. The
+        request is not-found while there is none. A Range header is ignored.
+      tags: [Profiles]
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The profile's avatar image.
+          headers:
+            Content-Length:
+              $ref: '#/components/headers/ContentLength'
+            ETag:
+              $ref: '#/components/headers/PosterETag'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptions'
+            Content-Security-Policy:
+              $ref: '#/components/headers/ContentSecurityPolicy'
+          content:
+            image/avif:
+              schema:
+                type: string
+                contentMediaType: image/avif
+            image/gif:
+              schema:
+                type: string
+                contentMediaType: image/gif
+            image/jpeg:
+              schema:
+                type: string
+                contentMediaType: image/jpeg
+            image/png:
+              schema:
+                type: string
+                contentMediaType: image/png
+            image/webp:
+              schema:
+                type: string
+                contentMediaType: image/webp
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+    head:
+      operationId: headProfileAvatar
+      summary: Read a profile's avatar's headers
+      description: Returns the headers and status a GET of the avatar would return, without a body.
+      tags: [Profiles]
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The profile's avatar image's headers.
+          headers:
+            Content-Length:
+              $ref: '#/components/headers/ContentLength'
+            ETag:
+              $ref: '#/components/headers/PosterETag'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptions'
+            Content-Security-Policy:
+              $ref: '#/components/headers/ContentSecurityPolicy'
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+    put:
+      operationId: putProfileAvatar
+      summary: Upload a profile's avatar
+      description: >-
+        Stores the image as the profile's avatar, replacing any it had, under the rules
+        of a torrent's poster: at most 1048576 bytes of an AVIF, GIF, JPEG,
+        PNG, or WebP image whose bytes begin with the signature of the type
+        its Content-Type names. The server never fetches images itself. The
+        image is stored before this returns and survives restarts. The last
+        of concurrent uploads wins.
+      tags: [Profiles]
+      requestBody:
+        description: >-
+          The avatar image, at most 1048576 bytes. Larger bodies are
+          content-too-large, and a body that does not arrive within 30 seconds
+          is request-timeout.
+        required: true
+        content:
+          image/avif:
+            schema:
+              type: string
+              contentMediaType: image/avif
+          image/gif:
+            schema:
+              type: string
+              contentMediaType: image/gif
+          image/jpeg:
+            schema:
+              type: string
+              contentMediaType: image/jpeg
+          image/png:
+            schema:
+              type: string
+              contentMediaType: image/png
+          image/webp:
+            schema:
+              type: string
+              contentMediaType: image/webp
+      responses:
+        '201':
+          description: There was no profile's avatar, and this one was stored.
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+            ETag:
+              $ref: '#/components/headers/PosterETag'
+        '204':
+          description: The profile's avatar was replaced.
+          headers:
+            ETag:
+              $ref: '#/components/headers/PosterETag'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/UnprocessableImage'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+    delete:
+      operationId: deleteProfileAvatar
+      summary: Delete a profile's avatar
+      description: Removes the profile's avatar, durably.
+      tags: [Profiles]
+      responses:
+        '204':
+          description: The profile's avatar was removed.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
+  /api/v1/profiles/{profile_id}/torrents/{torrent_id}/progress:
+    parameters:
+      - $ref: '#/components/parameters/ProfileId'
+      - $ref: '#/components/parameters/TorrentId'
+    get:
+      operationId: listTorrentProgress
+      summary: List a torrent's progress
+      description: >-
+        Returns a page of the profile's progress of the torrent's files, in
+        metadata order, for files with progress only. It is lifecycle-conflict
+        until metadata is available. The path
+        /api/v1/profiles/{profile_id}/torrents/{torrent_id} itself names no
+        resource.
+      tags: [Progress]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: The requested page of progress.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProgressPage'
+              examples:
+                one:
+                  summary: One file in progress
+                  value:
+                    items:
+                      - file_id: fil_xfuperelxpqq4qhvgmtq62qwv4
+                        position_seconds: 1325.5
+                        duration_seconds: 5400.0
+                        completion_ratio: 0.2455
+                        viewed: false
+                        viewed_at: null
+                        updated_at: '2026-10-19T20:15:00Z'
+                        links:
+                          self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/progress/fil_xfuperelxpqq4qhvgmtq62qwv4
+                          profile: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula
+                          torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+                          file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
+                          content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+                    links:
+                      self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/progress
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/LifecycleConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
+  /api/v1/profiles/{profile_id}/torrents/{torrent_id}/progress/{file_id}:
+    parameters:
+      - $ref: '#/components/parameters/ProfileId'
+      - $ref: '#/components/parameters/TorrentId'
+      - $ref: '#/components/parameters/FileId'
+    get:
+      operationId: getFileProgress
+      summary: Read a file's progress
+      description: >-
+        Returns the profile's progress of the file, which is not-found while
+        none was saved. It is lifecycle-conflict until metadata is available.
+      tags: [Progress]
+      responses:
+        '200':
+          description: The progress.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Progress'
+              examples:
+                partway:
+                  summary: A file a quarter through
+                  value:
+                    file_id: fil_xfuperelxpqq4qhvgmtq62qwv4
+                    position_seconds: 1325.5
+                    duration_seconds: 5400.0
+                    completion_ratio: 0.2455
+                    viewed: false
+                    viewed_at: null
+                    updated_at: '2026-10-19T20:15:00Z'
+                    links:
+                      self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/progress/fil_xfuperelxpqq4qhvgmtq62qwv4
+                      profile: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula
+                      torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+                      file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
+                      content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/LifecycleConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+    put:
+      operationId: putFileProgress
+      summary: Save a file's progress
+      description: >-
+        Replaces the profile's progress of the file. Players save it as they
+        play, so the last write wins and no precondition is needed. A position
+        at or past 90% of the duration marks the file viewed and resets the
+        position to 0, which the response shows, as docs/lifecycle.md
+        describes. Progress needs no engine and is stored before this returns.
+        It is lifecycle-conflict until metadata is available.
+      tags: [Progress]
+      requestBody:
+        description: >-
+          The position, duration, and viewed mark, in a JSON body of at most
+          16384 bytes. Larger bodies are content-too-large, and a body that
+          does not arrive within 30 seconds is request-timeout.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProgressUpdate'
+            examples:
+              playing:
+                summary: A position during playback
+                value:
+                  position_seconds: 1325.5
+                  duration_seconds: 5400.0
+                  viewed: false
+              mark_viewed:
+                summary: Mark the file viewed without playing it
+                value:
+                  position_seconds: 0.0
+                  duration_seconds: 5400.0
+                  viewed: true
+      responses:
+        '200':
+          description: The progress was replaced.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Progress'
+              examples:
+                partway:
+                  summary: A file a quarter through
+                  value:
+                    file_id: fil_xfuperelxpqq4qhvgmtq62qwv4
+                    position_seconds: 1325.5
+                    duration_seconds: 5400.0
+                    completion_ratio: 0.2455
+                    viewed: false
+                    viewed_at: null
+                    updated_at: '2026-10-19T20:15:00Z'
+                    links:
+                      self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/progress/fil_xfuperelxpqq4qhvgmtq62qwv4
+                      profile: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula
+                      torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+                      file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
+                      content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+        '201':
+          description: The file had no progress, and this was stored.
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Progress'
+              examples:
+                partway:
+                  summary: A file a quarter through
+                  value:
+                    file_id: fil_xfuperelxpqq4qhvgmtq62qwv4
+                    position_seconds: 1325.5
+                    duration_seconds: 5400.0
+                    completion_ratio: 0.2455
+                    viewed: false
+                    viewed_at: null
+                    updated_at: '2026-10-19T20:15:00Z'
+                    links:
+                      self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/progress/fil_xfuperelxpqq4qhvgmtq62qwv4
+                      profile: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula
+                      torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+                      file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
+                      content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
+        '409':
+          $ref: '#/components/responses/LifecycleConflict'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+    delete:
+      operationId: deleteFileProgress
+      summary: Clear a file's progress
+      description: Removes the profile's progress of the file, viewed mark included.
+      tags: [Progress]
+      responses:
+        '204':
+          description: The progress was removed.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/LifecycleConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
+  /api/v1/profiles/{profile_id}/up-next:
+    parameters:
+      - $ref: '#/components/parameters/ProfileId'
+    get:
+      operationId: listUpNext
+      summary: List what is up next
+      description: >-
+        Returns a page of what the profile can resume or watch next, most
+        recent activity first, with the entry ID as the tie-breaker. A series
+        has one entry, for the episode to resume or the next unviewed episode;
+        any other torrent has one entry per video file in progress.
+        docs/lifecycle.md gives the rules. The ETag digests the page, and a
+        matching If-None-Match receives 304.
+      tags: [Progress]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The requested page of entries.
+          headers:
+            ETag:
+              $ref: '#/components/headers/UpNextETag'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpNextPage'
+              examples:
+                empty:
+                  summary: Nothing up next
+                  value:
+                    items: []
+                    links:
+                      self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
+  /api/v1/profiles/{profile_id}/up-next/{entry_id}:
+    parameters:
+      - $ref: '#/components/parameters/ProfileId'
+      - $ref: '#/components/parameters/UpNextEntryId'
+    get:
+      operationId: getUpNextEntry
+      summary: Read an up next entry
+      description: Returns an entry while the profile's up next lists it.
+      tags: [Progress]
+      responses:
+        '200':
+          description: The entry.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpNextEntry'
+              examples:
+                next_episode:
+                  summary: The next episode of a series
+                  value:
+                    id: upn_5hdq2m7kzb6hxw3rjpt4yc2ula
+                    reason: next_episode
+                    activity_at: '2026-10-19T20:15:00Z'
+                    torrent:
+                      id: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+                      name: Example Show
+                      info_hashes:
+                        - algorithm: sha1
+                          value: 0123456789abcdef0123456789abcdef01234567
+                      observed_state: downloading
+                      storage_mode: memory
+                      size_bytes: 2147481600
+                      file_count: 2
+                      created_at: '2026-10-19T12:00:00Z'
+                      failure: null
+                      storage_transition: null
+                      storage_failure: null
+                      title: null
+                      kind: series
+                      year: null
+                      description: null
+                      categories: []
+                      genres: []
+                      poster: null
+                      links:
+                        self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+                        configuration: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/configuration
+                        files: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files
+                        statistics: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/statistics
+                        poster: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/poster
+                    file:
+                      id: fil_xfuperelxpqq4qhvgmtq62qwv4
+                      path: [Example Show, Example.Show.S01E02.mkv]
+                      size_bytes: 1073740800
+                      media_type: video/x-matroska
+                      links:
+                        self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
+                        torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+                        content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+                        preloads: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads
+                    progress: null
+                    links:
+                      self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next/upn_5hdq2m7kzb6hxw3rjpt4yc2ula
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+    delete:
+      operationId: deleteUpNextEntry
+      summary: Dismiss an up next entry
+      description: >-
+        Dismisses the entry: up next stops listing it, durably, until progress
+        is saved for one of its files again. Saved progress is kept.
+      tags: [Progress]
+      responses:
+        '204':
+          description: The entry was dismissed.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
   /api/v1/cache/statistics:
     get:
       operationId: getCacheStatistics
@@ -1395,6 +2161,32 @@ components:
       schema:
         type: string
       example: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+    ProfileId:
+      name: profile_id
+      in: path
+      required: true
+      description: The profile's ID.
+      schema:
+        type: string
+      example: prf_3kq7xw2mzb6hnd4rjpt5yc4ula
+    UpNextEntryId:
+      name: entry_id
+      in: path
+      required: true
+      description: The up next entry's ID.
+      schema:
+        type: string
+      example: upn_5hdq2m7kzb6hxw3rjpt4yc2ula
+    ProfileIfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: >-
+        The profile's current strong ETag. A request without it receives 428;
+        a stale value receives 412.
+      schema:
+        type: string
+      example: '"prf-5f1c0a9e2b7d4c3a8e6f1b2d"'
     FileId:
       name: file_id
       in: path
@@ -1599,6 +2391,18 @@ components:
       schema:
         type: string
       example: '"tl-9b0e3f6a1c2d4e5f7a8b9c0d"'
+    ProfileETag:
+      description: A strong validator that changes whenever the profile's representation changes.
+      required: true
+      schema:
+        type: string
+      example: '"prf-5f1c0a9e2b7d4c3a8e6f1b2d"'
+    UpNextETag:
+      description: A strong validator of the page of up next entries.
+      required: true
+      schema:
+        type: string
+      example: '"upn-9b0e3f6a1c2d4e5f7a8b9c0d"'
     PosterETag:
       description: A strong validator that identifies the poster's bytes.
       required: true
@@ -1839,6 +2643,44 @@ components:
                 detail: >-
                   A file may have 4 active preloads, and all files 16; cancel
                   one or let it end.
+    ProfileConflict:
+      description: >-
+        Another profile has the name, or the application has the most profiles
+        it allows.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProfileConflictProblem'
+          examples:
+            duplicate:
+              summary: A name another profile has
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/duplicate-profile
+                title: Duplicate profile
+                status: 409
+                detail: Another profile has this name.
+                profile: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula
+            too_many:
+              summary: A 33rd profile
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/too-many-profiles
+                title: Too many profiles
+                status: 409
+                detail: The application keeps at most 32 profiles; delete one first.
+    ProfilePreconditionFailed:
+      description: If-Match does not match the profile's current ETag.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            stale:
+              summary: A stale ETag
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/precondition-failed
+                title: Precondition failed
+                status: 412
+                detail: The profile changed since the ETag was issued.
     PreconditionFailed:
       description: If-Match does not match the configuration's current ETag.
       content:
@@ -2004,10 +2846,10 @@ components:
                 detail: >-
                   Disk storage cannot hold the files Example/a.mkv and
                   Example/A.mkv, which differ only in case.
-    UnprocessablePoster:
+    UnprocessableImage:
       description: >-
-        The body does not begin with the signature of the image type its
-        Content-Type names.
+        The body of a poster or avatar upload does not begin with the
+        signature of the image type its Content-Type names.
       content:
         application/problem+json:
           schema:
@@ -2105,7 +2947,7 @@ components:
         links:
           type: object
           description: Links to the top-level resources and the OpenAPI document.
-          required: [self, torrents, cache_statistics, settings, service-desc]
+          required: [self, torrents, profiles, cache_statistics, settings, service-desc]
           properties:
             self:
               type: string
@@ -2117,6 +2959,11 @@ components:
               format: uri-reference
               description: The torrents collection.
               examples: [/api/v1/torrents]
+            profiles:
+              type: string
+              format: uri-reference
+              description: The profiles collection.
+              examples: [/api/v1/profiles]
             cache_statistics:
               type: string
               format: uri-reference
@@ -2317,11 +3164,11 @@ components:
         $ref: '#/components/schemas/Genre'
       examples: [[Animation, Comedy]]
 
-    PosterMediaType:
+    ImageMediaType:
       type: string
       description: >-
-        The media type of a poster image. Clients must handle values added
-        later.
+        The media type of a poster or avatar image. Clients must handle
+        values added later.
       enum: [image/avif, image/gif, image/jpeg, image/png, image/webp]
       examples: [image/jpeg]
 
@@ -2476,7 +3323,7 @@ components:
           required: [media_type, size_bytes, updated_at]
           properties:
             media_type:
-              $ref: '#/components/schemas/PosterMediaType'
+              $ref: '#/components/schemas/ImageMediaType'
             size_bytes:
               type: integer
               format: int64
@@ -3346,6 +4193,350 @@ components:
           type: string
           description: An RFC 6901 JSON Pointer to the invalid body member.
           examples: [/desired_state]
+
+    ProfileName:
+      type: string
+      description: >-
+        A profile's name, normalized as a category is to 1 to 64 characters
+        without control characters, and unique among profiles after
+        normalization, case included.
+      minLength: 1
+      maxLength: 64
+      examples: [Alex]
+
+    Profile:
+      type: object
+      description: A person's viewing identity.
+      required: [id, name, created_at, avatar, links]
+      properties:
+        id:
+          type: string
+          readOnly: true
+          description: The profile's opaque, stable ID.
+          examples: [prf_3kq7xw2mzb6hnd4rjpt5yc4ula]
+        name:
+          $ref: '#/components/schemas/ProfileName'
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+          description: When the profile was created, in UTC.
+          examples: ['2026-10-19T12:00:00Z']
+        avatar:
+          type: [object, 'null']
+          readOnly: true
+          description: The profile's avatar, or null if it has none.
+          required: [media_type, size_bytes, updated_at]
+          properties:
+            media_type:
+              $ref: '#/components/schemas/ImageMediaType'
+            size_bytes:
+              type: integer
+              format: int64
+              minimum: 1
+              maximum: 1048576
+              description: The avatar image's size.
+              examples: [20480]
+            updated_at:
+              type: string
+              format: date-time
+              description: When the avatar was uploaded, in UTC.
+              examples: ['2026-10-19T12:05:00Z']
+          examples: [null]
+        links:
+          type: object
+          readOnly: true
+          description: Links from a profile.
+          required: [self, avatar, up_next]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: This profile.
+              examples: [/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula]
+            avatar:
+              type: string
+              format: uri-reference
+              description: The profile's avatar, not-found while it has none.
+              examples: [/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/avatar]
+            up_next:
+              type: string
+              format: uri-reference
+              description: What the profile can resume or watch next.
+              examples: [/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next]
+
+    ProfileCreation:
+      type: object
+      description: The input that creates a profile.
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          $ref: '#/components/schemas/ProfileName'
+
+    ProfilePatch:
+      type: object
+      description: A JSON merge patch of a profile. The name cannot be removed.
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          $ref: '#/components/schemas/ProfileName'
+
+    ProfilePage:
+      type: object
+      description: A page of profiles.
+      required: [items, links]
+      properties:
+        items:
+          type: array
+          description: The profiles on this page.
+          items:
+            $ref: '#/components/schemas/Profile'
+          examples: [[]]
+        links:
+          type: object
+          description: Links from a page of profiles.
+          required: [self]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: This page of profiles.
+              examples: [/api/v1/profiles]
+            next:
+              type: string
+              format: uri-reference
+              description: The next page of profiles, omitted on the last page.
+              examples: ['/api/v1/profiles?cursor=aebagbaf']
+
+    Progress:
+      type: object
+      description: >-
+        Where a profile is in a file. A file is in progress while its position
+        is at least 1% of its duration.
+      required: [file_id, position_seconds, duration_seconds, completion_ratio, viewed, viewed_at, updated_at, links]
+      properties:
+        file_id:
+          type: string
+          readOnly: true
+          description: The file's ID.
+          examples: [fil_xfuperelxpqq4qhvgmtq62qwv4]
+        position_seconds:
+          type: number
+          format: double
+          minimum: 0
+          description: The playback position, to the millisecond.
+          examples: [1325.5]
+        duration_seconds:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+          maximum: 1000000
+          description: The file's playback duration, to the millisecond.
+          examples: [5400.0]
+        completion_ratio:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          readOnly: true
+          description: The position as a fraction of the duration, from 0.0 to 1.0.
+          examples: [0.2455]
+        viewed:
+          type: boolean
+          description: Whether the file was viewed to 90% or marked viewed.
+          examples: [false]
+        viewed_at:
+          type: [string, 'null']
+          format: date-time
+          readOnly: true
+          description: When the file was last marked viewed, or null if it is not.
+          examples: [null]
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+          description: When the progress was last saved, in UTC.
+          examples: ['2026-10-19T20:15:00Z']
+        links:
+          type: object
+          readOnly: true
+          description: Links from a file's progress.
+          required: [self, profile, torrent, file, content]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: This progress.
+              examples: [/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/progress/fil_xfuperelxpqq4qhvgmtq62qwv4]
+            profile:
+              type: string
+              format: uri-reference
+              description: The profile the progress belongs to.
+              examples: [/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula]
+            torrent:
+              type: string
+              format: uri-reference
+              description: The torrent of the file.
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula]
+            file:
+              type: string
+              format: uri-reference
+              description: The file the progress is of.
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4]
+            content:
+              type: string
+              format: uri-reference
+              description: The file's content, to resume streaming.
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content]
+
+    ProgressUpdate:
+      type: object
+      description: >-
+        A file's progress as a player saves it, replacing the saved progress.
+        The position must not exceed the duration.
+      additionalProperties: false
+      required: [position_seconds, duration_seconds, viewed]
+      properties:
+        position_seconds:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1000000
+          description: The playback position, rounded to the millisecond.
+          examples: [1325.5]
+        duration_seconds:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+          maximum: 1000000
+          description: The file's playback duration, rounded to the millisecond.
+          examples: [5400.0]
+        viewed:
+          type: boolean
+          description: >-
+            Whether the file is viewed. Marking a file viewed that was not
+            resets its position to 0, as reaching 90% does; a viewed file
+            keeps the positions saved for it, so it can be watched again.
+            False clears the mark.
+          examples: [false]
+
+    ProgressPage:
+      type: object
+      description: A page of a torrent's progress for a profile.
+      required: [items, links]
+      properties:
+        items:
+          type: array
+          description: The progress on this page, in metadata order.
+          items:
+            $ref: '#/components/schemas/Progress'
+          examples: [[]]
+        links:
+          type: object
+          description: Links from a page of progress.
+          required: [self]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: This page of progress.
+              examples: [/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/progress]
+            next:
+              type: string
+              format: uri-reference
+              description: The next page of progress, omitted on the last page.
+              examples: ['/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/progress?cursor=aebagbaf']
+
+    UpNextEntry:
+      type: object
+      description: Something a profile can resume or watch next.
+      required: [id, reason, activity_at, torrent, file, progress, links]
+      properties:
+        id:
+          type: string
+          readOnly: true
+          description: >-
+            The entry's opaque ID, the same for a series, or for a file of any
+            other torrent, while the entry is listed again.
+          examples: [upn_5hdq2m7kzb6hxw3rjpt4yc2ula]
+        reason:
+          type: string
+          description: >-
+            resume for a file in progress, or next_episode for the next
+            unviewed episode of a series after a viewed one. Clients must
+            handle values added later.
+          enum: [resume, next_episode]
+          examples: [resume]
+        activity_at:
+          type: string
+          format: date-time
+          description: When progress that put the entry here was last saved.
+          examples: ['2026-10-19T20:15:00Z']
+        torrent:
+          $ref: '#/components/schemas/Torrent'
+        file:
+          $ref: '#/components/schemas/TorrentFile'
+        progress:
+          description: The file's progress, or null for a next episode not yet started.
+          anyOf:
+            - $ref: '#/components/schemas/Progress'
+            - type: 'null'
+          examples: [null]
+        links:
+          type: object
+          description: Links from an entry.
+          required: [self]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: This entry.
+              examples: [/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next/upn_5hdq2m7kzb6hxw3rjpt4yc2ula]
+
+    UpNextPage:
+      type: object
+      description: A page of up next entries.
+      required: [items, links]
+      properties:
+        items:
+          type: array
+          description: The entries on this page.
+          items:
+            $ref: '#/components/schemas/UpNextEntry'
+          examples: [[]]
+        links:
+          type: object
+          description: Links from a page of entries.
+          required: [self]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: This page of entries.
+              examples: [/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next]
+            next:
+              type: string
+              format: uri-reference
+              description: The next page of entries, omitted on the last page.
+              examples: ['/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next?cursor=aebagbaf']
+
+    ProfileConflictProblem:
+      description: >-
+        A duplicate-profile problem, which links to the profile with the name,
+        or a too-many-profiles problem, which does not.
+      allOf:
+        - $ref: '#/components/schemas/Problem'
+        - type: object
+          properties:
+            profile:
+              type: string
+              format: uri-reference
+              description: >-
+                The profile that has the name, present only in a
+                duplicate-profile problem.
+              examples: [/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula]
 
     DuplicateTorrentProblem:
       description: A duplicate-torrent problem that links to the existing torrent.

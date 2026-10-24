@@ -764,6 +764,7 @@ pub(crate) async fn delete<E: Engine>(
         let _lane = app.write_lane().await;
         app.store().delete(&record.id).await.map_err(store_failed)?;
         app.registry()?.remove(&id).ok_or_else(not_found)?;
+        app.viewing()?.forget_torrent(&record.id);
     }
     app.forget(&record.id);
     match app.engine().remove(&record.id).await {

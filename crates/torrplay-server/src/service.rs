@@ -32,6 +32,7 @@ pub(crate) async fn entry_point(headers: HeaderMap) -> Result<Response, Problem>
                 cache_statistics: format!("{BASE}/cache/statistics"),
                 self_field: BASE.to_owned(),
                 service_desc: format!("{BASE}/openapi.yaml"),
+                profiles: format!("{BASE}/profiles"),
                 settings: format!("{BASE}/settings"),
                 torrents: torrents_path(),
             },

@@ -62,8 +62,10 @@ document that schedules it.
 | Preload a file's head and tail, or at a byte offset | `PUT /api/v1/torrents/{hash}/preload` | Verified | PRL-01 to PRL-09 |
 | Preload at a playback position in seconds | `playback_position_seconds` | Deferred | Needs container seek index parsing; additive to the preload contract |
 | Background downloads of disk torrents | `internal/downloader` | Verified | BGD-01 to BGD-04 |
-| Mark files viewed, with the time | `viewed`, `viewed_at` | Planned | Viewing progress |
-| Playback positions | Client local storage | Planned | Viewing progress, on the server |
+| Mark files viewed, with the time | `viewed`, `viewed_at` | Verified | PRG-02 |
+| Playback positions, per profile | Client local storage | Verified | PRG-01 to PRG-06 |
+| Profiles with avatars | Not present | Verified | PRF-01 to PRF-03 |
+| Up next: resume and next episode | Not present | Verified | UPN-01 to UPN-05 |
 | Playlists for external players | `GET /api/v1/playlist` | Planned | Playlists and scoped playback access |
 
 ## Settings and operations
@@ -143,5 +145,8 @@ These differ from Go TorrPlay by decision; the linked documents record why.
 - Facets ignore the genre and uncategorized filters as well as category and
   search, and the listing version digests the torrents' representations
   instead of changing at every restart ([lifecycle](lifecycle.md#search)).
+- Playback positions and viewed marks live on the server, per profile,
+  instead of in one browser's storage, and up next is new
+  ([lifecycle](lifecycle.md#profiles-and-progress)).
 - The prototype listens on loopback only, so it has no authentication until
   authentication is designed.

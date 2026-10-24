@@ -10,22 +10,18 @@ use std::time::SystemTime;
 
 use axum::body::Body;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use torrplay_core::engine::Engine;
-use torrplay_core::library::{POSTER_MAX_BYTES, PosterInfo, PosterType};
+use torrplay_core::image::ImageInfo;
 use torrplay_core::registry::TorrentRecord;
 use torrplay_store::StoreError;
 
 use crate::app::{App, store_failed};
-use crate::body::read_limited;
-use crate::headers::{MediaType, negotiate};
-use crate::problem::{InvalidValue, Problem, ProblemType};
-use crate::representation::{NO_CACHE, poster_etag, torrent_path};
-use crate::torrents::{self, not_modified, with_etag};
-
-/// The image types an upload may have, as `Accept` lists them.
-const ACCEPTED: &str = "image/avif, image/gif, image/jpeg, image/png, image/webp";
+use crate::images;
+use crate::problem::Problem;
+use crate::representation::torrent_path;
+use crate::torrents;
 
 fn no_poster() -> Problem {
     Problem::not_found("The torrent has no poster.")
@@ -43,52 +39,16 @@ fn stored(error: StoreError) -> Problem {
     }
 }
 
-/// The headers a poster is served with, before its body.
-fn headers(poster: &PosterInfo) -> Result<Response, Problem> {
-    let mut response = StatusCode::OK.into_response();
-    let headers = response.headers_mut();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static(poster.poster_type.media_type()),
-    );
-    headers.insert(header::CONTENT_LENGTH, HeaderValue::from(poster.size_bytes));
-    headers.insert(header::CACHE_CONTROL, NO_CACHE);
-    headers.insert(
-        header::X_CONTENT_TYPE_OPTIONS,
-        HeaderValue::from_static("nosniff"),
-    );
-    headers.insert(
-        header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static("sandbox"),
-    );
-    with_etag(response, &poster_etag(poster))
-}
-
-/// Checks a read of the poster: the torrent and its poster exist, the
-/// client accepts its type, and its `If-None-Match` does not match.
-fn check_read<E: Engine>(
-    app: &App<E>,
-    id: &str,
-    request: &HeaderMap,
-) -> Result<Result<(TorrentRecord, PosterInfo), Response>, Problem> {
-    let record = record(app, id)?;
-    let poster = record.poster.clone().ok_or_else(no_poster)?;
-    negotiate(request, poster.poster_type.media_type())?;
-    if let Some(response) = not_modified(request, &poster_etag(&poster)) {
-        return Ok(Err(response));
-    }
-    Ok(Ok((record, poster)))
-}
-
 pub(crate) async fn get<E: Engine>(
     State(app): State<Arc<App<E>>>,
     Path(id): Path<String>,
     request: HeaderMap,
 ) -> Result<Response, Problem> {
-    let (record, _) = match check_read(&app, &id, &request)? {
-        Ok(found) => found,
-        Err(not_modified) => return Ok(not_modified),
-    };
+    let record = record(&app, &id)?;
+    let poster = record.poster.clone().ok_or_else(no_poster)?;
+    if let Some(response) = images::not_modified_or_acceptable(&request, &poster)? {
+        return Ok(response);
+    }
     // The headers follow the poster as read, which a replacement stored
     // since the record was read may have changed.
     let (poster, bytes) = app
@@ -97,8 +57,7 @@ pub(crate) async fn get<E: Engine>(
         .await
         .map_err(stored)?
         .ok_or_else(no_poster)?;
-    let (parts, _) = headers(&poster)?.into_parts();
-    Ok(Response::from_parts(parts, Body::from(bytes)))
+    images::serve(&poster, bytes)
 }
 
 pub(crate) async fn head<E: Engine>(
@@ -106,9 +65,10 @@ pub(crate) async fn head<E: Engine>(
     Path(id): Path<String>,
     request: HeaderMap,
 ) -> Result<Response, Problem> {
-    match check_read(&app, &id, &request)? {
-        Ok((_, poster)) => headers(&poster),
-        Err(not_modified) => Ok(not_modified),
+    let poster = record(&app, &id)?.poster.ok_or_else(no_poster)?;
+    match images::not_modified_or_acceptable(&request, &poster)? {
+        Some(response) => Ok(response),
+        None => images::headers(&poster),
     }
 }
 
@@ -120,30 +80,8 @@ pub(crate) async fn put<E: Engine>(
 ) -> Result<Response, Problem> {
     let record = record(&app, &id)?;
     app.require_running()?;
-    let Some(poster_type) =
-        MediaType::of_request(&request).and_then(|media| PosterType::parse(&media.essence))
-    else {
-        return Err(Problem::new(
-            ProblemType::UnsupportedMediaType,
-            format!("The operation accepts {ACCEPTED}."),
-        )
-        .with_header(header::ACCEPT, HeaderValue::from_static(ACCEPTED)));
-    };
-    let bytes = read_limited(
-        &request,
-        body,
-        POSTER_MAX_BYTES,
-        POSTER_MAX_BYTES as u64,
-        app.body_timeout(),
-    )
-    .await?;
-    if !poster_type.matches(&bytes) {
-        return Err(Problem::invalid_body(vec![InvalidValue::pointer(
-            "",
-            format!("Is not an {} image.", poster_type.media_type()),
-        )]));
-    }
-    let poster = PosterInfo::of(poster_type, &bytes, SystemTime::now());
+    let (image_type, bytes) = images::read_upload(&app, &request, body).await?;
+    let poster = ImageInfo::of(image_type, &bytes, SystemTime::now());
     let replaced = {
         let _lane = app.write_lane().await;
         let current = app.registry()?.get(&id).ok_or_else(torrents::not_found)?;
@@ -156,15 +94,11 @@ pub(crate) async fn put<E: Engine>(
             .map_err(|_| torrents::not_found())?;
         current.poster.is_some()
     };
-    let etag = poster_etag(&poster);
-    if replaced {
-        return with_etag(StatusCode::NO_CONTENT.into_response(), &etag);
-    }
-    let mut response = with_etag(StatusCode::CREATED.into_response(), &etag)?;
-    let location = HeaderValue::try_from(format!("{}/poster", torrent_path(&record.id)))
-        .map_err(|_| Problem::internal())?;
-    response.headers_mut().insert(header::LOCATION, location);
-    Ok(response)
+    images::uploaded(
+        &poster,
+        replaced,
+        format!("{}/poster", torrent_path(&record.id)),
+    )
 }
 
 pub(crate) async fn delete<E: Engine>(

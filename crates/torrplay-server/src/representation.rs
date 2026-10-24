@@ -11,10 +11,12 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use torrplay_api as api;
 use torrplay_core::engine;
-use torrplay_core::id::TorrentId;
-use torrplay_core::library::{self, Kind, Library, PosterInfo, PosterType};
+use torrplay_core::id::{FileId, ProfileId, TorrentId};
+use torrplay_core::image::{ImageInfo, ImageType};
+use torrplay_core::library::{self, Kind, Library};
 use torrplay_core::lifecycle::{self, Configuration, EntityTag, ObservedState};
 use torrplay_core::metadata::{Metadata, MetadataFile};
+use torrplay_core::profiles::{Profile, Progress};
 
 use crate::app::TorrentView;
 use crate::content;
@@ -80,13 +82,13 @@ fn kind(value: Kind) -> api::TorrentKind {
     }
 }
 
-pub(crate) fn poster_type(value: PosterType) -> api::PosterMediaType {
+pub(crate) fn image_type(value: ImageType) -> api::ImageMediaType {
     match value {
-        PosterType::Avif => api::PosterMediaType::ImageAvif,
-        PosterType::Gif => api::PosterMediaType::ImageGif,
-        PosterType::Jpeg => api::PosterMediaType::ImageJpeg,
-        PosterType::Png => api::PosterMediaType::ImagePng,
-        PosterType::Webp => api::PosterMediaType::ImageWebp,
+        ImageType::Avif => api::ImageMediaType::ImageAvif,
+        ImageType::Gif => api::ImageMediaType::ImageGif,
+        ImageType::Jpeg => api::ImageMediaType::ImageJpeg,
+        ImageType::Png => api::ImageMediaType::ImagePng,
+        ImageType::Webp => api::ImageMediaType::ImageWebp,
     }
 }
 
@@ -127,7 +129,7 @@ pub(crate) fn torrent(view: &TorrentView) -> api::Torrent {
         categories: library.categories.clone(),
         genres: library.genres.clone(),
         poster: record.poster.as_ref().map(|poster| api::TorrentPoster {
-            media_type: poster_type(poster.poster_type),
+            media_type: image_type(poster.image_type),
             size_bytes: count(poster.size_bytes),
             updated_at: poster.updated_at.into(),
         }),
@@ -219,9 +221,9 @@ pub(crate) fn configuration_etag(configuration: &Configuration) -> EntityTag {
     EntityTag::new(format!("cfg-{}", configuration.etag().opaque()))
 }
 
-/// The poster's ETag, from its digest.
-pub(crate) fn poster_etag(poster: &PosterInfo) -> EntityTag {
-    let hex: String = poster.digest[..12]
+/// An uploaded image's ETag, from its digest.
+pub(crate) fn image_etag(image: &ImageInfo) -> EntityTag {
+    let hex: String = image.digest[..12]
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();
@@ -297,4 +299,85 @@ pub(crate) fn cache_statistics(value: &engine::CacheStatistics) -> api::CacheSta
         pinned_bytes: count(value.pinned_bytes),
         usage_bytes: count(value.usage_bytes),
     }
+}
+
+pub(crate) fn profiles_path() -> String {
+    format!("{BASE}/profiles")
+}
+
+pub(crate) fn profile_path(id: &ProfileId) -> String {
+    format!("{BASE}/profiles/{id}")
+}
+
+pub(crate) fn profile(value: &Profile) -> api::Profile {
+    let path = profile_path(&value.id);
+    api::Profile {
+        id: value.id.to_string(),
+        name: value.name.clone(),
+        created_at: value.created_at.into(),
+        avatar: value.avatar.as_ref().map(|avatar| api::ProfileAvatar {
+            media_type: image_type(avatar.image_type),
+            size_bytes: count(avatar.size_bytes),
+            updated_at: avatar.updated_at.into(),
+        }),
+        links: api::ProfileLinks {
+            avatar: format!("{path}/avatar"),
+            up_next: format!("{path}/up-next"),
+            self_field: path,
+        },
+    }
+}
+
+/// The profile's ETag, a digest of its representation, so it changes
+/// whenever any member does.
+pub(crate) fn profile_etag(profile: &api::Profile) -> Result<EntityTag, Problem> {
+    let body = serde_json::to_vec(profile).map_err(|_| Problem::internal())?;
+    Ok(EntityTag::new(format!(
+        "prf-{}",
+        short_hex(&Sha256::digest(&body))
+    )))
+}
+
+/// The path of a profile's progress of a torrent's files.
+pub(crate) fn progress_path(profile: &ProfileId, torrent: &TorrentId) -> String {
+    format!("{}/torrents/{torrent}/progress", profile_path(profile))
+}
+
+/// Seconds from milliseconds.
+fn seconds(milliseconds: u64) -> f64 {
+    milliseconds as f64 / 1000.0
+}
+
+pub(crate) fn progress(
+    profile: &ProfileId,
+    torrent: &TorrentId,
+    file: &FileId,
+    value: &Progress,
+) -> api::Progress {
+    let file_path = format!("{}/files/{file}", torrent_path(torrent));
+    api::Progress {
+        file_id: file.to_string(),
+        position_seconds: seconds(value.position_ms),
+        duration_seconds: seconds(value.duration_ms),
+        completion_ratio: value.completion_ratio(),
+        viewed: value.viewed(),
+        viewed_at: value.viewed_at.map(Into::into),
+        updated_at: value.updated_at.into(),
+        links: api::ProgressLinks {
+            self_field: format!("{}/{file}", progress_path(profile, torrent)),
+            profile: profile_path(profile),
+            torrent: torrent_path(torrent),
+            content: format!("{file_path}/content"),
+            file: file_path,
+        },
+    }
+}
+
+/// A digest of a JSON body as a strong entity tag with `prefix`.
+pub(crate) fn body_etag(prefix: &str, value: &impl Serialize) -> Result<EntityTag, Problem> {
+    let body = serde_json::to_vec(value).map_err(|_| Problem::internal())?;
+    Ok(EntityTag::new(format!(
+        "{prefix}-{}",
+        short_hex(&Sha256::digest(&body))
+    )))
 }

@@ -20,11 +20,14 @@ use std::time::Duration;
 
 use tokio::sync::MutexGuard as LaneGuard;
 use torrplay_core::engine::{CacheStatistics, Engine, EngineError, Source};
-use torrplay_core::id::TorrentId;
+use torrplay_core::id::{ProfileId, TorrentId, random_torrent_id_bytes};
 use torrplay_core::lifecycle::{Failure, ObservedState, Readiness, StorageMode};
 use torrplay_core::metadata::Metadata;
+use torrplay_core::profiles::{DEFAULT_PROFILE_NAME, Profile, Viewing};
 use torrplay_core::registry::{Registry, TorrentRecord};
-use torrplay_store::{Store, StoreError, StoredSettings, StoredTorrent};
+use torrplay_store::{
+    Store, StoreError, StoredDismissal, StoredProgress, StoredSettings, StoredTorrent,
+};
 
 use crate::problem::Problem;
 
@@ -36,6 +39,7 @@ const DEFAULT_BODY_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct App<E> {
     engine: Arc<E>,
     registry: Registry,
+    viewing: Viewing,
     store: Store,
     /// Serializes mutations; see the [module documentation](self).
     writes: tokio::sync::Mutex<()>,
@@ -105,6 +109,7 @@ impl<E: Engine> App<E> {
         Self {
             engine,
             registry,
+            viewing: Viewing::default(),
             store,
             writes: tokio::sync::Mutex::new(()),
             body_timeout: DEFAULT_BODY_TIMEOUT,
@@ -130,6 +135,65 @@ impl<E: Engine> App<E> {
         }
         self.set_settings(stored);
         self
+    }
+
+    /// Runs with the profiles, progress, and dismissals the store held at
+    /// startup.
+    pub fn with_viewing(
+        self,
+        profiles: Vec<Profile>,
+        progress: Vec<StoredProgress>,
+        dismissals: Vec<StoredDismissal>,
+    ) -> Self {
+        for profile in profiles {
+            self.viewing.set_profile(profile);
+        }
+        for stored in progress {
+            self.viewing.set_progress(
+                &stored.profile,
+                &stored.torrent,
+                &stored.file,
+                stored.progress,
+            );
+        }
+        for stored in dismissals {
+            self.viewing
+                .set_dismissal(&stored.profile, &stored.entry, stored.at);
+        }
+        self
+    }
+
+    /// The profiles, their progress, and their dismissals, once the stored
+    /// torrents are restored, as [`registry`](Self::registry) waits for.
+    pub(crate) fn viewing(&self) -> Result<&Viewing, Problem> {
+        self.registry()?;
+        Ok(&self.viewing)
+    }
+
+    /// Creates and stores the default profile if there is none, so clients
+    /// that never choose a profile still have one.
+    async fn ensure_profile(&self) {
+        let _lane = self.writes.lock().await;
+        if !self.viewing.is_empty() {
+            return;
+        }
+        let id = match random_torrent_id_bytes() {
+            Ok(bytes) => ProfileId::from_random_bytes(bytes),
+            Err(error) => {
+                tracing::error!(%error, "no random bytes for the default profile's ID");
+                return;
+            }
+        };
+        let profile = Profile {
+            id,
+            name: DEFAULT_PROFILE_NAME.to_owned(),
+            created_at: std::time::SystemTime::now(),
+            avatar: None,
+        };
+        match self.store.insert_profile(&profile).await {
+            Ok(()) => self.viewing.set_profile(profile),
+            Err(error) => tracing::error!(%error, "the default profile could not be stored"),
+        }
     }
 
     /// The stored settings.
@@ -225,6 +289,7 @@ impl<E: Engine> App<E> {
                     .restore_failure = Some(Failure { detail });
             }
         }
+        self.ensure_profile().await;
         self.restoring.store(false, Ordering::SeqCst);
         Ok(())
     }

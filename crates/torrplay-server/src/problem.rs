@@ -36,6 +36,8 @@ pub(crate) enum ProblemType {
     LifecycleConflict,
     DuplicateTorrent,
     TooManyPreloads,
+    DuplicateProfile,
+    TooManyProfiles,
     PreconditionFailed,
     ContentTooLarge,
     UnsupportedMediaType,
@@ -59,6 +61,8 @@ impl ProblemType {
             Self::LifecycleConflict => "lifecycle-conflict",
             Self::DuplicateTorrent => "duplicate-torrent",
             Self::TooManyPreloads => "too-many-preloads",
+            Self::DuplicateProfile => "duplicate-profile",
+            Self::TooManyProfiles => "too-many-profiles",
             Self::PreconditionFailed => "precondition-failed",
             Self::ContentTooLarge => "content-too-large",
             Self::UnsupportedMediaType => "unsupported-media-type",
@@ -82,6 +86,8 @@ impl ProblemType {
             Self::LifecycleConflict => "Lifecycle conflict",
             Self::DuplicateTorrent => "Duplicate torrent",
             Self::TooManyPreloads => "Too many preloads",
+            Self::DuplicateProfile => "Duplicate profile",
+            Self::TooManyProfiles => "Too many profiles",
             Self::PreconditionFailed => "Precondition failed",
             Self::ContentTooLarge => "Content too large",
             Self::UnsupportedMediaType => "Unsupported media type",
@@ -102,9 +108,11 @@ impl ProblemType {
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             Self::NotAcceptable => StatusCode::NOT_ACCEPTABLE,
             Self::RequestTimeout => StatusCode::REQUEST_TIMEOUT,
-            Self::LifecycleConflict | Self::DuplicateTorrent | Self::TooManyPreloads => {
-                StatusCode::CONFLICT
-            }
+            Self::LifecycleConflict
+            | Self::DuplicateTorrent
+            | Self::TooManyPreloads
+            | Self::DuplicateProfile
+            | Self::TooManyProfiles => StatusCode::CONFLICT,
             Self::PreconditionFailed => StatusCode::PRECONDITION_FAILED,
             Self::ContentTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
@@ -174,6 +182,7 @@ struct Details {
     detail: String,
     errors: Vec<InvalidValue>,
     torrent: Option<String>,
+    profile: Option<String>,
     headers: HeaderMap,
 }
 
@@ -184,6 +193,7 @@ impl Problem {
             detail: detail.into(),
             errors: Vec::new(),
             torrent: None,
+            profile: None,
             headers: HeaderMap::new(),
         }))
     }
@@ -234,6 +244,16 @@ impl Problem {
         problem
     }
 
+    /// A `duplicate-profile` that links to the profile with the name.
+    pub(crate) fn duplicate_profile(profile: String) -> Self {
+        let mut problem = Self::new(
+            ProblemType::DuplicateProfile,
+            "Another profile has this name.",
+        );
+        problem.0.profile = Some(profile);
+        problem
+    }
+
     pub(crate) fn with_errors(mut self, errors: Vec<InvalidValue>) -> Self {
         self.0.errors = errors;
         self
@@ -268,6 +288,7 @@ impl Problem {
             detail,
             errors,
             torrent,
+            profile,
             ..
         } = &*self.0;
         let problem_type = *problem_type;
@@ -281,6 +302,16 @@ impl Problem {
                 status,
                 title,
                 torrent: torrent.clone(),
+                r#type: problem_type.uri(),
+            });
+        }
+        if let Some(profile) = profile {
+            return to_json(&api::ProfileConflictProblem {
+                detail,
+                instance: None,
+                status,
+                title,
+                profile: Some(profile.clone()),
                 r#type: problem_type.uri(),
             });
         }
@@ -409,7 +440,7 @@ impl From<EngineError> for Problem {
 mod tests {
     use super::*;
 
-    const ALL: [ProblemType; 18] = [
+    const ALL: [ProblemType; 20] = [
         ProblemType::MalformedRequest,
         ProblemType::NotFound,
         ProblemType::MethodNotAllowed,
@@ -418,6 +449,8 @@ mod tests {
         ProblemType::LifecycleConflict,
         ProblemType::DuplicateTorrent,
         ProblemType::TooManyPreloads,
+        ProblemType::DuplicateProfile,
+        ProblemType::TooManyProfiles,
         ProblemType::PreconditionFailed,
         ProblemType::ContentTooLarge,
         ProblemType::UnsupportedMediaType,

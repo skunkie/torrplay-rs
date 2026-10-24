@@ -2,16 +2,14 @@
 //
 // SPDX-License-Identifier: MIT
 
-//! A torrent's library members and poster, as the lifecycle's Library
-//! section defines them: how their text is normalized, how a kind is
-//! inferred from file names, and which images a poster may hold.
+//! A torrent's library members, as the lifecycle's Library section defines
+//! them: how their text is normalized and how a kind is inferred from file
+//! names.
 
 use std::borrow::Cow;
 use std::ops::RangeInclusive;
-use std::time::SystemTime;
 
 use icu_normalizer::ComposingNormalizerBorrowed;
-use sha2::{Digest, Sha256};
 
 /// The most characters a title has.
 pub const TITLE_MAX_CHARS: usize = 1024;
@@ -27,9 +25,6 @@ pub const LABELS_MAX: usize = 16;
 
 /// The years a torrent may have.
 pub const YEARS: RangeInclusive<u16> = 1800..=2200;
-
-/// The largest poster image, in bytes.
-pub const POSTER_MAX_BYTES: usize = 1 << 20;
 
 /// What a torrent holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -123,7 +118,7 @@ fn nfc(text: &str) -> Cow<'_, str> {
 
 /// Normalizes one line of text: NFC, surrounding whitespace removed, and
 /// each inner run of whitespace one space.
-fn normalize_line(text: &str, max: usize) -> Result<String, TextError> {
+pub(crate) fn normalize_line(text: &str, max: usize) -> Result<String, TextError> {
     let text = nfc(text);
     let mut line = String::with_capacity(text.len());
     for word in text.split_whitespace() {
@@ -204,15 +199,34 @@ pub fn infer_kind<'a>(video_file_names: impl IntoIterator<Item = &'a str>) -> Ki
 /// or `episode 2`, ignoring case. A pattern must not be part of a longer
 /// word or number.
 pub fn has_episode_pattern(name: &str) -> bool {
+    episode_number(name).is_some()
+}
+
+/// Returns the season and episode a file name's first episode pattern
+/// numbers, a pattern without a season counting as season 1; see
+/// [`has_episode_pattern`].
+pub fn episode_number(name: &str) -> Option<(u32, u32)> {
     let name = name.to_lowercase();
     let bytes = name.as_bytes();
-    (0..bytes.len()).any(|start| {
+    (0..bytes.len()).find_map(|start| {
         let boundary = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
-        boundary
-            && [season_episode, cross, episode_word]
-                .iter()
-                .any(|pattern| pattern(&bytes[start..]).is_some_and(|end| ends(bytes, start + end)))
+        if !boundary {
+            return None;
+        }
+        [season_episode, cross, episode_word]
+            .iter()
+            .filter_map(|pattern| pattern(&bytes[start..]))
+            .find(|found| ends(bytes, start + found.end))
+            .map(|found| (found.season.unwrap_or(1), found.episode))
     })
+}
+
+/// An episode pattern found at the start of some bytes.
+struct Found {
+    /// The length matched.
+    end: usize,
+    season: Option<u32>,
+    episode: u32,
 }
 
 /// Whether a pattern ending before `end` is not followed by a digit or a
@@ -223,122 +237,66 @@ fn ends(bytes: &[u8], end: usize) -> bool {
         .is_none_or(|byte| !byte.is_ascii_alphanumeric())
 }
 
-/// The length of a run of `min` to `max` digits at the start of `bytes`,
-/// which no further digit follows.
-fn digits(bytes: &[u8], min: usize, max: usize) -> Option<usize> {
+/// A run of `min` to `max` digits at the start of `bytes`, which no further
+/// digit follows: its length and its value.
+fn digits(bytes: &[u8], min: usize, max: usize) -> Option<(usize, u32)> {
     let run = bytes
         .iter()
         .take_while(|byte| byte.is_ascii_digit())
         .count();
-    (min..=max).contains(&run).then_some(run)
+    if !(min..=max).contains(&run) {
+        return None;
+    }
+    let value = bytes[..run]
+        .iter()
+        .fold(0, |value, digit| value * 10 + u32::from(digit - b'0'));
+    Some((run, value))
 }
 
-/// `s01e02`, or `s01e02e03` for several episodes: the length matched, if it
-/// matches.
-fn season_episode(bytes: &[u8]) -> Option<usize> {
+/// `s01e02`, or `s01e02e03` for several episodes, numbering the first.
+fn season_episode(bytes: &[u8]) -> Option<Found> {
     let rest = bytes.strip_prefix(b"s")?;
-    let mut end = 1 + digits(rest, 1, 2)?;
+    let (length, season) = digits(rest, 1, 2)?;
+    let mut end = 1 + length;
     let episode = |at: usize| {
         let rest = bytes.get(at..)?.strip_prefix(b"e")?;
-        Some(1 + digits(rest, 1, 3)?)
+        let (length, episode) = digits(rest, 1, 3)?;
+        Some((1 + length, episode))
     };
-    end += episode(end)?;
-    while let Some(more) = episode(end) {
+    let (length, first) = episode(end)?;
+    end += length;
+    while let Some((more, _)) = episode(end) {
         end += more;
     }
-    Some(end)
+    Some(Found {
+        end,
+        season: Some(season),
+        episode: first,
+    })
 }
 
 /// `1x02`.
-fn cross(bytes: &[u8]) -> Option<usize> {
-    let season = digits(bytes, 1, 2)?;
-    let rest = bytes[season..].strip_prefix(b"x")?;
-    Some(season + 1 + digits(rest, 2, 3)?)
+fn cross(bytes: &[u8]) -> Option<Found> {
+    let (length, season) = digits(bytes, 1, 2)?;
+    let rest = bytes[length..].strip_prefix(b"x")?;
+    let (episode_length, episode) = digits(rest, 2, 3)?;
+    Some(Found {
+        end: length + 1 + episode_length,
+        season: Some(season),
+        episode,
+    })
 }
 
 /// `episode 2`, with an optional space, dot, underscore, or hyphen.
-fn episode_word(bytes: &[u8]) -> Option<usize> {
+fn episode_word(bytes: &[u8]) -> Option<Found> {
     let rest = bytes.strip_prefix(b"episode")?;
     let separator = usize::from(rest.first().is_some_and(|byte| b" ._-".contains(byte)));
-    Some(7 + separator + digits(&rest[separator..], 1, 4)?)
-}
-
-/// The image types a poster may have.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum PosterType {
-    /// AVIF.
-    Avif,
-    /// GIF.
-    Gif,
-    /// JPEG.
-    Jpeg,
-    /// PNG.
-    Png,
-    /// WebP.
-    Webp,
-}
-
-impl PosterType {
-    /// Every poster type.
-    pub const ALL: [Self; 5] = [Self::Avif, Self::Gif, Self::Jpeg, Self::Png, Self::Webp];
-
-    /// Returns the media type.
-    pub const fn media_type(self) -> &'static str {
-        match self {
-            Self::Avif => "image/avif",
-            Self::Gif => "image/gif",
-            Self::Jpeg => "image/jpeg",
-            Self::Png => "image/png",
-            Self::Webp => "image/webp",
-        }
-    }
-
-    /// Parses a media type's essence, ignoring ASCII case.
-    pub fn parse(media_type: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|kind| kind.media_type().eq_ignore_ascii_case(media_type))
-    }
-
-    /// Returns whether `bytes` begin with this type's signature.
-    pub fn matches(self, bytes: &[u8]) -> bool {
-        match self {
-            // An ISO base media file whose brand is AVIF.
-            Self::Avif => {
-                bytes.get(4..8) == Some(b"ftyp")
-                    && matches!(bytes.get(8..12), Some(b"avif" | b"avis"))
-            }
-            Self::Gif => bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
-            Self::Jpeg => bytes.starts_with(&[0xff, 0xd8, 0xff]),
-            Self::Png => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
-            Self::Webp => bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP"),
-        }
-    }
-}
-
-/// What a torrent's record knows of its poster, without the image.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PosterInfo {
-    /// The image type.
-    pub poster_type: PosterType,
-    /// The image's size.
-    pub size_bytes: u64,
-    /// The SHA-256 digest of the image, which its entity tag derives from.
-    pub digest: [u8; 32],
-    /// When it was uploaded.
-    pub updated_at: SystemTime,
-}
-
-impl PosterInfo {
-    /// Describes an image of `poster_type` uploaded at `updated_at`.
-    pub fn of(poster_type: PosterType, bytes: &[u8], updated_at: SystemTime) -> Self {
-        Self {
-            poster_type,
-            size_bytes: bytes.len() as u64,
-            digest: Sha256::digest(bytes).into(),
-            updated_at,
-        }
-    }
+    let (length, episode) = digits(&rest[separator..], 1, 4)?;
+    Some(Found {
+        end: 7 + separator + length,
+        season: None,
+        episode,
+    })
 }
 
 #[cfg(test)]
@@ -445,6 +403,20 @@ mod tests {
     }
 
     #[test]
+    fn episode_patterns_number_their_episode() {
+        let cases = [
+            ("Show.S02E10.mkv", Some((2, 10))),
+            ("Show.S01E02E03.mkv", Some((1, 2))),
+            ("Show.3x07.mkv", Some((3, 7))),
+            ("Show episode 12.mkv", Some((1, 12))),
+            ("Film.1920x1080.mkv", None),
+        ];
+        for (name, expected) in cases {
+            assert_eq!(episode_number(name), expected, "{name}");
+        }
+    }
+
+    #[test]
     fn kinds_follow_the_video_files() {
         assert_eq!(infer_kind([]), Kind::Other);
         assert_eq!(infer_kind(["Film.mkv"]), Kind::Movie);
@@ -453,23 +425,5 @@ mod tests {
             assert_eq!(Kind::parse(kind.as_str()), Some(kind));
         }
         assert_eq!(Kind::parse("Movie"), None);
-    }
-
-    #[test]
-    fn posters_must_match_their_type() {
-        let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
-        let jpeg = [0xff, 0xd8, 0xff, 0xe0];
-        let avif = b"\0\0\0\x20ftypavif\0\0\0\0";
-        let webp = b"RIFF\0\0\0\0WEBPVP8 ";
-        assert!(PosterType::Png.matches(png));
-        assert!(!PosterType::Png.matches(&jpeg));
-        assert!(PosterType::Jpeg.matches(&jpeg));
-        assert!(PosterType::Gif.matches(b"GIF89a\x01\0"));
-        assert!(PosterType::Avif.matches(avif));
-        assert!(!PosterType::Avif.matches(b"\0\0\0\x20ftypmp42\0\0\0\0"));
-        assert!(PosterType::Webp.matches(webp));
-        assert!(!PosterType::Webp.matches(b"RIFF\0\0\0\0WAVE"));
-        assert_eq!(PosterType::parse("IMAGE/PNG"), Some(PosterType::Png));
-        assert_eq!(PosterType::parse("image/svg+xml"), None);
     }
 }

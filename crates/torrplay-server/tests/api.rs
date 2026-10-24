@@ -162,6 +162,11 @@ async fn listed_ids(server: &TestServer, path: &str) -> Vec<String> {
     ids
 }
 
+/// The IDs of every item a collection at `path` lists, all pages followed.
+async fn listed_ids_of(server: &TestServer, path: &str) -> Vec<String> {
+    listed_ids(server, path).await
+}
+
 /// A fixture whose video files name episodes, for an inferred series.
 fn episodes() -> FixtureSpec {
     FixtureSpec {
@@ -191,6 +196,68 @@ async fn create_with(server: &TestServer, n: u8, members: Value) -> String {
         .await;
     assert_eq!(created.status, StatusCode::CREATED);
     created.json()["id"].as_str().unwrap().to_owned()
+}
+
+/// The path of the first profile, the default one on a new data directory.
+async fn default_profile(server: &TestServer) -> String {
+    server.get("/api/v1/profiles").await.json()["items"][0]["links"]["self"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// A request to save progress at `path`.
+fn put_progress(path: &str, position: f64, duration: f64, viewed: bool) -> http::Request<Vec<u8>> {
+    json_request(
+        Method::PUT,
+        path,
+        &json!({ "position_seconds": position, "duration_seconds": duration, "viewed": viewed }),
+    )
+}
+
+/// A series whose episodes come out of order in its metadata.
+fn series() -> FixtureSpec {
+    FixtureSpec {
+        id: "series".into(),
+        torrent_name: "Series".into(),
+        seed: 41,
+        piece_length: 16 * 1024,
+        layout: torrplay_fixtures::Layout::MultiFile {
+            files: [
+                "Series.S01E02.mkv",
+                "Series.S01E01.mkv",
+                "Series.S01E03.mkv",
+                "notes.txt",
+            ]
+            .into_iter()
+            .map(|name| torrplay_fixtures::FileSpec {
+                path: vec![name.into()],
+                size_bytes: 20_000,
+            })
+            .collect(),
+        },
+    }
+}
+
+/// The IDs of a torrent's files by name.
+async fn file_ids(server: &TestServer, torrent: &str) -> std::collections::HashMap<String, String> {
+    files_of(server, torrent)
+        .await
+        .iter()
+        .map(|file| {
+            (
+                file["path"]
+                    .as_array()
+                    .unwrap()
+                    .last()
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+                file["id"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
 }
 
 mod scenario {
@@ -1610,6 +1677,24 @@ mod scenario {
             .header(header::ETAG)
             .unwrap()
             .to_owned();
+        let profile = default_profile(&server).await;
+        let profile_tag = server
+            .get(&profile)
+            .await
+            .header(header::ETAG)
+            .unwrap()
+            .to_owned();
+        let small = catalog::single_small();
+        let uploaded = server.upload(&small.metainfo().bytes, None).await.json();
+        let uploaded_path = uploaded["links"]["self"].as_str().unwrap().to_owned();
+        let file_id = files_of(&server, &uploaded_path).await[0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let progress = format!(
+            "{profile}/torrents/{}/progress/{file_id}",
+            uploaded["id"].as_str().unwrap()
+        );
         let partial = br#"{"desired_state":"#.to_vec();
         let length = (partial.len() + 10).to_string();
         let requests = [
@@ -1649,6 +1734,20 @@ mod scenario {
                 "image/png",
                 None,
             ),
+            (
+                Method::POST,
+                "/api/v1/profiles".to_owned(),
+                "application/json",
+                None,
+            ),
+            (
+                Method::PATCH,
+                profile.clone(),
+                "application/merge-patch+json",
+                Some(profile_tag.as_str()),
+            ),
+            (Method::PUT, format!("{profile}/avatar"), "image/png", None),
+            (Method::PUT, progress.clone(), "application/json", None),
         ];
         for (method, path, media_type, if_match) in requests {
             let mut headers = vec![
@@ -1827,6 +1926,7 @@ mod scenario {
             .as_str()
             .unwrap()
             .to_owned();
+        let profile = default_profile(&server).await;
         let server = server
             .restart_with(torrplay_core::fake::FakeEngine::with_catalog(), false)
             .await;
@@ -1864,6 +1964,62 @@ mod scenario {
             );
         }
         let head = server.send(empty(Method::HEAD, &poster)).await;
+        assert_eq!(head.status, StatusCode::SERVICE_UNAVAILABLE);
+        let torrent = path.rsplit('/').next().unwrap();
+        let progress = format!("{profile}/torrents/{torrent}/progress");
+        let file_id = file.rsplit('/').next().unwrap();
+        let entry = format!("{profile}/up-next/upn_aaaaaaaaaaaaaaaaaaaaaaaaaa");
+        for exchange in [
+            server.get("/api/v1/profiles").await,
+            server
+                .send(json_request(
+                    Method::POST,
+                    "/api/v1/profiles",
+                    &json!({ "name": "Kim" }),
+                ))
+                .await,
+            server.get(&profile).await,
+            server
+                .send(merge_patch(
+                    &profile,
+                    "\"prf-x\"",
+                    &json!({ "name": "Kim" }),
+                ))
+                .await,
+            server.send(empty(Method::DELETE, &profile)).await,
+            server.get(&format!("{profile}/avatar")).await,
+            server
+                .send(put_poster(&format!("{profile}/avatar"), "image/png", PNG))
+                .await,
+            server
+                .send(empty(Method::DELETE, &format!("{profile}/avatar")))
+                .await,
+            server.get(&progress).await,
+            server.get(&format!("{progress}/{file_id}")).await,
+            server
+                .send(put_progress(
+                    &format!("{progress}/{file_id}"),
+                    1.0,
+                    10.0,
+                    false,
+                ))
+                .await,
+            server
+                .send(empty(Method::DELETE, &format!("{progress}/{file_id}")))
+                .await,
+            server.get(&format!("{profile}/up-next")).await,
+            server.get(&entry).await,
+            server.send(empty(Method::DELETE, &entry)).await,
+        ] {
+            assert_problem(
+                &exchange,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "engine-unavailable",
+            );
+        }
+        let head = server
+            .send(empty(Method::HEAD, &format!("{profile}/avatar")))
+            .await;
         assert_eq!(head.status, StatusCode::SERVICE_UNAVAILABLE);
         server.finish_restore().await;
         assert_eq!(server.get("/readyz").await.status, StatusCode::OK);
@@ -3461,6 +3617,843 @@ mod scenario {
         server.stop().await;
     }
 
+    /// PRF-01 to PRF-03: profiles are created, renamed under preconditions,
+    /// limited, unique by name, and carry avatars.
+    pub async fn profiles() {
+        let server = TestServer::start().await;
+        let listed = server.get("/api/v1/profiles").await;
+        assert_eq!(listed.status, StatusCode::OK);
+        assert_eq!(listed.json()["items"][0]["name"], "Default");
+        assert_eq!(
+            server.get("/api/v1").await.json()["links"]["profiles"],
+            "/api/v1/profiles"
+        );
+        let created = server
+            .send(json_request(
+                Method::POST,
+                "/api/v1/profiles",
+                &json!({ "name": "  Alex  " }),
+            ))
+            .await;
+        assert_eq!(created.status, StatusCode::CREATED);
+        let path = created.header(header::LOCATION).unwrap().to_owned();
+        assert_eq!(created.json()["name"], "Alex");
+        let etag = created.header(header::ETAG).unwrap().to_owned();
+        let read = server.get(&path).await;
+        assert_eq!(read.header(header::ETAG), Some(etag.as_str()));
+        let cached = server
+            .send(with_header(
+                Method::GET,
+                &path,
+                header::IF_NONE_MATCH,
+                &etag,
+            ))
+            .await;
+        assert_eq!(cached.status, StatusCode::NOT_MODIFIED);
+
+        // Renaming needs the current ETag.
+        let rename = json!({ "name": "Sam" });
+        let body = serde_json::to_vec(&rename).unwrap();
+        let missing = server
+            .send_unchecked(patch(&path, None, &body, "application/merge-patch+json"))
+            .await;
+        assert_problem(
+            &missing,
+            StatusCode::PRECONDITION_REQUIRED,
+            "precondition-required",
+        );
+        let stale = server
+            .send(merge_patch(&path, "\"prf-stale\"", &rename))
+            .await;
+        assert_problem(
+            &stale,
+            StatusCode::PRECONDITION_FAILED,
+            "precondition-failed",
+        );
+        let renamed = server.send(merge_patch(&path, &etag, &rename)).await;
+        assert_eq!(renamed.status, StatusCode::OK);
+        assert_eq!(renamed.json()["name"], "Sam");
+        let etag = renamed.header(header::ETAG).unwrap().to_owned();
+        let wrong_type = server
+            .send_unchecked(patch(&path, Some(&etag), &body, "application/json"))
+            .await;
+        assert_problem(
+            &wrong_type,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported-media-type",
+        );
+        for (body, pointer) in [
+            (json!({ "name": null }), "/name"),
+            (json!({}), ""),
+            (json!({ "id": "x" }), "/id"),
+        ] {
+            let refused = server
+                .send_unchecked(merge_patch(&path, &etag, &body))
+                .await;
+            assert_problem(
+                &refused,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation-failed",
+            );
+            assert_eq!(errors(&refused, "pointer"), [pointer]);
+        }
+        let not_json = server
+            .send_unchecked(patch(
+                &path,
+                Some(&etag),
+                b"{",
+                "application/merge-patch+json",
+            ))
+            .await;
+        assert_problem(&not_json, StatusCode::BAD_REQUEST, "malformed-request");
+
+        // PRF-02.
+        let duplicate = server
+            .send(json_request(
+                Method::POST,
+                "/api/v1/profiles",
+                &json!({ "name": "Default " }),
+            ))
+            .await;
+        assert_problem(&duplicate, StatusCode::CONFLICT, "duplicate-profile");
+        assert_eq!(
+            duplicate.json()["profile"],
+            server.get("/api/v1/profiles").await.json()["items"][0]["links"]["self"]
+        );
+        let taken = server
+            .send(merge_patch(&path, &etag, &json!({ "name": "Default" })))
+            .await;
+        assert_problem(&taken, StatusCode::CONFLICT, "duplicate-profile");
+        for body in [
+            json!({ "name": "" }),
+            json!({ "name": "x".repeat(65) }),
+            json!({ "name": 3 }),
+            json!({}),
+        ] {
+            let refused = server
+                .send_unchecked(json_request(Method::POST, "/api/v1/profiles", &body))
+                .await;
+            assert_problem(
+                &refused,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation-failed",
+            );
+        }
+        let not_json = server
+            .send_unchecked(
+                request(Method::POST, "/api/v1/profiles")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(b"{".to_vec())
+                    .unwrap(),
+            )
+            .await;
+        assert_problem(&not_json, StatusCode::BAD_REQUEST, "malformed-request");
+        let form = server
+            .send_unchecked(
+                request(Method::POST, "/api/v1/profiles")
+                    .header(header::CONTENT_TYPE, "text/plain")
+                    .body(b"Alex".to_vec())
+                    .unwrap(),
+            )
+            .await;
+        assert_problem(
+            &form,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported-media-type",
+        );
+        let large = json!({ "name": "x".repeat(20_000) });
+        for exchange in [
+            server
+                .send_unchecked(json_request(Method::POST, "/api/v1/profiles", &large))
+                .await,
+            server
+                .send_unchecked(merge_patch(&path, &etag, &large))
+                .await,
+        ] {
+            assert_problem(
+                &exchange,
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "content-too-large",
+            );
+        }
+        for n in 3..=32 {
+            let created = server
+                .send(json_request(
+                    Method::POST,
+                    "/api/v1/profiles",
+                    &json!({ "name": format!("P{n}") }),
+                ))
+                .await;
+            assert_eq!(created.status, StatusCode::CREATED, "profile {n}");
+        }
+        let too_many = server
+            .send(json_request(
+                Method::POST,
+                "/api/v1/profiles",
+                &json!({ "name": "P33" }),
+            ))
+            .await;
+        assert_problem(&too_many, StatusCode::CONFLICT, "too-many-profiles");
+        let first = server.get("/api/v1/profiles?page_size=1").await.json();
+        assert!(first["links"]["next"].is_string());
+        let bad_page = server
+            .send_unchecked(empty(Method::GET, "/api/v1/profiles?page_size=0"))
+            .await;
+        assert_problem(&bad_page, StatusCode::BAD_REQUEST, "malformed-request");
+
+        // PRF-03: an avatar under a poster's rules.
+        let avatar = format!("{path}/avatar");
+        for method in [Method::GET, Method::HEAD, Method::DELETE] {
+            assert_eq!(
+                server.send(empty(method.clone(), &avatar)).await.status,
+                StatusCode::NOT_FOUND,
+                "{method}"
+            );
+        }
+        let uploaded = server.send(put_poster(&avatar, "image/png", PNG)).await;
+        assert_eq!(uploaded.status, StatusCode::CREATED);
+        assert_eq!(uploaded.header(header::LOCATION), Some(avatar.as_str()));
+        let tag = uploaded.header(header::ETAG).unwrap().to_owned();
+        let profile = server.get(&path).await;
+        assert_eq!(profile.json()["avatar"]["media_type"], "image/png");
+        assert_ne!(
+            profile.header(header::ETAG),
+            Some(etag.as_str()),
+            "the avatar is part of the profile"
+        );
+        let served = server.get(&avatar).await;
+        assert_eq!(served.body, PNG);
+        assert_eq!(
+            served.header(header::X_CONTENT_TYPE_OPTIONS),
+            Some("nosniff")
+        );
+        assert_eq!(
+            served.header(header::CONTENT_SECURITY_POLICY),
+            Some("sandbox")
+        );
+        for method in [Method::GET, Method::HEAD] {
+            let cached = server
+                .send(with_header(
+                    method.clone(),
+                    &avatar,
+                    header::IF_NONE_MATCH,
+                    &tag,
+                ))
+                .await;
+            assert_eq!(cached.status, StatusCode::NOT_MODIFIED, "{method}");
+        }
+        assert_eq!(
+            server.send(empty(Method::HEAD, &avatar)).await.status,
+            StatusCode::OK
+        );
+        assert_eq!(
+            server
+                .send(put_poster(&avatar, "image/jpeg", JPEG))
+                .await
+                .status,
+            StatusCode::NO_CONTENT
+        );
+        assert_problem(
+            &server
+                .send_unchecked(put_poster(&avatar, "text/plain", PNG))
+                .await,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported-media-type",
+        );
+        assert_problem(
+            &server.send(put_poster(&avatar, "image/png", JPEG)).await,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation-failed",
+        );
+        let declared = ((1 << 20) + 1).to_string();
+        let large = server
+            .send_before_body_ends(
+                Method::PUT,
+                &avatar,
+                &[
+                    ("Content-Type", "image/png"),
+                    ("Content-Length", declared.as_str()),
+                ],
+                Vec::new(),
+            )
+            .await;
+        assert_problem(&large, StatusCode::PAYLOAD_TOO_LARGE, "content-too-large");
+        assert_eq!(
+            server.send(empty(Method::DELETE, &avatar)).await.status,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(server.get(&path).await.json()["avatar"], Value::Null);
+
+        // Deleting, down to the last profile.
+        let unknown = "/api/v1/profiles/prf_aaaaaaaaaaaaaaaaaaaaaaaaaa";
+        for exchange in [
+            server.get(unknown).await,
+            server.send(empty(Method::DELETE, unknown)).await,
+            server.send(merge_patch(unknown, &etag, &rename)).await,
+            server
+                .send(put_poster(&format!("{unknown}/avatar"), "image/png", PNG))
+                .await,
+        ] {
+            assert_problem(&exchange, StatusCode::NOT_FOUND, "not-found");
+        }
+        let everyone: Vec<String> = listed_ids_of(&server, "/api/v1/profiles").await;
+        for (index, id) in everyone.iter().enumerate() {
+            let deleted = server
+                .send(empty(Method::DELETE, &format!("/api/v1/profiles/{id}")))
+                .await;
+            if index + 1 == everyone.len() {
+                assert_problem(&deleted, StatusCode::CONFLICT, "lifecycle-conflict");
+            } else {
+                assert_eq!(deleted.status, StatusCode::NO_CONTENT);
+            }
+        }
+        assert_problem(&server.get(&path).await, StatusCode::NOT_FOUND, "not-found");
+        server.stop().await;
+    }
+
+    /// PRG-01 to PRG-04: progress is saved per profile and file, marks files
+    /// viewed, is validated, and goes with its torrent and profile.
+    pub async fn progress() {
+        let server = TestServer::start().await;
+        let default = default_profile(&server).await;
+        let other = server
+            .send(json_request(
+                Method::POST,
+                "/api/v1/profiles",
+                &json!({ "name": "Sam" }),
+            ))
+            .await
+            .header(header::LOCATION)
+            .unwrap()
+            .to_owned();
+        let media = catalog::media_names();
+        let torrent = server.upload(&media.metainfo().bytes, None).await.json();
+        let torrent_path = torrent["links"]["self"].as_str().unwrap().to_owned();
+        let torrent_id = torrent["id"].as_str().unwrap().to_owned();
+        let files = file_ids(&server, &torrent_path).await;
+        let mkv = &files["video.mkv"];
+        let mp4 = &files["video.mp4"];
+        let collection = format!("{default}/torrents/{torrent_id}/progress");
+        let item = format!("{collection}/{mkv}");
+
+        // PRG-01.
+        assert_problem(&server.get(&item).await, StatusCode::NOT_FOUND, "not-found");
+        let created = server.send(put_progress(&item, 600.5, 5400.0, false)).await;
+        assert_eq!(created.status, StatusCode::CREATED);
+        assert_eq!(created.header(header::LOCATION), Some(item.as_str()));
+        assert_eq!(created.json()["position_seconds"], 600.5);
+        assert_eq!(
+            created.json()["links"]["content"],
+            format!("{torrent_path}/files/{mkv}/content")
+        );
+        let replaced = server.send(put_progress(&item, 900.0, 5400.0, false)).await;
+        assert_eq!(replaced.status, StatusCode::OK);
+        assert_eq!(server.get(&item).await.json()["position_seconds"], 900.0);
+        let magnet = server.create_magnet(&unknown_magnet(70)).await.json()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let early = format!("{default}/torrents/{magnet}/progress");
+        for exchange in [
+            server.get(&early).await,
+            server.get(&format!("{early}/{mkv}")).await,
+            server
+                .send(put_progress(&format!("{early}/{mkv}"), 1.0, 10.0, false))
+                .await,
+            server
+                .send(empty(Method::DELETE, &format!("{early}/{mkv}")))
+                .await,
+        ] {
+            assert_problem(&exchange, StatusCode::CONFLICT, "lifecycle-conflict");
+        }
+        let unknown_file = format!("{collection}/fil_aaaaaaaaaaaaaaaaaaaaaaaaaa");
+        for exchange in [
+            server.get(&unknown_file).await,
+            server
+                .send(put_progress(&unknown_file, 1.0, 10.0, false))
+                .await,
+            server.send(empty(Method::DELETE, &unknown_file)).await,
+            server
+                .get(&format!(
+                    "{default}/torrents/trr_aaaaaaaaaaaaaaaaaaaaaaaaaa/progress"
+                ))
+                .await,
+            server
+                .get("/api/v1/profiles/prf_aaaaaaaaaaaaaaaaaaaaaaaaaa/torrents/x/progress")
+                .await,
+        ] {
+            assert_problem(&exchange, StatusCode::NOT_FOUND, "not-found");
+        }
+
+        // PRG-02.
+        let viewed = server
+            .send(put_progress(&item, 4860.0, 5400.0, false))
+            .await
+            .json();
+        assert_eq!(viewed["viewed"], true, "90% marks it viewed");
+        assert_eq!(viewed["position_seconds"], 0.0);
+        assert!(viewed["viewed_at"].is_string());
+        let rewatching = server
+            .send(put_progress(&item, 300.0, 5400.0, true))
+            .await
+            .json();
+        assert_eq!(
+            rewatching["position_seconds"], 300.0,
+            "a viewed file keeps its position"
+        );
+        assert_eq!(rewatching["viewed_at"], viewed["viewed_at"]);
+        let unmarked = server
+            .send(put_progress(&item, 300.0, 5400.0, false))
+            .await
+            .json();
+        assert_eq!(
+            (unmarked["viewed"].clone(), unmarked["viewed_at"].clone()),
+            (json!(false), Value::Null)
+        );
+        let marked = server
+            .send(put_progress(
+                &format!("{collection}/{mp4}"),
+                50.0,
+                100.0,
+                true,
+            ))
+            .await
+            .json();
+        assert_eq!(
+            (marked["viewed"].clone(), marked["position_seconds"].clone()),
+            (json!(true), json!(0.0))
+        );
+
+        // PRG-03.
+        for (body, pointers) in [
+            (
+                json!({ "position_seconds": 11, "duration_seconds": 10, "viewed": false }),
+                vec!["/position_seconds"],
+            ),
+            (
+                json!({ "position_seconds": 0, "duration_seconds": 0, "viewed": false }),
+                vec!["/duration_seconds"],
+            ),
+            (
+                json!({ "position_seconds": 1, "duration_seconds": 10, "viewed": false, "x": 1 }),
+                vec!["/x"],
+            ),
+        ] {
+            let refused = server
+                .send_unchecked(json_request(Method::PUT, &item, &body))
+                .await;
+            assert_problem(
+                &refused,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation-failed",
+            );
+            assert_eq!(errors(&refused, "pointer"), pointers);
+        }
+        let not_json = server
+            .send_unchecked(
+                request(Method::PUT, &item)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(b"{".to_vec())
+                    .unwrap(),
+            )
+            .await;
+        assert_problem(&not_json, StatusCode::BAD_REQUEST, "malformed-request");
+        let text = server
+            .send_unchecked(
+                request(Method::PUT, &item)
+                    .header(header::CONTENT_TYPE, "text/plain")
+                    .body(b"1".to_vec())
+                    .unwrap(),
+            )
+            .await;
+        assert_problem(
+            &text,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported-media-type",
+        );
+        let large = json!({ "position_seconds": 1, "duration_seconds": 2, "viewed": false, "pad": "x".repeat(20_000) });
+        assert_problem(
+            &server
+                .send_unchecked(json_request(Method::PUT, &item, &large))
+                .await,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "content-too-large",
+        );
+
+        // PRG-04: per profile, listed in metadata order, deleted with owners.
+        let sams = format!("{other}/torrents/{torrent_id}/progress/{mkv}");
+        server.send(put_progress(&sams, 42.0, 5400.0, false)).await;
+        assert_eq!(server.get(&item).await.json()["position_seconds"], 300.0);
+        assert_eq!(server.get(&sams).await.json()["position_seconds"], 42.0);
+        let page = server.get(&collection).await.json();
+        let listed: Vec<&str> = page["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["file_id"].as_str().unwrap())
+            .collect();
+        assert_eq!(listed, [mkv.as_str(), mp4.as_str()], "metadata order");
+        let paged = server
+            .get(&format!("{collection}?page_size=1"))
+            .await
+            .json();
+        assert!(paged["links"]["next"].is_string());
+        let bad_page = server
+            .send_unchecked(empty(Method::GET, &format!("{collection}?page_size=0")))
+            .await;
+        assert_problem(&bad_page, StatusCode::BAD_REQUEST, "malformed-request");
+        assert_eq!(
+            server.send(empty(Method::DELETE, &item)).await.status,
+            StatusCode::NO_CONTENT
+        );
+        assert_problem(&server.get(&item).await, StatusCode::NOT_FOUND, "not-found");
+        assert_eq!(
+            server.send(empty(Method::DELETE, &other)).await.status,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            server
+                .send(empty(Method::DELETE, &torrent_path))
+                .await
+                .status,
+            StatusCode::NO_CONTENT
+        );
+        let again = server.upload(&media.metainfo().bytes, None).await.json();
+        let again_id = again["id"].as_str().unwrap();
+        let page = server
+            .get(&format!("{default}/torrents/{again_id}/progress"))
+            .await
+            .json();
+        assert_eq!(
+            page["items"],
+            json!([]),
+            "a new torrent starts without progress"
+        );
+        server.stop().await;
+    }
+
+    /// UPN-01 to UPN-05: up next resumes files, moves a series to its next
+    /// episode, honors dismissals, and answers conditional requests.
+    pub async fn up_next() {
+        let server = TestServer::start().await;
+        let profile = default_profile(&server).await;
+        let up_next = format!("{profile}/up-next");
+        let media = catalog::media_names();
+        let movies = server.upload(&media.metainfo().bytes, None).await.json();
+        let movies_id = movies["id"].as_str().unwrap().to_owned();
+        let movie_files = file_ids(&server, movies["links"]["self"].as_str().unwrap()).await;
+        let show = series();
+        server.engine.add_fixture(&show);
+        let shows = server.upload(&show.metainfo().bytes, None).await.json();
+        assert_eq!(shows["kind"], "series");
+        let shows_id = shows["id"].as_str().unwrap().to_owned();
+        let episodes = file_ids(&server, shows["links"]["self"].as_str().unwrap()).await;
+        let progress =
+            |torrent: &str, file: &str| format!("{profile}/torrents/{torrent}/progress/{file}");
+        let entries = || async {
+            server.get(&up_next).await.json()["items"]
+                .as_array()
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(entries().await, Vec::<Value>::new());
+
+        // UPN-01: files of a movie torrent, above 1% only.
+        server
+            .send(put_progress(
+                &progress(&movies_id, &movie_files["video.mkv"]),
+                0.5,
+                100.0,
+                false,
+            ))
+            .await;
+        server
+            .send(put_progress(
+                &progress(&movies_id, &movie_files["video.mp4"]),
+                30.0,
+                100.0,
+                false,
+            ))
+            .await;
+        let listed = entries().await;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0]["reason"], "resume");
+        assert_eq!(listed[0]["file"]["id"], movie_files["video.mp4"].as_str());
+        assert_eq!(listed[0]["progress"]["position_seconds"], 30.0);
+        assert_eq!(listed[0]["torrent"]["id"], movies_id.as_str());
+
+        // UPN-02: viewing an episode moves its series to the next one.
+        server
+            .send(put_progress(
+                &progress(&shows_id, &episodes["Series.S01E01.mkv"]),
+                95.0,
+                100.0,
+                false,
+            ))
+            .await;
+        let listed = entries().await;
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0]["reason"], "next_episode", "most recent first");
+        assert_eq!(
+            listed[0]["file"]["id"],
+            episodes["Series.S01E02.mkv"].as_str()
+        );
+        assert_eq!(listed[0]["progress"], Value::Null);
+        let series_entry = listed[0]["id"].as_str().unwrap().to_owned();
+        let entry = server.get(&format!("{up_next}/{series_entry}")).await;
+        assert_eq!(entry.status, StatusCode::OK);
+        assert_eq!(entry.json(), listed[0]);
+
+        // UPN-03: one entry per series, for its latest episode.
+        server
+            .send(put_progress(
+                &progress(&shows_id, &episodes["Series.S01E02.mkv"]),
+                10.0,
+                100.0,
+                false,
+            ))
+            .await;
+        server
+            .send(put_progress(
+                &progress(&shows_id, &episodes["Series.S01E03.mkv"]),
+                20.0,
+                100.0,
+                false,
+            ))
+            .await;
+        let listed = entries().await;
+        assert_eq!(listed.len(), 2);
+        assert_eq!(
+            (listed[0]["reason"].clone(), listed[0]["id"].clone()),
+            (json!("resume"), json!(series_entry))
+        );
+        assert_eq!(
+            listed[0]["file"]["id"],
+            episodes["Series.S01E03.mkv"].as_str()
+        );
+        server
+            .send(put_progress(
+                &progress(&shows_id, &episodes["Series.S01E03.mkv"]),
+                99.0,
+                100.0,
+                false,
+            ))
+            .await;
+        let listed = entries().await;
+        assert_eq!(listed.len(), 1, "the last episode viewed leaves no entry");
+
+        // UPN-05: conditional requests.
+        let read = server.get(&up_next).await;
+        let etag = read.header(header::ETAG).unwrap().to_owned();
+        let cached = server
+            .send(with_header(
+                Method::GET,
+                &up_next,
+                header::IF_NONE_MATCH,
+                &etag,
+            ))
+            .await;
+        assert_eq!(cached.status, StatusCode::NOT_MODIFIED);
+
+        // UPN-04: dismissal, until progress returns.
+        let movie_entry = listed[0]["id"].as_str().unwrap().to_owned();
+        let entry_path = format!("{up_next}/{movie_entry}");
+        assert_eq!(
+            server.send(empty(Method::DELETE, &entry_path)).await.status,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(entries().await, Vec::<Value>::new());
+        assert_problem(
+            &server.send(empty(Method::DELETE, &entry_path)).await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        assert_problem(
+            &server.get(&entry_path).await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        let changed = server
+            .send(with_header(
+                Method::GET,
+                &up_next,
+                header::IF_NONE_MATCH,
+                &etag,
+            ))
+            .await;
+        assert_eq!(
+            changed.status,
+            StatusCode::OK,
+            "a dismissal changes the page"
+        );
+        server
+            .send(put_progress(
+                &progress(&movies_id, &movie_files["video.mp4"]),
+                40.0,
+                100.0,
+                false,
+            ))
+            .await;
+        let listed = entries().await;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0]["id"], movie_entry.as_str(), "the same ID");
+
+        assert_problem(
+            &server
+                .get("/api/v1/profiles/prf_aaaaaaaaaaaaaaaaaaaaaaaaaa/up-next")
+                .await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        let bad_page = server
+            .send_unchecked(empty(Method::GET, &format!("{up_next}?page_size=0")))
+            .await;
+        assert_problem(&bad_page, StatusCode::BAD_REQUEST, "malformed-request");
+        server.stop().await;
+    }
+
+    /// PRG-05: profiles, avatars, progress, and dismissals survive a restart.
+    pub async fn profiles_restart() {
+        let server = TestServer::start().await;
+        let profile = default_profile(&server).await;
+        server
+            .send(put_poster(&format!("{profile}/avatar"), "image/png", PNG))
+            .await;
+        let media = catalog::media_names();
+        let torrent = server.upload(&media.metainfo().bytes, None).await.json();
+        let torrent_id = torrent["id"].as_str().unwrap().to_owned();
+        let files = file_ids(&server, torrent["links"]["self"].as_str().unwrap()).await;
+        let item = format!(
+            "{profile}/torrents/{torrent_id}/progress/{}",
+            files["video.mkv"]
+        );
+        server.send(put_progress(&item, 30.0, 100.0, false)).await;
+        let other = format!(
+            "{profile}/torrents/{torrent_id}/progress/{}",
+            files["video.mp4"]
+        );
+        server.send(put_progress(&other, 30.0, 100.0, false)).await;
+        let up_next = format!("{profile}/up-next");
+        let dismissed = server.get(&up_next).await.json()["items"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        server
+            .send(empty(Method::DELETE, &format!("{up_next}/{dismissed}")))
+            .await;
+        let profile_before = server.get(&profile).await;
+        let progress_before = server.get(&item).await.json();
+        let up_next_before = server.get(&up_next).await.json();
+        let avatar_before = server.get(&format!("{profile}/avatar")).await;
+
+        let server = server.restart().await;
+        let profile_after = server.get(&profile).await;
+        assert_eq!(profile_after.json(), profile_before.json());
+        assert_eq!(
+            profile_after.header(header::ETAG),
+            profile_before.header(header::ETAG)
+        );
+        assert_eq!(server.get(&item).await.json(), progress_before);
+        assert_eq!(
+            server.get(&up_next).await.json(),
+            up_next_before,
+            "the dismissal holds"
+        );
+        let avatar_after = server.get(&format!("{profile}/avatar")).await;
+        assert_eq!(avatar_after.body, avatar_before.body);
+        assert_eq!(
+            avatar_after.header(header::ETAG),
+            avatar_before.header(header::ETAG)
+        );
+        assert_eq!(
+            listed_ids_of(&server, "/api/v1/profiles").await.len(),
+            1,
+            "no second default"
+        );
+        server.stop().await;
+    }
+
+    /// PRG-06: failed writes change no profile, progress, or dismissal.
+    pub async fn profiles_store_failures() {
+        let server = TestServer::start().await;
+        let profile = default_profile(&server).await;
+        let media = catalog::media_names();
+        let torrent = server.upload(&media.metainfo().bytes, None).await.json();
+        let torrent_id = torrent["id"].as_str().unwrap().to_owned();
+        let files = file_ids(&server, torrent["links"]["self"].as_str().unwrap()).await;
+        let item = format!(
+            "{profile}/torrents/{torrent_id}/progress/{}",
+            files["video.mkv"]
+        );
+        server.send(put_progress(&item, 30.0, 100.0, false)).await;
+        let avatar = format!("{profile}/avatar");
+        server.send(put_poster(&avatar, "image/png", PNG)).await;
+        let extra = server
+            .send(json_request(
+                Method::POST,
+                "/api/v1/profiles",
+                &json!({ "name": "Sam" }),
+            ))
+            .await
+            .header(header::LOCATION)
+            .unwrap()
+            .to_owned();
+        let up_next = format!("{profile}/up-next");
+        let entry = server.get(&up_next).await.json()["items"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let etag = server
+            .get(&profile)
+            .await
+            .header(header::ETAG)
+            .unwrap()
+            .to_owned();
+        let before = (
+            server.get(&profile).await.json(),
+            server.get(&item).await.json(),
+            server.get(&up_next).await.json(),
+            listed_ids_of(&server, "/api/v1/profiles").await,
+        );
+
+        server.app.store().fail_writes(true);
+        for exchange in [
+            server
+                .send(json_request(
+                    Method::POST,
+                    "/api/v1/profiles",
+                    &json!({ "name": "Kim" }),
+                ))
+                .await,
+            server
+                .send(merge_patch(&profile, &etag, &json!({ "name": "Alex" })))
+                .await,
+            server.send(empty(Method::DELETE, &extra)).await,
+            server.send(put_poster(&avatar, "image/jpeg", JPEG)).await,
+            server.send(empty(Method::DELETE, &avatar)).await,
+            server.send(put_progress(&item, 60.0, 100.0, false)).await,
+            server.send(empty(Method::DELETE, &item)).await,
+            server
+                .send(empty(Method::DELETE, &format!("{up_next}/{entry}")))
+                .await,
+        ] {
+            assert_problem(
+                &exchange,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal-error",
+            );
+        }
+        server.app.store().fail_writes(false);
+        let after = (
+            server.get(&profile).await.json(),
+            server.get(&item).await.json(),
+            server.get(&up_next).await.json(),
+            listed_ids_of(&server, "/api/v1/profiles").await,
+        );
+        assert_eq!(after, before);
+        server.stop().await;
+    }
+
     async fn listed_len(server: &TestServer) -> usize {
         server.get("/api/v1/torrents").await.json()["items"]
             .as_array()
@@ -3483,6 +4476,16 @@ const EXEMPT: &[(&str, u16)] = &[
     // which answers from the registry without the store.
     ("getTorrentPoster", 500),
     ("headTorrentPoster", 500),
+    // These answer from the application's own records, as the entry point
+    // does, or read an avatar from the store, which tests cannot fail.
+    ("listProfiles", 500),
+    ("getProfile", 500),
+    ("getProfileAvatar", 500),
+    ("headProfileAvatar", 500),
+    ("listTorrentProgress", 500),
+    ("getFileProgress", 500),
+    ("listUpNext", 500),
+    ("getUpNextEntry", 500),
 ];
 
 macro_rules! scenarios {
@@ -3543,4 +4546,9 @@ scenarios!(
     library_store_failures,
     search,
     facets,
+    profiles,
+    progress,
+    up_next,
+    profiles_restart,
+    profiles_store_failures,
 );

@@ -468,6 +468,68 @@ Every page of the collection carries facets for global navigation:
 - The page's ETag digests the version and every query parameter, and a
   matching `If-None-Match` receives `304 Not Modified` without a body.
 
+## Profiles and progress
+
+A profile is a person's viewing identity, like a streaming service's "Who
+is watching?". Progress and up next belong to a profile; torrents, files,
+and the library are the same for every profile. Authentication, once
+designed, decides which profiles a client may use; it does not change
+them.
+
+- At startup the application creates a profile named `Default` if none is
+  stored, so a client that never chooses a profile still works.
+- A name is normalized as a category is, to 1 to 64 characters, and is
+  unique among profiles after normalization, case included; another
+  profile's name is `duplicate-profile`. The application keeps at most 32
+  profiles, so a 33rd is `too-many-profiles`, and deleting the last one is
+  `lifecycle-conflict`.
+- A profile's ETag digests its representation, avatar included, and a
+  `PATCH` must carry it in `If-Match`. Its avatar follows the rules of a
+  torrent's poster. Deleting a profile deletes its avatar, progress, and
+  dismissals.
+
+A file's progress is a profile's playback position in it, as the player
+reports it in seconds, with the file's duration and a viewed mark.
+
+- A `PUT` replaces it and the last write wins, since players save it every
+  few seconds, possibly from several devices. Positions and durations are
+  rounded to the millisecond, and a position past the duration is
+  `validation-failed`.
+- A file is in progress while its position is at least 1% of its
+  duration. Reaching 90% marks it viewed and resets its position to 0, and
+  so does marking a file viewed that was not. A viewed file keeps the
+  positions saved for it, so it can be watched again; `viewed: false`
+  clears the mark. `viewed_at` is when the file last became viewed.
+- Progress needs the file's ID, so its operations are `lifecycle-conflict`
+  until metadata is available. It needs no engine, so it works while a
+  torrent is paused or failed. It changes neither the torrent's
+  representation nor the listing version.
+- Deleting the torrent or the profile deletes its progress.
+
+Up next lists what a profile can resume or watch next, by video files,
+those served with a `video/` media type:
+
+- A series, a torrent whose reported kind is `series`, has at most one
+  entry, from its video file with the most recently saved progress. While
+  that file is in progress, the entry resumes it. Once it is viewed, the
+  entry is the next episode that is not viewed, with the reason
+  `next_episode`; episodes are ordered by season and episode number from
+  their names' episode patterns, a pattern without a season counting as
+  season 1, with metadata order breaking ties and files without a pattern
+  following in metadata order. Without a next episode, or while the file is
+  neither in progress nor viewed, the series has no entry.
+- Any other torrent has one entry for each video file in progress.
+- Entries are ordered by the time of the progress that put them there,
+  most recent first, with the entry ID as the tie-breaker. An entry's ID
+  stays the same for its series, or for its file, so a dismissal can name
+  it.
+- Dismissing an entry, with `DELETE`, hides it, durably, until progress is
+  saved again for one of the files that put it there. Saved progress is
+  kept. Viewed files leave up next by the rules above; entries never expire
+  otherwise.
+- Each entry embeds its torrent's and file's current representations and
+  the file's progress, and the page's ETag digests the page.
+
 ## Persistence
 
 The application keeps a database in its data directory, which must be on a
@@ -479,7 +541,8 @@ local filesystem, as [ADR 8](adr/0008-database.md) requires.
   original bytes, or a magnet URI and, once metadata is recorded, the
   torrent file built from it. The configuration includes the library
   members, and a poster is stored with its bytes, media type, digest, and
-  upload time.
+  upload time. Profiles, their avatars, progress, and dismissals are stored
+  too, and are read at startup, except avatar images.
 - It records whether the application last shut down cleanly. A disk
   torrent's resume bitfield, the record of its verified pieces, lives in the
   download directory beside its files rather than in the database.

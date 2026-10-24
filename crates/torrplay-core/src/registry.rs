@@ -24,7 +24,8 @@ use std::time::SystemTime;
 use crate::id::{
     InfoHashV1, RandomnessError, TORRENT_ID_RANDOM_BYTES, TorrentId, random_torrent_id_bytes,
 };
-use crate::library::{Library, PosterInfo};
+use crate::image::ImageInfo;
+use crate::library::Library;
 use crate::lifecycle::{Configuration, DesiredState, EntityTag, StorageMode};
 use crate::metadata::Metadata;
 
@@ -54,7 +55,7 @@ pub struct TorrentRecord {
     /// after retrieval.
     pub metadata: Option<Arc<Metadata>>,
     /// The poster, if one was uploaded.
-    pub poster: Option<PosterInfo>,
+    pub poster: Option<ImageInfo>,
 }
 
 /// The input that registers a torrent.
@@ -347,7 +348,7 @@ impl Registry {
 
     /// Replaces torrent `id`'s poster with one its caller stored, or removes
     /// it.
-    pub fn set_poster(&self, id: &str, poster: Option<PosterInfo>) -> Result<(), UnknownTorrent> {
+    pub fn set_poster(&self, id: &str, poster: Option<ImageInfo>) -> Result<(), UnknownTorrent> {
         let mut state = self.lock();
         let entry = state.torrents.get_mut(id).ok_or(UnknownTorrent)?;
         entry.record.poster = poster;

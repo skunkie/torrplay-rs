@@ -23,7 +23,7 @@ use std::time::{Duration, SystemTime};
 use sha2::{Digest, Sha256};
 
 use crate::base32;
-use crate::id::{InfoHashV1, TorrentId};
+use crate::id::{InfoHashV1, ProfileId, TorrentId, UpNextEntryId};
 use crate::library::Kind;
 use crate::lifecycle::ObservedState;
 use crate::registry::TorrentRecord;
@@ -448,6 +448,108 @@ impl SortKey for SearchSortKey {
     }
 }
 
+/// Encodes a time as seconds and nanoseconds since the Unix epoch, earlier
+/// times counting as the epoch.
+fn encode_time(time: SystemTime, out: &mut Vec<u8>) {
+    let since = time
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    out.extend_from_slice(&since.as_secs().to_be_bytes());
+    out.extend_from_slice(&since.subsec_nanos().to_be_bytes());
+}
+
+/// Decodes [`encode_time`]'s encoding and the text after it.
+fn decode_time(bytes: &[u8]) -> Option<(SystemTime, String)> {
+    let (secs, rest) = bytes.split_first_chunk::<8>()?;
+    let (nanos, text) = rest.split_first_chunk::<4>()?;
+    let nanos = u32::from_be_bytes(*nanos);
+    if nanos >= 1_000_000_000 || text.is_empty() {
+        return None;
+    }
+    let time =
+        SystemTime::UNIX_EPOCH.checked_add(Duration::new(u64::from_be_bytes(*secs), nanos))?;
+    Some((time, String::from_utf8(text.to_vec()).ok()?))
+}
+
+/// The sort key of the profiles collection: oldest first by creation time,
+/// then by profile ID.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ProfileSortKey {
+    created_at: SystemTime,
+    id: String,
+}
+
+impl ProfileSortKey {
+    /// Returns the key of a profile created at `created_at`.
+    pub fn of(id: &ProfileId, created_at: SystemTime) -> Self {
+        Self {
+            created_at,
+            id: id.as_str().to_owned(),
+        }
+    }
+}
+
+impl SortKey for ProfileSortKey {
+    const KIND: u8 = 4;
+
+    fn encode(&self, out: &mut Vec<u8>) {
+        encode_time(self.created_at, out);
+        out.extend_from_slice(self.id.as_bytes());
+    }
+
+    fn decode(bytes: &[u8]) -> Option<Self> {
+        let (created_at, id) = decode_time(bytes)?;
+        Some(Self { created_at, id })
+    }
+}
+
+/// The sort key of a profile's up next: most recent activity first, then by
+/// entry ID.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UpNextSortKey {
+    activity_at: SystemTime,
+    id: String,
+}
+
+impl UpNextSortKey {
+    /// Returns the key of an entry whose activity was at `activity_at`.
+    pub fn of(id: &UpNextEntryId, activity_at: SystemTime) -> Self {
+        Self {
+            activity_at,
+            id: id.as_str().to_owned(),
+        }
+    }
+}
+
+impl Ord for UpNextSortKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other
+            .activity_at
+            .cmp(&self.activity_at)
+            .then_with(|| self.id.cmp(&other.id))
+    }
+}
+
+impl PartialOrd for UpNextSortKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl SortKey for UpNextSortKey {
+    const KIND: u8 = 5;
+
+    fn encode(&self, out: &mut Vec<u8>) {
+        encode_time(self.activity_at, out);
+        out.extend_from_slice(self.id.as_bytes());
+    }
+
+    fn decode(bytes: &[u8]) -> Option<Self> {
+        let (activity_at, id) = decode_time(bytes)?;
+        Some(Self { activity_at, id })
+    }
+}
+
 /// The sort key of a torrent's files collection: metadata order, as the
 /// position in [`Metadata::files`](crate::metadata::Metadata::files).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -631,6 +733,48 @@ mod tests {
             ObservedState::ALL
                 .into_iter()
                 .all(|state| TorrentFilter::default().matches(matched(record, state)))
+        );
+    }
+
+    #[test]
+    fn profile_and_up_next_keys_round_trip_their_cursors() {
+        let at = |secs| SystemTime::UNIX_EPOCH + Duration::new(secs, 7);
+        let profile = ProfileId::from_random_bytes([1; 16]);
+        let keys = [
+            ProfileSortKey::of(&profile, at(2)),
+            ProfileSortKey::of(&profile, at(1)),
+        ];
+        let page = paginate(
+            keys.clone(),
+            Clone::clone,
+            &request(1, None, FilterFingerprint::none()).unwrap(),
+        );
+        assert_eq!(page.items, [keys[1].clone()], "oldest first");
+        let next =
+            request::<ProfileSortKey>(1, page.next_cursor.as_deref(), FilterFingerprint::none())
+                .unwrap();
+        assert_eq!(
+            paginate(keys.clone(), Clone::clone, &next).items,
+            [keys[0].clone()]
+        );
+
+        let entry = UpNextEntryId::of_series(&TorrentId::from_random_bytes([2; 16]));
+        let keys = [
+            UpNextSortKey::of(&entry, at(1)),
+            UpNextSortKey::of(&entry, at(3)),
+        ];
+        let page = paginate(
+            keys.clone(),
+            Clone::clone,
+            &request(1, None, FilterFingerprint::none()).unwrap(),
+        );
+        assert_eq!(page.items, [keys[1].clone()], "most recent first");
+        let next =
+            request::<UpNextSortKey>(1, page.next_cursor.as_deref(), FilterFingerprint::none())
+                .unwrap();
+        assert_eq!(
+            paginate(keys.clone(), Clone::clone, &next).items,
+            [keys[0].clone()]
         );
     }
 
