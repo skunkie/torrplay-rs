@@ -529,3 +529,38 @@ pub(crate) async fn head_poster<E: Engine>(
     gate(&app, client)?;
     posters::head(State(app), path, headers).await
 }
+
+/// The bytes of each icon `torrplay_dlna::description::ICONS` lists, which
+/// `scripts/render-logo.py` draws.
+fn icon_bytes(name: &str) -> Option<&'static [u8]> {
+    Some(match name {
+        "icon-48.png" => include_bytes!("../assets/dlna/icon-48.png"),
+        "icon-120.png" => include_bytes!("../assets/dlna/icon-120.png"),
+        "icon-48.jpg" => include_bytes!("../assets/dlna/icon-48.jpg"),
+        "icon-120.jpg" => include_bytes!("../assets/dlna/icon-120.jpg"),
+        _ => return None,
+    })
+}
+
+pub(crate) async fn get_icon<E: Engine>(
+    State(app): State<Arc<App<E>>>,
+    client: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Path(name): Path<String>,
+) -> Result<Response, Problem> {
+    gate(&app, client)?;
+    let icon = torrplay_dlna::description::ICONS
+        .iter()
+        .find(|icon| icon.name == name)
+        .zip(icon_bytes(&name));
+    let Some((icon, bytes)) = icon else {
+        return Err(Problem::not_found("The media server has no such icon."));
+    };
+    Ok((
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static(icon.media_type),
+        )],
+        bytes,
+    )
+        .into_response())
+}

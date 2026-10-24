@@ -188,6 +188,19 @@ async fn the_media_server_answers_only_while_on() {
             .await
     };
     assert_eq!(description().await.status, StatusCode::NOT_FOUND);
+    let icon = |path: &'static str| {
+        let server = &server;
+        async move {
+            server
+                .send_raw(request(Method::GET, path).body(Vec::new()).unwrap())
+                .await
+        }
+    };
+    assert_eq!(
+        icon("/dlna/icons/icon-48.png").await.status,
+        StatusCode::NOT_FOUND,
+        "icons are hidden while the media server is off"
+    );
     enable(&server, true).await;
     let found = description().await;
     assert_eq!(found.status, StatusCode::OK);
@@ -209,6 +222,39 @@ async fn the_media_server_answers_only_while_on() {
     );
     let udn = between(&body, "<UDN>", "</UDN>").to_owned();
     assert!(udn.starts_with("uuid:") && udn.len() == 41, "{udn}");
+
+    // DLNA-15: the listed icons, PNG before JPEG and small before large.
+    let listed: Vec<(String, u32, String)> = body
+        .split("<icon>")
+        .skip(1)
+        .map(|icon| {
+            (
+                between(icon, "<mimetype>", "</mimetype>").to_owned(),
+                between(icon, "<width>", "</width>").parse().unwrap(),
+                between(icon, "<url>", "</url>").to_owned(),
+            )
+        })
+        .collect();
+    let expected = [
+        ("image/png", 48, "/dlna/icons/icon-48.png"),
+        ("image/png", 120, "/dlna/icons/icon-120.png"),
+        ("image/jpeg", 48, "/dlna/icons/icon-48.jpg"),
+        ("image/jpeg", 120, "/dlna/icons/icon-120.jpg"),
+    ];
+    assert_eq!(
+        listed,
+        expected.map(|(media, size, url)| (media.to_owned(), size, url.to_owned()))
+    );
+    for (media_type, size, path) in expected {
+        let served = icon(path).await;
+        assert_eq!(served.status, StatusCode::OK, "{path}");
+        assert_eq!(served.header(header::CONTENT_TYPE), Some(media_type));
+        assert_eq!(image_size(&served.body), Some((size, size)), "{path}");
+    }
+    assert_eq!(
+        icon("/dlna/icons/icon-64.png").await.status,
+        StatusCode::NOT_FOUND
+    );
     for path in [
         "/dlna/content-directory.xml",
         "/dlna/connection-manager.xml",
@@ -811,4 +857,27 @@ async fn subscribers_receive_events() {
         "turning off ended every subscription"
     );
     server.stop().await;
+}
+
+/// The width and height a PNG's header or a JPEG's start-of-frame segment
+/// declares.
+fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    let be16 = |at: usize| u32::from(u16::from_be_bytes([bytes[at], bytes[at + 1]]));
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        let be32 = |at: usize| u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap());
+        return Some((be32(16), be32(20)));
+    }
+    if !bytes.starts_with(&[0xFF, 0xD8]) {
+        return None;
+    }
+    let mut at = 2;
+    while at + 9 < bytes.len() {
+        let marker = bytes[at + 1];
+        let length = be16(at + 2) as usize;
+        if matches!(marker, 0xC0..=0xC3) {
+            return Some((be16(at + 7), be16(at + 5)));
+        }
+        at += 2 + length;
+    }
+    None
 }

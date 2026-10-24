@@ -81,9 +81,26 @@ ContentDirectory and ConnectionManager services.
 | `/dlna/connection-manager/events` | SUBSCRIBE, UNSUBSCRIBE | ConnectionManager's events |
 | `/dlna/media/{torrent_id}/{file_id}/{file_name}` | GET, HEAD | A file's content |
 | `/dlna/posters/{torrent_id}` | GET, HEAD | A torrent's poster |
+| `/dlna/icons/{icon}` | GET, HEAD | One of the device's icons |
 
 Descriptions are `text/xml; charset="utf-8"`. The device description
 declares `dlna:X_DLNADOC` `DMS-1.50`.
+
+The device description lists four icons, which televisions show beside
+its name, in the order DLNA's icon profiles list them:
+
+| Icon | Media type | Size |
+|---|---|---|
+| `icon-48.png` | `image/png` | 48 × 48 |
+| `icon-120.png` | `image/png` | 120 × 120 |
+| `icon-48.jpg` | `image/jpeg` | 48 × 48 |
+| `icon-120.jpg` | `image/jpeg` | 120 × 120 |
+
+Each has a color depth of 24 bits. The PNG icons are the logo's rounded
+tile on a transparent background; the JPEG icons fill their square, since
+JPEG has no transparency. `scripts/render-logo.py` draws them and the
+master, `brand/logo.svg`, from one geometry. Any other icon name is
+`404 Not Found`.
 
 ## Actions
 

@@ -10,6 +10,43 @@ use crate::services::{CONNECTION_MANAGER, CONTENT_DIRECTORY};
 /// The device type the media server announces.
 pub const DEVICE_TYPE: &str = "urn:schemas-upnp-org:device:MediaServer:1";
 
+/// An icon the device description lists, which the server serves at
+/// `/dlna/icons/{name}`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Icon {
+    /// Its file name.
+    pub name: &'static str,
+    /// Its media type.
+    pub media_type: &'static str,
+    /// Its width and height, in pixels.
+    pub size: u32,
+}
+
+/// The device's icons, in the order DLNA's icon profiles list them: PNG
+/// before JPEG, small before large.
+pub const ICONS: [Icon; 4] = [
+    Icon {
+        name: "icon-48.png",
+        media_type: "image/png",
+        size: 48,
+    },
+    Icon {
+        name: "icon-120.png",
+        media_type: "image/png",
+        size: 120,
+    },
+    Icon {
+        name: "icon-48.jpg",
+        media_type: "image/jpeg",
+        size: 48,
+    },
+    Icon {
+        name: "icon-120.jpg",
+        media_type: "image/jpeg",
+        size: 120,
+    },
+];
+
 /// The media server's identity. Its name televisions show is a setting,
 /// which [`description`](Self::description) takes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,8 +70,19 @@ impl Device {
                 "<service><serviceType>{service_type}</serviceType><serviceId>urn:upnp-org:serviceId:{id}</serviceId><SCPDURL>/dlna/{path}.xml</SCPDURL><controlURL>/dlna/{path}/control</controlURL><eventSubURL>/dlna/{path}/events</eventSubURL></service>"
             )
         };
+        let icons: String = ICONS
+            .iter()
+            .map(|icon| {
+                format!(
+                    "<icon><mimetype>{}</mimetype><width>{size}</width><height>{size}</height><depth>24</depth><url>/dlna/icons/{}</url></icon>",
+                    icon.media_type,
+                    icon.name,
+                    size = icon.size,
+                )
+            })
+            .collect();
         format!(
-            r#"<?xml version="1.0" encoding="utf-8"?><root xmlns="urn:schemas-upnp-org:device-1-0" xmlns:dlna="urn:schemas-dlna-org:device-1-0"><specVersion><major>1</major><minor>0</minor></specVersion><device><deviceType>{DEVICE_TYPE}</deviceType><friendlyName>{}</friendlyName><manufacturer>TorrPlay</manufacturer><manufacturerURL>https://github.com/skunkie/torrplay-rs</manufacturerURL><modelDescription>TorrPlay media server</modelDescription><modelName>TorrPlay</modelName><modelNumber>{}</modelNumber><UDN>{}</UDN><dlna:X_DLNADOC>DMS-1.50</dlna:X_DLNADOC><serviceList>{}{}</serviceList></device></root>"#,
+            r#"<?xml version="1.0" encoding="utf-8"?><root xmlns="urn:schemas-upnp-org:device-1-0" xmlns:dlna="urn:schemas-dlna-org:device-1-0"><specVersion><major>1</major><minor>0</minor></specVersion><device><deviceType>{DEVICE_TYPE}</deviceType><friendlyName>{}</friendlyName><manufacturer>TorrPlay</manufacturer><manufacturerURL>https://github.com/skunkie/torrplay-rs</manufacturerURL><modelDescription>TorrPlay media server</modelDescription><modelName>TorrPlay</modelName><modelNumber>{}</modelNumber><UDN>{}</UDN><dlna:X_DLNADOC>DMS-1.50</dlna:X_DLNADOC><iconList>{icons}</iconList><serviceList>{}{}</serviceList></device></root>"#,
             escape(friendly_name),
             escape(&self.version),
             escape(&self.udn()),
@@ -236,6 +284,8 @@ mod tests {
             "<dlna:X_DLNADOC>DMS-1.50</dlna:X_DLNADOC>",
             "<controlURL>/dlna/content-directory/control</controlURL>",
             "<SCPDURL>/dlna/connection-manager.xml</SCPDURL>",
+            "<icon><mimetype>image/png</mimetype><width>48</width><height>48</height><depth>24</depth><url>/dlna/icons/icon-48.png</url></icon>",
+            "<icon><mimetype>image/jpeg</mimetype><width>120</width><height>120</height><depth>24</depth><url>/dlna/icons/icon-120.jpg</url></icon>",
         ] {
             assert!(description.contains(expected), "{expected}\n{description}");
         }

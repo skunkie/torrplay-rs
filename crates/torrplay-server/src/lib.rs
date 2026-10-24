@@ -172,6 +172,7 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
             post(credentials::create_playback_token::<E>),
         )
         .route("/dlna/description.xml", get(dlna::device::<E>))
+        .route("/dlna/icons/{icon}", get(dlna::get_icon::<E>))
         .route(
             "/dlna/content-directory.xml",
             get(dlna::content_directory_description::<E>),
