@@ -100,11 +100,21 @@ document through its generated type.
 cargo run -p torrplay -- --help
 ```
 
-`torrplay` serves the API on `127.0.0.1:8080` by default and refuses
-addresses that are not loopback, since the API has no authentication. Its
-options set the API address, the BitTorrent peer port (4240), the cache
-capacity in bytes (256 MiB), and the log level of TorrPlay's own logs, which
-go to standard error; other crates log warnings and errors only. The engine
+`torrplay` serves the API on `127.0.0.1:8080` by default; `--listen` may
+name any address, and the application warns when one beyond loopback is
+served while authentication is off. `--allowed-host` adds a host name
+requests may give, such as a reverse proxy's. Its other options set the
+BitTorrent peer port (4240) and the log level of TorrPlay's own logs, which
+go to standard error; other crates log warnings and errors only.
+
+Authentication is off until a password is set through the API or on the
+command line of the stopped application:
+
+```bash
+printf '%s\n' 'a long passphrase' | cargo run -p torrplay -- password set
+```
+
+`torrplay password remove` turns it off again and revokes every token. The engine
 uses ADR 2's network configuration, so a running instance reaches the public
 swarm through DHT and trackers.
 

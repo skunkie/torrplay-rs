@@ -93,9 +93,11 @@ document that schedules it.
 
 | Feature | Go TorrPlay | Status | Evidence or plan |
 |---|---|---|---|
-| Sign-in with tokens | `POST /oauth/token` | Planned | Authentication; the prototype listens on loopback only |
-| Scoped access tokens | `POST /api/v1/tokens` | Planned | Scoped playback access |
-| A playback token for external players | `playback_token` | Planned | Scoped playback access |
+| Sign-in with tokens | `POST /oauth/token` | Verified | `POST /api/v1/access-tokens`; AUT scenarios |
+| Scoped access tokens | `POST /api/v1/tokens` | Verified | `api` and `playback` access tokens; AUT-05 |
+| A playback token for external players | `playback_token` | Verified | `POST /api/v1/playback-tokens`; AUT-06 |
+| HTTP Basic authentication | `basicAuth` | Excluded | Bearer tokens only, so browsers never cache the password |
+| Disabling authentication through the environment | `TORRPLAY_DISABLE_AUTH` | Excluded | `torrplay password remove` on the stopped application instead; AUT-11 |
 
 ## Integrations
 
@@ -148,5 +150,7 @@ These differ from Go TorrPlay by decision; the linked documents record why.
 - Playback positions and viewed marks live on the server, per profile,
   instead of in one browser's storage, and up next is new
   ([lifecycle](lifecycle.md#profiles-and-progress)).
-- The prototype listens on loopback only, so it has no authentication until
-  authentication is designed.
+- The password is stored as an Argon2id hash instead of in the settings,
+  access tokens are stored, named, and revocable instead of signed with one
+  secret, and every request must name an allowed host
+  ([lifecycle](lifecycle.md#authentication)).

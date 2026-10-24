@@ -25,7 +25,7 @@ use crate::images::{self, Images};
 use crate::{StoreError, StoredTorrent};
 
 /// The schema version this build creates and migrates to.
-pub(crate) const VERSION: u32 = 8;
+pub(crate) const VERSION: u32 = 9;
 
 /// The schema at each version, applied in order to reach the next one.
 const MIGRATIONS: [&str; VERSION as usize] = [
@@ -144,6 +144,26 @@ const MIGRATIONS: [&str; VERSION as usize] = [
         PRIMARY KEY (profile_id, entry_id)
     ) STRICT;
     CREATE INDEX up_next_dismissals_torrent_id_idx ON up_next_dismissals (torrent_id);",
+    // Version 9: the password's hash, NULL while authentication is off, the
+    // key that signs playback tokens, one row, and access tokens by their
+    // secrets' digests.
+    "CREATE TABLE credentials (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        password_hash TEXT,
+        password_updated_at_ns INTEGER CHECK (password_updated_at_ns >= 0),
+        signing_key BLOB NOT NULL CHECK (length(signing_key) = 32),
+        CHECK ((password_hash IS NULL) = (password_updated_at_ns IS NULL))
+    ) STRICT;
+    CREATE TABLE access_tokens (
+        id TEXT PRIMARY KEY,
+        secret_digest BLOB NOT NULL CHECK (length(secret_digest) = 32),
+        name TEXT NOT NULL,
+        scope TEXT NOT NULL CHECK (scope IN ('api', 'playback')),
+        created_at_ns INTEGER NOT NULL CHECK (created_at_ns >= 0),
+        expires_at_ns INTEGER CHECK (expires_at_ns >= 0),
+        last_used_at_ns INTEGER CHECK (last_used_at_ns >= 0),
+        CONSTRAINT access_tokens_secret_digest_key UNIQUE (secret_digest)
+    ) STRICT;",
 ];
 
 /// Opens the database at `path`, takes its lock, and migrates it.

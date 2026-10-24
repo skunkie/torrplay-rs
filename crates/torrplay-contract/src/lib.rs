@@ -13,9 +13,13 @@
 //! also records which documented responses tests have produced, so a test can
 //! require all of them.
 //!
-//! Every operation may also answer `405` and `406`, which the document's
-//! description assigns to the API conventions rather than to each
-//! operation; both must be Problem Details, and `405` must carry `Allow`.
+//! Every operation may also answer `405`, `406`, and `421`, and one whose
+//! security requirements name a scheme may answer `401` and `403`, which
+//! the document's description assigns to the API conventions rather than to
+//! each operation. All must be Problem Details; `405` must carry `Allow`,
+//! and `401` `WWW-Authenticate`. A security scheme that reads an API key
+//! from the query allows that query parameter on the operations that name
+//! it.
 
 mod multipart;
 mod strict;
@@ -182,6 +186,11 @@ struct Operation {
     segments: Vec<Option<String>>,
     pointer: String,
     parameters: Vec<Parameter>,
+    /// Whether a security requirement names a scheme, so a request may be
+    /// refused for its credentials.
+    secured: bool,
+    /// The query parameters its security schemes read credentials from.
+    credential_parameters: Vec<String>,
 }
 
 /// The contract and the coverage of its responses.
@@ -279,6 +288,7 @@ impl Contract {
                         parameters.push(self.parameter(&format!("{list}/{index}"))?);
                     }
                 }
+                let (secured, credential_parameters) = self.security(operation, &pointer)?;
                 operations.push(Operation {
                     id,
                     method: method.clone(),
@@ -289,10 +299,51 @@ impl Contract {
                         .collect(),
                     pointer,
                     parameters,
+                    secured,
+                    credential_parameters,
                 });
             }
         }
         Ok(operations)
+    }
+
+    /// Reads an operation's security requirements, or the document's: whether
+    /// any names a scheme, and the query parameters of those schemes that
+    /// read an API key from the query.
+    fn security(
+        &self,
+        operation: &Value,
+        pointer: &str,
+    ) -> Result<(bool, Vec<String>), ContractError> {
+        let Some(requirements) = operation
+            .get("security")
+            .or_else(|| self.document.get("security"))
+            .and_then(Value::as_array)
+        else {
+            return Ok((false, Vec::new()));
+        };
+        let mut secured = false;
+        let mut parameters = Vec::new();
+        for requirement in requirements {
+            let names = requirement
+                .as_object()
+                .ok_or_else(|| malformed(pointer, "a security requirement is not an object"))?;
+            for name in names.keys() {
+                secured = true;
+                let scheme_pointer = format!("/components/securitySchemes/{}", escape(name));
+                let scheme = self
+                    .document
+                    .pointer(&scheme_pointer)
+                    .ok_or_else(|| malformed(&scheme_pointer, "an undefined security scheme"))?;
+                let field = |key: &str| scheme.get(key).and_then(Value::as_str);
+                if field("type") == Some("apiKey") && field("in") == Some("query") {
+                    let parameter = field("name")
+                        .ok_or_else(|| malformed(&scheme_pointer, "an API key without a name"))?;
+                    parameters.push(parameter.to_owned());
+                }
+            }
+        }
+        Ok((secured, parameters))
     }
 
     fn parameter(&self, pointer: &str) -> Result<Parameter, ContractError> {
@@ -463,6 +514,7 @@ impl Contract {
                 .parameters
                 .iter()
                 .any(|parameter| parameter.location == Location::Query && &parameter.name == name)
+                && !operation.credential_parameters.contains(name)
             {
                 violations.push(Violation::UnknownQueryParameter(name.clone()));
             }
@@ -725,9 +777,19 @@ impl Contract {
                     observed.insert((operation.id.clone(), status));
                 }
             }
-            (None, 405 | 406) => {
+            (None, 405 | 406 | 421) => {
                 if status == 405 && !response.headers().contains_key(http::header::ALLOW) {
                     violations.push(Violation::MissingHeader("Allow".into()));
+                }
+                self.check_problem(status, response, &mut violations);
+            }
+            (None, 401 | 403) if operation.is_some_and(|operation| operation.secured) => {
+                if status == 401
+                    && !response
+                        .headers()
+                        .contains_key(http::header::WWW_AUTHENTICATE)
+                {
+                    violations.push(Violation::MissingHeader("WWW-Authenticate".into()));
                 }
                 self.check_problem(status, response, &mut violations);
             }
@@ -854,7 +916,8 @@ impl Contract {
         }
     }
 
-    /// Checks a `405` or `406` body against the problem schema.
+    /// Checks the body of a response the conventions assign to every
+    /// operation against the problem schema.
     fn check_problem<C: AsRef<[u8]>>(
         &self,
         status: u16,

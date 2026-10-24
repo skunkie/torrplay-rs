@@ -6,7 +6,7 @@
 //! keeps milestone 3's exit criterion, that CI detects deliberate contract
 //! violations, true as the harness changes.
 
-use http::header::{ALLOW, CACHE_CONTROL, CONTENT_TYPE, ETAG};
+use http::header::{ALLOW, CACHE_CONTROL, CONTENT_TYPE, ETAG, WWW_AUTHENTICATE};
 
 use super::*;
 
@@ -90,7 +90,7 @@ fn has_invalid_body(found: &[Violation], needle: &str) -> bool {
 #[test]
 fn the_contract_parses_with_every_operation() {
     let contract = fresh();
-    assert_eq!(contract.operations.len(), 42);
+    assert_eq!(contract.operations.len(), 50);
     assert!(
         contract
             .documented_responses()
@@ -520,6 +520,68 @@ fn every_operation_may_answer_405_and_406() {
             method: "PUT".into(),
             template: "/api/v1/torrents/{torrent_id}".into(),
         }]
+    );
+}
+
+#[test]
+fn secured_operations_may_answer_401_and_403() {
+    let contract = fresh();
+    let unauthorized = json(
+        401,
+        "application/problem+json",
+        &problem(401, &format!("{PROBLEM_TYPE_BASE}authentication-required")),
+        &[(WWW_AUTHENTICATE, "Bearer realm=\"TorrPlay\"")],
+    );
+    contract
+        .check_response(&request(Method::GET, TORRENT), &unauthorized)
+        .unwrap();
+    let mut without_challenge = unauthorized;
+    without_challenge.headers_mut().remove(WWW_AUTHENTICATE);
+    assert_eq!(
+        violations(contract.check_response(&request(Method::GET, TORRENT), &without_challenge)),
+        [Violation::MissingHeader("WWW-Authenticate".into())]
+    );
+    let forbidden = json(
+        403,
+        "application/problem+json",
+        &problem(403, &format!("{PROBLEM_TYPE_BASE}insufficient-scope")),
+        &[],
+    );
+    contract
+        .check_response(&request(Method::GET, TORRENT), &forbidden)
+        .unwrap();
+    assert_eq!(
+        violations(contract.check_response(&request(Method::GET, "/livez"), &forbidden)),
+        [Violation::UndocumentedStatus(403)],
+        "an operation that needs no credentials refuses none"
+    );
+}
+
+#[test]
+fn every_operation_may_answer_421() {
+    let contract = fresh();
+    let misdirected = json(
+        421,
+        "application/problem+json",
+        &problem(421, &format!("{PROBLEM_TYPE_BASE}misdirected-request")),
+        &[],
+    );
+    contract
+        .check_response(&request(Method::GET, TORRENT), &misdirected)
+        .unwrap();
+}
+
+#[test]
+fn a_query_credential_is_allowed_only_where_its_scheme_is() {
+    let contract = fresh();
+    contract
+        .check_request(&request(Method::GET, &format!("{CONTENT}?token=tpp_abc")))
+        .unwrap();
+    assert_eq!(
+        violations(
+            contract.check_request(&request(Method::GET, &format!("{TORRENT}?token=tpp_abc")))
+        ),
+        [Violation::UnknownQueryParameter("token".into())]
     );
 }
 

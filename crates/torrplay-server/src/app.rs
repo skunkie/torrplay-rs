@@ -16,9 +16,10 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use tokio::sync::MutexGuard as LaneGuard;
+use torrplay_core::credentials::{AllowedHosts, AttemptLimiter, Credentials};
 use torrplay_core::engine::{CacheStatistics, Engine, EngineError, Source};
 use torrplay_core::id::{ProfileId, TorrentId, random_torrent_id_bytes};
 use torrplay_core::lifecycle::{Failure, ObservedState, Readiness, StorageMode};
@@ -26,7 +27,8 @@ use torrplay_core::metadata::Metadata;
 use torrplay_core::profiles::{DEFAULT_PROFILE_NAME, Profile, Viewing};
 use torrplay_core::registry::{Registry, TorrentRecord};
 use torrplay_store::{
-    Store, StoreError, StoredDismissal, StoredProgress, StoredSettings, StoredTorrent,
+    Store, StoreError, StoredCredentials, StoredDismissal, StoredProgress, StoredSettings,
+    StoredTorrent,
 };
 
 use crate::problem::Problem;
@@ -34,6 +36,10 @@ use crate::problem::Problem;
 /// How long a request body may take to arrive by default, as the contract
 /// documents.
 const DEFAULT_BODY_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The source of the current time for credentials' expiry, which tests
+/// replace.
+pub type Clock = Arc<dyn Fn() -> SystemTime + Send + Sync>;
 
 /// The state of a TorrPlay server over the engine `E`.
 pub struct App<E> {
@@ -50,6 +56,13 @@ pub struct App<E> {
     /// Set until [`App::restore`] has registered the stored torrents.
     restoring: AtomicBool,
     shutting_down: AtomicBool,
+    credentials: Credentials,
+    /// Serializes changes to the credentials and password checks, so one
+    /// password is hashed at a time.
+    credential_writes: tokio::sync::Mutex<()>,
+    limiter: Mutex<AttemptLimiter>,
+    allowed_hosts: AllowedHosts,
+    clock: Clock,
 }
 
 /// What the server last learned from the engine. Requests answered from
@@ -117,7 +130,59 @@ impl<E: Engine> App<E> {
             settings: Mutex::new(StoredSettings::default()),
             restoring: AtomicBool::new(true),
             shutting_down: AtomicBool::new(false),
+            credentials: Credentials::empty(),
+            credential_writes: tokio::sync::Mutex::new(()),
+            limiter: Mutex::new(AttemptLimiter::default()),
+            allowed_hosts: AllowedHosts::default(),
+            clock: Arc::new(SystemTime::now),
         }
+    }
+
+    /// Runs with the password, signing key, and access tokens the store held
+    /// at startup.
+    pub fn with_credentials(mut self, stored: StoredCredentials) -> Self {
+        self.credentials = Credentials::new(stored.password, stored.key, stored.tokens);
+        self
+    }
+
+    /// Allows requests to name `hosts` beyond those always allowed.
+    pub fn with_allowed_hosts(mut self, hosts: AllowedHosts) -> Self {
+        self.allowed_hosts = hosts;
+        self
+    }
+
+    /// Reads the time for credentials' expiry from `clock`.
+    pub fn with_clock(mut self, clock: Clock) -> Self {
+        self.clock = clock;
+        self
+    }
+
+    /// Whether a password is set, so requests need credentials.
+    pub fn authentication_enabled(&self) -> bool {
+        self.credentials.is_enabled()
+    }
+
+    pub(crate) fn credentials(&self) -> &Credentials {
+        &self.credentials
+    }
+
+    /// Takes the lane of credential changes and password checks.
+    pub(crate) async fn credential_lane(&self) -> LaneGuard<'_, ()> {
+        self.credential_writes.lock().await
+    }
+
+    pub(crate) fn limiter(&self) -> MutexGuard<'_, AttemptLimiter> {
+        // The limiter's every update is a whole assignment.
+        self.limiter.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub(crate) fn allowed_hosts(&self) -> &AllowedHosts {
+        &self.allowed_hosts
+    }
+
+    /// The current time for credentials' expiry.
+    pub(crate) fn now(&self) -> SystemTime {
+        (self.clock)()
     }
 
     /// Runs with the settings the store held at startup, and gives them to

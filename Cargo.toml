@@ -32,6 +32,8 @@ unwrap_used = "warn"
 
 [workspace.dependencies]
 anyhow = "1"
+# Password hashing with Argon2id, from RustCrypto like sha2.
+argon2 = { version = "0.6", default-features = false, features = ["alloc", "password-hash"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "http2", "matched-path", "tokio"] }
 # librqbit's bencode, from the same fork commit, to recognize v2-only
 # torrents librqbit cannot parse.
@@ -50,6 +52,8 @@ fs4 = "1.1"
 getrandom = { version = "0.3.4", features = ["std"] }
 # The HTTP/2 reset reasons hyper reads from stream errors.
 h2 = "0.4"
+# Signing playback tokens, over the same digest release as sha2.
+hmac = "0.13"
 http = "1"
 http-body-util = "0.1"
 # Full case folding for search, from the same ICU4X release as the

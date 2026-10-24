@@ -241,6 +241,9 @@ The initial problem types, by name, each appended to the base above:
 | Name | Status | Used when |
 |---|---|---|
 | `malformed-request` | 400 | The body cannot be parsed, or a path or query parameter is unknown, malformed, or out of bounds, including an invalid cursor. |
+| `authentication-required` | 401 | Authentication is on and the request carries no valid credential. |
+| `insufficient-scope` | 403 | The credential's scope or torrent does not allow the operation. |
+| `invalid-credentials` | 403 | The password a request gives does not match. |
 | `not-found` | 404 | The target resource does not exist. |
 | `method-not-allowed` | 405 | The resource does not support the method. |
 | `not-acceptable` | 406 | No supported media type matches `Accept`. |
@@ -250,13 +253,16 @@ The initial problem types, by name, each appended to the base above:
 | `too-many-preloads` | 409 | Creating a preload would exceed the limit of active preloads per file or in total. |
 | `duplicate-profile` | 409 | Another profile has the name; the `profile` extension member holds its URI. |
 | `too-many-profiles` | 409 | Creating a profile would exceed the limit of profiles. |
+| `too-many-access-tokens` | 409 | Creating an access token would exceed the limit of access tokens. |
 | `precondition-failed` | 412 | `If-Match` does not match the current ETag. |
 | `content-too-large` | 413 | The request body exceeds its documented limit. |
 | `unsupported-media-type` | 415 | The request's `Content-Type` is not accepted by the operation. |
 | `range-not-satisfiable` | 416 | No requested range overlaps the content. |
 | `validation-failed` | 422 | The body parses but violates its schema or a documented rule, including unknown and read-only members, invalid torrent metainfo, and an unparsable magnet URI. |
+| `misdirected-request` | 421 | The request's `Host` is not an allowed host. |
 | `unsupported-torrent` | 422 | A valid torrent's version or features are not supported, such as a v2-only torrent, pieces longer than cache capacity in memory storage, or files the download directory cannot hold in disk storage. |
 | `precondition-required` | 428 | A PATCH omits `If-Match`. |
+| `too-many-attempts` | 429 | Recent wrong passwords make the request wait; `Retry-After` gives how long. |
 | `internal-error` | 500 | An unexpected failure. |
 | `engine-unavailable` | 503 | The torrent engine cannot serve the request right now; `Retry-After` is sent when a retry time is known. |
 | `insufficient-storage` | 507 | The download directory's filesystem has less free space than a torrent in disk storage needs. |
@@ -280,9 +286,18 @@ status is not.
 
 ## Security
 
-- The prototype listens on loopback only and has no authentication.
-  Authentication and authorization are specified in the contract before
-  remote access is enabled.
+- Authentication is off until a password is set; then every operation
+  needs a credential unless its security requirements include the empty
+  one ([lifecycle](lifecycle.md#authentication)). The contract describes
+  the credentials as the `accessToken` bearer scheme and the
+  `playbackToken` query scheme.
+- Any operation that needs a credential may answer `401
+  authentication-required`, with `WWW-Authenticate`, and `403
+  insufficient-scope`; any operation may answer `421 misdirected-request`
+  for a `Host` that is not allowed. Like `405` and `406`, the contract
+  leaves these to the conventions rather than repeating them on each
+  operation.
+- Responses that hold a secret carry `Cache-Control: no-store`.
 - Request bodies, uploaded torrent files, and magnet URIs have documented
   size limits, and oversized input is rejected before it is fully buffered.
   A request body must arrive within the request body timeout, so a client

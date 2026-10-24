@@ -272,7 +272,8 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 
 **Profile**
 : A person's viewing identity, with its own progress and up next. It is
-  independent of authentication, which decides only who may use it.
+  independent of authentication, which decides only who may use the
+  application.
 
 **Avatar**
 : An image a client uploads to show a profile, under a poster's rules.
@@ -293,3 +294,36 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 **Dismissal**
 : A profile's choice to hide an up next entry until it saves progress for
   that entry again.
+
+## Authentication
+
+**Authentication**
+: The check that a request carries a valid credential. It is on while a
+  password is set and off otherwise.
+
+**Password**
+: The one secret that signs a client in. The application keeps only its
+  hash.
+
+**Access token**
+: A named, revocable credential a client gets by signing in and sends as
+  a bearer token. Its **secret** is shown once; the application keeps a
+  digest.
+
+**Scope**
+: What a credential allows: `api`, every operation, or `playback`, only
+  reading file content and posters.
+
+**Playback operation**
+: `GET` or `HEAD` of a file's content or a torrent's poster, the operations
+  a `playback` credential allows.
+
+**Playback token**
+: A signed, expiring credential for the playback operations of one torrent
+  or of all, carried in a URL's `token` query parameter. The application
+  does not store it.
+
+**Allowed host**
+: A name a request's `Host` may give: an IP address, `localhost`, a
+  `.localhost` or `.local` name, or one configured with `--allowed-host`.
+  Other names are refused, which defeats DNS rebinding.

@@ -167,6 +167,7 @@ async fn an_engine_that_cannot_start_stops_the_application() -> anyhow::Result<(
             LibrqbitEngine::new(config),
             store,
             contents,
+            torrplay_core::credentials::AllowedHosts::default(),
             ShutdownTimings::default(),
             std::future::pending(),
         ),

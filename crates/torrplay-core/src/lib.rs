@@ -18,6 +18,8 @@
 //!   the kind inferred from file names.
 //! - [`image`]: uploaded images, posters and avatars.
 //! - [`profiles`]: profiles, their progress, and up next.
+//! - [`credentials`]: the password, access tokens, playback tokens, the
+//!   limit on wrong passwords, and the allowed hosts.
 //! - [`registry`]: the registered torrents, with atomic duplicate detection.
 //! - [`pagination`]: page sizes and opaque cursors for collections.
 //! - [`search`]: matching and ranking searches, shared by every interface.
@@ -32,6 +34,7 @@
 //! The crate has no HTTP or engine dependencies; mapping its types to the
 //! representations of `api/openapi.yaml` is the server's job.
 
+pub mod credentials;
 pub mod engine;
 #[cfg(feature = "fake")]
 pub mod fake;

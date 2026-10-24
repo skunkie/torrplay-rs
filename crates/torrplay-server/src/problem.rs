@@ -29,6 +29,9 @@ pub(crate) const PROBLEM_JSON: &str = "application/problem+json";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ProblemType {
     MalformedRequest,
+    AuthenticationRequired,
+    InsufficientScope,
+    InvalidCredentials,
     NotFound,
     MethodNotAllowed,
     NotAcceptable,
@@ -38,13 +41,16 @@ pub(crate) enum ProblemType {
     TooManyPreloads,
     DuplicateProfile,
     TooManyProfiles,
+    TooManyAccessTokens,
     PreconditionFailed,
     ContentTooLarge,
     UnsupportedMediaType,
     RangeNotSatisfiable,
+    MisdirectedRequest,
     ValidationFailed,
     UnsupportedTorrent,
     PreconditionRequired,
+    TooManyAttempts,
     InternalError,
     EngineUnavailable,
     InsufficientStorage,
@@ -54,6 +60,9 @@ impl ProblemType {
     fn name(self) -> &'static str {
         match self {
             Self::MalformedRequest => "malformed-request",
+            Self::AuthenticationRequired => "authentication-required",
+            Self::InsufficientScope => "insufficient-scope",
+            Self::InvalidCredentials => "invalid-credentials",
             Self::NotFound => "not-found",
             Self::MethodNotAllowed => "method-not-allowed",
             Self::NotAcceptable => "not-acceptable",
@@ -63,13 +72,16 @@ impl ProblemType {
             Self::TooManyPreloads => "too-many-preloads",
             Self::DuplicateProfile => "duplicate-profile",
             Self::TooManyProfiles => "too-many-profiles",
+            Self::TooManyAccessTokens => "too-many-access-tokens",
             Self::PreconditionFailed => "precondition-failed",
             Self::ContentTooLarge => "content-too-large",
             Self::UnsupportedMediaType => "unsupported-media-type",
             Self::RangeNotSatisfiable => "range-not-satisfiable",
+            Self::MisdirectedRequest => "misdirected-request",
             Self::ValidationFailed => "validation-failed",
             Self::UnsupportedTorrent => "unsupported-torrent",
             Self::PreconditionRequired => "precondition-required",
+            Self::TooManyAttempts => "too-many-attempts",
             Self::InternalError => "internal-error",
             Self::EngineUnavailable => "engine-unavailable",
             Self::InsufficientStorage => "insufficient-storage",
@@ -79,6 +91,9 @@ impl ProblemType {
     fn title(self) -> &'static str {
         match self {
             Self::MalformedRequest => "Malformed request",
+            Self::AuthenticationRequired => "Authentication required",
+            Self::InsufficientScope => "Insufficient scope",
+            Self::InvalidCredentials => "Invalid credentials",
             Self::NotFound => "Not found",
             Self::MethodNotAllowed => "Method not allowed",
             Self::NotAcceptable => "Not acceptable",
@@ -88,13 +103,16 @@ impl ProblemType {
             Self::TooManyPreloads => "Too many preloads",
             Self::DuplicateProfile => "Duplicate profile",
             Self::TooManyProfiles => "Too many profiles",
+            Self::TooManyAccessTokens => "Too many access tokens",
             Self::PreconditionFailed => "Precondition failed",
             Self::ContentTooLarge => "Content too large",
             Self::UnsupportedMediaType => "Unsupported media type",
             Self::RangeNotSatisfiable => "Range not satisfiable",
+            Self::MisdirectedRequest => "Misdirected request",
             Self::ValidationFailed => "Validation failed",
             Self::UnsupportedTorrent => "Unsupported torrent",
             Self::PreconditionRequired => "Precondition required",
+            Self::TooManyAttempts => "Too many attempts",
             Self::InternalError => "Internal error",
             Self::EngineUnavailable => "Engine unavailable",
             Self::InsufficientStorage => "Insufficient storage",
@@ -104,6 +122,8 @@ impl ProblemType {
     fn status(self) -> StatusCode {
         match self {
             Self::MalformedRequest => StatusCode::BAD_REQUEST,
+            Self::AuthenticationRequired => StatusCode::UNAUTHORIZED,
+            Self::InsufficientScope | Self::InvalidCredentials => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             Self::NotAcceptable => StatusCode::NOT_ACCEPTABLE,
@@ -112,13 +132,16 @@ impl ProblemType {
             | Self::DuplicateTorrent
             | Self::TooManyPreloads
             | Self::DuplicateProfile
-            | Self::TooManyProfiles => StatusCode::CONFLICT,
+            | Self::TooManyProfiles
+            | Self::TooManyAccessTokens => StatusCode::CONFLICT,
             Self::PreconditionFailed => StatusCode::PRECONDITION_FAILED,
             Self::ContentTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::RangeNotSatisfiable => StatusCode::RANGE_NOT_SATISFIABLE,
+            Self::MisdirectedRequest => StatusCode::MISDIRECTED_REQUEST,
             Self::ValidationFailed | Self::UnsupportedTorrent => StatusCode::UNPROCESSABLE_ENTITY,
             Self::PreconditionRequired => StatusCode::PRECONDITION_REQUIRED,
+            Self::TooManyAttempts => StatusCode::TOO_MANY_REQUESTS,
             Self::InternalError => StatusCode::INTERNAL_SERVER_ERROR,
             Self::EngineUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::InsufficientStorage => StatusCode::INSUFFICIENT_STORAGE,
@@ -440,8 +463,11 @@ impl From<EngineError> for Problem {
 mod tests {
     use super::*;
 
-    const ALL: [ProblemType; 20] = [
+    const ALL: [ProblemType; 26] = [
         ProblemType::MalformedRequest,
+        ProblemType::AuthenticationRequired,
+        ProblemType::InsufficientScope,
+        ProblemType::InvalidCredentials,
         ProblemType::NotFound,
         ProblemType::MethodNotAllowed,
         ProblemType::NotAcceptable,
@@ -451,13 +477,16 @@ mod tests {
         ProblemType::TooManyPreloads,
         ProblemType::DuplicateProfile,
         ProblemType::TooManyProfiles,
+        ProblemType::TooManyAccessTokens,
         ProblemType::PreconditionFailed,
         ProblemType::ContentTooLarge,
         ProblemType::UnsupportedMediaType,
         ProblemType::RangeNotSatisfiable,
+        ProblemType::MisdirectedRequest,
         ProblemType::ValidationFailed,
         ProblemType::UnsupportedTorrent,
         ProblemType::PreconditionRequired,
+        ProblemType::TooManyAttempts,
         ProblemType::InternalError,
         ProblemType::EngineUnavailable,
         ProblemType::InsufficientStorage,

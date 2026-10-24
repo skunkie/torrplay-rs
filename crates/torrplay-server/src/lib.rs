@@ -14,16 +14,21 @@
 //! define, including `405` and `406` for every resource.
 //!
 //! Each response is logged with `tracing` by method, route template, and
-//! status. Logs never carry request paths, queries, or bodies, and engine
-//! errors are logged with URLs and magnet URIs redacted, so private tracker
-//! passkeys stay out of them.
+//! status. Logs never carry request paths, queries, headers, or bodies, and
+//! engine errors are logged with URLs and magnet URIs redacted, so private
+//! tracker passkeys and credentials stay out of them.
 //!
-//! Binding the listener and the shutdown sequence belong to the caller; the
-//! prototype listens on loopback only.
+//! Before any handler, a guard refuses requests that name a host the
+//! application does not serve and, while a password is set, requests
+//! without a credential their operation allows.
+//!
+//! Binding the listener and the shutdown sequence belong to the caller.
 
 mod app;
+mod authentication;
 mod body;
 mod content;
+mod credentials;
 mod files;
 mod headers;
 mod images;
@@ -48,10 +53,10 @@ use axum::extract::{MatchedPath, Request};
 use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{any, get};
+use axum::routing::{any, get, post};
 use torrplay_core::engine::Engine;
 
-pub use crate::app::App;
+pub use crate::app::{App, Clock};
 use crate::problem::{Problem, ProblemType};
 
 /// Returns the router of the API over `app`.
@@ -144,9 +149,31 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
             "/api/v1/profiles/{profile_id}/up-next/{entry_id}",
             get(up_next::get::<E>).delete(up_next::delete::<E>),
         )
+        .route(
+            "/api/v1/password",
+            get(credentials::get_password::<E>)
+                .put(credentials::set_password::<E>)
+                .delete(credentials::delete_password::<E>),
+        )
+        .route(
+            "/api/v1/access-tokens",
+            get(credentials::list_access_tokens::<E>).post(credentials::create_access_token::<E>),
+        )
+        .route(
+            "/api/v1/access-tokens/{access_token_id}",
+            get(credentials::get_access_token::<E>).delete(credentials::delete_access_token::<E>),
+        )
+        .route(
+            "/api/v1/playback-tokens",
+            post(credentials::create_playback_token::<E>),
+        )
         .route("/livez", get(service::liveness))
         .route("/readyz", get(service::readiness::<E>))
         .fallback(unknown_resource)
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&app),
+            authentication::guard::<E>,
+        ))
         .layer(axum::middleware::map_response(method_not_allowed))
         .layer(axum::middleware::from_fn(log_response))
         .with_state(app)

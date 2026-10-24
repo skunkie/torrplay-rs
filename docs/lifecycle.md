@@ -472,9 +472,9 @@ Every page of the collection carries facets for global navigation:
 
 A profile is a person's viewing identity, like a streaming service's "Who
 is watching?". Progress and up next belong to a profile; torrents, files,
-and the library are the same for every profile. Authentication, once
-designed, decides which profiles a client may use; it does not change
-them.
+and the library are the same for every profile. Authentication decides
+who may use the application, not who is watching: every access token may
+use every profile.
 
 - At startup the application creates a profile named `Default` if none is
   stored, so a client that never chooses a profile still works.
@@ -530,6 +530,110 @@ those served with a `video/` media type:
 - Each entry embeds its torrent's and file's current representations and
   the file's progress, and the page's ETag digests the page.
 
+## Authentication
+
+Authentication is off until a password is set. While it is off, anyone who
+can reach the application may use every operation, credentials are ignored,
+and content URLs need no token. There is one password and no user names:
+the application serves one household, whose people are profiles.
+
+- `PUT /api/v1/password` sets the password, `201` with `Location`, which
+  turns authentication on. While it is off anyone may set it, as anyone may
+  change everything else. Changing a password that is set needs an access
+  token, as every request then does, and `current_password`; a wrong one is
+  `invalid-credentials`, and `current_password` is `validation-failed` when
+  missing while a password is set or present while none is. A change keeps
+  access tokens unless `revoke_access_tokens` is true.
+- A password has 8 to 256 characters after NFC normalization. It is stored
+  only as an Argon2id hash in PHC format, with 19 MiB of memory, 2 passes,
+  and 1 lane, and no response or log holds it.
+- `DELETE /api/v1/password` turns authentication off and revokes every
+  access token and playback token, so none works if a password is set
+  again.
+- A forgotten password is reset on the command line while the application
+  is stopped, since it holds the database's lock: `torrplay password set`
+  reads a new password from the first line of standard input, and
+  `torrplay password remove` removes it as `DELETE` does.
+
+An access token is a client's credential, created by signing in with the
+password: `POST /api/v1/access-tokens` with a name, such as the device's,
+a scope, and an optional lifetime.
+
+- The response is `201` with `Location` and the only copy of the secret:
+  `tpa_` and 256 random bits in lowercase base32. The database keeps its
+  SHA-256 digest, and the token's ID, `atk_`, is not secret.
+- The `api` scope allows every operation. The `playback` scope allows only
+  the playback operations: `GET` and `HEAD` of a file's content and of a
+  torrent's poster, for a television or a player that keeps one URL.
+- A token lasts from one hour to a year, or until it is revoked. An
+  expired token is refused as an unknown one, is neither listed nor read,
+  and is deleted at the next startup or token creation. The application
+  keeps at most 64 tokens, so a 65th is `too-many-access-tokens`.
+- `last_used_at` is updated by each request that carries the token and
+  stored at most once an hour, so after a restart it may be up to an hour
+  old.
+- `DELETE` revokes a token at once, with the playback tokens it issued; a
+  client may revoke its own to sign out. While authentication is off,
+  signing in is `lifecycle-conflict`, and no tokens exist.
+
+While a password is set, every request needs a credential except the entry
+point, the OpenAPI document, signing in, `/livez`, and `/readyz`.
+
+- A request sends an access token as `Authorization: Bearer`
+  ([RFC 6750](https://www.rfc-editor.org/rfc/rfc6750.html)). Playback
+  operations also take the `token` query parameter, for URLs that cannot
+  carry a header, with a playback token or a `playback` access token; an
+  `api` token in a URL is refused, so it stays out of history and proxy
+  logs. The header is used when both are present.
+- A request without a credential, or with an unknown, expired, or revoked
+  one, is `401 authentication-required` with
+  `WWW-Authenticate: Bearer realm="TorrPlay"`, which adds
+  `error="invalid_token"` when a credential was sent.
+- A credential whose scope does not allow the operation, or a playback
+  token of another torrent, is `403 insufficient-scope`, with
+  `error="insufficient_scope"`.
+
+A playback token, from `POST /api/v1/playback-tokens`, lets a media
+element or an external player stream without an access token.
+
+- Only an `api` access token may issue one, `200` since nothing is stored.
+  It allows the playback operations of one torrent, or of every torrent
+  when `torrent_id` is null, for 1 minute to 30 days, 1 day by default.
+  An unknown `torrent_id` is `validation-failed`. While authentication is
+  off this is `lifecycle-conflict`, since content URLs need no token.
+- The token is `tpp_` and, in lowercase base32, a version, the issuing
+  access token's ID, the expiry to the second, the torrent's ID if any,
+  and a 128-bit HMAC-SHA-256 tag under a key the database keeps. It is
+  valid until it expires, until its access token is revoked or expires, or
+  until the password is removed, which replaces the key.
+
+Wrong passwords are limited so they cannot be guessed quickly.
+
+- Signing in and changing the password share one limit: after 5
+  consecutive wrong passwords, the next is checked only after 1 second,
+  and each further failure doubles the wait, up to 60 seconds. An attempt
+  during the wait is `429 too-many-attempts` with `Retry-After`, and a
+  correct password ends the wait. The limit is in memory, so a restart
+  resets it.
+- One password is hashed at a time, so concurrent attempts cannot exhaust
+  memory.
+
+Every request but `/livez` and `/readyz` names an allowed host in `Host`,
+or `:authority` over HTTP/2, so a web page cannot reach the API through
+DNS rebinding, a name the page's server controls that it points at the
+application. That holds whether or not authentication is on.
+
+- An IP address, `localhost`, a name under `.localhost` or `.local`, and a
+  name given with `--allowed-host` are allowed, ignoring case, the port,
+  and a trailing dot. Any other name is `421 misdirected-request`. A
+  request without `Host`, which no browser sends, is not refused.
+- The application listens on loopback by default, and `--listen` may name
+  any address. It logs a warning when the address is not a loopback one
+  while authentication is off. It serves no TLS; a reverse proxy can, and
+  its host name needs `--allowed-host`.
+- Logs never record credentials: requests are logged without their
+  queries, and `Authorization` is never logged.
+
 ## Persistence
 
 The application keeps a database in its data directory, which must be on a
@@ -542,7 +646,9 @@ local filesystem, as [ADR 8](adr/0008-database.md) requires.
   torrent file built from it. The configuration includes the library
   members, and a poster is stored with its bytes, media type, digest, and
   upload time. Profiles, their avatars, progress, and dismissals are stored
-  too, and are read at startup, except avatar images.
+  too, and are read at startup, except avatar images. So are the password's
+  hash, the key that signs playback tokens, and the access tokens, by
+  their secrets' digests.
 - It records whether the application last shut down cleanly. A disk
   torrent's resume bitfield, the record of its verified pieces, lives in the
   download directory beside its files rather than in the database.

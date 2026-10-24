@@ -6,8 +6,9 @@
 //! client whose every exchange is checked against the contract.
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use http::{HeaderMap, Method, Request, Response, StatusCode, header};
 use serde_json::Value;
@@ -16,6 +17,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
+use torrplay_core::credentials::AllowedHosts;
 use torrplay_core::fake::FakeEngine;
 use torrplay_core::id::{TORRENT_ID_RANDOM_BYTES, TorrentId};
 use torrplay_core::registry::Registry;
@@ -33,6 +35,9 @@ pub struct TestServer {
     /// Stored torrents not restored yet, for a server started without
     /// restoring them.
     unrestored: Mutex<Option<Vec<StoredTorrent>>>,
+    /// How far the application's clock runs ahead, in seconds.
+    clock_offset: Arc<AtomicU64>,
+    allowed_hosts: AllowedHosts,
     addr: SocketAddr,
     base: String,
     client: reqwest::Client,
@@ -97,7 +102,25 @@ impl TestServer {
     async fn start_with(body_timeout: Option<Duration>) -> Self {
         let data = Arc::new(TempDir::new().expect("a data directory"));
         let engine = FakeEngine::with_catalog();
-        Self::start_over(data, engine, body_timeout, true).await
+        Self::start_over(data, engine, body_timeout, true, AllowedHosts::default()).await
+    }
+
+    /// Starts a server that also allows requests to name `hosts`.
+    pub async fn start_allowing(hosts: &[&str]) -> Self {
+        let data = Arc::new(TempDir::new().expect("a data directory"));
+        let hosts = AllowedHosts::new(
+            hosts
+                .iter()
+                .map(|host| AllowedHosts::normalize(host).expect("a host name"))
+                .collect(),
+        );
+        Self::start_over(data, FakeEngine::with_catalog(), None, true, hosts).await
+    }
+
+    /// Runs the application's clock `by` further ahead, for credentials'
+    /// expiry.
+    pub fn advance_clock(&self, by: Duration) {
+        self.clock_offset.fetch_add(by.as_secs(), Ordering::SeqCst);
     }
 
     /// Stops the server and starts another over the same data directory and
@@ -112,8 +135,9 @@ impl TestServer {
     /// later.
     pub async fn restart_with(self, engine: FakeEngine, restore: bool) -> Self {
         let data = Arc::clone(&self.data);
+        let hosts = self.allowed_hosts.clone();
         self.stop().await;
-        Self::start_over(data, engine, None, restore).await
+        Self::start_over(data, engine, None, restore, hosts).await
     }
 
     /// Restores the torrents a server started without restoring holds.
@@ -135,6 +159,7 @@ impl TestServer {
         engine: FakeEngine,
         body_timeout: Option<Duration>,
         restore: bool,
+        allowed_hosts: AllowedHosts,
     ) -> Self {
         let engine = Arc::new(engine);
         let (store, contents) = Store::open(data.path()).expect("the store opens");
@@ -155,7 +180,14 @@ impl TestServer {
         });
         let mut app = App::with_registry(Arc::clone(&engine), registry, store)
             .with_settings(contents.settings)
-            .with_viewing(contents.profiles, contents.progress, contents.dismissals);
+            .with_viewing(contents.profiles, contents.progress, contents.dismissals)
+            .with_credentials(contents.credentials)
+            .with_allowed_hosts(allowed_hosts.clone());
+        let clock_offset = Arc::new(AtomicU64::new(0));
+        let offset = Arc::clone(&clock_offset);
+        app = app.with_clock(Arc::new(move || {
+            SystemTime::now() + Duration::from_secs(offset.load(Ordering::SeqCst))
+        }));
         if let Some(timeout) = body_timeout {
             app = app.with_body_timeout(timeout);
         }
@@ -191,6 +223,8 @@ impl TestServer {
             issued,
             data,
             unrestored: Mutex::new(unrestored),
+            clock_offset,
+            allowed_hosts,
             addr,
             base,
             client,
@@ -224,7 +258,7 @@ impl TestServer {
         headers: &[(&str, &str)],
         body: Vec<u8>,
     ) -> Exchange {
-        let mut head = format!("{method} {path} HTTP/1.1\r\nHost: test\r\n");
+        let mut head = format!("{method} {path} HTTP/1.1\r\nHost: {}\r\n", self.addr);
         for (name, value) in headers {
             head.push_str(&format!("{name}: {value}\r\n"));
         }

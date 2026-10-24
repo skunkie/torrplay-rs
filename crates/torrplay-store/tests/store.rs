@@ -14,8 +14,9 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, SystemTime};
 
 use tempfile::TempDir;
+use torrplay_core::credentials::{AccessToken, PasswordHash, Scope, SigningKey, new_secret};
 use torrplay_core::id::{
-    FileId, InfoHashV1, ProfileId, TORRENT_ID_RANDOM_BYTES, TorrentId, UpNextEntryId,
+    AccessTokenId, FileId, InfoHashV1, ProfileId, TORRENT_ID_RANDOM_BYTES, TorrentId, UpNextEntryId,
 };
 use torrplay_core::image::{ImageInfo, ImageType};
 use torrplay_core::library::{Kind, Library};
@@ -25,6 +26,10 @@ use torrplay_core::settings::Explicit;
 use torrplay_store::{
     FILE_NAME, Store, StoreError, StoredDismissal, StoredProgress, StoredSettings, StoredTorrent,
 };
+
+/// Turns a database back into version 8, before credentials.
+const UNDO_VERSION_9: &str = "DROP TABLE access_tokens;
+    DROP TABLE credentials;";
 
 /// Turns a database back into version 7, before profiles.
 const UNDO_VERSION_8: &str = "DROP TABLE up_next_dismissals;
@@ -217,7 +222,7 @@ async fn a_newer_schema_is_refused() {
         Store::open(dir.path()),
         Err(StoreError::TooNew {
             found: 99,
-            supported: 8
+            supported: 9
         })
     ));
 }
@@ -323,7 +328,7 @@ async fn a_version_1_database_is_copied_then_migrated() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_8}
+                "{UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  DROP TABLE settings;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
@@ -362,7 +367,7 @@ async fn a_version_1_database_is_copied_then_migrated() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_8}
+                "{UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  DROP TABLE settings;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
@@ -400,7 +405,7 @@ async fn settings_from_version_2_keep_their_values_and_lack_the_cache_capacity()
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_8}
+                "{UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  ALTER TABLE settings DROP COLUMN cache_capacity_bytes;
                  ALTER TABLE settings DROP COLUMN background_downloads;
@@ -454,7 +459,7 @@ async fn settings_from_version_5_lack_the_background_downloads_switch() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_8}
+                "{UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  ALTER TABLE settings DROP COLUMN background_downloads;
                  PRAGMA user_version = 5;",
@@ -485,7 +490,7 @@ async fn torrents_from_version_3_use_memory_storage() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_8}
+                "{UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  ALTER TABLE settings DROP COLUMN background_downloads;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
@@ -739,7 +744,7 @@ async fn torrents_from_version_6_have_empty_library_members() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_8}
+                "{UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7} PRAGMA user_version = 6;"
             ))
             .unwrap();
@@ -884,11 +889,171 @@ async fn a_version_7_database_gains_empty_profiles() {
     {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
-            .execute_batch(&format!("{UNDO_VERSION_8} PRAGMA user_version = 7;"))
+            .execute_batch(&format!(
+                "{UNDO_VERSION_9} {UNDO_VERSION_8} PRAGMA user_version = 7;"
+            ))
             .unwrap();
     }
     let (_store, contents) = Store::open(dir.path()).unwrap();
     assert_eq!(contents.torrents.len(), 1);
     assert!(contents.profiles.is_empty());
     assert!(dir.path().join(format!("{FILE_NAME}.v7.bak")).exists());
+}
+
+fn access_token(n: u8, expires_at: Option<SystemTime>) -> AccessToken {
+    AccessToken {
+        id: AccessTokenId::from_random_bytes([n; TORRENT_ID_RANDOM_BYTES]),
+        name: format!("Device {n}"),
+        scope: if n.is_multiple_of(2) {
+            Scope::Api
+        } else {
+            Scope::Playback
+        },
+        created_at: SystemTime::UNIX_EPOCH + Duration::from_nanos(u64::from(n)),
+        expires_at,
+        last_used_at: None,
+        digest: new_secret().unwrap().1,
+    }
+}
+
+#[tokio::test]
+async fn credentials_survive_a_reopen_and_keep_their_signing_key() {
+    let dir = TempDir::new().unwrap();
+    let (key, hash, laptop) = {
+        let (store, contents) = Store::open(dir.path()).unwrap();
+        assert_eq!(
+            contents.credentials.password, None,
+            "authentication starts off"
+        );
+        assert!(contents.credentials.tokens.is_empty());
+        let hash = PasswordHash::new("correct horse").unwrap();
+        let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        store.set_password(&hash, at, false).await.unwrap();
+        let laptop = access_token(2, None);
+        store.insert_access_token(&laptop, &[]).await.unwrap();
+        let used = at + Duration::from_secs(60);
+        store.touch_access_token(&laptop.id, used).await.unwrap();
+        let laptop = AccessToken {
+            last_used_at: Some(used),
+            ..laptop
+        };
+        (contents.credentials.key, (hash, at), laptop)
+    };
+    let (_store, contents) = Store::open(dir.path()).unwrap();
+    assert_eq!(contents.credentials.key, key, "the key is drawn once");
+    assert_eq!(contents.credentials.password, Some(hash));
+    assert!(
+        contents
+            .credentials
+            .password
+            .unwrap()
+            .0
+            .verify("correct horse"),
+        "the hash verifies after a reopen"
+    );
+    assert_eq!(contents.credentials.tokens, [laptop]);
+}
+
+#[tokio::test]
+async fn expired_access_tokens_are_deleted_on_open_and_on_insert() {
+    let dir = TempDir::new().unwrap();
+    let past = SystemTime::UNIX_EPOCH + Duration::from_secs(1);
+    let future = SystemTime::now() + Duration::from_secs(3600);
+    {
+        let (store, _) = open(&dir);
+        store
+            .insert_access_token(&access_token(1, Some(past)), &[])
+            .await
+            .unwrap();
+        store
+            .insert_access_token(&access_token(2, Some(past)), &[])
+            .await
+            .unwrap();
+        let renewed = access_token(3, Some(future));
+        store
+            .insert_access_token(&renewed, &[access_token(2, None).id])
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        rusqlite_count(&dir, "SELECT count(*) FROM access_tokens"),
+        2,
+        "the insert deleted the expired token it was given"
+    );
+    let (store, contents) = Store::open(dir.path()).unwrap();
+    assert_eq!(
+        contents.credentials.tokens,
+        [access_token(3, Some(future))].map(|token| AccessToken {
+            digest: contents.credentials.tokens[0].digest,
+            ..token
+        })
+    );
+    drop(store);
+    assert_eq!(
+        rusqlite_count(&dir, "SELECT count(*) FROM access_tokens"),
+        1
+    );
+}
+
+#[tokio::test]
+async fn revoking_and_removing_the_password_delete_every_access_token() {
+    let dir = TempDir::new().unwrap();
+    let hash = PasswordHash::new("correct horse").unwrap();
+    let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+    let new_key = SigningKey::new().unwrap();
+    {
+        let (store, _) = open(&dir);
+        store.set_password(&hash, at, false).await.unwrap();
+        store
+            .insert_access_token(&access_token(2, None), &[])
+            .await
+            .unwrap();
+        store.set_password(&hash, at, true).await.unwrap();
+    }
+    let (store, contents) = Store::open(dir.path()).unwrap();
+    assert!(
+        contents.credentials.tokens.is_empty(),
+        "the change revoked them"
+    );
+    assert!(contents.credentials.password.is_some());
+    drop(store);
+    {
+        let (store, _) = open(&dir);
+        store
+            .insert_access_token(&access_token(4, None), &[])
+            .await
+            .unwrap();
+        store
+            .delete_access_token(&access_token(4, None).id)
+            .await
+            .unwrap();
+        store
+            .insert_access_token(&access_token(6, None), &[])
+            .await
+            .unwrap();
+        store.remove_password(&new_key).await.unwrap();
+    }
+    let (_store, contents) = Store::open(dir.path()).unwrap();
+    assert_eq!(contents.credentials.password, None);
+    assert!(contents.credentials.tokens.is_empty());
+    assert_eq!(contents.credentials.key, new_key);
+}
+
+#[tokio::test]
+async fn a_version_8_database_gains_credentials_without_a_password() {
+    let dir = TempDir::new().unwrap();
+    {
+        let (store, _) = open(&dir);
+        store.insert(torrent(1, 10)).await.unwrap();
+    }
+    {
+        let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
+        connection
+            .execute_batch(&format!("{UNDO_VERSION_9} PRAGMA user_version = 8;"))
+            .unwrap();
+    }
+    let (_store, contents) = Store::open(dir.path()).unwrap();
+    assert_eq!(contents.torrents.len(), 1);
+    assert_eq!(contents.credentials.password, None);
+    assert!(dir.path().join(format!("{FILE_NAME}.v8.bak")).exists());
 }
