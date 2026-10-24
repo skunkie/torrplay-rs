@@ -22,9 +22,10 @@ use std::time::Duration;
 
 use tokio::io::AsyncRead;
 
-use crate::id::{InfoHashV1, TorrentId};
+use crate::id::{InfoHashV1, PreloadId, TorrentId};
 use crate::lifecycle::{DesiredState, Failure, Readiness, StorageMode};
 use crate::metadata::{FileIndex, ReportedMetadata};
+use crate::preload::{PreloadRequest, PreloadStatus};
 use crate::settings::Settings;
 
 /// The input a torrent is created from.
@@ -132,6 +133,13 @@ pub enum EngineError {
         /// The longest piece length among the engine's torrents.
         piece_length_bytes: u64,
     },
+    /// Creating a preload would exceed the limit of active preloads of one
+    /// file, or of all files: `too-many-preloads`.
+    #[error("the file, or the engine, has the most active preloads it allows")]
+    TooManyPreloads,
+    /// The file has no preload with the ID.
+    #[error("the file has no preload with this ID")]
+    UnknownPreload,
     /// An unexpected engine failure: `internal-error`.
     #[error("the torrent engine failed")]
     Internal(#[source] Box<dyn std::error::Error + Send + Sync>),
@@ -398,6 +406,50 @@ pub trait Engine: Send + Sync + 'static {
         file: FileIndex,
         range: ByteRange,
     ) -> impl Future<Output = Result<Self::Reader, EngineError>> + Send;
+
+    /// Creates a preload of the file at `file` under `preload`, which the
+    /// server issued, and returns its status at once, while it downloads, as
+    /// the lifecycle's Preloads section describes. Returns
+    /// [`EngineError::MetadataUnavailable`] without metadata,
+    /// [`EngineError::NotStarted`] for a paused or failed torrent,
+    /// [`EngineError::UnknownFile`] for an index outside the file list,
+    /// [`EngineError::RangeOutOfBounds`] for an offset at or past the
+    /// file's end, and [`EngineError::TooManyPreloads`] past the limits.
+    fn create_preload(
+        &self,
+        id: &TorrentId,
+        file: FileIndex,
+        preload: PreloadId,
+        request: PreloadRequest,
+    ) -> impl Future<Output = Result<PreloadStatus, EngineError>> + Send;
+
+    /// Returns the file's preloads, active and recently ended, in creation
+    /// order. Returns [`EngineError::MetadataUnavailable`] without metadata
+    /// and [`EngineError::UnknownFile`] for an index outside the file list.
+    fn preloads(
+        &self,
+        id: &TorrentId,
+        file: FileIndex,
+    ) -> impl Future<Output = Result<Vec<PreloadStatus>, EngineError>> + Send;
+
+    /// Returns one of the file's preloads, or
+    /// [`EngineError::UnknownPreload`], as well as the errors of
+    /// [`preloads`](Self::preloads).
+    fn preload(
+        &self,
+        id: &TorrentId,
+        file: FileIndex,
+        preload: &PreloadId,
+    ) -> impl Future<Output = Result<PreloadStatus, EngineError>> + Send;
+
+    /// Cancels and removes one of the file's preloads, releasing its pins
+    /// and piece priorities, with the errors of [`preload`](Self::preload).
+    fn cancel_preload(
+        &self,
+        id: &TorrentId,
+        file: FileIndex,
+        preload: &PreloadId,
+    ) -> impl Future<Output = Result<(), EngineError>> + Send;
 
     /// Returns a torrent's transfer and peer statistics.
     fn torrent_statistics(

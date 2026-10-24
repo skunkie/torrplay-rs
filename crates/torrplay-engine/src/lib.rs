@@ -20,6 +20,7 @@ pub mod disk;
 pub mod evictor;
 mod inspect;
 pub mod playback;
+pub mod preload;
 mod reader;
 pub mod scheduler;
 pub mod storage;

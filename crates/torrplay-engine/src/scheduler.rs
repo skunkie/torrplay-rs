@@ -108,6 +108,22 @@ pub(crate) struct Plan {
     pub(crate) shared: Vec<(u32, u8)>,
 }
 
+/// Appends `preloads`' pieces to `plan`, after every reader's and each
+/// once, and pins those of preloads that pin when the torrent is `cached`.
+pub(crate) fn add_preloads(plan: &mut Plan, preloads: &[ScheduledPreload], cached: bool) {
+    let mut planned: HashSet<u32> = plan.priorities.iter().copied().collect();
+    for preload in preloads {
+        for &piece in &preload.pieces {
+            if planned.insert(piece) {
+                plan.priorities.push(piece);
+            }
+            if cached && preload.pinned {
+                plan.pins.insert(piece);
+            }
+        }
+    }
+}
+
 /// Returns a torrent's share of the global readahead budget: its readers'
 /// part of all readers.
 pub(crate) fn torrent_budget(readahead_bytes: u64, readers: u64, all_readers: u64) -> u64 {
@@ -214,9 +230,19 @@ struct Binding {
     torrent: Weak<ManagedTorrent>,
 }
 
+/// A preload's pieces as a scheduler requests them: after every reader's,
+/// and pinned while its torrent is in memory storage.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ScheduledPreload {
+    pub(crate) pieces: Vec<u32>,
+    pub(crate) pinned: bool,
+}
+
 struct State {
     binding: Option<Binding>,
     readers: BTreeMap<u64, ReaderPosition>,
+    // The torrent's downloading and ready preloads, in creation order.
+    preloads: Vec<ScheduledPreload>,
     next_reader: u64,
     priorities: Vec<ValidPieceIndex>,
     // The plan's shared pieces, with their tiers.
@@ -269,6 +295,7 @@ impl TorrentScheduler {
             state: Mutex::new(State {
                 binding: None,
                 readers: BTreeMap::new(),
+                preloads: Vec::new(),
                 next_reader: 0,
                 priorities: Vec::new(),
                 shared: Vec::new(),
@@ -330,6 +357,39 @@ impl TorrentScheduler {
             self.playback.move_cache_readers(readers, cached);
         }
         Ok(())
+    }
+
+    /// Whether the torrent is in memory storage, the last it was bound to.
+    pub(crate) fn is_cached(&self) -> bool {
+        self.cached.load(Ordering::Acquire)
+    }
+
+    /// Whether the scheduler closed because its torrent paused, failed, or
+    /// is being deleted.
+    pub(crate) fn is_closed(&self) -> bool {
+        self.state.lock().map_or(true, |state| state.closed)
+    }
+
+    /// The torrent bound now, if it is still in the session.
+    pub(crate) fn torrent(&self) -> Option<Arc<ManagedTorrent>> {
+        self.state.lock().ok()?.binding.as_ref()?.torrent.upgrade()
+    }
+
+    /// The layout of the torrent bound now.
+    pub(crate) fn layout(&self) -> Option<Layout> {
+        Some(self.state.lock().ok()?.binding.as_ref()?.layout.clone())
+    }
+
+    /// Requests and pins `preloads` from now on, replacing the earlier ones.
+    pub(crate) fn set_preloads(&self, preloads: Vec<ScheduledPreload>) -> anyhow::Result<()> {
+        {
+            let mut state = self.lock()?;
+            if state.preloads == preloads || state.closed {
+                return Ok(());
+            }
+            state.preloads = preloads;
+        }
+        self.replan()
     }
 
     /// Starts adding the torrent again with other storage: its readers stop
@@ -417,6 +477,7 @@ impl TorrentScheduler {
             let streams = std::mem::take(&mut state.streams);
             let removed = state.readers.len() as u64;
             state.readers.clear();
+            state.preloads.clear();
             (removed, streams)
         };
         // Released idle readers find their entries gone, so they count
@@ -503,17 +564,18 @@ impl TorrentScheduler {
                 readers.len() as u64
             };
             let budget = torrent_budget(
-                self.playback.readahead_bytes(),
+                self.playback.reader_budget(),
                 readers.len() as u64,
                 all_readers,
             );
-            let plan = plan(
+            let mut plan = plan(
                 &binding.layout,
                 &readers,
                 budget,
                 self.playback.readahead_ramp_bytes(),
                 live_peers,
             );
+            add_preloads(&mut plan, &state.preloads, binding.cache.is_some());
             state.priorities = plan
                 .priorities
                 .iter()
@@ -1025,6 +1087,39 @@ mod tests {
         let plan = plan(&layout(), &[at(0, 350)], 5 * PIECE, 0, 0);
         assert_eq!(plan.priorities, [3, 0, 9, 4, 5, 6, 7]);
         assert_eq!(plan.pins, HashSet::from([3, 4, 0, 9]));
+    }
+
+    #[test]
+    fn preload_pieces_follow_the_readers_and_pin_in_memory_storage() {
+        let mut planned = plan(&layout(), &[at(0, 350)], 2 * PIECE, 0, 0);
+        let readers = planned.priorities.clone();
+        let preloads = [
+            ScheduledPreload {
+                pieces: vec![3, 15, 16],
+                pinned: true,
+            },
+            ScheduledPreload {
+                pieces: vec![16, 17],
+                pinned: true,
+            },
+        ];
+        add_preloads(&mut planned, &preloads, true);
+        assert_eq!(planned.priorities[..readers.len()], readers[..]);
+        assert_eq!(
+            planned.priorities[readers.len()..],
+            [15, 16, 17],
+            "after the readers' pieces, each once"
+        );
+        assert!(
+            [15, 16, 17]
+                .iter()
+                .all(|piece| planned.pins.contains(piece))
+        );
+
+        let mut on_disk = plan(&layout(), &[], 2 * PIECE, 0, 0);
+        add_preloads(&mut on_disk, &preloads, false);
+        assert_eq!(on_disk.priorities, [3, 15, 16, 17]);
+        assert!(on_disk.pins.is_empty(), "disk storage pins nothing");
     }
 
     #[test]

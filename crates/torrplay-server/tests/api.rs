@@ -24,6 +24,7 @@ use serde_json::{Value, json};
 use torrplay_core::engine::{CacheStatistics, Ratio, TorrentStatistics};
 use torrplay_core::id::FileId;
 use torrplay_core::lifecycle::{Readiness, StorageMode};
+use torrplay_core::preload::PreloadState;
 use torrplay_core::settings::{Explicit, Settings};
 use torrplay_fixtures::{FixtureSpec, catalog, generator, hex};
 use torrplay_store::StoredSettings;
@@ -1565,6 +1566,15 @@ mod scenario {
                 "application/merge-patch+json",
                 Some(settings_tag.as_str()),
             ),
+            (
+                Method::POST,
+                format!(
+                    "{}/files/fil_aaaaaaaaaaaaaaaaaaaaaaaaaa/preloads",
+                    created.json()["links"]["self"].as_str().unwrap()
+                ),
+                "application/json",
+                None,
+            ),
         ];
         for (method, path, media_type, if_match) in requests {
             let mut headers = vec![
@@ -2163,6 +2173,281 @@ mod scenario {
         server.stop().await;
     }
 
+    /// PRL-03, PRL-07, PRL-08, and the preload operations' responses:
+    /// creating, listing, reading, and canceling preloads, their limits,
+    /// how ended ones stay listed, and the conflicts of a torrent that is
+    /// paused or lacks metadata.
+    pub async fn preloads() {
+        let server = TestServer::start().await;
+        let small = catalog::single_small();
+        let created = server.upload(&small.metainfo().bytes, None).await;
+        let torrent = server.id_of(&created);
+        let file = &files_of(&server, created.json()["links"]["self"].as_str().unwrap()).await[0];
+        let preloads = file["links"]["preloads"].as_str().unwrap().to_owned();
+        assert_eq!(
+            preloads,
+            format!("{}/preloads", file["links"]["self"].as_str().unwrap())
+        );
+
+        let listed = server.get(&preloads).await;
+        assert_eq!(listed.status, StatusCode::OK);
+        assert_eq!(listed.header(header::CACHE_CONTROL), Some("no-cache"));
+        assert_eq!(listed.json()["items"], json!([]));
+
+        let preload = server
+            .send(json_request(Method::POST, &preloads, &json!({})))
+            .await;
+        assert_eq!(preload.status, StatusCode::CREATED);
+        let body = preload.json();
+        let location = body["links"]["self"].as_str().unwrap().to_owned();
+        assert_eq!(preload.header(header::LOCATION), Some(location.as_str()));
+        assert!(body["id"].as_str().unwrap().starts_with("prl_"));
+        assert_eq!(body["state"], "downloading");
+        assert_eq!(body["offset_bytes"], Value::Null);
+        assert_eq!(
+            body["ranges"],
+            json!([{ "start_bytes": 0, "length_bytes": small.files()[0].size_bytes }]),
+            "a file that fits is covered whole"
+        );
+        assert_eq!(body["links"]["file"], file["links"]["self"]);
+        let read = server.get(&location).await;
+        assert_eq!(read.status, StatusCode::OK);
+        assert_eq!(read.header(header::CACHE_CONTROL), Some("no-cache"));
+        assert_eq!(read.json()["id"], body["id"]);
+        let expires = |body: &Value| {
+            let at = |member: &str| {
+                chrono::DateTime::parse_from_rfc3339(body[member].as_str().unwrap()).unwrap()
+            };
+            (at("expires_at") - at("created_at")).num_seconds()
+        };
+        assert_eq!(expires(&body), 120, "the default time to live");
+
+        // Refused requests.
+        let invalid = server
+            .send_unchecked(json_request(
+                Method::POST,
+                &preloads,
+                &json!({ "offset_bytes": -1, "ttl_seconds": 5, "extra": true }),
+            ))
+            .await;
+        assert_problem(
+            &invalid,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation-failed",
+        );
+        let mut pointers = errors(&invalid, "pointer");
+        pointers.sort();
+        assert_eq!(pointers, ["/extra", "/offset_bytes", "/ttl_seconds"]);
+        let past_end = server
+            .send(json_request(
+                Method::POST,
+                &preloads,
+                &json!({ "offset_bytes": small.files()[0].size_bytes }),
+            ))
+            .await;
+        assert_eq!(errors(&past_end, "pointer"), ["/offset_bytes"]);
+        assert_problem(
+            &server
+                .send_unchecked(
+                    request(Method::POST, &preloads)
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(b"{".to_vec())
+                        .unwrap(),
+                )
+                .await,
+            StatusCode::BAD_REQUEST,
+            "malformed-request",
+        );
+        let plain = server
+            .send_unchecked(
+                request(Method::POST, &preloads)
+                    .header(header::CONTENT_TYPE, "text/plain")
+                    .body(b"{}".to_vec())
+                    .unwrap(),
+            )
+            .await;
+        assert_problem(
+            &plain,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported-media-type",
+        );
+        assert_eq!(plain.header(header::ACCEPT), Some("application/json"));
+        assert_problem(
+            &server
+                .send_unchecked(
+                    request(Method::POST, &preloads)
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(vec![b' '; 20_000])
+                        .unwrap(),
+                )
+                .await,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "content-too-large",
+        );
+
+        // At most 4 active preloads of a file; an ended one frees a place
+        // and stays listed.
+        let mut ids = vec![body["id"].as_str().unwrap().to_owned()];
+        for ttl in [10, 600, 3600] {
+            let created = server
+                .send(json_request(
+                    Method::POST,
+                    &preloads,
+                    &json!({ "ttl_seconds": ttl, "offset_bytes": 0 }),
+                ))
+                .await;
+            assert_eq!(created.status, StatusCode::CREATED);
+            assert_eq!(expires(&created.json()), ttl);
+            ids.push(created.json()["id"].as_str().unwrap().to_owned());
+        }
+        let fifth = server
+            .send(json_request(Method::POST, &preloads, &json!({})))
+            .await;
+        assert_problem(&fifth, StatusCode::CONFLICT, "too-many-preloads");
+        server
+            .engine
+            .set_preload_state(&torrent, &ids[1], PreloadState::Expired, None);
+        let expired = server.get(&format!("{preloads}/{}", ids[1])).await.json();
+        assert_eq!(expired["state"], "expired");
+        assert!(expired["ended_at"].is_string());
+        assert_eq!(
+            server
+                .send(json_request(Method::POST, &preloads, &json!({})))
+                .await
+                .status,
+            StatusCode::CREATED,
+            "the expired preload no longer counts"
+        );
+        let listed = server.get(&preloads).await.json();
+        assert_eq!(listed["items"].as_array().unwrap().len(), 5);
+        assert_eq!(listed["items"][1]["id"], ids[1].as_str(), "creation order");
+
+        // Canceling removes a preload at once.
+        let canceled = format!("{preloads}/{}", ids[0]);
+        assert_eq!(
+            server.send(empty(Method::DELETE, &canceled)).await.status,
+            StatusCode::NO_CONTENT
+        );
+        assert_problem(
+            &server.get(&canceled).await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        assert_problem(
+            &server.send(empty(Method::DELETE, &canceled)).await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        let unknown_file = preloads.replace(
+            file["id"].as_str().unwrap(),
+            "fil_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        );
+        assert_problem(
+            &server.get(&unknown_file).await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        assert_problem(
+            &server
+                .send(json_request(Method::POST, &unknown_file, &json!({})))
+                .await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+
+        // Pausing fails the torrent's preloads; a paused torrent takes no
+        // new one.
+        let configuration = format!(
+            "{}/configuration",
+            created.json()["links"]["self"].as_str().unwrap()
+        );
+        let tag = server
+            .get(&configuration)
+            .await
+            .header(header::ETAG)
+            .unwrap()
+            .to_owned();
+        server
+            .send(merge_patch(
+                &configuration,
+                &tag,
+                &json!({ "desired_state": "paused" }),
+            ))
+            .await;
+        let failed = server.get(&format!("{preloads}/{}", ids[2])).await.json();
+        assert_eq!(failed["state"], "failed");
+        assert_eq!(failed["failure"]["detail"], "The torrent was paused.");
+        assert_problem(
+            &server
+                .send(json_request(Method::POST, &preloads, &json!({})))
+                .await,
+            StatusCode::CONFLICT,
+            "lifecycle-conflict",
+        );
+
+        // Without metadata, a file's preloads are a lifecycle conflict.
+        let magnet = server.create_magnet(&unknown_magnet(7)).await;
+        let unlisted = format!(
+            "{}/files/fil_aaaaaaaaaaaaaaaaaaaaaaaaaa/preloads",
+            magnet.json()["links"]["self"].as_str().unwrap()
+        );
+        for exchange in [
+            server.get(&unlisted).await,
+            server
+                .send(json_request(Method::POST, &unlisted, &json!({})))
+                .await,
+            server
+                .get(&format!("{unlisted}/prl_aaaaaaaaaaaaaaaaaaaaaaaaaa"))
+                .await,
+            server
+                .send(empty(
+                    Method::DELETE,
+                    &format!("{unlisted}/prl_aaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                ))
+                .await,
+        ] {
+            assert_problem(&exchange, StatusCode::CONFLICT, "lifecycle-conflict");
+        }
+
+        // Engine faults and unavailability.
+        let one = format!("{preloads}/{}", ids[2]);
+        server.engine.inject_fault(Some("the engine failed"));
+        for exchange in [
+            server.get(&preloads).await,
+            server
+                .send(json_request(Method::POST, &preloads, &json!({})))
+                .await,
+            server.get(&one).await,
+            server.send(empty(Method::DELETE, &one)).await,
+        ] {
+            assert_problem(
+                &exchange,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal-error",
+            );
+        }
+        server.engine.inject_fault(None);
+        server
+            .engine
+            .set_readiness(Readiness::Unavailable { retry_after: None });
+        for exchange in [
+            server.get(&preloads).await,
+            server
+                .send(json_request(Method::POST, &preloads, &json!({})))
+                .await,
+            server.get(&one).await,
+            server.send(empty(Method::DELETE, &one)).await,
+        ] {
+            assert_problem(
+                &exchange,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "engine-unavailable",
+            );
+        }
+        server.engine.set_readiness(Readiness::Ready);
+        server.stop().await;
+    }
+
     async fn listed_len(server: &TestServer) -> usize {
         server.get("/api/v1/torrents").await.json()["items"]
             .as_array()
@@ -2233,4 +2518,5 @@ scenarios!(
     disk_creation,
     storage_transitions,
     cache_capacity_settings,
+    preloads,
 );

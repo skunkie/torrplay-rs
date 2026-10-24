@@ -238,7 +238,9 @@ so that the whole torrent is there for later playback.
 A preload fetches part of a file before playback starts, so the first
 range requests a player sends find their pieces there. Preloads are
 resources in the file's `preloads` collection, which the contract
-describes.
+describes. A preload ID is `prl_` and 128 random bits, issued as torrent
+IDs are ([ADR 4](adr/0004-resource-identity.md)), and names its preload
+only until the application restarts.
 
 - A `POST` creates a preload of a started torrent's file and returns
   `201 Created` at once, while the preload downloads. A torrent that is
@@ -258,7 +260,9 @@ describes.
 - A preload is `queued`, `downloading`, `ready`, `expired`, or `failed`. A
   memory torrent's preload is `queued` while the pins of earlier preloads
   leave no room for its own in the preloads' share of the budget; preloads
-  leave the queue in the order they were created. It is then
+  leave the queue in the order they were created, and a preload that pins
+  more than the share alone starts once no other preload pins anything. It
+  is then
   `downloading` until it holds every piece of its ranges, and `ready`
   from then on. A disk torrent's preload never queues.
 - A preload's pieces have the piece priority of preloads: below every
@@ -285,7 +289,8 @@ describes.
   preload's pins and piece priorities at once.
 - An expired or failed preload stays in its collection, with `ended_at`
   set, for 5 minutes, so clients can read how it ended, and is then
-  removed. At most 4 preloads of one file and 16 in total may be queued,
+  removed; a file lists at most 16 preloads, so its oldest ended ones may
+  go sooner. At most 4 preloads of one file and 16 in total may be queued,
   downloading, or ready at once; creating another is
   `too-many-preloads`, a `409 Conflict`.
 - A storage mode transition keeps a torrent's preloads. A transition to

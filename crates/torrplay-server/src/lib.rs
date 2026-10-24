@@ -26,6 +26,7 @@ mod body;
 mod content;
 mod files;
 mod headers;
+mod preloads;
 mod problem;
 mod query;
 mod representation;
@@ -74,6 +75,14 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
         .route(
             &format!("{torrent}/files/{{file_id}}/content"),
             get(files::get_content::<E>).head(files::head_content::<E>),
+        )
+        .route(
+            &format!("{torrent}/files/{{file_id}}/preloads"),
+            get(preloads::list::<E>).post(preloads::create::<E>),
+        )
+        .route(
+            &format!("{torrent}/files/{{file_id}}/preloads/{{preload_id}}"),
+            get(preloads::get::<E>).delete(preloads::delete::<E>),
         )
         .route(
             &format!("{torrent}/statistics"),

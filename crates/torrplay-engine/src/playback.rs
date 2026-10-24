@@ -30,6 +30,7 @@ use tokio::sync::{Notify, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
+use crate::preload::Preloads;
 use crate::scheduler::{Reader, TorrentScheduler};
 
 /// The default idle timeout, as the lifecycle defines it.
@@ -102,6 +103,10 @@ pub struct Playback {
     // Whether disk torrents download the rest of themselves while no reader
     // exists, which settings change.
     background_downloads: AtomicBool,
+    // The cache bytes preloads pin, which readers' readahead leaves them.
+    preload_pinned: AtomicU64,
+    // The engine's preloads, which the cache's bounded fallback ends.
+    preloads: Mutex<Weak<Preloads>>,
     opened: AtomicU64,
     active: watch::Sender<bool>,
     next_scheduler: AtomicU64,
@@ -123,6 +128,8 @@ impl Playback {
             readers: AtomicU64::new(0),
             cache_readers: AtomicU64::new(0),
             background_downloads: AtomicBool::new(true),
+            preload_pinned: AtomicU64::new(0),
+            preloads: Mutex::new(Weak::new()),
             opened: AtomicU64::new(0),
             active: watch::Sender::new(false),
             next_scheduler: AtomicU64::new(0),
@@ -146,6 +153,49 @@ impl Playback {
         self.readahead_bytes
             .store(readahead_bytes, Ordering::Release);
         self.replan_all();
+    }
+
+    /// The readahead budget readers share: what preload pins leave of the
+    /// whole budget.
+    pub fn reader_budget(&self) -> u64 {
+        self.readahead_bytes()
+            .saturating_sub(self.preload_pinned.load(Ordering::Acquire))
+    }
+
+    /// Records the cache bytes preloads pin, rebalancing every torrent's
+    /// readahead when it changes.
+    pub(crate) fn set_preload_pinned_bytes(&self, bytes: u64) {
+        if self.preload_pinned.swap(bytes, Ordering::AcqRel) != bytes {
+            self.replan_all();
+        }
+    }
+
+    pub(crate) fn set_preloads(&self, preloads: Weak<Preloads>) {
+        *self
+            .preloads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = preloads;
+    }
+
+    /// Ends the newest preload that pins cache pieces, for the cache's
+    /// bounded fallback once no idle reader is left to release, and returns
+    /// whether there was one.
+    pub fn end_newest_preload(&self) -> bool {
+        let preloads = self
+            .preloads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .upgrade();
+        preloads.is_some_and(|preloads| preloads.end_newest_pinning())
+    }
+
+    /// Every torrent's scheduler.
+    pub(crate) fn schedulers(&self) -> Vec<Arc<TorrentScheduler>> {
+        self.lock()
+            .schedulers
+            .iter()
+            .filter_map(Weak::upgrade)
+            .collect()
     }
 
     /// Whether disk torrents download the pieces they lack while no reader

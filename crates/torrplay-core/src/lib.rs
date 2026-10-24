@@ -34,6 +34,7 @@ pub mod id;
 pub mod lifecycle;
 pub mod metadata;
 pub mod pagination;
+pub mod preload;
 pub mod redact;
 pub mod registry;
 pub mod settings;

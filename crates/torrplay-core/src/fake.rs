@@ -26,9 +26,10 @@ use crate::engine::{
     ByteRange, CacheStatistics, Engine, EngineError, Inspection, Source, SourceRejection,
     TorrentStatistics, TorrentStatus,
 };
-use crate::id::{InfoHashV1, TorrentId};
+use crate::id::{InfoHashV1, PreloadId, TorrentId};
 use crate::lifecycle::{DesiredState, Failure, Readiness, StorageMode};
 use crate::metadata::{FileIndex, ReportedFile, ReportedMetadata};
+use crate::preload::{self, PreloadRequest, PreloadState, PreloadStatus};
 use crate::settings::Settings;
 
 /// The detail of a rejected torrent file.
@@ -81,6 +82,8 @@ struct Torrent {
     metadata: Option<Arc<ReportedMetadata>>,
     failure: Option<Failure>,
     statistics: TorrentStatistics,
+    /// Its preloads, in creation order.
+    preloads: Vec<PreloadStatus>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -286,6 +289,36 @@ impl FakeEngine {
         gate
     }
 
+    /// Moves a preload to `state`, as the engine would as it downloads,
+    /// expires, or fails with `failure`. An ended preload records the time.
+    pub fn set_preload_state(
+        &self,
+        id: &TorrentId,
+        preload: &str,
+        state: PreloadState,
+        failure: Option<&str>,
+    ) {
+        let mut engine = self.lock();
+        let Some(status) = engine.torrents.get_mut(id).and_then(|torrent| {
+            torrent
+                .preloads
+                .iter_mut()
+                .find(|status| status.id.as_str() == preload)
+        }) else {
+            return;
+        };
+        status.state = state;
+        status.completed_bytes = if state == PreloadState::Ready {
+            status.target_bytes
+        } else {
+            0
+        };
+        status.ended_at = state.is_ended().then(std::time::SystemTime::now);
+        status.failure = failure.map(|detail| Failure {
+            detail: detail.to_owned(),
+        });
+    }
+
     /// The storage mode a torrent was added in.
     pub fn storage_mode(&self, id: &TorrentId) -> Option<StorageMode> {
         self.lock()
@@ -463,6 +496,7 @@ impl Engine for FakeEngine {
                 metadata: inspection.metadata,
                 failure: None,
                 statistics: TorrentStatistics::default(),
+                preloads: Vec::new(),
             },
         );
         Ok(())
@@ -539,6 +573,9 @@ impl Engine for FakeEngine {
             torrent.failure = None;
         }
         torrent.desired_state = desired_state;
+        if desired_state == DesiredState::Paused {
+            fail_preloads(torrent, "The torrent was paused.");
+        }
         Ok(())
     }
 
@@ -609,12 +646,169 @@ impl Engine for FakeEngine {
         })
     }
 
+    async fn create_preload(
+        &self,
+        id: &TorrentId,
+        file: FileIndex,
+        preload: PreloadId,
+        request: PreloadRequest,
+    ) -> Result<PreloadStatus, EngineError> {
+        let mut state = self.ready()?;
+        let active = state
+            .torrents
+            .values()
+            .flat_map(|torrent| &torrent.preloads)
+            .filter(|preload| !preload.state.is_ended())
+            .count();
+        let torrent = state.torrent(id)?;
+        let size_bytes = file_size(torrent, file)?;
+        if torrent.desired_state != DesiredState::Started || torrent.failure.is_some() {
+            return Err(EngineError::NotStarted);
+        }
+        if request
+            .offset_bytes
+            .is_some_and(|offset| offset >= size_bytes)
+        {
+            return Err(EngineError::RangeOutOfBounds);
+        }
+        let of_file = torrent
+            .preloads
+            .iter()
+            .filter(|preload| preload.file == file && !preload.state.is_ended())
+            .count();
+        if of_file >= preload::PER_FILE_LIMIT || active >= preload::TOTAL_LIMIT {
+            return Err(EngineError::TooManyPreloads);
+        }
+        let ranges = fake_ranges(size_bytes, request.offset_bytes);
+        let created_at = std::time::SystemTime::now();
+        let status = PreloadStatus {
+            id: preload,
+            file,
+            state: PreloadState::Downloading,
+            offset_bytes: request.offset_bytes,
+            target_bytes: ranges.iter().map(|range| range.len_bytes()).sum(),
+            ranges,
+            completed_bytes: 0,
+            created_at,
+            expires_at: created_at + request.ttl,
+            ended_at: None,
+            failure: None,
+        };
+        torrent.preloads.push(status.clone());
+        let mut excess = torrent
+            .preloads
+            .iter()
+            .filter(|preload| preload.file == file)
+            .count()
+            .saturating_sub(preload::LISTED_LIMIT);
+        torrent.preloads.retain(|preload| {
+            if excess > 0 && preload.file == file && preload.state.is_ended() {
+                excess -= 1;
+                return false;
+            }
+            true
+        });
+        Ok(status)
+    }
+
+    async fn preloads(
+        &self,
+        id: &TorrentId,
+        file: FileIndex,
+    ) -> Result<Vec<PreloadStatus>, EngineError> {
+        let mut state = self.ready()?;
+        let torrent = state.torrent(id)?;
+        file_size(torrent, file)?;
+        Ok(torrent
+            .preloads
+            .iter()
+            .filter(|preload| preload.file == file)
+            .cloned()
+            .collect())
+    }
+
+    async fn preload(
+        &self,
+        id: &TorrentId,
+        file: FileIndex,
+        preload: &PreloadId,
+    ) -> Result<PreloadStatus, EngineError> {
+        self.preloads(id, file)
+            .await?
+            .into_iter()
+            .find(|status| &status.id == preload)
+            .ok_or(EngineError::UnknownPreload)
+    }
+
+    async fn cancel_preload(
+        &self,
+        id: &TorrentId,
+        file: FileIndex,
+        preload: &PreloadId,
+    ) -> Result<(), EngineError> {
+        let mut state = self.ready()?;
+        let torrent = state.torrent(id)?;
+        file_size(torrent, file)?;
+        let before = torrent.preloads.len();
+        torrent
+            .preloads
+            .retain(|status| !(status.file == file && &status.id == preload));
+        if torrent.preloads.len() == before {
+            return Err(EngineError::UnknownPreload);
+        }
+        Ok(())
+    }
+
     async fn torrent_statistics(&self, id: &TorrentId) -> Result<TorrentStatistics, EngineError> {
         Ok(self.ready()?.torrent(id)?.statistics)
     }
 
     async fn cache_statistics(&self) -> Result<CacheStatistics, EngineError> {
         Ok(self.ready()?.cache_statistics)
+    }
+}
+
+/// The size of the file at `file`, with the errors preload operations
+/// return for a torrent without metadata or an index outside its files.
+fn file_size(torrent: &Torrent, file: FileIndex) -> Result<u64, EngineError> {
+    Ok(torrent
+        .metadata
+        .as_ref()
+        .ok_or(EngineError::MetadataUnavailable)?
+        .files
+        .get(file.0)
+        .ok_or(EngineError::UnknownFile)?
+        .size_bytes)
+}
+
+/// Ranges shaped like the engine's, without pieces: the whole file when it
+/// fits, or else its head and tail, or a window at `offset`.
+fn fake_ranges(size_bytes: u64, offset: Option<u64>) -> Vec<ByteRange> {
+    let limit = preload::MAX_PRELOAD_BYTES;
+    if size_bytes <= limit {
+        return ByteRange::new(0, size_bytes).into_iter().collect();
+    }
+    let tail = ByteRange::new(size_bytes - preload::TAIL_BYTES, size_bytes);
+    let head = match offset {
+        None => ByteRange::new(0, limit - preload::TAIL_BYTES),
+        Some(offset) => {
+            let start = offset.min(size_bytes - limit);
+            ByteRange::new(start, start + limit - preload::TAIL_BYTES)
+        }
+    };
+    head.into_iter().chain(tail).collect()
+}
+
+/// Ends a torrent's active preloads with a failure.
+fn fail_preloads(torrent: &mut Torrent, detail: &str) {
+    for preload in &mut torrent.preloads {
+        if !preload.state.is_ended() {
+            preload.state = PreloadState::Failed;
+            preload.ended_at = Some(std::time::SystemTime::now());
+            preload.failure = Some(Failure {
+                detail: detail.to_owned(),
+            });
+        }
     }
 }
 

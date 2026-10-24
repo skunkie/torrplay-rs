@@ -57,9 +57,10 @@ use torrplay_core::engine::{
     ByteRange, CacheStatistics, Engine, EngineError, Inspection, Ratio, Source, SourceRejection,
     TorrentStatistics, TorrentStatus,
 };
-use torrplay_core::id::{InfoHashV1, TorrentId};
+use torrplay_core::id::{InfoHashV1, PreloadId, TorrentId};
 use torrplay_core::lifecycle::{DesiredState, Failure, Readiness, StorageMode};
 use torrplay_core::metadata::{FileIndex, ReportedMetadata};
+use torrplay_core::preload::{PreloadRequest, PreloadStatus};
 use torrplay_core::redact::redact;
 use torrplay_core::settings::Settings;
 
@@ -72,6 +73,7 @@ use crate::playback::{
     DEFAULT_IDLE_READERS_PER_TORRENT, DEFAULT_IDLE_READERS_TOTAL, DEFAULT_IDLE_TIMEOUT,
     DEFAULT_READAHEAD_RAMP_BYTES, Playback, PlaybackConfig, Reaper,
 };
+use crate::preload::{PreloadTimer, Preloads};
 use crate::reader::RangeReader;
 use crate::scheduler::{OpenError, TorrentScheduler};
 use crate::storage::{CachedTorrent, Layout, MemoryStorageFactory};
@@ -233,6 +235,8 @@ struct Running {
     playback: Arc<Playback>,
     evictor: Mutex<Option<Evictor>>,
     reaper: Mutex<Option<Reaper>>,
+    preloads: Arc<Preloads>,
+    preload_timer: Mutex<Option<PreloadTimer>>,
     // Cancels the streams of torrents whose storage failed.
     failure_monitor: Mutex<Option<JoinHandle<()>>>,
 }
@@ -483,6 +487,7 @@ impl LibrqbitEngine {
             idle_readers_total: tunables.idle_readers_total,
         });
         playback.set_background_downloads(tunables.background_downloads);
+        let preloads = Preloads::new(&playback, tunables.piece_wait);
         let (failures, failed) = mpsc::unbounded_channel();
         let running = Arc::new(Running {
             factory: MemoryStorageFactory::new(cache.clone()).with_failure_reports(failures),
@@ -492,6 +497,8 @@ impl LibrqbitEngine {
                 playback.clone(),
             ))),
             reaper: Mutex::new(Some(playback.spawn_reaper())),
+            preload_timer: Mutex::new(Some(preloads.spawn_timer())),
+            preloads,
             failure_monitor: Mutex::new(Some(tokio::spawn(monitor_failures(
                 self.this.clone(),
                 failed,
@@ -544,8 +551,12 @@ impl LibrqbitEngine {
         running.session.stop().await;
         let reaper = take(&running.reaper).map(Reaper::shutdown);
         let evictor = take(&running.evictor).map(Evictor::shutdown);
+        let preload_timer = take(&running.preload_timer).map(PreloadTimer::shutdown);
         if let Some(reaper) = reaper {
             reaper.await?;
+        }
+        if let Some(preload_timer) = preload_timer {
+            preload_timer.await?;
         }
         if let Some(evictor) = evictor {
             evictor.await?;
@@ -706,6 +717,21 @@ impl LibrqbitEngine {
             Phase::Ready(running) => Ok(running.clone()),
             Phase::Starting | Phase::Stopped => Err(EngineError::Unavailable { retry_after: None }),
         }
+    }
+
+    /// Checks that the torrent's metadata lists a file at `file`.
+    fn check_file(&self, id: &TorrentId, file: FileIndex) -> Result<(), EngineError> {
+        let torrent = self.torrent(id)?;
+        let state = torrent.state();
+        let metadata = state
+            .metadata
+            .as_ref()
+            .ok_or(EngineError::MetadataUnavailable)?;
+        metadata
+            .files
+            .get(file.0)
+            .map(drop)
+            .ok_or(EngineError::UnknownFile)
     }
 
     fn torrent(&self, id: &TorrentId) -> Result<Arc<Torrent>, EngineError> {
@@ -1328,13 +1354,22 @@ impl LibrqbitEngine {
     /// Cancels the streams of the torrent whose storage, cache key `key`,
     /// failed a write.
     fn storage_failed(&self, key: TorrentKey) {
-        let torrents: Vec<_> = self.lock_torrents().values().cloned().collect();
-        let scheduler = torrents.iter().find_map(|torrent| {
+        let torrents: Vec<_> = self
+            .lock_torrents()
+            .iter()
+            .map(|(id, torrent)| (id.clone(), torrent.clone()))
+            .collect();
+        let found = torrents.iter().find_map(|(id, torrent)| {
             let state = torrent.state();
             let live = state.live.as_ref()?;
-            (live.cached.as_ref()?.key == key).then(|| live.scheduler.clone())
+            (live.cached.as_ref()?.key == key).then(|| (id.clone(), live.scheduler.clone()))
         });
-        if let Some(scheduler) = scheduler {
+        if let Some((id, scheduler)) = found {
+            if let Ok(running) = self.running() {
+                running
+                    .preloads
+                    .fail_torrent(&id, "The torrent's storage failed a write.");
+            }
             tracing::error!("a torrent's storage failed a write; its streams are canceled");
             if let Err(error) = scheduler.close() {
                 tracing::error!(error = %redact(&format!("{error:#}")), "canceling the streams failed");
@@ -1450,6 +1485,7 @@ impl Engine for LibrqbitEngine {
             running
                 .playback
                 .set_background_downloads(tunables.background_downloads);
+            running.preloads.set_piece_wait(tunables.piece_wait);
         }
         Ok(())
     }
@@ -1747,6 +1783,7 @@ impl Engine for LibrqbitEngine {
             (state.live.take(), state.storage_mode)
         };
         self.lock_torrents().remove(id);
+        running.preloads.remove_torrent(id);
         if let Some(live) = live {
             self.delete_live(&running, live).await.map_err(internal)?;
         }
@@ -1843,6 +1880,86 @@ impl Engine for LibrqbitEngine {
             range.len_bytes(),
             self.tunables().piece_wait,
         ))
+    }
+
+    async fn create_preload(
+        &self,
+        id: &TorrentId,
+        file: FileIndex,
+        preload: PreloadId,
+        request: PreloadRequest,
+    ) -> Result<PreloadStatus, EngineError> {
+        let running = self.running()?;
+        let torrent = self.torrent(id)?;
+        let scheduler = {
+            let mut state = torrent.state();
+            let metadata = state
+                .metadata
+                .clone()
+                .ok_or(EngineError::MetadataUnavailable)?;
+            let size_bytes = metadata
+                .files
+                .get(file.0)
+                .ok_or(EngineError::UnknownFile)?
+                .size_bytes;
+            if state.desired != DesiredState::Started
+                || state.failure.is_some()
+                || Self::engine_failure(&mut state).is_some()
+            {
+                return Err(EngineError::NotStarted);
+            }
+            if request
+                .offset_bytes
+                .is_some_and(|offset| offset >= size_bytes)
+            {
+                return Err(EngineError::RangeOutOfBounds);
+            }
+            let live = state.live.as_ref().ok_or(EngineError::NotStarted)?;
+            live.scheduler.clone()
+        };
+        // A transition may be adding the torrent again; its layout stays.
+        let layout = scheduler.layout().ok_or(EngineError::NotStarted)?;
+        if let Some(handle) = scheduler.torrent() {
+            // As for a stream: the preload needs peers now.
+            handle.reconnect_peers();
+        }
+        running
+            .preloads
+            .create(id, &scheduler, &layout, file, preload, request)
+    }
+
+    async fn preloads(
+        &self,
+        id: &TorrentId,
+        file: FileIndex,
+    ) -> Result<Vec<PreloadStatus>, EngineError> {
+        let running = self.running()?;
+        self.check_file(id, file)?;
+        Ok(running.preloads.of_file(id, file))
+    }
+
+    async fn preload(
+        &self,
+        id: &TorrentId,
+        file: FileIndex,
+        preload: &PreloadId,
+    ) -> Result<PreloadStatus, EngineError> {
+        self.preloads(id, file)
+            .await?
+            .into_iter()
+            .find(|status| &status.id == preload)
+            .ok_or(EngineError::UnknownPreload)
+    }
+
+    async fn cancel_preload(
+        &self,
+        id: &TorrentId,
+        file: FileIndex,
+        preload: &PreloadId,
+    ) -> Result<(), EngineError> {
+        let running = self.running()?;
+        self.check_file(id, file)?;
+        running.preloads.cancel(id, file, preload)
     }
 
     async fn torrent_statistics(&self, id: &TorrentId) -> Result<TorrentStatistics, EngineError> {

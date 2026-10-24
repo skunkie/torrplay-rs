@@ -157,6 +157,7 @@ pub(crate) fn file(torrent: &TorrentId, file: &MetadataFile) -> api::TorrentFile
         id: file.id().to_string(),
         links: api::TorrentFileLinks {
             content: format!("{path}/content"),
+            preloads: format!("{path}/preloads"),
             self_field: path,
             torrent: torrent_path(torrent),
         },
