@@ -7,6 +7,7 @@
 
 mod support;
 
+use std::num::NonZeroU32;
 use std::time::Duration;
 
 use support::{
@@ -19,7 +20,7 @@ use torrplay_core::lifecycle::{DesiredState, StorageMode};
 use torrplay_core::metadata::FileIndex;
 use torrplay_core::preload::{PreloadRequest, PreloadState, PreloadStatus};
 use torrplay_engine::LibrqbitEngine;
-use torrplay_fixtures::catalog;
+use torrplay_fixtures::{FileSpec, FixtureSpec, Layout, catalog};
 
 fn preload_id(n: u8) -> PreloadId {
     PreloadId::from_random_bytes([n; 16])
@@ -151,6 +152,84 @@ async fn a_preload_at_an_offset_serves_a_stream_there() -> anyhow::Result<()> {
 
     drop(reader);
     engine.shutdown().await?;
+    Ok(())
+}
+
+/// PRL-04: a reader's pieces are requested before a preload's. librqbit
+/// already serves the piece a stream waits for first, so the reader reads
+/// its first bytes and then holds its readahead window, which must arrive
+/// before the preload, created earlier, completes; through one
+/// rate-limited seeder the order shows in what has downloaded by then.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_readers_window_comes_before_a_preload() -> anyhow::Result<()> {
+    let spec = FixtureSpec {
+        id: "reader-and-preload".into(),
+        torrent_name: "reader-and-preload".into(),
+        seed: 11,
+        piece_length: MIB as u32,
+        layout: Layout::MultiFile {
+            files: ["streamed.bin", "preloaded.bin"]
+                .into_iter()
+                .map(|name| FileSpec {
+                    path: vec![name.into()],
+                    size_bytes: 16 * MIB,
+                })
+                .collect(),
+        },
+    };
+    let upload_limit = NonZeroU32::new(8 * MIB as u32).expect("a limit");
+    let seeder =
+        Seeder::start_with_upload_limit(&spec, &spec.metainfo().bytes, upload_limit).await?;
+    // A 32 MiB readahead budget: the preload pins 16 MiB, and the reader's
+    // window takes the other 16 MiB, its whole file, without a ramp.
+    let started = start_with(vec![seeder.addr], |config| {
+        *config = config.clone().with_cache_capacity(64 * MIB);
+        config.readahead_ramp_bytes = 0;
+    })
+    .await?;
+    let engine = &started.engine;
+    engine
+        .add(&id(1), &upload(&spec), DesiredState::Started)
+        .await?;
+
+    let created = engine
+        .create_preload(&id(1), FileIndex(1), preload_id(1), request(None))
+        .await?;
+    assert_eq!(created.target_bytes, 16 * MIB, "the whole second file");
+    let mut reader = engine
+        .open_reader(&id(1), FileIndex(0), range(0, 16 * MIB))
+        .await?;
+    let mut first = vec![0; 1000];
+    bounded("the reader's first bytes", async {
+        Ok(reader.read_exact(&mut first).await?)
+    })
+    .await?;
+    assert!(first == expected(&spec, 0, 0, 1000));
+
+    let downloaded = eventually("the preload becoming ready", || {
+        let status = futures_now(engine.preload(&id(1), FileIndex(1), &preload_id(1)))?;
+        if status.state != PreloadState::Ready {
+            return Ok(None);
+        }
+        Ok(Some(
+            futures_now(engine.torrent_statistics(&id(1)))?.downloaded_bytes,
+        ))
+    })
+    .await?;
+    assert!(
+        downloaded >= 28 * MIB,
+        "the reader's window arrived before the preload completed: {downloaded} bytes by then"
+    );
+    let mut rest = Vec::new();
+    bounded("the rest of the reader's range", async {
+        Ok(reader.read_to_end(&mut rest).await?)
+    })
+    .await?;
+    assert!(rest == expected(&spec, 0, 1000, 16 * MIB), "byte-correct");
+
+    drop(reader);
+    engine.shutdown().await?;
+    seeder.stop().await;
     Ok(())
 }
 
