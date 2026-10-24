@@ -253,3 +253,17 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 **Poster**
 : An image a client uploads to show a torrent in the library. The server
   stores and serves it but never fetches images itself.
+
+**Search**
+: Matching free text against torrents' titles and names, ranked by match
+  quality. With typo tolerance (`fuzzy`), long words may also match words a
+  typo or two away.
+
+**Facet**
+: A count of the listed torrents by a library member, such as each
+  category, that a client shows beside its menus. Facets ignore the filters
+  those menus set.
+
+**Listing version**
+: An opaque digest of the torrents a listing's facets describe, which
+  changes whenever one of them is added, removed, or changes.

@@ -52,9 +52,16 @@ getrandom = { version = "0.3.4", features = ["std"] }
 h2 = "0.4"
 http = "1"
 http-body-util = "0.1"
+# Full case folding for search, from the same ICU4X release as the
+# normalizer, since the standard library only lowercases.
+icu_casemap = { version = "2.3", default-features = false, features = ["compiled_data"] }
 # Unicode normalization, already in the tree through url, for comparing
-# disk paths as case-insensitive filesystems do and for library text.
+# disk paths as case-insensitive filesystems do, for library text, and for
+# search.
 icu_normalizer = { version = "2.3", default-features = false, features = ["compiled_data"] }
+# Unicode general categories for search's word splitting, already in the
+# tree through url.
+icu_properties = { version = "2.3", default-features = false, features = ["compiled_data"] }
 # Without default features it never fetches remote references.
 jsonschema = { version = "0.59", default-features = false }
 # librqbit from the torrplay/patches branch of the skunkie/rqbit fork: the

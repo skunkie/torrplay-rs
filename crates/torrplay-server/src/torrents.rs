@@ -5,6 +5,7 @@
 //! The torrents collection, torrents, their configuration, and their
 //! statistics.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -21,10 +22,11 @@ use torrplay_core::library::{self as core_library, Kind, Library, TextError};
 use torrplay_core::lifecycle::{DesiredState, EntityTag, ObservedState, StorageMode};
 use torrplay_core::metadata::Metadata;
 use torrplay_core::pagination::{
-    CURSOR_PARAMETER, Matched, PAGE_SIZE_PARAMETER, PageRequest, TorrentFilter, TorrentSortKey,
-    paginate,
+    CURSOR_PARAMETER, Matched, PAGE_SIZE_PARAMETER, PageRequest, SearchSortKey, TorrentFilter,
+    TorrentSortKey, paginate,
 };
 use torrplay_core::registry::{ConfigurationError, ConfigurationUpdate, NewTorrent, Prepared};
+use torrplay_core::search::{Query as SearchQuery, SEARCH_MAX_CHARS};
 use torrplay_store::StoredTorrent;
 
 use crate::app::{App, TorrentView, store_failed};
@@ -49,6 +51,10 @@ const UNCATEGORIZED_PARAMETER: &str = "uncategorized";
 const GENRE_PARAMETER: &str = "genre";
 const KIND_PARAMETER: &str = "kind";
 const INFO_HASH_PARAMETER: &str = "info_hash";
+
+/// The query parameters of a search and its typo tolerance.
+const SEARCH_PARAMETER: &str = "search";
+const FUZZY_PARAMETER: &str = "fuzzy";
 
 /// The filter parameters, in the order links carry them.
 const FILTER_PARAMETERS: [&str; 6] = [
@@ -80,7 +86,12 @@ pub(crate) async fn list<E: Engine>(
 ) -> Result<Response, Problem> {
     negotiate(&headers, JSON)?;
     let query = Query::parse(uri.query());
-    let mut allowed = vec![PAGE_SIZE_PARAMETER, CURSOR_PARAMETER];
+    let mut allowed = vec![
+        PAGE_SIZE_PARAMETER,
+        CURSOR_PARAMETER,
+        SEARCH_PARAMETER,
+        FUZZY_PARAMETER,
+    ];
     allowed.extend(FILTER_PARAMETERS);
     let mut errors = query.unexpected(
         &allowed,
@@ -88,52 +99,184 @@ pub(crate) async fn list<E: Engine>(
             PAGE_SIZE_PARAMETER,
             CURSOR_PARAMETER,
             UNCATEGORIZED_PARAMETER,
+            SEARCH_PARAMETER,
+            FUZZY_PARAMETER,
         ],
     );
     let paging = Paging::parse(&query, &mut errors);
     let filter = torrent_filter(&query, &mut errors);
+    let search = search_query(&query, &mut errors);
     reject(errors)?;
-    let request =
-        PageRequest::<TorrentSortKey>::new(paging.page_size, paging.cursor, filter.fingerprint())
-            .map_err(|error| Problem::malformed(vec![page_error(error)]))?;
+    let fingerprint = filter.fingerprint(
+        search
+            .as_ref()
+            .map(|(text, query)| (text.as_str(), query.typos())),
+    );
 
-    let mut views = Vec::new();
+    // The facets' torrents, in creation order, with their representations,
+    // which the version digests.
+    let mut base = Vec::new();
     for record in app.registry()?.list() {
         let view = app.observe(record).await?;
         let record = &view.record;
+        let kind = representation::reported_kind(
+            record.configuration.library(),
+            record.metadata.as_deref(),
+        );
         let matched = Matched {
             record,
             observed_state: view.observed_state(),
-            kind: representation::reported_kind(
-                record.configuration.library(),
-                record.metadata.as_deref(),
-            ),
+            kind,
         };
-        if filter.matches(matched) {
-            views.push(view);
+        if filter.matches_facet_base(matched) {
+            let listed = filter.matches(matched);
+            base.push((view, kind, listed));
         }
     }
-    let page = paginate(views, |view| TorrentSortKey::of(&view.record), &request);
-    let filters: Vec<(&str, &str)> = FILTER_PARAMETERS
+    let represented: Vec<api::Torrent> = base
         .iter()
+        .map(|(view, _, _)| representation::torrent(view))
+        .collect();
+    let facets = facets(&base, &represented)?;
+    let etag = representation::listing_etag(&facets.version, &query);
+    if let Some(response) = not_modified(&headers, &etag) {
+        return Ok(response);
+    }
+
+    let listed = base
+        .iter()
+        .zip(&represented)
+        .filter(|((_, _, listed), _)| *listed)
+        .map(|((view, _, _), torrent)| (view, torrent));
+    let (total, items, next_cursor): (usize, Vec<&api::Torrent>, _) = match &search {
+        None => {
+            let request =
+                PageRequest::<TorrentSortKey>::new(paging.page_size, paging.cursor, fingerprint)
+                    .map_err(|error| Problem::malformed(vec![page_error(error)]))?;
+            let listed: Vec<_> = listed.collect();
+            let total = listed.len();
+            let page = paginate(
+                listed,
+                |(view, _)| TorrentSortKey::of(&view.record),
+                &request,
+            );
+            let items = page.items.into_iter().map(|(_, torrent)| torrent).collect();
+            (total, items, page.next_cursor)
+        }
+        Some((_, search)) => {
+            let request =
+                PageRequest::<SearchSortKey>::new(paging.page_size, paging.cursor, fingerprint)
+                    .map_err(|error| Problem::malformed(vec![page_error(error)]))?;
+            let ranked: Vec<_> = listed
+                .filter_map(|(view, torrent)| {
+                    let title = torrent.title.as_deref();
+                    let name = torrent.name.as_deref();
+                    search
+                        .rank(title.into_iter().chain(name))
+                        .map(|rank| (SearchSortKey::of(rank, &view.record), torrent))
+                })
+                .collect();
+            let total = ranked.len();
+            let page = paginate(ranked, |(key, _)| key.clone(), &request);
+            let items = page.items.into_iter().map(|(_, torrent)| torrent).collect();
+            (total, items, page.next_cursor)
+        }
+    };
+    let mut parameters: Vec<(&str, &str)> = FILTER_PARAMETERS
+        .iter()
+        .chain(&[SEARCH_PARAMETER, FUZZY_PARAMETER])
         .flat_map(|&name| query.all(name).map(move |value| (name, value)))
         .collect();
+    parameters.sort_by_key(|&(name, _)| {
+        FILTER_PARAMETERS
+            .iter()
+            .chain(&[SEARCH_PARAMETER, FUZZY_PARAMETER])
+            .position(|&known| known == name)
+    });
     let path = torrents_path();
     let body = api::TorrentPage {
-        items: page.items.iter().map(representation::torrent).collect(),
+        items: items.into_iter().cloned().collect(),
+        total: representation::count(total as u64),
+        facets,
         links: api::TorrentPageLinks {
-            next: page
-                .next_cursor
+            next: next_cursor
                 .as_deref()
-                .map(|cursor| paging.link(&path, &filters, Some(cursor))),
-            self_field: paging.link(&path, &filters, paging.cursor),
+                .map(|cursor| paging.link(&path, &parameters, Some(cursor))),
+            self_field: paging.link(&path, &parameters, paging.cursor),
         },
     };
-    let mut response = json(StatusCode::OK, &body)?;
+    let mut response = with_etag(json(StatusCode::OK, &body)?, &etag)?;
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, NO_CACHE);
     Ok(response)
+}
+
+/// Reads the search parameters: the search's text and the parsed query, or
+/// `None` without a search or for a blank one.
+fn search_query(query: &Query, errors: &mut Vec<InvalidValue>) -> Option<(String, SearchQuery)> {
+    let typos = match query.first(FUZZY_PARAMETER) {
+        None | Some("false") => false,
+        Some("true") => true,
+        Some(_) => {
+            errors.push(InvalidValue::parameter(
+                FUZZY_PARAMETER,
+                "Must be true or false.",
+            ));
+            false
+        }
+    };
+    let text = query.first(SEARCH_PARAMETER)?;
+    if text.chars().count() > SEARCH_MAX_CHARS {
+        errors.push(InvalidValue::parameter(
+            SEARCH_PARAMETER,
+            format!("Must be at most {SEARCH_MAX_CHARS} characters."),
+        ));
+        return None;
+    }
+    let parsed = SearchQuery::new(text, typos);
+    (!parsed.is_blank()).then(|| (text.to_owned(), parsed))
+}
+
+/// Counts the categories and genres of the facets' torrents, given in
+/// creation order with their representations, and digests those into the
+/// listing version.
+fn facets(
+    base: &[(TorrentView, Option<Kind>, bool)],
+    represented: &[api::Torrent],
+) -> Result<api::TorrentFacets, Problem> {
+    let mut categories: BTreeMap<&str, u64> = BTreeMap::new();
+    let mut genres: BTreeMap<&str, u64> = BTreeMap::new();
+    let mut uncategorized = 0;
+    for (view, _, _) in base {
+        let library = view.record.configuration.library();
+        if library.categories.is_empty() {
+            uncategorized += 1;
+        }
+        for category in &library.categories {
+            *categories.entry(category).or_default() += 1;
+        }
+        for genre in &library.genres {
+            *genres.entry(genre).or_default() += 1;
+        }
+    }
+    let counts = |labels: BTreeMap<&str, u64>| {
+        labels
+            .into_iter()
+            .map(|(name, count)| api::LabelCount {
+                name: name.to_owned(),
+                count: representation::count(count),
+            })
+            .collect()
+    };
+    let torrents: Vec<&api::Torrent> = represented.iter().collect();
+    Ok(api::TorrentFacets {
+        total: representation::count(base.len() as u64),
+        uncategorized: representation::count(uncategorized),
+        categories: counts(categories),
+        genres: counts(genres),
+        version: representation::listing_version(&torrents)?,
+    })
 }
 
 /// Reads the filter parameters of the torrents collection, adding an error

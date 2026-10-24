@@ -401,8 +401,8 @@ values with a new state ETag.
 - The torrents collection filters by `category`, `uncategorized`, `genre`,
   the reported `kind`, and `info_hash`, as the contract describes. Filter
   values are normalized like the members they match; one that is invalid
-  after normalization is `malformed-request`. Category facets and the
-  listing version come with search.
+  after normalization is `malformed-request`. The response's facets and
+  listing version are described under [Search](#search).
 
 A torrent may also have a poster: an image at `/poster`, outside the
 configuration.
@@ -419,6 +419,54 @@ configuration.
 - A poster needs no engine and no metadata. Changing it changes the torrent's
   state ETag but not the configuration's. Deleting the torrent deletes its
   poster.
+
+## Search
+
+The torrents collection's `search` parameter matches free text against
+each torrent's title and name. REST, Stremio catalogs, and DLNA title
+searches share one matcher, and `fixtures/search-cases.json` holds
+language-neutral cases that every implementation of it, the client's
+included, must pass.
+
+- Text is split into words: it is case-folded in full, so `Straße` reads
+  `strasse`, decomposed into compatibility forms without diacritics, and
+  split at every character that is neither a letter nor a decimal digit,
+  except apostrophes, which are dropped, so `Llama's` reads `llamas` and
+  `Sintel.2010.1080p` reads `sintel 2010 1080p`.
+- Every word of the search must match a word of the torrent's title and
+  name together. A word matches as a whole word, as the start of a word, or
+  inside the words; with `fuzzy=true`, a word of at least five characters
+  without digits may also match a word one edit away, or two for words over
+  eight characters, counting insertions, deletions, substitutions, and
+  swaps of adjacent characters.
+- A search without words, such as `-`, matches torrents whose title or name
+  contains each of its whitespace-separated parts as folded text. A search
+  of whitespace alone is no search.
+- Matches are ranked: fewer typo matches first, then the higher sum of each
+  word's quality, where a whole word counts 4, a word start 3, a match
+  inside words 2, and a typo match 1. Equal matches keep the collection's
+  order, newest first with the ID as the tie-breaker, so pages are
+  deterministic. A cursor holds the rank, so it works only with its search;
+  a torrent whose title changes between pages may repeat or be skipped.
+- `total` counts the torrents matching every filter and the search, across
+  pages.
+
+Every page of the collection carries facets for global navigation:
+
+- They describe the torrents matching the request's `observed_state`,
+  `kind`, and `info_hash` filters, ignoring its search and its `category`,
+  `uncategorized`, and `genre` filters, so the menus those filters come from
+  keep every choice while one is selected.
+- They count those torrents, those without categories, and those with each
+  category and genre, ordered by name in Unicode code point order. A torrent
+  counts once in each of its categories and genres.
+- Their `version` is a digest of those torrents' representations in
+  creation order, so it changes when one is added or removed or its
+  representation changes, observed state and poster included. A client
+  holding the full listing compares it with the version of a filtered or
+  searched page to know whether to fetch the listing again.
+- The page's ETag digests the version and every query parameter, and a
+  matching `If-None-Match` receives `304 Not Modified` without a body.
 
 ## Persistence
 

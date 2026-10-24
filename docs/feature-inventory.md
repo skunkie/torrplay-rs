@@ -42,8 +42,9 @@ document that schedules it.
 | Memory and disk storage, with transitions | `storage` member | Verified | DSK-01 to DSK-09 ([ADR 9](adr/0009-disk-storage.md)) |
 | List torrents with pagination | `GET /api/v1/torrents` | Verified | API scenarios, `torrent_pages` |
 | Filter torrents by category, genre, kind, and info hash | Query parameters | Verified | LIB-06 |
-| Look up torrents by name | `names` parameter | Planned | Search; the plan rules out an ad hoc name filter |
-| Search torrents, typo tolerant, with category facets | `search` parameter, `facets` | Planned | Search, with the shared matcher AGENTS.md requires |
+| Look up torrents by name | `names` parameter | Verified | SRC-02; by search, since the plan rules out an ad hoc name filter |
+| Search torrents, typo tolerant, with category and genre facets | `search` parameter, `facets` | Verified | SRC-01 to SRC-08 |
+| Listing versions and conditional listing requests | `facets.version`, `ETag` | Verified | SRC-06, SRC-07 |
 | Title, categories, genres, kind, year, and description | `title`, `category` | Verified | LIB-01 to LIB-05, LIB-09, LIB-10 |
 | Posters uploaded and served by the server | `poster` URL or data URI | Verified | LIB-07 to LIB-10 |
 | Resolve a torrent from a URL without storing it | `POST /api/v1/torrent-resolutions` | Deferred | Fetching client-supplied URLs needs an outbound request policy first |
@@ -139,5 +140,8 @@ These differ from Go TorrPlay by decision; the linked documents record why.
   and matched exactly, and a kind, inferred from file names unless set; Go
   TorrPlay keeps one category string. The server stores uploaded posters
   and never fetches a poster URL ([lifecycle](lifecycle.md#library)).
+- Facets ignore the genre and uncategorized filters as well as category and
+  search, and the listing version digests the torrents' representations
+  instead of changing at every restart ([lifecycle](lifecycle.md#search)).
 - The prototype listens on loopback only, so it has no authentication until
   authentication is designed.

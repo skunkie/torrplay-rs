@@ -243,6 +243,22 @@ members and posters (M7).
 | LIB-09 | Restart with library members and a poster, then delete the torrent and create it again | The members, the poster, and their ETags survive the restart; the new torrent has no poster |
 | LIB-10 | A database write fails during a library PATCH and a poster PUT and DELETE | `500 internal-error`; the configuration, the poster, and their ETags are unchanged |
 
+### Search
+
+These scenarios accept the lifecycle's [search](lifecycle.md#search) and
+facets (M7).
+
+| ID | Scenario | Expected |
+|---|---|---|
+| SRC-01 | The cases of `fixtures/search-cases.json`, without typo tolerance | Each search lists exactly its expected names, in order |
+| SRC-02 | Search titles and names for whole words, word starts, and words inside, with dots, case, and diacritics | Every search word must match; whole words rank above starts above insides; equal matches list newest first |
+| SRC-03 | Search with a typo, with and without `fuzzy=true`, and with a short or digit-bearing word | The typo matches only with `fuzzy=true`, ranked below exact matches; short and digit-bearing words stay exact |
+| SRC-04 | Page through a search, reuse its cursor with another search or without one | No match repeats or is skipped, `total` counts them all; the reused cursor is `400 malformed-request` |
+| SRC-05 | List with category, genre, kind, and search filters | Facets count the torrents of the kind filter only, every category and genre in code point order, and those without categories |
+| SRC-06 | Read the version before and after creation, deletion, a title change, a poster upload, and a pause, and with other menu filters | It changes with each change and is the same for every request with the same facet filters |
+| SRC-07 | GET a page with `If-None-Match` of its ETag, before and after a change, and with another query | `304` with the ETag; `200` with a new ETag after the change and for the other query |
+| SRC-08 | A search over 1024 characters, a repeated `search`, and `fuzzy=maybe` | `400 malformed-request` naming the parameter |
+
 ### Peers
 
 | ID | Scenario | Expected |

@@ -181,6 +181,18 @@ fn episodes() -> FixtureSpec {
     }
 }
 
+/// Creates a torrent from an unknown magnet URI with library `members`, and
+/// returns its ID.
+async fn create_with(server: &TestServer, n: u8, members: Value) -> String {
+    let mut body = members;
+    body["magnet_uri"] = json!(unknown_magnet(n));
+    let created = server
+        .send(json_request(Method::POST, "/api/v1/torrents", &body))
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    created.json()["id"].as_str().unwrap().to_owned()
+}
+
 mod scenario {
     use super::*;
 
@@ -3204,6 +3216,251 @@ mod scenario {
         server.stop().await;
     }
 
+    /// SRC-02 to SRC-04 and SRC-08: searches match titles and names, rank
+    /// their matches, tolerate typos on request, and page with cursors.
+    pub async fn search() {
+        let server = TestServer::start().await;
+        let title = |title: &str| json!({ "title": title });
+        let spring = create_with(&server, 50, title("Spring.2019")).await;
+        let springtime = create_with(&server, 51, title("Springtime Walk")).await;
+        let dotted = create_with(&server, 52, title("Sintel.2010.1080p")).await;
+        let inside = create_with(&server, 53, title("Xsintel Trailer")).await;
+        let spaced = create_with(&server, 54, title("Sintel 2010")).await;
+        let accented = create_with(&server, 55, title("Élan Vital")).await;
+        let media = catalog::media_names();
+        let named = server.upload(&media.metainfo().bytes, None).await.json()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let searched = |query: &str| {
+            let server = &server;
+            let path = format!("/api/v1/torrents?{query}");
+            async move { listed_ids(server, &path).await }
+        };
+        let cases: [(&str, Vec<&String>); 10] = [
+            ("search=spring", vec![&spring, &springtime]),
+            ("search=sintel", vec![&spaced, &dotted, &inside]),
+            ("search=SINTEL%202010", vec![&spaced, &dotted]),
+            ("search=sintel.2010", vec![&spaced, &dotted]),
+            ("search=sintel%202014", vec![]),
+            ("search=elan", vec![&accented]),
+            ("search=media", vec![&named]),
+            ("search=sintl", vec![]),
+            ("search=sintl&fuzzy=true", vec![&spaced, &dotted]),
+            ("search=2011&fuzzy=true", vec![]),
+        ];
+        for (query, expected) in cases {
+            assert_eq!(
+                searched(query).await,
+                expected.into_iter().cloned().collect::<Vec<_>>(),
+                "{query}"
+            );
+        }
+        let typo = create_with(&server, 56, title("Sintle Demo")).await;
+        assert_eq!(
+            searched("search=sintel&fuzzy=true").await,
+            [&spaced, &dotted, &inside, &typo].map(Clone::clone),
+            "typo matches rank below exact ones"
+        );
+        assert_eq!(
+            searched("search=%20%20").await.len(),
+            8,
+            "whitespace alone is no search"
+        );
+
+        // SRC-04: pages of a search, and its cursor elsewhere.
+        assert_eq!(
+            searched("search=sintel&page_size=1").await,
+            [&spaced, &dotted, &inside].map(Clone::clone)
+        );
+        let first = server
+            .get("/api/v1/torrents?search=sintel&page_size=1")
+            .await
+            .json();
+        assert_eq!(first["total"], 3);
+        let next = first["links"]["next"].as_str().unwrap();
+        assert!(next.contains("search=sintel"), "{next}");
+        let cursor = next.split("cursor=").nth(1).unwrap();
+        for query in [
+            format!("search=spring&page_size=1&cursor={cursor}"),
+            format!("search=sintel&fuzzy=true&page_size=1&cursor={cursor}"),
+            format!("page_size=1&cursor={cursor}"),
+        ] {
+            let reused = server.get(&format!("/api/v1/torrents?{query}")).await;
+            assert_problem(&reused, StatusCode::BAD_REQUEST, "malformed-request");
+            assert_eq!(errors(&reused, "parameter"), ["cursor"], "{query}");
+        }
+
+        // SRC-08.
+        let long = "a".repeat(1025);
+        for (query, parameter) in [
+            (format!("search={long}"), "search"),
+            ("search=a&search=b".to_owned(), "search"),
+            ("search=a&fuzzy=maybe".to_owned(), "fuzzy"),
+        ] {
+            let refused = server
+                .send_unchecked(empty(Method::GET, &format!("/api/v1/torrents?{query}")))
+                .await;
+            assert_problem(&refused, StatusCode::BAD_REQUEST, "malformed-request");
+            assert_eq!(errors(&refused, "parameter"), [parameter]);
+        }
+        server.stop().await;
+    }
+
+    /// SRC-05 to SRC-07: facets ignore the menu filters and the search, the
+    /// listing version follows every change, and pages answer conditional
+    /// requests.
+    pub async fn facets() {
+        let server = TestServer::start().await;
+        let movie = create_with(
+            &server,
+            60,
+            json!({ "kind": "movie", "categories": ["Movies", "Kids"], "genres": ["Comedy"] }),
+        )
+        .await;
+        let series = create_with(
+            &server,
+            61,
+            json!({ "kind": "series", "categories": ["Kids"], "genres": ["Drama"] }),
+        )
+        .await;
+        let other = create_with(&server, 62, json!({ "kind": "other" })).await;
+        create_with(
+            &server,
+            63,
+            json!({ "kind": "other", "categories": ["Äpfel", "apple", "Zebra"] }),
+        )
+        .await;
+        let page = |query: &str| {
+            let server = &server;
+            let path = format!("/api/v1/torrents?{query}");
+            async move { server.get(&path).await.json() }
+        };
+        let all = page("").await;
+        assert_eq!(all["total"], 4);
+        assert_eq!(
+            all["facets"],
+            json!({
+                "total": 4,
+                "uncategorized": 1,
+                "categories": [
+                    { "name": "Kids", "count": 2 },
+                    { "name": "Movies", "count": 1 },
+                    { "name": "Zebra", "count": 1 },
+                    { "name": "apple", "count": 1 },
+                    { "name": "Äpfel", "count": 1 },
+                ],
+                "genres": [
+                    { "name": "Comedy", "count": 1 },
+                    { "name": "Drama", "count": 1 },
+                ],
+                "version": all["facets"]["version"],
+            })
+        );
+        let version = all["facets"]["version"].as_str().unwrap().to_owned();
+        let narrowed = page("category=Movies&genre=Drama&uncategorized=true&search=zzz").await;
+        assert_eq!(narrowed["total"], 0);
+        assert_eq!(
+            narrowed["facets"], all["facets"],
+            "menu filters and search leave facets"
+        );
+        let movies = page("kind=movie").await;
+        assert_eq!(movies["facets"]["total"], 1);
+        assert_eq!(
+            movies["facets"]["categories"],
+            json!([{ "name": "Kids", "count": 1 }, { "name": "Movies", "count": 1 }])
+        );
+        assert_ne!(movies["facets"]["version"], version.as_str());
+
+        // SRC-07: conditional requests.
+        let read = server.get("/api/v1/torrents").await;
+        let etag = read.header(header::ETAG).unwrap().to_owned();
+        let cached = server
+            .send(with_header(
+                Method::GET,
+                "/api/v1/torrents",
+                header::IF_NONE_MATCH,
+                &etag,
+            ))
+            .await;
+        assert_eq!(cached.status, StatusCode::NOT_MODIFIED);
+        assert_eq!(cached.header(header::ETAG), Some(etag.as_str()));
+        let other_query = server
+            .send(with_header(
+                Method::GET,
+                "/api/v1/torrents?page_size=1",
+                header::IF_NONE_MATCH,
+                &etag,
+            ))
+            .await;
+        assert_eq!(
+            other_query.status,
+            StatusCode::OK,
+            "another query, another ETag"
+        );
+
+        // SRC-06: every change moves the version.
+        let current = || async {
+            server.get("/api/v1/torrents").await.json()["facets"]["version"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
+        let mut seen = vec![version];
+        let configuration = format!("/api/v1/torrents/{other}/configuration");
+        let tag = server
+            .get(&configuration)
+            .await
+            .header(header::ETAG)
+            .unwrap()
+            .to_owned();
+        let retitled = server
+            .send(merge_patch(
+                &configuration,
+                &tag,
+                &json!({ "title": "New" }),
+            ))
+            .await;
+        let tag = retitled.header(header::ETAG).unwrap().to_owned();
+        seen.push(current().await);
+        server
+            .send(put_poster(
+                &format!("/api/v1/torrents/{movie}/poster"),
+                "image/png",
+                PNG,
+            ))
+            .await;
+        seen.push(current().await);
+        server
+            .send(merge_patch(
+                &configuration,
+                &tag,
+                &json!({ "desired_state": "paused" }),
+            ))
+            .await;
+        seen.push(current().await);
+        server
+            .send(empty(Method::DELETE, &format!("/api/v1/torrents/{series}")))
+            .await;
+        seen.push(current().await);
+        create_with(&server, 64, json!({})).await;
+        seen.push(current().await);
+        let distinct: HashSet<&String> = seen.iter().collect();
+        assert_eq!(distinct.len(), seen.len(), "{seen:?}");
+        assert_eq!(current().await, *seen.last().unwrap(), "and only then");
+        let changed = server
+            .send(with_header(
+                Method::GET,
+                "/api/v1/torrents",
+                header::IF_NONE_MATCH,
+                &etag,
+            ))
+            .await;
+        assert_eq!(changed.status, StatusCode::OK);
+        assert_ne!(changed.header(header::ETAG), Some(etag.as_str()));
+        server.stop().await;
+    }
+
     async fn listed_len(server: &TestServer) -> usize {
         server.get("/api/v1/torrents").await.json()["items"]
             .as_array()
@@ -3284,4 +3541,6 @@ scenarios!(
     posters,
     library_restart,
     library_store_failures,
+    search,
+    facets,
 );

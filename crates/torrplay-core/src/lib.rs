@@ -18,6 +18,7 @@
 //!   kind inferred from file names, and poster images.
 //! - [`registry`]: the registered torrents, with atomic duplicate detection.
 //! - [`pagination`]: page sizes and opaque cursors for collections.
+//! - [`search`]: matching and ranking searches, shared by every interface.
 //! - [`settings`]: the application's settings, their bounds and defaults,
 //!   and merging explicit values with the defaults.
 //! - [`redact`]: redaction of URLs and magnet URIs in text bound for logs.
@@ -40,6 +41,7 @@ pub mod pagination;
 pub mod preload;
 pub mod redact;
 pub mod registry;
+pub mod search;
 pub mod settings;
 
 mod base32;
