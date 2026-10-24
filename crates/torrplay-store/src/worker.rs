@@ -16,6 +16,8 @@ use torrplay_core::id::TorrentId;
 use torrplay_core::library::Library;
 use torrplay_core::lifecycle::Configuration;
 
+use crate::images::{self, Images};
+use crate::profiles;
 use crate::schema::{self, to_ns, version};
 use crate::{Command, StoreError, StoredTorrent};
 
@@ -77,44 +79,69 @@ impl Worker {
                 }
                 Command::SetPoster(id, poster, bytes, reply) => {
                     let _ = reply.send(self.write(|connection| {
-                        require(connection, &id)?;
-                        connection.execute(
-                            "INSERT INTO torrent_posters
-                                 (torrent_id, media_type, digest, updated_at_ns, bytes)
-                             VALUES (?1, ?2, ?3, ?4, ?5)
-                             ON CONFLICT (torrent_id) DO UPDATE SET
-                                 media_type = excluded.media_type,
-                                 digest = excluded.digest,
-                                 updated_at_ns = excluded.updated_at_ns,
-                                 bytes = excluded.bytes",
-                            params![
-                                id.as_str(),
-                                poster.poster_type.media_type(),
-                                poster.digest.as_slice(),
-                                to_ns(poster.updated_at)?,
-                                bytes
-                            ],
-                        )?;
-                        Ok(())
+                        images::set(connection, Images::Posters, id.as_str(), &poster, &bytes)
                     }));
                 }
                 Command::DeletePoster(id, reply) => {
                     let _ = reply.send(self.write(|connection| {
-                        require(connection, &id)?;
-                        connection.execute(
-                            "DELETE FROM torrent_posters WHERE torrent_id = ?1",
-                            [id.as_str()],
-                        )?;
-                        Ok(())
+                        images::delete(connection, Images::Posters, id.as_str())
                     }));
                 }
                 Command::Poster(id, reply) => {
-                    let _ = reply.send(self.read(|connection| schema::poster(connection, &id)));
+                    let _ =
+                        reply.send(self.read(|connection| {
+                            images::one(connection, Images::Posters, id.as_str())
+                        }));
+                }
+                Command::InsertProfile(profile, reply) => {
+                    let _ = reply.send(
+                        self.write(|connection| profiles::insert_profile(connection, &profile)),
+                    );
+                }
+                Command::RenameProfile(id, name, reply) => {
+                    let _ = reply.send(
+                        self.write(|connection| profiles::rename_profile(connection, &id, &name)),
+                    );
+                }
+                Command::DeleteProfile(id, reply) => {
+                    let _ = reply
+                        .send(self.write(|connection| profiles::delete_profile(connection, &id)));
+                }
+                Command::SetAvatar(id, avatar, bytes, reply) => {
+                    let _ = reply.send(self.write(|connection| {
+                        images::set(connection, Images::Avatars, id.as_str(), &avatar, &bytes)
+                    }));
+                }
+                Command::DeleteAvatar(id, reply) => {
+                    let _ = reply.send(self.write(|connection| {
+                        images::delete(connection, Images::Avatars, id.as_str())
+                    }));
+                }
+                Command::Avatar(id, reply) => {
+                    let _ =
+                        reply.send(self.read(|connection| {
+                            images::one(connection, Images::Avatars, id.as_str())
+                        }));
+                }
+                Command::SetProgress(progress, reply) => {
+                    let _ = reply.send(
+                        self.write(|connection| profiles::set_progress(connection, &progress)),
+                    );
+                }
+                Command::DeleteProgress(profile, torrent, file, reply) => {
+                    let _ = reply.send(self.write(|connection| {
+                        profiles::delete_progress(connection, &profile, &torrent, &file)
+                    }));
+                }
+                Command::SetDismissal(dismissal, reply) => {
+                    let _ = reply.send(
+                        self.write(|connection| profiles::set_dismissal(connection, &dismissal)),
+                    );
                 }
                 Command::Delete(id, reply) => {
                     let _ = reply.send(self.write(|connection| {
-                        // The torrent file, library lists, and poster go
-                        // through the foreign keys.
+                        // The torrent file, library lists, poster, progress,
+                        // and dismissals go through the foreign keys.
                         connection.execute("DELETE FROM torrents WHERE id = ?1", [id.as_str()])?;
                         Ok(())
                     }));

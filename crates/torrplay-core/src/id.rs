@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: MIT
 
 //! Torrent IDs, file IDs, and v1 info hashes, as
-//! `docs/adr/0004-resource-identity.md` defines them.
+//! `docs/adr/0004-resource-identity.md` defines them, and the IDs of
+//! preloads, profiles, and up next entries.
 //!
 //! Torrent and file IDs are opaque to clients. The server never validates
 //! the shape of a requested ID: lookups take any `&str`, and one that names
@@ -52,12 +53,7 @@ impl TorrentId {
     /// shape [`from_random_bytes`](Self::from_random_bytes) produces, `trr_`
     /// and 26 lowercase base32 characters.
     pub fn from_stored(text: &str) -> Option<Self> {
-        let encoded = text.strip_prefix(Self::PREFIX)?;
-        let shaped = encoded.len() == 26
-            && encoded
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || (b'2'..=b'7').contains(&byte));
-        shaped.then(|| Self(text.to_owned()))
+        has_shape(text, Self::PREFIX).then(|| Self(text.to_owned()))
     }
 
     /// Returns the ID's text.
@@ -89,6 +85,123 @@ pub fn random_torrent_id_bytes() -> Result<[u8; TORRENT_ID_RANDOM_BYTES], Random
     let mut bytes = [0; TORRENT_ID_RANDOM_BYTES];
     getrandom::fill(&mut bytes).map_err(RandomnessError)?;
     Ok(bytes)
+}
+
+/// Whether `text` is `prefix` and 26 lowercase base32 characters, the shape
+/// of 128 bits the server encodes.
+fn has_shape(text: &str, prefix: &str) -> bool {
+    text.strip_prefix(prefix).is_some_and(|encoded| {
+        encoded.len() == 26
+            && encoded
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || (b'2'..=b'7').contains(&byte))
+    })
+}
+
+/// The opaque, server-assigned identifier of a profile: `prf_` followed by
+/// 128 random bits in lowercase base32, drawn like a torrent ID's.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ProfileId(String);
+
+impl ProfileId {
+    /// The prefix of every profile ID the server issues.
+    pub const PREFIX: &str = "prf_";
+
+    /// Builds the ID that encodes `random`. Production IDs take these bytes
+    /// from [`random_torrent_id_bytes`].
+    pub fn from_random_bytes(random: [u8; TORRENT_ID_RANDOM_BYTES]) -> Self {
+        Self(format!("{}{}", Self::PREFIX, base32::encode(&random)))
+    }
+
+    /// Reads an ID the server issued and stored: `None` unless it has the
+    /// shape [`from_random_bytes`](Self::from_random_bytes) produces.
+    pub fn from_stored(text: &str) -> Option<Self> {
+        has_shape(text, Self::PREFIX).then(|| Self(text.to_owned()))
+    }
+
+    /// Returns the ID's text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ProfileId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl Borrow<str> for ProfileId {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+/// The domain separation string that starts every up next entry ID digest.
+const UP_NEXT_ID_DOMAIN: &[u8] = b"torrplay-up-next-id-v1";
+
+/// The identifier of an up next entry: `upn_` followed by the first 128
+/// bits of a SHA-256 digest of what the entry stands for, a series or one
+/// file of another torrent, so it stays the same while the entry comes and
+/// goes. Clients treat it as opaque.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct UpNextEntryId(String);
+
+impl UpNextEntryId {
+    /// The prefix of every up next entry ID.
+    pub const PREFIX: &str = "upn_";
+
+    /// The ID of a series' entry.
+    pub fn of_series(torrent: &TorrentId) -> Self {
+        Self::derive(&[b"series", torrent.as_str().as_bytes()])
+    }
+
+    /// The ID of the entry of one file of a torrent that is not a series.
+    pub fn of_file(torrent: &TorrentId, file: &FileId) -> Self {
+        Self::derive(&[
+            b"file",
+            torrent.as_str().as_bytes(),
+            file.as_str().as_bytes(),
+        ])
+    }
+
+    fn derive(parts: &[&[u8]]) -> Self {
+        let mut hasher = Sha256::new();
+        hasher.update(UP_NEXT_ID_DOMAIN);
+        for part in parts {
+            hasher.update((part.len() as u64).to_be_bytes());
+            hasher.update(part);
+        }
+        let digest = hasher.finalize();
+        Self(format!(
+            "{}{}",
+            Self::PREFIX,
+            base32::encode(&digest[..FILE_ID_DIGEST_BYTES])
+        ))
+    }
+
+    /// Reads a stored ID: `None` unless it has the shape the derivation
+    /// produces.
+    pub fn from_stored(text: &str) -> Option<Self> {
+        has_shape(text, Self::PREFIX).then(|| Self(text.to_owned()))
+    }
+
+    /// Returns the ID's text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for UpNextEntryId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl Borrow<str> for UpNextEntryId {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
 }
 
 /// The opaque, server-assigned identifier of a preload: `prl_` followed by
@@ -154,6 +267,12 @@ impl FileId {
             Self::PREFIX,
             base32::encode(&digest[..FILE_ID_DIGEST_BYTES])
         ))
+    }
+
+    /// Reads a stored ID: `None` unless it has the shape the derivation
+    /// produces.
+    pub fn from_stored(text: &str) -> Option<Self> {
+        has_shape(text, Self::PREFIX).then(|| Self(text.to_owned()))
     }
 
     /// Returns the ID's text.

@@ -259,6 +259,28 @@ facets (M7).
 | SRC-07 | GET a page with `If-None-Match` of its ETag, before and after a change, and with another query | `304` with the ETag; `200` with a new ETag after the change and for the other query |
 | SRC-08 | A search over 1024 characters, a repeated `search`, and `fuzzy=maybe` | `400 malformed-request` naming the parameter |
 
+### Profiles and progress
+
+These scenarios accept the lifecycle's
+[profiles and progress](lifecycle.md#profiles-and-progress) (M7).
+
+| ID | Scenario | Expected |
+|---|---|---|
+| PRF-01 | Start on a new data directory, list profiles, create, rename with and without `If-Match`, and delete one | A `Default` profile exists; `201` with `Location` and `ETag`; `428`, `412` with a stale ETag, `200`; `204`, then `404` |
+| PRF-02 | Create a profile with another's name after normalization, a 33rd profile, and an invalid name; delete the last profile | `409 duplicate-profile` linking the other; `409 too-many-profiles`; `422 validation-failed`; `409 lifecycle-conflict` |
+| PRF-03 | Upload, read, replace, and delete an avatar | As a poster: `201`, `200` with `nosniff` and `sandbox`, `304`, `204`; the profile's `avatar` and ETag follow |
+| PRG-01 | Save a file's progress, again, and read it; save for a magnet torrent before metadata and for an unknown file | `201` with `Location`, then `200`; the stored position; `409 lifecycle-conflict`; `404` |
+| PRG-02 | Save a position at 90% of the duration, mark a file viewed and not viewed, and save a position for a viewed file | Viewed with the position reset to 0 and `viewed_at` set; unmarked with `viewed_at` null; the viewed file keeps the new position |
+| PRG-03 | Save a position past the duration, a zero duration, and an unknown member | `422 validation-failed` naming each member |
+| PRG-04 | Two profiles save progress of one file; list a torrent's progress; delete the progress, the torrent, and a profile | Each profile sees its own; metadata order with only files with progress; each deletion removes the progress |
+| PRG-05 | Restart with profiles, avatars, progress, and a dismissal | All survive with their ETags |
+| UPN-01 | Save progress in two movie files of one torrent, below and above 1% | Up next lists the file above 1%, most recent activity first |
+| UPN-02 | View episode `S01E01` of a series to 90%, then view the last episode | One `next_episode` entry for `S01E02`; then no entry for the series |
+| UPN-03 | Save progress in two episodes of one series | One `resume` entry for the most recently saved |
+| UPN-04 | Dismiss an entry, then save progress for its file | The entry leaves up next, and `DELETE` again is `404`; the new progress brings it back with the same ID |
+| UPN-05 | GET up next with `If-None-Match` of its ETag before and after saving progress | `304`, then `200` with a new ETag |
+| PRG-06 | A database write fails while saving progress, creating a profile, and dismissing an entry | `500 internal-error`; nothing changes |
+
 ### Peers
 
 | ID | Scenario | Expected |

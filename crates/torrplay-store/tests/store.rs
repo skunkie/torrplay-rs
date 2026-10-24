@@ -14,11 +14,23 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, SystemTime};
 
 use tempfile::TempDir;
-use torrplay_core::id::{InfoHashV1, TORRENT_ID_RANDOM_BYTES, TorrentId};
-use torrplay_core::library::{Kind, Library, PosterInfo, PosterType};
+use torrplay_core::id::{
+    FileId, InfoHashV1, ProfileId, TORRENT_ID_RANDOM_BYTES, TorrentId, UpNextEntryId,
+};
+use torrplay_core::image::{ImageInfo, ImageType};
+use torrplay_core::library::{Kind, Library};
 use torrplay_core::lifecycle::{Configuration, DesiredState, StorageMode};
+use torrplay_core::profiles::{Profile, Progress};
 use torrplay_core::settings::Explicit;
-use torrplay_store::{FILE_NAME, Store, StoreError, StoredSettings, StoredTorrent};
+use torrplay_store::{
+    FILE_NAME, Store, StoreError, StoredDismissal, StoredProgress, StoredSettings, StoredTorrent,
+};
+
+/// Turns a database back into version 7, before profiles.
+const UNDO_VERSION_8: &str = "DROP TABLE up_next_dismissals;
+    DROP TABLE progress;
+    DROP TABLE profile_avatars;
+    DROP TABLE profiles;";
 
 /// Turns a database back into version 6, before the library.
 const UNDO_VERSION_7: &str = "DROP TABLE torrent_posters;
@@ -205,7 +217,7 @@ async fn a_newer_schema_is_refused() {
         Store::open(dir.path()),
         Err(StoreError::TooNew {
             found: 99,
-            supported: 7
+            supported: 8
         })
     ));
 }
@@ -311,7 +323,8 @@ async fn a_version_1_database_is_copied_then_migrated() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_7}
+                "{UNDO_VERSION_8}
+                 {UNDO_VERSION_7}
                  DROP TABLE settings;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
                  DROP TABLE runs;
@@ -349,7 +362,8 @@ async fn a_version_1_database_is_copied_then_migrated() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_7}
+                "{UNDO_VERSION_8}
+                 {UNDO_VERSION_7}
                  DROP TABLE settings;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
                  DROP TABLE runs;
@@ -386,7 +400,8 @@ async fn settings_from_version_2_keep_their_values_and_lack_the_cache_capacity()
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_7}
+                "{UNDO_VERSION_8}
+                 {UNDO_VERSION_7}
                  ALTER TABLE settings DROP COLUMN cache_capacity_bytes;
                  ALTER TABLE settings DROP COLUMN background_downloads;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
@@ -439,7 +454,8 @@ async fn settings_from_version_5_lack_the_background_downloads_switch() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_7}
+                "{UNDO_VERSION_8}
+                 {UNDO_VERSION_7}
                  ALTER TABLE settings DROP COLUMN background_downloads;
                  PRAGMA user_version = 5;",
             ))
@@ -469,7 +485,8 @@ async fn torrents_from_version_3_use_memory_storage() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_7}
+                "{UNDO_VERSION_8}
+                 {UNDO_VERSION_7}
                  ALTER TABLE settings DROP COLUMN background_downloads;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
                  DROP TABLE runs;
@@ -660,8 +677,8 @@ async fn posters_are_stored_replaced_and_deleted_with_their_torrent() {
     let at = SystemTime::UNIX_EPOCH + Duration::from_nanos(1_700_000_000_000_000_007);
     let png = b"\x89PNG\r\n\x1a\nfirst".to_vec();
     let jpeg = vec![0xff, 0xd8, 0xff, 0xe0, 1, 2, 3];
-    let first = PosterInfo::of(PosterType::Png, &png, at);
-    let second = PosterInfo::of(PosterType::Jpeg, &jpeg, at + Duration::from_secs(1));
+    let first = ImageInfo::of(ImageType::Png, &png, at);
+    let second = ImageInfo::of(ImageType::Jpeg, &jpeg, at + Duration::from_secs(1));
     {
         let (store, _) = open(&dir);
         store.insert(torrent(1, 10)).await.unwrap();
@@ -721,11 +738,157 @@ async fn torrents_from_version_6_have_empty_library_members() {
     {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
-            .execute_batch(&format!("{UNDO_VERSION_7} PRAGMA user_version = 6;"))
+            .execute_batch(&format!(
+                "{UNDO_VERSION_8}
+                 {UNDO_VERSION_7} PRAGMA user_version = 6;"
+            ))
             .unwrap();
     }
     let (_store, stored) = open(&dir);
     assert_eq!(stored, [stored_torrent]);
     assert_eq!(stored[0].configuration.library(), &Library::default());
     assert!(dir.path().join(format!("{FILE_NAME}.v6.bak")).exists());
+}
+
+fn profile(n: u8, name: &str) -> Profile {
+    Profile {
+        id: ProfileId::from_random_bytes([n; TORRENT_ID_RANDOM_BYTES]),
+        name: name.into(),
+        created_at: SystemTime::UNIX_EPOCH + Duration::from_nanos(1_000 + u64::from(n)),
+        avatar: None,
+    }
+}
+
+#[tokio::test]
+async fn profiles_progress_and_dismissals_survive_and_go_with_their_owners() {
+    let dir = TempDir::new().unwrap();
+    let at = |secs| SystemTime::UNIX_EPOCH + Duration::from_secs(secs);
+    let alex = profile(1, "Alex");
+    let sam = profile(2, "Sam");
+    let file = FileId::derive(&["Film.mkv"]);
+    let progress = |profile: &Profile, torrent: u32, position_ms| StoredProgress {
+        profile: profile.id.clone(),
+        torrent: id(torrent),
+        file: file.clone(),
+        progress: Progress {
+            position_ms,
+            duration_ms: 10_000,
+            viewed_at: (position_ms == 0).then(|| at(4)),
+            updated_at: at(5),
+        },
+    };
+    let entry = UpNextEntryId::of_file(&id(1), &file);
+    let dismissal = StoredDismissal {
+        profile: alex.id.clone(),
+        entry: entry.clone(),
+        torrent: id(1),
+        at: at(6),
+    };
+    let png = b"\x89PNG\r\n\x1a\navatar".to_vec();
+    let avatar = ImageInfo::of(ImageType::Png, &png, at(7));
+    {
+        let (store, _) = open(&dir);
+        store.insert(torrent(1, 10)).await.unwrap();
+        store.insert(torrent(2, 20)).await.unwrap();
+        store.insert_profile(&alex).await.unwrap();
+        store.insert_profile(&sam).await.unwrap();
+        assert!(
+            store.insert_profile(&profile(3, "Alex")).await.is_err(),
+            "names are unique"
+        );
+        store.rename_profile(&sam.id, "Sammy").await.unwrap();
+        store
+            .set_avatar(&alex.id, &avatar, png.clone())
+            .await
+            .unwrap();
+        store
+            .set_progress(&progress(&alex, 1, 2_500))
+            .await
+            .unwrap();
+        store
+            .set_progress(&progress(&alex, 1, 3_000))
+            .await
+            .unwrap();
+        store.set_progress(&progress(&sam, 1, 0)).await.unwrap();
+        store.set_progress(&progress(&alex, 2, 100)).await.unwrap();
+        store.set_dismissal(&dismissal).await.unwrap();
+        assert!(matches!(
+            store
+                .set_progress(&progress(&profile(9, "Nobody"), 1, 1))
+                .await,
+            Err(StoreError::UnknownProfile)
+        ));
+        assert!(matches!(
+            store.set_progress(&progress(&alex, 9, 1)).await,
+            Err(StoreError::UnknownTorrent)
+        ));
+        assert!(matches!(
+            store
+                .set_avatar(&profile(9, "Nobody").id, &avatar, png.clone())
+                .await,
+            Err(StoreError::UnknownProfile)
+        ));
+    }
+    {
+        let (store, contents) = Store::open(dir.path()).unwrap();
+        let mut profiles = contents.profiles.clone();
+        profiles.sort_by(|a, b| a.id.cmp(&b.id));
+        assert_eq!(
+            profiles,
+            [
+                Profile {
+                    avatar: Some(avatar.clone()),
+                    ..alex.clone()
+                },
+                Profile {
+                    name: "Sammy".into(),
+                    ..sam.clone()
+                }
+            ]
+        );
+        assert_eq!(contents.progress.len(), 3);
+        assert!(
+            contents.progress.contains(&progress(&alex, 1, 3_000)),
+            "replaced"
+        );
+        assert!(contents.progress.contains(&progress(&sam, 1, 0)));
+        assert_eq!(contents.dismissals, [dismissal]);
+        assert_eq!(store.avatar(&alex.id).await.unwrap(), Some((avatar, png)));
+        store
+            .delete_progress(&alex.id, &id(2), &file)
+            .await
+            .unwrap();
+        store.delete(&id(1)).await.unwrap();
+        store.delete_profile(&sam.id).await.unwrap();
+    }
+    let (_store, contents) = Store::open(dir.path()).unwrap();
+    assert_eq!(contents.profiles.len(), 1);
+    assert!(
+        contents.progress.is_empty(),
+        "each deletion took its progress"
+    );
+    assert!(
+        contents.dismissals.is_empty(),
+        "and the torrent its dismissals"
+    );
+}
+
+#[tokio::test]
+async fn a_version_7_database_gains_empty_profiles() {
+    let dir = TempDir::new().unwrap();
+    {
+        let (store, _) = open(&dir);
+        store.insert(torrent(1, 10)).await.unwrap();
+    }
+    // A database as version 7 left it.
+    {
+        let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
+        connection
+            .execute_batch(&format!("{UNDO_VERSION_8} PRAGMA user_version = 7;"))
+            .unwrap();
+    }
+    let (_store, contents) = Store::open(dir.path()).unwrap();
+    assert_eq!(contents.torrents.len(), 1);
+    assert!(contents.profiles.is_empty());
+    assert!(dir.path().join(format!("{FILE_NAME}.v7.bak")).exists());
 }

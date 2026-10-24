@@ -9,8 +9,8 @@
 //! the store: every mutation is one durable transaction, and the caller
 //! changes its records only after the store committed. The database is read
 //! once, at startup, by [`Store::open`], which returns the stored torrents,
-//! except for poster images, which [`Store::poster`] reads when they are
-//! served.
+//! except for poster and avatar images, which [`Store::poster`] and
+//! [`Store::avatar`] read when they are served.
 //!
 //! One worker thread owns the database connection. The async methods send it
 //! commands over a bounded channel and await its reply, so async tasks never
@@ -29,11 +29,14 @@ use std::thread::JoinHandle;
 use std::time::SystemTime;
 
 use tokio::sync::{mpsc, oneshot};
-use torrplay_core::id::{InfoHashV1, TorrentId};
-use torrplay_core::library::PosterInfo;
+use torrplay_core::id::{FileId, InfoHashV1, ProfileId, TorrentId, UpNextEntryId};
+use torrplay_core::image::ImageInfo;
 use torrplay_core::lifecycle::{Configuration, StorageMode};
+use torrplay_core::profiles::{Profile, Progress};
 pub use torrplay_core::settings::Stored as StoredSettings;
 
+mod images;
+mod profiles;
 mod schema;
 mod worker;
 
@@ -65,7 +68,33 @@ pub struct StoredTorrent {
     pub torrent_file: Option<Vec<u8>>,
     /// The poster's description, without its image; a new torrent has
     /// none, and [`Store::insert`] ignores it.
-    pub poster: Option<PosterInfo>,
+    pub poster: Option<ImageInfo>,
+}
+
+/// A profile's stored progress of one file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredProgress {
+    /// The profile.
+    pub profile: ProfileId,
+    /// The torrent.
+    pub torrent: TorrentId,
+    /// The file.
+    pub file: FileId,
+    /// The progress.
+    pub progress: Progress,
+}
+
+/// A profile's stored dismissal of an up next entry.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredDismissal {
+    /// The profile.
+    pub profile: ProfileId,
+    /// The entry.
+    pub entry: UpNextEntryId,
+    /// The entry's torrent, with which the dismissal is deleted.
+    pub torrent: TorrentId,
+    /// When it was dismissed.
+    pub at: SystemTime,
 }
 
 /// What the store held when it was opened.
@@ -76,6 +105,12 @@ pub struct Contents {
     /// The stored settings: the explicit values and their version, or every
     /// setting unset at version 1 if none were stored.
     pub settings: StoredSettings,
+    /// The stored profiles, with their avatars' descriptions, in no order.
+    pub profiles: Vec<Profile>,
+    /// Every profile's stored progress.
+    pub progress: Vec<StoredProgress>,
+    /// Every profile's stored dismissals.
+    pub dismissals: Vec<StoredDismissal>,
     /// Whether the last run recorded a clean shutdown. After a crash or a
     /// power loss, disk torrents' resume bitfields may be newer than their
     /// data.
@@ -116,6 +151,9 @@ pub enum StoreError {
     /// No stored torrent has the ID.
     #[error("no stored torrent has this ID")]
     UnknownTorrent,
+    /// No stored profile has the ID.
+    #[error("no stored profile has this ID")]
+    UnknownProfile,
     /// The store was closed, or its worker ended.
     #[error("the store is closed")]
     Closed,
@@ -138,9 +176,18 @@ enum Command {
     RecordCleanShutdown(Reply<()>),
     SetSettings(StoredSettings, Reply<()>),
     SetTorrentFile(TorrentId, Vec<u8>, Reply<()>),
-    SetPoster(TorrentId, PosterInfo, Vec<u8>, Reply<()>),
+    SetPoster(TorrentId, ImageInfo, Vec<u8>, Reply<()>),
     DeletePoster(TorrentId, Reply<()>),
-    Poster(TorrentId, Reply<Option<(PosterInfo, Vec<u8>)>>),
+    Poster(TorrentId, Reply<Option<(ImageInfo, Vec<u8>)>>),
+    InsertProfile(Profile, Reply<()>),
+    RenameProfile(ProfileId, String, Reply<()>),
+    DeleteProfile(ProfileId, Reply<()>),
+    SetAvatar(ProfileId, ImageInfo, Vec<u8>, Reply<()>),
+    DeleteAvatar(ProfileId, Reply<()>),
+    Avatar(ProfileId, Reply<Option<(ImageInfo, Vec<u8>)>>),
+    SetProgress(StoredProgress, Reply<()>),
+    DeleteProgress(ProfileId, TorrentId, FileId, Reply<()>),
+    SetDismissal(StoredDismissal, Reply<()>),
     Delete(TorrentId, Reply<()>),
 }
 
@@ -167,6 +214,9 @@ impl Store {
         let mut connection = schema::open(&path)?;
         let torrents = schema::torrents(&mut connection)?;
         let settings = schema::settings(&connection)?;
+        let profiles = profiles::profiles(&connection)?;
+        let progress = profiles::progress(&connection)?;
+        let dismissals = profiles::dismissals(&connection)?;
         let clean_shutdown = schema::begin_run(&mut connection)?;
         let (sender, receiver) = mpsc::channel(QUEUE);
         #[cfg(feature = "test-support")]
@@ -195,6 +245,9 @@ impl Store {
             Contents {
                 torrents,
                 settings,
+                profiles,
+                progress,
+                dismissals,
                 clean_shutdown,
             },
         ))
@@ -262,7 +315,7 @@ impl Store {
     pub async fn set_poster(
         &self,
         id: &TorrentId,
-        poster: &PosterInfo,
+        poster: &ImageInfo,
         bytes: Vec<u8>,
     ) -> Result<(), StoreError> {
         let (id, poster) = (id.clone(), poster.clone());
@@ -278,12 +331,82 @@ impl Store {
 
     /// Reads a stored torrent's poster with its image, in a read-only
     /// transaction, or `None` if it has none.
-    pub async fn poster(
-        &self,
-        id: &TorrentId,
-    ) -> Result<Option<(PosterInfo, Vec<u8>)>, StoreError> {
+    pub async fn poster(&self, id: &TorrentId) -> Result<Option<(ImageInfo, Vec<u8>)>, StoreError> {
         let id = id.clone();
         self.send(|reply| Command::Poster(id, reply)).await
+    }
+
+    /// Stores a new profile. Its ID and name must be free.
+    pub async fn insert_profile(&self, profile: &Profile) -> Result<(), StoreError> {
+        let profile = profile.clone();
+        self.send(|reply| Command::InsertProfile(profile, reply))
+            .await
+    }
+
+    /// Renames a stored profile; the name must be free.
+    pub async fn rename_profile(&self, id: &ProfileId, name: &str) -> Result<(), StoreError> {
+        let (id, name) = (id.clone(), name.to_owned());
+        self.send(|reply| Command::RenameProfile(id, name, reply))
+            .await
+    }
+
+    /// Deletes a stored profile with its avatar, progress, and dismissals.
+    pub async fn delete_profile(&self, id: &ProfileId) -> Result<(), StoreError> {
+        let id = id.clone();
+        self.send(|reply| Command::DeleteProfile(id, reply)).await
+    }
+
+    /// Stores `bytes`, which `avatar` describes, as a stored profile's
+    /// avatar, replacing any it had.
+    pub async fn set_avatar(
+        &self,
+        id: &ProfileId,
+        avatar: &ImageInfo,
+        bytes: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        let (id, avatar) = (id.clone(), avatar.clone());
+        self.send(|reply| Command::SetAvatar(id, avatar, bytes, reply))
+            .await
+    }
+
+    /// Deletes a stored profile's avatar, if it has one.
+    pub async fn delete_avatar(&self, id: &ProfileId) -> Result<(), StoreError> {
+        let id = id.clone();
+        self.send(|reply| Command::DeleteAvatar(id, reply)).await
+    }
+
+    /// Reads a stored profile's avatar with its image, in a read-only
+    /// transaction, or `None` if it has none.
+    pub async fn avatar(&self, id: &ProfileId) -> Result<Option<(ImageInfo, Vec<u8>)>, StoreError> {
+        let id = id.clone();
+        self.send(|reply| Command::Avatar(id, reply)).await
+    }
+
+    /// Stores a profile's progress of a file of a stored torrent.
+    pub async fn set_progress(&self, progress: &StoredProgress) -> Result<(), StoreError> {
+        let progress = progress.clone();
+        self.send(|reply| Command::SetProgress(progress, reply))
+            .await
+    }
+
+    /// Deletes a profile's progress of a file, if it has any.
+    pub async fn delete_progress(
+        &self,
+        profile: &ProfileId,
+        torrent: &TorrentId,
+        file: &FileId,
+    ) -> Result<(), StoreError> {
+        let (profile, torrent, file) = (profile.clone(), torrent.clone(), file.clone());
+        self.send(|reply| Command::DeleteProgress(profile, torrent, file, reply))
+            .await
+    }
+
+    /// Stores a profile's dismissal of an up next entry, replacing an
+    /// earlier one.
+    pub async fn set_dismissal(&self, dismissal: &StoredDismissal) -> Result<(), StoreError> {
+        let dismissal = dismissal.clone();
+        self.send(|reply| Command::SetDismissal(dismissal, reply))
+            .await
     }
 
     /// Deletes a stored torrent with its torrent file, library lists, and

@@ -317,6 +317,9 @@ pub async fn serve(
     let Contents {
         torrents,
         settings,
+        profiles,
+        progress,
+        dismissals,
         clean_shutdown,
     } = contents;
     if !clean_shutdown {
@@ -345,7 +348,11 @@ pub async fn serve(
         Ok(Err(error)) => tracing::warn!(%error, "the download directory could not be swept"),
         Err(error) => tracing::warn!(%error, "sweeping the download directory panicked"),
     }
-    let app = Arc::new(App::new(engine.clone(), store).with_settings(settings));
+    let app = Arc::new(
+        App::new(engine.clone(), store)
+            .with_settings(settings)
+            .with_viewing(profiles, progress, dismissals),
+    );
     let (close_listener, listener_closed) = oneshot::channel::<()>();
     let mut server = tokio::spawn(
         axum::serve(listener, torrplay_server::router(app.clone()))

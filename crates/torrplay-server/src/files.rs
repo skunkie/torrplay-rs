@@ -43,7 +43,7 @@ fn unknown_file() -> Problem {
 }
 
 /// Returns the torrent `id` and its metadata, which must be available.
-async fn with_metadata<E: Engine>(
+pub(crate) async fn with_metadata<E: Engine>(
     app: &App<E>,
     id: &str,
 ) -> Result<(TorrentView, Arc<Metadata>), Problem> {

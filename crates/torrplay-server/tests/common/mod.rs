@@ -154,7 +154,8 @@ impl TestServer {
             Ok(bytes)
         });
         let mut app = App::with_registry(Arc::clone(&engine), registry, store)
-            .with_settings(contents.settings);
+            .with_settings(contents.settings)
+            .with_viewing(contents.profiles, contents.progress, contents.dismissals);
         if let Some(timeout) = body_timeout {
             app = app.with_body_timeout(timeout);
         }
