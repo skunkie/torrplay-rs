@@ -40,6 +40,7 @@ mod problem;
 mod profiles;
 mod progress;
 mod query;
+mod reference;
 mod representation;
 mod service;
 mod settings;
@@ -67,6 +68,8 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
         .route("/api/v1", get(service::entry_point))
         .route("/api/v1/", any(service::entry_point_with_slash))
         .route("/api/v1/openapi.yaml", get(service::document))
+        .route("/api/v1/reference", get(reference::get_page))
+        .route("/api/v1/reference/scalar.js", get(reference::get_script))
         .route(
             "/api/v1/torrents",
             get(torrents::list::<E>).post(torrents::create::<E>),

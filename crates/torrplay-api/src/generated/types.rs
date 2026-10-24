@@ -1281,10 +1281,10 @@ pub type Genre = String;
 ///The API's entry point.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EntryPoint {
-    ///Links to the top-level resources and the OpenAPI document.
+    ///Links to the top-level resources, the OpenAPI document, and the API reference.
     pub links: EntryPointLinks,
 }
-///Links to the top-level resources and the OpenAPI document.
+///Links to the top-level resources, the OpenAPI document, and the API reference.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EntryPointLinks {
     ///The access tokens collection, where clients sign in.
@@ -1303,6 +1303,9 @@ pub struct EntryPointLinks {
     ///The OpenAPI document, under its RFC 8631 relation name.
     #[serde(rename = "service-desc")]
     pub service_desc: String,
+    ///The API reference page, under its RFC 8631 relation name.
+    #[serde(rename = "service-doc")]
+    pub service_doc: String,
     ///The application's settings.
     pub settings: String,
     ///The torrents collection.

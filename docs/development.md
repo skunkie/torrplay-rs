@@ -94,6 +94,20 @@ a deliberate change: update the version here and in `.github/workflows/ci.yml`,
 regenerate, and run the crate's tests, which round-trip every example in the
 document through its generated type.
 
+## API reference bundle
+
+`/api/v1/reference` serves the contract through the standalone browser bundle
+of Scalar's API reference, which `crates/torrplay-server/assets/scalar/`
+holds gzipped with its SHA-256 digest, so the server needs no CDN.
+`scripts/update-scalar.sh` vendors the version it pins: it downloads the
+bundle from jsDelivr, verifies it against the digest jsDelivr publishes, and
+compresses it reproducibly. The server's tests check that the embedded bundle
+decompresses to the committed digest. To upgrade, change the script's version
+to a release at least two weeks old, run it, and check the page in a browser
+for blocked requests, since its Content-Security-Policy allows only the
+page's own origin. The bundle compiles in Scalar's dependencies, whose
+licenses `REUSE.toml` lists; review them when upgrading.
+
 ## Running TorrPlay
 
 ```bash
@@ -102,7 +116,8 @@ cargo run -p torrplay -- --help
 
 `torrplay` serves the API on `127.0.0.1:8080` by default; `--listen` may
 name any address, and the application warns when one beyond loopback is
-served while authentication is off. `--allowed-host` adds a host name
+served while authentication is off. `/api/v1/reference` shows the API in a
+browser. `--allowed-host` adds a host name
 requests may give, such as a reverse proxy's, and `--dlna-name` the DLNA
 media server's name, which the `dlna_enabled` setting turns on
 ([the DLNA contract](dlna.md)). Its other options set the

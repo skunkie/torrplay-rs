@@ -45,6 +45,9 @@ chrono = { version = "0.4", default-features = false, features = ["serde", "std"
 # The platform's data directory, the default for the database; librqbit
 # already depends on it.
 directories = "6"
+# Decompressing the vendored API reference bundle for clients that refuse
+# gzip; already in the tree through librqbit.
+flate2 = "1.1"
 form_urlencoded = "1"
 # Only for TryStreamExt, which axum already depends on.
 futures-util = { version = "0.3", default-features = false }

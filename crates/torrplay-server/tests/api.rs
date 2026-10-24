@@ -376,6 +376,7 @@ mod scenario {
             entry.json()["links"]["service-desc"],
             "/api/v1/openapi.yaml"
         );
+        assert_eq!(entry.json()["links"]["service-doc"], "/api/v1/reference");
         let redirect = server.send_raw(empty(Method::GET, "/api/v1/")).await;
         assert_eq!(redirect.status, StatusCode::PERMANENT_REDIRECT);
         assert_eq!(redirect.header(header::LOCATION), Some("/api/v1"));
@@ -392,6 +393,81 @@ mod scenario {
         }
         let unknown = server.send_raw(empty(Method::GET, "/api/v2")).await;
         assert_eq!(unknown.status, StatusCode::NOT_FOUND);
+        server.stop().await;
+    }
+
+    /// API-22.
+    pub async fn api_reference() {
+        let server = TestServer::start().await;
+        let page = server.get("/api/v1/reference").await;
+        assert_eq!(page.status, StatusCode::OK);
+        assert_eq!(
+            page.header(header::CONTENT_TYPE),
+            Some("text/html; charset=utf-8")
+        );
+        let policy = page.header(header::CONTENT_SECURITY_POLICY).unwrap();
+        for directive in [
+            "default-src 'none'",
+            "script-src 'self'",
+            "connect-src 'self'",
+        ] {
+            assert!(policy.contains(directive), "{directive}");
+        }
+        let html = String::from_utf8(page.body).unwrap();
+        assert!(html.contains(r#"src="/api/v1/reference/scalar.js""#));
+
+        let script = "/api/v1/reference/scalar.js";
+        let compressed = server.get(script).await;
+        assert_eq!(compressed.status, StatusCode::OK);
+        assert_eq!(
+            compressed.header(header::CONTENT_TYPE),
+            Some("text/javascript; charset=utf-8")
+        );
+        assert_eq!(compressed.header(header::CONTENT_ENCODING), Some("gzip"));
+        assert_eq!(compressed.header(header::VARY), Some("Accept-Encoding"));
+        let mut decompressed = Vec::new();
+        std::io::Read::read_to_end(
+            &mut flate2::read::GzDecoder::new(compressed.body.as_slice()),
+            &mut decompressed,
+        )
+        .expect("a gzip body");
+
+        let identity = server
+            .send(with_header(
+                Method::GET,
+                script,
+                header::ACCEPT_ENCODING,
+                "identity",
+            ))
+            .await;
+        assert_eq!(identity.status, StatusCode::OK);
+        assert_eq!(identity.header(header::CONTENT_ENCODING), None);
+        assert_eq!(identity.body, decompressed, "one bundle in both codings");
+        let gzip_tag = compressed.header(header::ETAG).unwrap();
+        let identity_tag = identity.header(header::ETAG).unwrap();
+        assert_ne!(gzip_tag, identity_tag, "codings have their own tags");
+
+        let mut revalidation = with_header(Method::GET, script, header::IF_NONE_MATCH, gzip_tag);
+        revalidation
+            .headers_mut()
+            .insert(header::ACCEPT_ENCODING, "gzip".parse().unwrap());
+        let unchanged = server.send(revalidation).await;
+        assert_eq!(unchanged.status, StatusCode::NOT_MODIFIED);
+        assert_eq!(unchanged.header(header::ETAG), Some(gzip_tag));
+        assert!(unchanged.body.is_empty());
+        let other_coding = server
+            .send(with_header(
+                Method::GET,
+                script,
+                header::IF_NONE_MATCH,
+                identity_tag,
+            ))
+            .await;
+        assert_eq!(
+            other_coding.status,
+            StatusCode::OK,
+            "the identity tag does not match the gzip representation"
+        );
         server.stop().await;
     }
 
@@ -4756,9 +4832,20 @@ mod scenario {
                 .await,
             Some("invalid_request"),
         );
-        for public in ["/api/v1", "/api/v1/openapi.yaml", "/livez", "/readyz"] {
+        for public in [
+            "/api/v1",
+            "/api/v1/openapi.yaml",
+            "/api/v1/reference",
+            "/api/v1/reference/scalar.js",
+            "/livez",
+            "/readyz",
+        ] {
             let accept = if public.ends_with(".yaml") {
                 "application/yaml"
+            } else if public.ends_with(".js") {
+                "*/*"
+            } else if public.ends_with("reference") {
+                "text/html"
             } else {
                 "application/json"
             };
@@ -5386,6 +5473,10 @@ const EXEMPT: &[(&str, u16)] = &[
     // only a failure to serialize their bodies could make them 500.
     ("getEntryPoint", 500),
     ("getOpenApiDocument", 500),
+    // The page is a constant, and the script a bundle a unit test
+    // decompresses, so only a failed worker could make them 500.
+    ("getApiReference", 500),
+    ("getApiReferenceScript", 500),
     ("getTorrentConfiguration", 500),
     ("getSettings", 500),
     // A process that answers is live.
@@ -5435,6 +5526,7 @@ macro_rules! scenarios {
 
 scenarios!(
     service_endpoints,
+    api_reference,
     magnet_creation,
     upload_creation,
     duplicates,

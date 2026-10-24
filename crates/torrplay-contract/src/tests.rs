@@ -90,7 +90,7 @@ fn has_invalid_body(found: &[Violation], needle: &str) -> bool {
 #[test]
 fn the_contract_parses_with_every_operation() {
     let contract = fresh();
-    assert_eq!(contract.operations.len(), 50);
+    assert_eq!(contract.operations.len(), 52);
     assert!(
         contract
             .documented_responses()

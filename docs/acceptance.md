@@ -77,7 +77,7 @@ milestones. Later milestones keep every scenario passing.
 
 | ID | Scenario | Expected |
 |---|---|---|
-| API-01 | GET `/api/v1`, and GET `/api/v1/` | Entry point with links including `service-desc`; the second answers `308` to `/api/v1` |
+| API-01 | GET `/api/v1`, and GET `/api/v1/` | Entry point with links including `service-desc` and `service-doc`; the second answers `308` to `/api/v1` |
 | API-02 | GET `/api/v1/openapi.yaml` | The served document equals `api/openapi.yaml`, as `application/yaml` |
 | API-03 | Every response of every operation | Validates against the contract's schema for its status and media type (M3) |
 | API-04 | Create from a magnet URI, then from the uploaded `single-small` file | `201` with `Location` and a representation; magnet starts `retrieving_metadata`, upload starts `downloading` |
@@ -98,6 +98,7 @@ milestones. Later milestones keep every scenario passing.
 | API-19 | GET `/livez` and `/readyz` while running normally | `200` with `status` `ok` |
 | API-20 | Create from `hybrid` fixtures, including one with two padding files of equal length | Torrents that load are v1 torrents with one `sha1` info hash; the spike records which hybrid files fail and how (M2) |
 | API-21 | Create from a magnet URI with a private tracker passkey, then exercise every operation and an error | The passkey appears in no response, problem, or log line |
+| API-22 | GET `/api/v1/reference` and its script, with and without gzip in `Accept-Encoding`, then with the script's ETag | An HTML page whose policy allows only its own origin; the bundle gzipped or not, each with its own strong ETag; `304` for a matching ETag; both need no credential |
 
 ### Lifecycle
 
