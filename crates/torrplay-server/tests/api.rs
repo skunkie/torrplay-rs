@@ -1843,6 +1843,7 @@ mod scenario {
                 "drain_period_seconds": 10,
                 "peer_limit": 50,
                 "cache_capacity_bytes": 268_435_456,
+                "background_downloads": true,
                 "links": { "self": path },
             })
         );
@@ -1917,6 +1918,7 @@ mod scenario {
                     "peer_limit": "many",
                     "readahead_bytes": 1,
                     "idle_readers_total": 2,
+                    "background_downloads": 1,
                 }),
             ))
             .await;
@@ -1929,7 +1931,7 @@ mod scenario {
         pointers.sort();
         assert_eq!(
             pointers,
-            ["/peer_limit", "/readahead_bytes"],
+            ["/background_downloads", "/peer_limit", "/readahead_bytes"],
             "member types are checked before bounds"
         );
         let invalid = server
@@ -1999,16 +2001,22 @@ mod scenario {
             "nothing applied"
         );
 
-        // Explicit zero, and a value set again keeps the tag.
+        // Explicit zero and false, and a value set again keeps the tag.
         let changed = server
             .send(merge_patch(
                 path,
                 &tag,
-                &json!({ "idle_timeout_seconds": 0, "peer_limit": 60 }),
+                &json!({
+                    "idle_timeout_seconds": 0,
+                    "peer_limit": 60,
+                    "background_downloads": false,
+                }),
             ))
             .await;
         assert_eq!(changed.status, StatusCode::OK);
         assert_eq!(changed.json()["idle_timeout_seconds"], 0);
+        assert_eq!(changed.json()["background_downloads"], false);
+        assert!(!server.engine.settings().background_downloads);
         let changed_tag = changed.header(header::ETAG).unwrap().to_owned();
         assert_ne!(changed_tag, tag);
         assert_eq!(server.engine.settings().idle_timeout, Duration::ZERO);
@@ -2028,15 +2036,21 @@ mod scenario {
         assert_eq!(restored.json()["idle_timeout_seconds"], 0, "zero survives");
         assert_eq!(restored.json()["peer_limit"], 60);
         assert_eq!(
+            restored.json()["background_downloads"],
+            false,
+            "false survives"
+        );
+        assert_eq!(
             server.engine.settings().peer_limit,
             60,
             "applied at startup"
         );
+        assert!(!server.engine.settings().background_downloads);
         let reset = server
             .send(merge_patch(
                 path,
                 &changed_tag,
-                &json!({ "peer_limit": null }),
+                &json!({ "peer_limit": null, "background_downloads": null }),
             ))
             .await;
         assert_eq!(
@@ -2044,6 +2058,8 @@ mod scenario {
             50,
             "null returns to the default"
         );
+        assert_eq!(reset.json()["background_downloads"], true);
+        assert!(server.engine.settings().background_downloads);
         assert_eq!(reset.json()["idle_timeout_seconds"], 0);
         server.stop().await;
     }

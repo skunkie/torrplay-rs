@@ -786,6 +786,44 @@ async fn a_paused_disk_torrent_downloads_once_started() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// BGD-04: turned off, background downloads stop; turned on, they resume.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn turning_background_downloads_off_stops_them_until_turned_on() -> anyhow::Result<()> {
+    let spec = catalog::large(4 * MIB);
+    let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
+    let downloads = tempfile::tempdir()?;
+    let started = start_with(vec![seeder.addr], |config| {
+        config.download_dir = downloads.path().to_path_buf();
+    })
+    .await?;
+    let engine = &started.engine;
+    let mut settings = Settings::DEFAULT;
+    settings.background_downloads = false;
+    engine.apply_settings(&settings)?;
+    engine
+        .add_in(
+            &id(1),
+            &upload(&spec),
+            DesiredState::Started,
+            StorageMode::Disk,
+        )
+        .await?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        downloaded(engine, 1).await?,
+        0,
+        "nothing downloads in the background while they are off"
+    );
+
+    settings.background_downloads = true;
+    engine.apply_settings(&settings)?;
+    completed(engine, 1).await?;
+
+    engine.shutdown().await?;
+    seeder.stop().await;
+    Ok(())
+}
+
 /// A paused torrent opens no reader, and a reader whose piece never comes
 /// fails after the piece wait bound.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

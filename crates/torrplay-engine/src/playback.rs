@@ -22,7 +22,7 @@
 //! background work can react without polling.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 
@@ -99,6 +99,9 @@ pub struct Playback {
     readers: AtomicU64,
     // Those of torrents in memory storage, which share the readahead budget.
     cache_readers: AtomicU64,
+    // Whether disk torrents download the rest of themselves while no reader
+    // exists, which settings change.
+    background_downloads: AtomicBool,
     opened: AtomicU64,
     active: watch::Sender<bool>,
     next_scheduler: AtomicU64,
@@ -119,6 +122,7 @@ impl Playback {
             readahead_bytes: AtomicU64::new(config.readahead_bytes),
             readers: AtomicU64::new(0),
             cache_readers: AtomicU64::new(0),
+            background_downloads: AtomicBool::new(true),
             opened: AtomicU64::new(0),
             active: watch::Sender::new(false),
             next_scheduler: AtomicU64::new(0),
@@ -142,6 +146,20 @@ impl Playback {
         self.readahead_bytes
             .store(readahead_bytes, Ordering::Release);
         self.replan_all();
+    }
+
+    /// Whether disk torrents download the pieces they lack while no reader
+    /// exists; they do unless turned off.
+    pub fn background_downloads(&self) -> bool {
+        self.background_downloads.load(Ordering::Acquire)
+    }
+
+    /// Turns background downloads on or off, replanning every torrent so
+    /// the change takes effect at once.
+    pub fn set_background_downloads(&self, on: bool) {
+        if self.background_downloads.swap(on, Ordering::AcqRel) != on {
+            self.replan_all();
+        }
     }
 
     /// The least a ramping reader reads ahead, or zero for no ramp.

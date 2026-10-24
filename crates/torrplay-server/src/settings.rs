@@ -55,6 +55,7 @@ fn representation(stored: &Stored) -> api::Settings {
         drain_period_seconds: int(drain),
         peer_limit: int(peers),
         cache_capacity_bytes: i64::try_from(capacity).unwrap_or(i64::MAX),
+        background_downloads: stored.explicit.effective().background_downloads,
         links: api::SettingsLinks {
             self_field: settings_path(),
         },
@@ -120,9 +121,14 @@ pub(crate) async fn update<E: Engine>(
         ));
     }
     let mut explicit = current.explicit;
-    for (name, value) in patch {
-        if let Some(slot) = explicit.slot(name) {
-            *slot = value;
+    for change in patch {
+        match change {
+            Change::Number(name, value) => {
+                if let Some(slot) = explicit.slot(name) {
+                    *slot = value;
+                }
+            }
+            Change::BackgroundDownloads(value) => explicit.background_downloads = value,
         }
     }
     let effective = explicit.validate().map_err(|invalid| {
@@ -188,21 +194,44 @@ fn apply<E: Engine>(app: &App<E>, settings: &settings::Settings) -> Result<(), P
         })
 }
 
-/// Reads a merge patch of the settings: each member's new value, or `None`
-/// to return it to its default. The patch must set at least one member.
-fn parse_patch(value: Value) -> Result<Vec<(&'static str, Option<u64>)>, Problem> {
+/// One member of a settings patch: its new value, or `None` to return it to
+/// its default.
+enum Change {
+    /// A numeric setting, by name.
+    Number(&'static str, Option<u64>),
+    /// The background downloads switch.
+    BackgroundDownloads(Option<bool>),
+}
+
+/// Reads a merge patch of the settings. The patch must set at least one
+/// member.
+fn parse_patch(value: Value) -> Result<Vec<Change>, Problem> {
     let members = object(value)?;
     let mut errors = Vec::new();
     let mut patch = Vec::new();
     for (member, value) in &members {
+        if member == settings::BACKGROUND_DOWNLOADS {
+            match value {
+                Value::Null => patch.push(Change::BackgroundDownloads(None)),
+                Value::Bool(on) => patch.push(Change::BackgroundDownloads(Some(*on))),
+                _ => errors.push(InvalidValue::pointer(
+                    pointer(member),
+                    format!(
+                        "Must be true, false, or null for the default, {}.",
+                        settings::BACKGROUND_DOWNLOADS_DEFAULT
+                    ),
+                )),
+            }
+            continue;
+        }
         let Some(bounds) = settings::ALL.iter().find(|bounds| bounds.name == member) else {
             errors.push(unknown_member(member));
             continue;
         };
         match value {
-            Value::Null => patch.push((bounds.name, None)),
+            Value::Null => patch.push(Change::Number(bounds.name, None)),
             value => match value.as_u64() {
-                Some(value) => patch.push((bounds.name, Some(value))),
+                Some(value) => patch.push(Change::Number(bounds.name, Some(value))),
                 None => errors.push(InvalidValue::pointer(
                     pointer(member),
                     format!(

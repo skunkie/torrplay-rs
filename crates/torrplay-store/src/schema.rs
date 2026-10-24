@@ -21,7 +21,7 @@ use torrplay_core::settings::{self, Explicit, Stored};
 use crate::{StoreError, StoredTorrent};
 
 /// The schema version this build creates and migrates to.
-pub(crate) const VERSION: u32 = 5;
+pub(crate) const VERSION: u32 = 6;
 
 /// The schema at each version, applied in order to reach the next one.
 const MIGRATIONS: [&str; VERSION as usize] = [
@@ -70,6 +70,9 @@ const MIGRATIONS: [&str; VERSION as usize] = [
         id INTEGER PRIMARY KEY CHECK (id = 1),
         clean_shutdown INTEGER NOT NULL CHECK (clean_shutdown IN (0, 1))
     ) STRICT;",
+    // Version 6: the background downloads switch, NULL while unset.
+    "ALTER TABLE settings
+        ADD COLUMN background_downloads INTEGER CHECK (background_downloads IN (0, 1));",
 ];
 
 /// Opens the database at `path`, takes its lock, and migrates it.
@@ -255,7 +258,8 @@ pub(crate) fn settings(connection: &Connection) -> Result<Stored, StoreError> {
     let row = connection
         .query_row(
             "SELECT version, piece_wait_seconds, idle_timeout_seconds, idle_readers_per_torrent,
-                    idle_readers_total, drain_period_seconds, peer_limit, cache_capacity_bytes
+                    idle_readers_total, drain_period_seconds, peer_limit, cache_capacity_bytes,
+                    background_downloads
              FROM settings WHERE id = 1",
             [],
             |row| {
@@ -263,11 +267,12 @@ pub(crate) fn settings(connection: &Connection) -> Result<Stored, StoreError> {
                 for (index, value) in values.iter_mut().enumerate() {
                     *value = row.get::<_, Option<i64>>(index + 1)?;
                 }
-                Ok((row.get::<_, i64>(0)?, values))
+                let background_downloads = row.get::<_, Option<bool>>(settings::ALL.len() + 1)?;
+                Ok((row.get::<_, i64>(0)?, values, background_downloads))
             },
         )
         .optional()?;
-    let Some((version, values)) = row else {
+    let Some((version, values, background_downloads)) = row else {
         return Ok(Stored::default());
     };
     let corrupt = |what: &str| StoreError::Corrupt(format!("settings: {what}"));
@@ -275,7 +280,10 @@ pub(crate) fn settings(connection: &Connection) -> Result<Stored, StoreError> {
         .ok()
         .filter(|&version| version >= 1)
         .ok_or_else(|| corrupt("the version is out of range"))?;
-    let mut explicit = Explicit::default();
+    let mut explicit = Explicit {
+        background_downloads,
+        ..Explicit::default()
+    };
     for (bounds, value) in settings::ALL.iter().zip(values) {
         let value = value
             .map(|value| u64::try_from(value).map_err(|_| corrupt(bounds.name)))
@@ -319,8 +327,9 @@ pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(
     connection.execute(
         "INSERT INTO settings (id, version, piece_wait_seconds, idle_timeout_seconds,
                                idle_readers_per_torrent, idle_readers_total,
-                               drain_period_seconds, peer_limit, cache_capacity_bytes)
-         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                               drain_period_seconds, peer_limit, cache_capacity_bytes,
+                               background_downloads)
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT (id) DO UPDATE SET
              version = excluded.version,
              piece_wait_seconds = excluded.piece_wait_seconds,
@@ -329,7 +338,8 @@ pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(
              idle_readers_total = excluded.idle_readers_total,
              drain_period_seconds = excluded.drain_period_seconds,
              peer_limit = excluded.peer_limit,
-             cache_capacity_bytes = excluded.cache_capacity_bytes",
+             cache_capacity_bytes = excluded.cache_capacity_bytes,
+             background_downloads = excluded.background_downloads",
         rusqlite::params![
             version,
             piece_wait,
@@ -338,7 +348,8 @@ pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(
             total,
             drain,
             peers,
-            capacity
+            capacity,
+            explicit.background_downloads
         ],
     )?;
     Ok(())

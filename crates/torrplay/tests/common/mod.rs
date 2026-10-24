@@ -68,6 +68,7 @@ fn settings_of(config: &EngineConfig) -> torrplay_core::settings::Explicit {
         drain_period_seconds: None,
         peer_limit: count(config.peer_limit),
         cache_capacity_bytes: Some(config.cache_capacity_bytes),
+        background_downloads: None,
     }
 }
 

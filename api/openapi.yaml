@@ -775,6 +775,7 @@ paths:
                     drain_period_seconds: 10
                     peer_limit: 50
                     cache_capacity_bytes: 268435456
+                    background_downloads: true
                     links:
                       self: /api/v1/settings
         '304':
@@ -833,6 +834,7 @@ paths:
                     drain_period_seconds: 10
                     peer_limit: 50
                     cache_capacity_bytes: 268435456
+                    background_downloads: true
                     links:
                       self: /api/v1/settings
         '400':
@@ -1775,7 +1777,7 @@ components:
       description: >-
         The application's settings. Each value is the one set, or its default
         while it is unset.
-      required: [piece_wait_seconds, idle_timeout_seconds, idle_readers_per_torrent, idle_readers_total, drain_period_seconds, peer_limit, cache_capacity_bytes, links]
+      required: [piece_wait_seconds, idle_timeout_seconds, idle_readers_per_torrent, idle_readers_total, drain_period_seconds, peer_limit, cache_capacity_bytes, background_downloads, links]
       properties:
         piece_wait_seconds:
           type: integer
@@ -1859,6 +1861,16 @@ components:
             current pieces, cache usage may stay above the capacity, and no
             new piece is admitted.
           examples: [268435456]
+        background_downloads:
+          type: boolean
+          default: true
+          description: >-
+            Whether started torrents in disk storage download the pieces they
+            lack while no reader exists. Applies at once: turned off, torrents
+            request only the pieces readers need, and requests already sent
+            finish; turned on, background downloads resume unless playback is
+            active.
+          examples: [true]
         links:
           type: object
           readOnly: true
@@ -1928,6 +1940,10 @@ components:
           maximum: 68719476736
           description: The new value, or null for the default, 268435456.
           examples: [268435456, null]
+        background_downloads:
+          type: [boolean, 'null']
+          description: The new value, or null for the default, true.
+          examples: [false, null]
 
     TorrentFile:
       type: object
