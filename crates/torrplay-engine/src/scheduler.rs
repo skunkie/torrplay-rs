@@ -567,10 +567,13 @@ impl PieceSelector for TorrentScheduler {
     }
 
     // A disk torrent downloads the rest of itself in the background while
-    // no reader exists anywhere; reader changes replan every torrent, which
-    // reselects its pieces, so this takes effect at once.
+    // background downloads are on and no reader exists anywhere; changes to
+    // either replan every torrent, which reselects its pieces, so they take
+    // effect at once.
     fn download_other_pieces(&self) -> bool {
-        !self.cached.load(Ordering::Acquire) && self.playback.readers() == 0
+        !self.cached.load(Ordering::Acquire)
+            && self.playback.background_downloads()
+            && self.playback.readers() == 0
     }
 
     // librqbit fetches a piece from one peer unless it is shared; sharing
@@ -791,6 +794,12 @@ impl AsyncRead for Reader {
                 if this.swap_begun.as_mut().poll(cx).is_ready() {
                     cx.waker().wake_by_ref();
                 }
+            }
+            // Removal cancels the streams, then deletes the torrent, failing
+            // its stream's reads; a read that began before the cancellation
+            // reports the cancellation rather than librqbit's error.
+            Poll::Ready(Err(_)) if this.is_canceled() => {
+                return Poll::Ready(Err(Self::canceled_error()));
             }
             // A swap that began after the check above deletes the old
             // torrent, failing its stream's reads; the reader reopens the

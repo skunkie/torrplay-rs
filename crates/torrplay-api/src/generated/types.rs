@@ -443,6 +443,9 @@ impl AsRef<str> for ObservedState {
 ///The application's settings. Each value is the one set, or its default while it is unset.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Settings {
+    ///Whether started torrents in disk storage download the pieces they lack while no reader exists. Applies at once: turned off, torrents request only the pieces readers need, and requests already sent finish; turned on, background downloads resume unless playback is active.
+    #[serde(default)]
+    pub background_downloads: bool,
     ///The capacity of the global piece cache that every torrent in memory storage mode shares; the readahead budget is half of it. It must be at least the piece length of every torrent with metadata. Applies at once. Growing it admits the pieces waiting for room. Shrinking it evicts verified, unpinned pieces down to the new capacity, releasing idle readers when nothing else can be evicted; until partial pieces complete and active readers leave their current pieces, cache usage may stay above the capacity, and no new piece is admitted.
     ///Constraint: minimum=4194304, maximum=68719476736
     #[serde(default)]
@@ -630,6 +633,13 @@ pub struct CacheStatisticsLinks {
 ///A JSON merge patch of the settings. Omitted members keep their values; a member set to null returns to its default.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct SettingsPatch {
+    ///The new value, or null for the default, true.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub background_downloads: Option<Option<bool>>,
     ///The new value, or null for the default, 268435456.
     ///Constraint: minimum=4194304, maximum=68719476736
     #[serde(

@@ -317,6 +317,7 @@ struct Tunables {
     peer_limit: usize,
     cache_capacity_bytes: u64,
     readahead_bytes: u64,
+    background_downloads: bool,
 }
 
 /// Why a torrent did not join the session.
@@ -438,6 +439,7 @@ impl LibrqbitEngine {
                 peer_limit: config.peer_limit,
                 cache_capacity_bytes: config.cache_capacity_bytes,
                 readahead_bytes: config.readahead_bytes,
+                background_downloads: true,
             }),
             config,
             phase: Mutex::new(Phase::Starting),
@@ -480,6 +482,7 @@ impl LibrqbitEngine {
             idle_readers_per_torrent: tunables.idle_readers_per_torrent,
             idle_readers_total: tunables.idle_readers_total,
         });
+        playback.set_background_downloads(tunables.background_downloads);
         let (failures, failed) = mpsc::unbounded_channel();
         let running = Arc::new(Running {
             factory: MemoryStorageFactory::new(cache.clone()).with_failure_reports(failures),
@@ -1427,6 +1430,7 @@ impl Engine for LibrqbitEngine {
                 } else {
                     current.readahead_bytes
                 },
+                background_downloads: settings.background_downloads,
             };
             (*current, running, resized)
         };
@@ -1443,6 +1447,9 @@ impl Engine for LibrqbitEngine {
                     .playback
                     .set_readahead_bytes(tunables.readahead_bytes);
             }
+            running
+                .playback
+                .set_background_downloads(tunables.background_downloads);
         }
         Ok(())
     }

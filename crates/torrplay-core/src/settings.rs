@@ -78,7 +78,14 @@ pub const CACHE_CAPACITY_BYTES: Bounds = Bounds {
     default: 256 << 20,
 };
 
-/// Every setting, in the order representations list them.
+/// The name of the background downloads switch, the one setting that is not
+/// a number.
+pub const BACKGROUND_DOWNLOADS: &str = "background_downloads";
+/// Whether background downloads run while unset.
+pub const BACKGROUND_DOWNLOADS_DEFAULT: bool = true;
+
+/// Every numeric setting, in the order representations list them; the
+/// background downloads switch follows them.
 pub const ALL: [Bounds; 7] = [
     PIECE_WAIT_SECONDS,
     IDLE_TIMEOUT_SECONDS,
@@ -107,6 +114,9 @@ pub struct Settings {
     pub peer_limit: usize,
     /// The global piece cache's capacity.
     pub cache_capacity_bytes: u64,
+    /// Whether started torrents in disk storage download the pieces they
+    /// lack while no reader exists.
+    pub background_downloads: bool,
 }
 
 impl Settings {
@@ -119,6 +129,7 @@ impl Settings {
         drain_period: Duration::from_secs(DRAIN_PERIOD_SECONDS.default),
         peer_limit: PEER_LIMIT.default as usize,
         cache_capacity_bytes: CACHE_CAPACITY_BYTES.default,
+        background_downloads: BACKGROUND_DOWNLOADS_DEFAULT,
     };
 }
 
@@ -139,6 +150,8 @@ pub struct Explicit {
     pub peer_limit: Option<u64>,
     /// [`CACHE_CAPACITY_BYTES`].
     pub cache_capacity_bytes: Option<u64>,
+    /// [`BACKGROUND_DOWNLOADS`].
+    pub background_downloads: Option<bool>,
 }
 
 /// A value a setting cannot take, with the setting's name.
@@ -151,7 +164,7 @@ pub struct InvalidSetting {
 }
 
 impl Explicit {
-    /// The slot of the setting named `name`, if there is one.
+    /// The slot of the numeric setting named `name`, if there is one.
     pub fn slot(&mut self, name: &str) -> Option<&mut Option<u64>> {
         Some(match name {
             "piece_wait_seconds" => &mut self.piece_wait_seconds,
@@ -165,7 +178,8 @@ impl Explicit {
         })
     }
 
-    /// Each setting's value, explicit or default, in [`ALL`]'s order.
+    /// Each numeric setting's value, explicit or default, in [`ALL`]'s
+    /// order.
     pub fn values(&self) -> [u64; 7] {
         let value = |explicit: Option<u64>, bounds: Bounds| explicit.unwrap_or(bounds.default);
         [
@@ -229,6 +243,9 @@ impl Explicit {
             drain_period: Duration::from_secs(drain),
             peer_limit: peers as usize,
             cache_capacity_bytes: capacity,
+            background_downloads: self
+                .background_downloads
+                .unwrap_or(BACKGROUND_DOWNLOADS_DEFAULT),
         }
     }
 }
@@ -276,6 +293,17 @@ mod tests {
         assert_eq!(settings.idle_timeout, Duration::ZERO);
         assert_eq!(settings.idle_readers_total, 0);
         assert_eq!(settings.piece_wait, Settings::DEFAULT.piece_wait);
+    }
+
+    #[test]
+    fn background_downloads_are_on_unless_turned_off() {
+        assert!(Explicit::default().effective().background_downloads);
+        let off = Explicit {
+            background_downloads: Some(false),
+            ..Explicit::default()
+        };
+        assert!(!off.validate().unwrap().background_downloads);
+        assert_ne!(off, Explicit::default(), "explicit false is kept");
     }
 
     #[test]

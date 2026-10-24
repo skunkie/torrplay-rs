@@ -194,7 +194,7 @@ async fn a_newer_schema_is_refused() {
         Store::open(dir.path()),
         Err(StoreError::TooNew {
             found: 99,
-            supported: 5
+            supported: 6
         })
     ));
 }
@@ -255,6 +255,7 @@ async fn settings_keep_explicit_values_and_their_version() {
             explicit: Explicit {
                 idle_timeout_seconds: Some(0),
                 peer_limit: Some(80),
+                background_downloads: Some(false),
                 ..Explicit::default()
             },
             version: 4,
@@ -276,6 +277,11 @@ async fn settings_keep_explicit_values_and_their_version() {
         "zero stays set"
     );
     assert_eq!(contents.settings.explicit.peer_limit, Some(80));
+    assert_eq!(
+        contents.settings.explicit.background_downloads,
+        Some(false),
+        "false stays set"
+    );
     assert_eq!(
         contents.settings.explicit.piece_wait_seconds, None,
         "unset stays unset"
@@ -368,6 +374,7 @@ async fn settings_from_version_2_keep_their_values_and_lack_the_cache_capacity()
         connection
             .execute_batch(
                 "ALTER TABLE settings DROP COLUMN cache_capacity_bytes;
+                 ALTER TABLE settings DROP COLUMN background_downloads;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
                  DROP TABLE runs;
                  PRAGMA user_version = 2;",
@@ -398,6 +405,44 @@ async fn settings_from_version_2_keep_their_values_and_lack_the_cache_capacity()
 }
 
 #[tokio::test]
+async fn settings_from_version_5_lack_the_background_downloads_switch() {
+    let dir = TempDir::new().unwrap();
+    {
+        let (store, _) = open(&dir);
+        store
+            .set_settings(StoredSettings {
+                explicit: Explicit {
+                    peer_limit: Some(20),
+                    ..Explicit::default()
+                },
+                version: 2,
+            })
+            .await
+            .unwrap();
+    }
+    // A database as version 5 left it.
+    {
+        let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE settings DROP COLUMN background_downloads;
+                 PRAGMA user_version = 5;",
+            )
+            .unwrap();
+    }
+    let (_store, contents) = Store::open(dir.path()).unwrap();
+    assert_eq!(
+        contents.settings.explicit,
+        Explicit {
+            peer_limit: Some(20),
+            ..Explicit::default()
+        },
+        "the switch is unset, so it takes the current default"
+    );
+    assert!(dir.path().join(format!("{FILE_NAME}.v5.bak")).exists());
+}
+
+#[tokio::test]
 async fn torrents_from_version_3_use_memory_storage() {
     let dir = TempDir::new().unwrap();
     {
@@ -409,7 +454,8 @@ async fn torrents_from_version_3_use_memory_storage() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(
-                "ALTER TABLE torrents DROP COLUMN desired_storage_mode;
+                "ALTER TABLE settings DROP COLUMN background_downloads;
+                 ALTER TABLE torrents DROP COLUMN desired_storage_mode;
                  DROP TABLE runs;
                  PRAGMA user_version = 3;",
             )
