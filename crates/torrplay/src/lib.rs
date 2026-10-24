@@ -534,11 +534,16 @@ pub async fn serve(
     }
     let listen = listener.local_addr()?;
     let (stop_media_server, media_server_stopped) = oneshot::channel::<()>();
+    let notifying = Arc::clone(&app);
     let media_server = tokio::spawn(media_server::supervise(
         app.dlna_enabled(),
         media_server_udn,
         listen,
         media_server_stopped,
+        move || {
+            let app = Arc::clone(&notifying);
+            async move { app.notify_media_server_subscribers().await }
+        },
     ));
     let (close_listener, listener_closed) = oneshot::channel::<()>();
     let mut server = tokio::spawn(

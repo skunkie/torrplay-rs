@@ -6,7 +6,8 @@
 //! specifies them: a UPnP AV MediaServer with the DLNA extensions
 //! televisions expect.
 //!
-//! This crate knows nothing of torrents or HTTP frameworks. The server
+//! This crate knows nothing of torrents or HTTP frameworks, and takes only
+//! the shared search matcher from `torrplay-core`. The server
 //! builds a [`Catalog`](tree::Catalog) of the library and serves the
 //! routes; this crate parses and answers the protocols:
 //!
@@ -15,14 +16,18 @@
 //! - [`soap`]: reading action requests and writing responses and faults.
 //! - [`services`]: the ContentDirectory and ConnectionManager actions.
 //! - [`tree`] and [`id`]: the content tree and its object IDs.
+//! - [`search`]: search and sort criteria.
 //! - [`dlna`]: protocol info and the DLNA media headers.
+//! - [`gena`]: event subscriptions and notifications.
 //! - [`network`]: private addresses and the address to advertise.
 
 pub mod description;
 mod didl;
 pub mod dlna;
+pub mod gena;
 pub mod id;
 pub mod network;
+pub mod search;
 pub mod services;
 pub mod soap;
 pub mod ssdp;

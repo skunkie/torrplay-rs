@@ -315,6 +315,11 @@ These scenarios accept [the DLNA contract](dlna.md) (M7).
 | DLNA-07 | Call an unknown action, `Browse` without arguments, and `Browse` while the stored torrents are restored | SOAP faults `401`, `402`, and `720` |
 | DLNA-08 | Change a torrent's library title, then read `GetSystemUpdateID` | The update ID grows by one |
 | DLNA-09 | Turn the media server on and off repeatedly | Each start announces and each stop says goodbye, and no task is left behind |
+| DLNA-10 | Search the root for video items whose title contains a word, in two containers' torrents, and with a typo | Each match once, the better title match first; no match for the typo |
+| DLNA-11 | Search with `doesNotContain`, `exists`, `upnp:genre`, and `*`, and with an unknown property or broken syntax | The matching objects; `708` for the rest |
+| DLNA-12 | Browse and search with `-dc:date`, `+dc:title`, and an unknown sort property | Newest first; titles ignoring case; `709` |
+| DLNA-13 | Subscribe to ContentDirectory, change a torrent's title, renew, and unsubscribe | `200` with `SID` and `TIMEOUT`; an initial event with `SEQ: 0`, then one with the new update ID and `SEQ: 1`; `200`; `200`, and no more events |
+| DLNA-14 | Subscribe with a callback on another address, without `NT`, with both `SID` and `CALLBACK`, and renew an unknown `SID` | `412`, `412`, `400`, `412` |
 
 ### Peers
 

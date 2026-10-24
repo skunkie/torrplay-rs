@@ -2,27 +2,40 @@
 //
 // SPDX-License-Identifier: MIT
 
-//! Announcing the DLNA media server while the `dlna_enabled` setting is on:
+//! Running the DLNA media server while the `dlna_enabled` setting is on:
 //! SSDP starts when it turns on and says goodbye when it turns off or the
-//! application shuts down.
+//! application shuts down, and subscribers' events are sent every 2
+//! seconds.
 
+use std::future::Future;
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use tokio::sync::{oneshot, watch};
 use torrplay_dlna::network::advertised_address;
 use torrplay_dlna::ssdp::{Announcer, Config};
 
+/// How often subscribers' events are checked, which also bounds the rate
+/// of `SystemUpdateID` events.
+const EVENT_INTERVAL: Duration = Duration::from_secs(2);
+
 /// Follows `enabled` until `stop`, starting and stopping the announcer of
-/// the device `uuid` for an API listening on `listen`. A start that fails,
-/// such as on a loopback listener, is logged, and the next change tries
-/// again.
-pub(crate) async fn supervise(
+/// the device `uuid` for an API listening on `listen`, and running `events`
+/// every 2 seconds while it is on. A start that fails, such as on a
+/// loopback listener, is logged, and the next change tries again.
+pub(crate) async fn supervise<F, Fut>(
     mut enabled: watch::Receiver<bool>,
     uuid: String,
     listen: SocketAddr,
     mut stop: oneshot::Receiver<()>,
-) {
+    events: F,
+) where
+    F: Fn() -> Fut,
+    Fut: Future<Output = ()>,
+{
     let mut running: Option<Announcer> = None;
+    let mut interval = tokio::time::interval(EVENT_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         let wanted = *enabled.borrow_and_update();
         if wanted && running.is_none() {
@@ -36,6 +49,7 @@ pub(crate) async fn supervise(
                     break;
                 }
             }
+            _ = interval.tick(), if wanted => events().await,
             _ = &mut stop => break,
         }
     }
@@ -85,6 +99,7 @@ mod tests {
             "4b1c0b2a-6f5e-4d3c-8b2a-1f0e9d8c7b6a".into(),
             "127.0.0.1:8080".parse().unwrap(),
             stopped,
+            || async {},
         ));
         for on in [true, false, true] {
             enabled.send(on).unwrap();

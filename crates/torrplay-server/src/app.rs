@@ -156,6 +156,13 @@ impl<E: Engine> App<E> {
         self.media_server.as_ref()
     }
 
+    /// Sends the DLNA media server's due events: initial ones, and the
+    /// system update ID when the content tree changed. The task that
+    /// announces the media server calls it every 2 seconds while it is on.
+    pub async fn notify_media_server_subscribers(&self) {
+        crate::dlna::notify(self).await;
+    }
+
     /// Follows the `dlna_enabled` setting, for the task that announces the
     /// media server.
     pub fn dlna_enabled(&self) -> watch::Receiver<bool> {
@@ -297,10 +304,13 @@ impl<E: Engine> App<E> {
 
     pub(crate) fn set_settings(&self, stored: StoredSettings) {
         *self.settings.lock().unwrap_or_else(PoisonError::into_inner) = stored;
-        self.dlna_enabled.send_if_modified(|enabled| {
-            let now = stored.explicit.effective().dlna_enabled;
-            std::mem::replace(enabled, now) != now
-        });
+        let on = stored.explicit.effective().dlna_enabled;
+        self.dlna_enabled
+            .send_if_modified(|enabled| std::mem::replace(enabled, on) != on);
+        if !on && let Some(server) = &self.media_server {
+            // Turned off, the media server forgets its control points.
+            server.subscriptions.clear();
+        }
     }
 
     /// Registers the torrents the store held at startup, in creation order,

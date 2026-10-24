@@ -103,7 +103,7 @@ document that schedules it.
 
 | Feature | Go TorrPlay | Status | Evidence or plan |
 |---|---|---|---|
-| DLNA/UPnP media server | `internal/dlna` | Verified | `torrplay-dlna` and [the DLNA contract](dlna.md); DLNA scenarios. Discovery, browsing, and media; search and eventing are planned |
+| DLNA/UPnP media server | `internal/dlna` | Verified | `torrplay-dlna` and [the DLNA contract](dlna.md); DLNA scenarios: discovery, browsing, search, sorting, eventing, and media |
 | Stremio addon | `internal/stremio` | Planned | Its own adapter, with path and query token authentication |
 | MCP server | `internal/mcp` | Planned | Over the application's HTTP API |
 | qBittorrent API | `POST /api/v2/torrents/add` | Deferred | Optional; only if a later product scope includes it |

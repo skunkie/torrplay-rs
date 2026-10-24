@@ -518,3 +518,284 @@ async fn the_update_id_follows_the_content_tree() {
     assert_eq!(update_id().await, first + 1);
     server.stop().await;
 }
+
+/// Searches `container` with `criteria`, sorted by `sort`.
+async fn search(server: &TestServer, container: &str, criteria: &str, sort: &str) -> Exchange {
+    let criteria = criteria
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('"', "&quot;");
+    call(
+        server,
+        "Search",
+        &[
+            ("ContainerID", container),
+            ("SearchCriteria", &criteria),
+            ("Filter", "*"),
+            ("StartingIndex", "0"),
+            ("RequestedCount", "0"),
+            ("SortCriteria", sort),
+        ],
+    )
+    .await
+}
+
+fn didl_of(exchange: &Exchange) -> String {
+    assert_eq!(exchange.status, StatusCode::OK, "{}", text(exchange));
+    between(&text(exchange), "<Result>", "</Result>")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&amp;", "&")
+}
+
+/// DLNA-10 to DLNA-12: searches match titles through the shared matcher,
+/// find each object once, rank and sort, and refuse what they cannot read.
+#[tokio::test]
+async fn searches_find_rank_and_sort() {
+    let server = TestServer::start().await;
+    let (media, _) = upload(&server, &catalog::media_names()).await;
+    let show_spec = series();
+    server.engine.add_fixture(&show_spec);
+    let (show, _) = upload(&server, &show_spec).await;
+    configure(
+        &server,
+        &media,
+        json!({ "title": "Sintel extras", "genres": ["Animation"] }),
+    )
+    .await;
+    configure(
+        &server,
+        &show,
+        json!({ "title": "Sintel", "categories": ["TV"] }),
+    )
+    .await;
+    enable(&server, true).await;
+
+    let titled = didl_of(&search(&server, "0", r#"dc:title contains "sintel""#, "").await);
+    let whole = titled.find(&format!("t:{show}")).unwrap();
+    let partial = titled.find(&format!("t:{media}")).unwrap();
+    assert!(whole < partial, "the closer title first: {titled}");
+    assert_eq!(
+        titled.matches(&format!(r#"id="t:{show}""#)).count(),
+        1,
+        "each once"
+    );
+    let typo = search(&server, "0", r#"dc:title contains "sintle""#, "").await;
+    assert!(
+        text(&typo).contains("<TotalMatches>0</TotalMatches>"),
+        "no typo tolerance"
+    );
+
+    let videos = search(
+        &server,
+        "0",
+        r#"(upnp:class derivedfrom "object.item.videoItem") and (dc:title contains "S01E01")"#,
+        "",
+    )
+    .await;
+    assert!(
+        text(&videos).contains("<TotalMatches>1</TotalMatches>"),
+        "{}",
+        text(&videos)
+    );
+    let animated = didl_of(&search(&server, "0", r#"upnp:genre = "animation""#, "").await);
+    assert!(animated.contains(&format!("t:{media}")) && !animated.contains(&format!("t:{show}")));
+    let in_category = search(&server, "category:TV", "*", "").await;
+    assert!(
+        text(&in_category).contains("<TotalMatches>3</TotalMatches>"),
+        "the series and its two episodes"
+    );
+    let without = didl_of(
+        &search(
+            &server,
+            &format!("t:{media}"),
+            r#"dc:title doesNotContain "video""#,
+            "",
+        )
+        .await,
+    );
+    assert!(without.contains("audio.mp3") && !without.contains("video.mkv"));
+
+    let sorted = didl_of(&search(&server, "all", "upnp:genre exists false", "+dc:title").await);
+    assert!(sorted.contains(&format!("t:{show}")));
+    let browsed = call(
+        &server,
+        "Browse",
+        &[
+            ("ObjectID", "all"),
+            ("BrowseFlag", "BrowseDirectChildren"),
+            ("StartingIndex", "0"),
+            ("RequestedCount", "0"),
+            ("SortCriteria", "+dc:title"),
+        ],
+    )
+    .await;
+    let browsed = didl_of(&browsed);
+    assert!(
+        browsed.find(&format!("t:{show}")).unwrap() < browsed.find(&format!("t:{media}")).unwrap(),
+        "Sintel before Sintel extras"
+    );
+    assert!(
+        browsed.contains("<dc:date>"),
+        "torrents carry their creation date"
+    );
+
+    assert_eq!(
+        fault_code(&search(&server, "0", r#"dc:creator = "x""#, "").await),
+        "708"
+    );
+    assert_eq!(
+        fault_code(&search(&server, "0", "dc:title contains", "").await),
+        "708"
+    );
+    assert_eq!(
+        fault_code(&search(&server, "0", "*", "+upnp:class").await),
+        "709"
+    );
+    let capabilities = call(&server, "GetSearchCapabilities", &[]).await;
+    assert!(text(&capabilities).contains("dc:title,dc:date,upnp:class,upnp:genre,@id,@parentID"));
+    server.stop().await;
+}
+
+fn method(name: &str) -> Method {
+    Method::from_bytes(name.as_bytes()).unwrap()
+}
+
+/// Accepts one `NOTIFY` on `listener` and answers it, or `None` if none
+/// arrives in time.
+async fn next_event(listener: &tokio::net::TcpListener) -> Option<String> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let accepted =
+        tokio::time::timeout(std::time::Duration::from_millis(500), listener.accept()).await;
+    let (mut stream, _) = accepted.ok()?.ok()?;
+    let mut received = vec![0; 8192];
+    let length = stream.read(&mut received).await.ok()?;
+    stream
+        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+        .await
+        .ok()?;
+    Some(String::from_utf8_lossy(&received[..length]).into_owned())
+}
+
+/// DLNA-13 and DLNA-14: subscriptions receive events, renew, and end; bad
+/// subscriptions are refused.
+#[tokio::test]
+async fn subscribers_receive_events() {
+    let server = TestServer::start().await;
+    let (media, _) = upload(&server, &catalog::media_names()).await;
+    enable(&server, true).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let callback = format!(
+        "<http://127.0.0.1:{}/events>",
+        listener.local_addr().unwrap().port()
+    );
+    let events = "/dlna/content-directory/events";
+    let subscribe = |headers: &[(&str, &str)]| {
+        let mut builder = request(method("SUBSCRIBE"), events);
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        builder.body(Vec::new()).unwrap()
+    };
+
+    let granted = server
+        .send_raw(subscribe(&[
+            ("CALLBACK", &callback),
+            ("NT", "upnp:event"),
+            ("TIMEOUT", "Second-300"),
+        ]))
+        .await;
+    assert_eq!(granted.status, StatusCode::OK);
+    assert_eq!(granted.header("timeout"), Some("Second-300"));
+    let sid = granted.header("sid").unwrap().to_owned();
+    assert!(sid.starts_with("uuid:"));
+
+    server.app.notify_media_server_subscribers().await;
+    let initial = next_event(&listener).await.expect("the initial event");
+    assert!(initial.contains(&format!("SID: {sid}\r\n")) && initial.contains("SEQ: 0\r\n"));
+    let first: u32 = between(&initial, "<SystemUpdateID>", "</SystemUpdateID>")
+        .parse()
+        .unwrap();
+
+    server.app.notify_media_server_subscribers().await;
+    assert_eq!(next_event(&listener).await, None, "nothing changed");
+    configure(&server, &media, json!({ "title": "Renamed" })).await;
+    server.app.notify_media_server_subscribers().await;
+    let changed = next_event(&listener)
+        .await
+        .expect("an event for the change");
+    assert!(changed.contains("SEQ: 1\r\n"));
+    assert!(changed.contains(&format!("<SystemUpdateID>{}</SystemUpdateID>", first + 1)));
+
+    let renewed = server
+        .send_raw(subscribe(&[("SID", &sid), ("TIMEOUT", "Second-600")]))
+        .await;
+    assert_eq!(renewed.status, StatusCode::OK);
+    assert_eq!(renewed.header("timeout"), Some("Second-600"));
+    let ended = server
+        .send_raw(
+            request(method("UNSUBSCRIBE"), events)
+                .header("SID", &sid)
+                .body(Vec::new())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(ended.status, StatusCode::OK);
+    configure(&server, &media, json!({ "title": "Renamed again" })).await;
+    server.app.notify_media_server_subscribers().await;
+    assert_eq!(
+        next_event(&listener).await,
+        None,
+        "no events after unsubscribing"
+    );
+
+    let elsewhere = server
+        .send_raw(subscribe(&[
+            ("CALLBACK", "<http://192.168.1.99/events>"),
+            ("NT", "upnp:event"),
+        ]))
+        .await;
+    assert_eq!(
+        elsewhere.status,
+        StatusCode::PRECONDITION_FAILED,
+        "a callback elsewhere"
+    );
+    let no_nt = server.send_raw(subscribe(&[("CALLBACK", &callback)])).await;
+    assert_eq!(no_nt.status, StatusCode::PRECONDITION_FAILED);
+    let both = server
+        .send_raw(subscribe(&[
+            ("SID", &sid),
+            ("CALLBACK", &callback),
+            ("NT", "upnp:event"),
+        ]))
+        .await;
+    assert_eq!(both.status, StatusCode::BAD_REQUEST);
+    let unknown = server.send_raw(subscribe(&[("SID", "uuid:unknown")])).await;
+    assert_eq!(unknown.status, StatusCode::PRECONDITION_FAILED);
+    let other = server
+        .send_raw(request(Method::GET, events).body(Vec::new()).unwrap())
+        .await;
+    assert_eq!(other.status, StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(other.header(header::ALLOW), Some("SUBSCRIBE, UNSUBSCRIBE"));
+
+    let cm = server
+        .send_raw(
+            request(method("SUBSCRIBE"), "/dlna/connection-manager/events")
+                .header("CALLBACK", &callback)
+                .header("NT", "upnp:event")
+                .body(Vec::new())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(cm.status, StatusCode::OK);
+    enable(&server, false).await;
+    enable(&server, true).await;
+    server.app.notify_media_server_subscribers().await;
+    assert_eq!(
+        next_event(&listener).await,
+        None,
+        "turning off ended every subscription"
+    );
+    server.stop().await;
+}

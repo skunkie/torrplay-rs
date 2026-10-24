@@ -157,6 +157,12 @@ pub enum Fault {
     /// `701`: the object ID names nothing.
     #[error("No such object")]
     NoSuchObject,
+    /// `708`: the search criteria cannot be read.
+    #[error("Unsupported or invalid search criteria")]
+    InvalidSearch,
+    /// `709`: the sort criteria cannot be read.
+    #[error("Unsupported or invalid sort criteria")]
+    InvalidSort,
     /// `720`: the request cannot be processed now.
     #[error("Cannot process the request")]
     CannotProcess,
@@ -169,6 +175,8 @@ impl Fault {
             Self::InvalidAction => 401,
             Self::InvalidArgs => 402,
             Self::NoSuchObject => 701,
+            Self::InvalidSearch => 708,
+            Self::InvalidSort => 709,
             Self::CannotProcess => 720,
         }
     }
