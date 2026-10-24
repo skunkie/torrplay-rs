@@ -93,6 +93,23 @@ pub fn random_torrent_id_bytes() -> Result<[u8; TORRENT_ID_RANDOM_BYTES], Random
     Ok(bytes)
 }
 
+/// Draws a random (version 4) UUID, as RFC 9562 formats it in lowercase.
+pub fn random_uuid() -> Result<String, RandomnessError> {
+    let mut bytes = [0; 16];
+    fill_random(&mut bytes)?;
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    Ok(format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    ))
+}
+
 /// Fills `bytes` from the operating system's cryptographically secure random
 /// number generator.
 pub(crate) fn fill_random(bytes: &mut [u8]) -> Result<(), RandomnessError> {
@@ -519,5 +536,14 @@ mod tests {
         for invalid in ["", "0123", &format!("{text}0"), &text.replace('a', "g")] {
             assert_eq!(InfoHashV1::from_hex(invalid), None, "{invalid:?}");
         }
+    }
+
+    #[test]
+    fn random_uuids_are_version_4() {
+        let uuid = random_uuid().unwrap();
+        assert_eq!(uuid.len(), 36);
+        assert_eq!(&uuid[14..15], "4", "{uuid}");
+        assert!("89ab".contains(&uuid[19..20]), "{uuid}");
+        assert_ne!(random_uuid().unwrap(), uuid);
     }
 }

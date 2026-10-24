@@ -128,6 +128,8 @@ pub struct Contents {
     pub dismissals: Vec<StoredDismissal>,
     /// The password, the signing key, and the access tokens.
     pub credentials: StoredCredentials,
+    /// The media server's device UUID, drawn when the store first opens.
+    pub media_server_udn: String,
     /// Whether the last run recorded a clean shutdown. After a crash or a
     /// power loss, disk torrents' resume bitfields may be newer than their
     /// data.
@@ -240,6 +242,7 @@ impl Store {
         let progress = profiles::progress(&connection)?;
         let dismissals = profiles::dismissals(&connection)?;
         let credentials = credentials::credentials(&mut connection, SystemTime::now())?;
+        let media_server_udn = schema::media_server_udn(&mut connection)?;
         let clean_shutdown = schema::begin_run(&mut connection)?;
         let (sender, receiver) = mpsc::channel(QUEUE);
         #[cfg(feature = "test-support")]
@@ -272,6 +275,7 @@ impl Store {
                 progress,
                 dismissals,
                 credentials,
+                media_server_udn,
                 clean_shutdown,
             },
         ))

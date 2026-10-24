@@ -244,6 +244,7 @@ The initial problem types, by name, each appended to the base above:
 | `authentication-required` | 401 | Authentication is on and the request carries no valid credential. |
 | `insufficient-scope` | 403 | The credential's scope or torrent does not allow the operation. |
 | `invalid-credentials` | 403 | The password a request gives does not match. |
+| `forbidden` | 403 | The resource is not served to the client's address, as the DLNA media server is not to public addresses. |
 | `not-found` | 404 | The target resource does not exist. |
 | `method-not-allowed` | 405 | The resource does not support the method. |
 | `not-acceptable` | 406 | No supported media type matches `Accept`. |

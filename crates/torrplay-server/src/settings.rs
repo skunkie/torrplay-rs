@@ -56,6 +56,7 @@ fn representation(stored: &Stored) -> api::Settings {
         peer_limit: int(peers),
         cache_capacity_bytes: i64::try_from(capacity).unwrap_or(i64::MAX),
         background_downloads: stored.explicit.effective().background_downloads,
+        dlna_enabled: stored.explicit.effective().dlna_enabled,
         links: api::SettingsLinks {
             self_field: settings_path(),
         },
@@ -128,7 +129,13 @@ pub(crate) async fn update<E: Engine>(
                     *slot = value;
                 }
             }
-            Change::BackgroundDownloads(value) => explicit.background_downloads = value,
+            Change::Switch(name, value) => {
+                if name == settings::DLNA_ENABLED {
+                    explicit.dlna_enabled = value;
+                } else {
+                    explicit.background_downloads = value;
+                }
+            }
         }
     }
     let effective = explicit.validate().map_err(|invalid| {
@@ -199,8 +206,8 @@ fn apply<E: Engine>(app: &App<E>, settings: &settings::Settings) -> Result<(), P
 enum Change {
     /// A numeric setting, by name.
     Number(&'static str, Option<u64>),
-    /// The background downloads switch.
-    BackgroundDownloads(Option<bool>),
+    /// A switch, by name: background downloads or the DLNA media server.
+    Switch(&'static str, Option<bool>),
 }
 
 /// Reads a merge patch of the settings. The patch must set at least one
@@ -210,16 +217,22 @@ fn parse_patch(value: Value) -> Result<Vec<Change>, Problem> {
     let mut errors = Vec::new();
     let mut patch = Vec::new();
     for (member, value) in &members {
-        if member == settings::BACKGROUND_DOWNLOADS {
+        let switch = [
+            (
+                settings::BACKGROUND_DOWNLOADS,
+                settings::BACKGROUND_DOWNLOADS_DEFAULT,
+            ),
+            (settings::DLNA_ENABLED, settings::DLNA_ENABLED_DEFAULT),
+        ]
+        .into_iter()
+        .find(|(name, _)| name == member);
+        if let Some((name, default)) = switch {
             match value {
-                Value::Null => patch.push(Change::BackgroundDownloads(None)),
-                Value::Bool(on) => patch.push(Change::BackgroundDownloads(Some(*on))),
+                Value::Null => patch.push(Change::Switch(name, None)),
+                Value::Bool(on) => patch.push(Change::Switch(name, Some(*on))),
                 _ => errors.push(InvalidValue::pointer(
                     pointer(member),
-                    format!(
-                        "Must be true, false, or null for the default, {}.",
-                        settings::BACKGROUND_DOWNLOADS_DEFAULT
-                    ),
+                    format!("Must be true, false, or null for the default, {default}."),
                 )),
             }
             continue;

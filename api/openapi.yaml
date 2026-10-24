@@ -2075,6 +2075,7 @@ paths:
                     peer_limit: 50
                     cache_capacity_bytes: 268435456
                     background_downloads: true
+                    dlna_enabled: false
                     links:
                       self: /api/v1/settings
         '304':
@@ -2134,6 +2135,7 @@ paths:
                     peer_limit: 50
                     cache_capacity_bytes: 268435456
                     background_downloads: true
+                    dlna_enabled: false
                     links:
                       self: /api/v1/settings
         '400':
@@ -4088,7 +4090,7 @@ components:
       description: >-
         The application's settings. Each value is the one set, or its default
         while it is unset.
-      required: [piece_wait_seconds, idle_timeout_seconds, idle_readers_per_torrent, idle_readers_total, drain_period_seconds, peer_limit, cache_capacity_bytes, background_downloads, links]
+      required: [piece_wait_seconds, idle_timeout_seconds, idle_readers_per_torrent, idle_readers_total, drain_period_seconds, peer_limit, cache_capacity_bytes, background_downloads, dlna_enabled, links]
       properties:
         piece_wait_seconds:
           type: integer
@@ -4182,6 +4184,16 @@ components:
             finish; turned on, background downloads resume unless playback is
             active.
           examples: [true]
+        dlna_enabled:
+          type: boolean
+          default: false
+          description: >-
+            Whether the DLNA media server announces the library to the local
+            network, as docs/dlna.md describes. Turning it on grants every
+            client with a private address read-only access to torrents'
+            playable files and posters without a token, even while a
+            password is set. Applies at once.
+          examples: [false]
         links:
           type: object
           readOnly: true
@@ -4255,6 +4267,10 @@ components:
           type: [boolean, 'null']
           description: The new value, or null for the default, true.
           examples: [false, null]
+        dlna_enabled:
+          type: [boolean, 'null']
+          description: The new value, or null for the default, false.
+          examples: [true, null]
 
     TorrentFile:
       type: object

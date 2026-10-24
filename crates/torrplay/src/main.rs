@@ -94,7 +94,10 @@ async fn run(config: &Config) -> anyhow::Result<()> {
         LibrqbitEngine::new(config.engine_config(folder.path(), &download_dir)),
         store,
         contents,
-        AllowedHosts::new(config.allowed_hosts.clone()),
+        torrplay::ServeOptions {
+            allowed_hosts: AllowedHosts::new(config.allowed_hosts.clone()),
+            dlna_name: config.dlna_name.clone(),
+        },
         ShutdownTimings::default(),
         termination(),
     )

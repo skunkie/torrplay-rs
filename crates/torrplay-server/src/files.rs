@@ -127,7 +127,7 @@ pub(crate) async fn head_content<E: Engine>(
     content(&app, &id, &file_id, &headers, false).await
 }
 
-async fn content<E: Engine>(
+pub(crate) async fn content<E: Engine>(
     app: &App<E>,
     id: &str,
     file_id: &str,

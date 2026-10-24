@@ -32,6 +32,7 @@ pub(crate) enum ProblemType {
     AuthenticationRequired,
     InsufficientScope,
     InvalidCredentials,
+    Forbidden,
     NotFound,
     MethodNotAllowed,
     NotAcceptable,
@@ -63,6 +64,7 @@ impl ProblemType {
             Self::AuthenticationRequired => "authentication-required",
             Self::InsufficientScope => "insufficient-scope",
             Self::InvalidCredentials => "invalid-credentials",
+            Self::Forbidden => "forbidden",
             Self::NotFound => "not-found",
             Self::MethodNotAllowed => "method-not-allowed",
             Self::NotAcceptable => "not-acceptable",
@@ -94,6 +96,7 @@ impl ProblemType {
             Self::AuthenticationRequired => "Authentication required",
             Self::InsufficientScope => "Insufficient scope",
             Self::InvalidCredentials => "Invalid credentials",
+            Self::Forbidden => "Forbidden",
             Self::NotFound => "Not found",
             Self::MethodNotAllowed => "Method not allowed",
             Self::NotAcceptable => "Not acceptable",
@@ -123,7 +126,9 @@ impl ProblemType {
         match self {
             Self::MalformedRequest => StatusCode::BAD_REQUEST,
             Self::AuthenticationRequired => StatusCode::UNAUTHORIZED,
-            Self::InsufficientScope | Self::InvalidCredentials => StatusCode::FORBIDDEN,
+            Self::InsufficientScope | Self::InvalidCredentials | Self::Forbidden => {
+                StatusCode::FORBIDDEN
+            }
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             Self::NotAcceptable => StatusCode::NOT_ACCEPTABLE,
@@ -463,11 +468,12 @@ impl From<EngineError> for Problem {
 mod tests {
     use super::*;
 
-    const ALL: [ProblemType; 26] = [
+    const ALL: [ProblemType; 27] = [
         ProblemType::MalformedRequest,
         ProblemType::AuthenticationRequired,
         ProblemType::InsufficientScope,
         ProblemType::InvalidCredentials,
+        ProblemType::Forbidden,
         ProblemType::NotFound,
         ProblemType::MethodNotAllowed,
         ProblemType::NotAcceptable,

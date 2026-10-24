@@ -29,6 +29,7 @@ mod authentication;
 mod body;
 mod content;
 mod credentials;
+mod dlna;
 mod files;
 mod headers;
 mod images;
@@ -166,6 +167,31 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
         .route(
             "/api/v1/playback-tokens",
             post(credentials::create_playback_token::<E>),
+        )
+        .route("/dlna/description.xml", get(dlna::device::<E>))
+        .route(
+            "/dlna/content-directory.xml",
+            get(dlna::content_directory_description::<E>),
+        )
+        .route(
+            "/dlna/connection-manager.xml",
+            get(dlna::connection_manager_description::<E>),
+        )
+        .route(
+            "/dlna/content-directory/control",
+            post(dlna::content_directory::<E>),
+        )
+        .route(
+            "/dlna/connection-manager/control",
+            post(dlna::connection_manager::<E>),
+        )
+        .route(
+            "/dlna/media/{torrent_id}/{file_id}/{file_name}",
+            get(dlna::get_media::<E>).head(dlna::head_media::<E>),
+        )
+        .route(
+            "/dlna/posters/{torrent_id}",
+            get(dlna::get_poster::<E>).head(dlna::head_poster::<E>),
         )
         .route("/livez", get(service::liveness))
         .route("/readyz", get(service::readiness::<E>))

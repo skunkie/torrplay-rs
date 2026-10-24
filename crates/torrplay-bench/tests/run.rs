@@ -67,7 +67,7 @@ async fn a_trace_runs_against_torrplay_through_the_local_tracker() -> anyhow::Re
         LibrqbitEngine::new(config),
         store,
         contents,
-        torrplay::AllowedHosts::default(),
+        torrplay::ServeOptions::default(),
         ShutdownTimings::default(),
         async {
             let _ = triggered.await;

@@ -26,6 +26,9 @@ use anyhow::Context;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 pub use torrplay_core::credentials::AllowedHosts;
+use torrplay_dlna::description::Device;
+
+mod media_server;
 use torrplay_core::id::TorrentId;
 use torrplay_core::lifecycle::StorageMode;
 use torrplay_engine::{DEFAULT_PEER_PORT, EngineConfig, LibrqbitEngine, NetworkConfig};
@@ -38,6 +41,12 @@ pub const DEFAULT_PORT: u16 = 8080;
 
 /// How long the whole shutdown may take before the process exits anyway.
 pub const DEFAULT_SHUTDOWN_LIMIT: Duration = Duration::from_secs(30);
+
+/// The DLNA media server's friendly name unless `--dlna-name` sets one.
+pub const DEFAULT_DLNA_NAME: &str = "TorrPlay";
+
+/// The longest friendly name `--dlna-name` takes.
+const DLNA_NAME_MAX_CHARS: usize = 64;
 
 /// How often the drain checks whether streams are still in progress.
 const DRAIN_POLL: Duration = Duration::from_millis(50);
@@ -59,6 +68,9 @@ Options:
   --allowed-host <NAME>      A host name requests may give besides IP addresses,
                              localhost, and .local names, such as a reverse
                              proxy's; repeat for each
+  --dlna-name <NAME>         The name televisions show for the DLNA media server,
+                             which the dlna_enabled setting turns on
+                             [default: TorrPlay]
   --peer-port <PORT>         The BitTorrent peer port on every interface [default: 4240]
   --data-dir <DIR>           Where the torrents database lives, on a local
                              filesystem [default: the platform's data directory]
@@ -81,6 +93,8 @@ pub struct Config {
     /// The host names requests may give beyond those always allowed,
     /// normalized.
     pub allowed_hosts: Vec<String>,
+    /// The DLNA media server's friendly name.
+    pub dlna_name: String,
     /// The peer listener's port, on every interface.
     pub peer_port: u16,
     /// The most verbose level TorrPlay's own logs record; other crates log
@@ -104,6 +118,7 @@ impl Default for Config {
         Self {
             listen: (Ipv4Addr::LOCALHOST, DEFAULT_PORT).into(),
             allowed_hosts: Vec::new(),
+            dlna_name: DEFAULT_DLNA_NAME.to_owned(),
             peer_port: DEFAULT_PEER_PORT,
             log_level: Level::INFO,
             log_filter: None,
@@ -241,6 +256,20 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, Arg
                 config.listen = value
                     .parse()
                     .map_err(|_| invalid(value.clone(), "an IP address and port"))?;
+            }
+            "--dlna-name" => {
+                let value = value()?;
+                let name = value.trim();
+                if name.is_empty()
+                    || name.chars().count() > DLNA_NAME_MAX_CHARS
+                    || name.chars().any(char::is_control)
+                {
+                    return Err(invalid(
+                        value,
+                        "1 to 64 characters without control characters",
+                    ));
+                }
+                config.dlna_name = name.to_owned();
             }
             "--allowed-host" => {
                 let value = value()?;
@@ -409,10 +438,29 @@ impl Default for ShutdownTimings {
     }
 }
 
+/// What [`serve`] serves beyond the store's contents.
+#[derive(Clone, Debug)]
+pub struct ServeOptions {
+    /// The host names requests may give beyond those always allowed.
+    pub allowed_hosts: AllowedHosts,
+    /// The DLNA media server's friendly name.
+    pub dlna_name: String,
+}
+
+impl Default for ServeOptions {
+    fn default() -> Self {
+        Self {
+            allowed_hosts: AllowedHosts::default(),
+            dlna_name: DEFAULT_DLNA_NAME.to_owned(),
+        }
+    }
+}
+
 /// Serves the API on `listener` over `engine`, which must not be started
-/// yet, and `store` with what it held, allowing requests to name
-/// `allowed_hosts`, until `shutdown` completes, then shuts down in the
-/// lifecycle's order.
+/// yet, and `store` with what it held, with `options`, until `shutdown`
+/// completes, then shuts down in the lifecycle's order. The DLNA media
+/// server is announced while its setting is on, and says goodbye before
+/// the listener closes.
 ///
 /// The stored settings apply at once. The listener serves before the engine
 /// starts, and the stored torrents are restored once it has. Fails if the engine cannot start, if restoring or
@@ -422,7 +470,7 @@ pub async fn serve(
     engine: Arc<LibrqbitEngine>,
     store: Store,
     contents: Contents,
-    allowed_hosts: AllowedHosts,
+    options: ServeOptions,
     timings: ShutdownTimings,
     shutdown: impl Future<Output = ()>,
 ) -> anyhow::Result<()> {
@@ -433,6 +481,7 @@ pub async fn serve(
         progress,
         dismissals,
         credentials,
+        media_server_udn,
         clean_shutdown,
     } = contents;
     if !clean_shutdown {
@@ -466,7 +515,12 @@ pub async fn serve(
             .with_settings(settings)
             .with_viewing(profiles, progress, dismissals)
             .with_credentials(credentials)
-            .with_allowed_hosts(allowed_hosts),
+            .with_allowed_hosts(options.allowed_hosts)
+            .with_media_server(Device {
+                friendly_name: options.dlna_name,
+                uuid: media_server_udn.clone(),
+                version: env!("CARGO_PKG_VERSION").to_owned(),
+            }),
     );
     if let Ok(address) = listener.local_addr()
         && !address.ip().is_loopback()
@@ -478,14 +532,26 @@ pub async fn serve(
              it may use it until a password is set"
         );
     }
+    let listen = listener.local_addr()?;
+    let (stop_media_server, media_server_stopped) = oneshot::channel::<()>();
+    let media_server = tokio::spawn(media_server::supervise(
+        app.dlna_enabled(),
+        media_server_udn,
+        listen,
+        media_server_stopped,
+    ));
     let (close_listener, listener_closed) = oneshot::channel::<()>();
     let mut server = tokio::spawn(
-        axum::serve(listener, torrplay_server::router(app.clone()))
-            .with_graceful_shutdown(async {
-                // A dropped sender closes the listener too.
-                let _ = listener_closed.await;
-            })
-            .into_future(),
+        axum::serve(
+            listener,
+            torrplay_server::router(app.clone())
+                .into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async {
+            // A dropped sender closes the listener too.
+            let _ = listener_closed.await;
+        })
+        .into_future(),
     );
     let mut shutdown = std::pin::pin!(shutdown);
 
@@ -535,6 +601,10 @@ pub async fn serve(
         app.begin_shutdown();
         drain(&engine, timings.drain.unwrap_or_else(|| app.drain_period())).await;
         engine.cancel_streams()?;
+        let _ = stop_media_server.send(());
+        media_server
+            .await
+            .context("the DLNA media server's task panicked")?;
         let _ = close_listener.send(());
         if !server.is_finished() {
             server_result(server.await)?;
@@ -653,6 +723,7 @@ mod tests {
             Config {
                 listen: "[::1]:9000".parse().unwrap(),
                 allowed_hosts: Vec::new(),
+                dlna_name: DEFAULT_DLNA_NAME.to_owned(),
                 peer_port: 6881,
                 log_level: Level::DEBUG,
                 log_filter: Some("librqbit=debug,torrplay_engine=trace".into()),
@@ -695,6 +766,24 @@ mod tests {
             parse(&["--allowed-host", "evil example"]),
             Err(ArgsError::InvalidValue { .. })
         ));
+    }
+
+    #[test]
+    fn the_media_server_name_is_trimmed_and_bounded() {
+        let Ok(Command::Run(config)) = parse(&["--dlna-name", "  Living room  "]) else {
+            panic!("the name parses");
+        };
+        assert_eq!(config.dlna_name, "Living room");
+        assert_eq!(Config::default().dlna_name, DEFAULT_DLNA_NAME);
+        for name in ["", "   ", &"x".repeat(65), "tab\there"] {
+            assert!(
+                matches!(
+                    parse(&["--dlna-name", name]),
+                    Err(ArgsError::InvalidValue { .. })
+                ),
+                "{name:?}"
+            );
+        }
     }
 
     #[test]

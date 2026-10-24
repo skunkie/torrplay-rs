@@ -50,6 +50,10 @@ fn requirement(route: Option<&str>, method: &Method) -> Requirement {
         return Requirement::Host;
     };
     let reads = method == Method::GET || method == Method::HEAD;
+    if route.starts_with("/dlna/") {
+        // The media server's own access rule applies instead.
+        return Requirement::Host;
+    }
     match route {
         "/livez" | "/readyz" => Requirement::Nothing,
         "/api/v1" | "/api/v1/" | "/api/v1/openapi.yaml" => Requirement::Host,

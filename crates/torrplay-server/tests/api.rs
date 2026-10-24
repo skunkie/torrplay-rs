@@ -2214,6 +2214,7 @@ mod scenario {
                 "peer_limit": 50,
                 "cache_capacity_bytes": 268_435_456,
                 "background_downloads": true,
+                "dlna_enabled": false,
                 "links": { "self": path },
             })
         );
