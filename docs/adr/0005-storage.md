@@ -193,7 +193,9 @@ no evictable piece, the cache reduces other pins in this order:
    no evictable piece, including when the reservation is for the idle
    reader's own readahead.
 2. Once preloads exist, shrink each preload's pinned range to its first
-   piece. The preload contract in milestone 6 may refine this.
+   piece. The preload contract in milestone 6 refined this: the
+   [lifecycle](../lifecycle.md#preloads) ends preloads instead, newest
+   first, one at a time.
 
 If the current pieces of active readers and the partial pieces still
 exceed capacity, the cache admits no new piece, and the engine does not

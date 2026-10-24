@@ -35,6 +35,7 @@ pub(crate) enum ProblemType {
     RequestTimeout,
     LifecycleConflict,
     DuplicateTorrent,
+    TooManyPreloads,
     PreconditionFailed,
     ContentTooLarge,
     UnsupportedMediaType,
@@ -57,6 +58,7 @@ impl ProblemType {
             Self::RequestTimeout => "request-timeout",
             Self::LifecycleConflict => "lifecycle-conflict",
             Self::DuplicateTorrent => "duplicate-torrent",
+            Self::TooManyPreloads => "too-many-preloads",
             Self::PreconditionFailed => "precondition-failed",
             Self::ContentTooLarge => "content-too-large",
             Self::UnsupportedMediaType => "unsupported-media-type",
@@ -79,6 +81,7 @@ impl ProblemType {
             Self::RequestTimeout => "Request timeout",
             Self::LifecycleConflict => "Lifecycle conflict",
             Self::DuplicateTorrent => "Duplicate torrent",
+            Self::TooManyPreloads => "Too many preloads",
             Self::PreconditionFailed => "Precondition failed",
             Self::ContentTooLarge => "Content too large",
             Self::UnsupportedMediaType => "Unsupported media type",
@@ -99,7 +102,9 @@ impl ProblemType {
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             Self::NotAcceptable => StatusCode::NOT_ACCEPTABLE,
             Self::RequestTimeout => StatusCode::REQUEST_TIMEOUT,
-            Self::LifecycleConflict | Self::DuplicateTorrent => StatusCode::CONFLICT,
+            Self::LifecycleConflict | Self::DuplicateTorrent | Self::TooManyPreloads => {
+                StatusCode::CONFLICT
+            }
             Self::PreconditionFailed => StatusCode::PRECONDITION_FAILED,
             Self::ContentTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
@@ -356,6 +361,15 @@ impl From<EngineError> for Problem {
                 "The torrent is not started; start it to stream its files.",
             ),
             EngineError::UnknownFile => Self::not_found("The torrent has no file with this ID."),
+            EngineError::UnknownPreload => Self::not_found("The file has no preload with this ID."),
+            EngineError::TooManyPreloads => Self::new(
+                ProblemType::TooManyPreloads,
+                format!(
+                    "A file may have {} active preloads, and all files {}; cancel one or let it end.",
+                    torrplay_core::preload::PER_FILE_LIMIT,
+                    torrplay_core::preload::TOTAL_LIMIT
+                ),
+            ),
             EngineError::InsufficientStorage {
                 needed_bytes,
                 available_bytes,
@@ -395,7 +409,7 @@ impl From<EngineError> for Problem {
 mod tests {
     use super::*;
 
-    const ALL: [ProblemType; 17] = [
+    const ALL: [ProblemType; 18] = [
         ProblemType::MalformedRequest,
         ProblemType::NotFound,
         ProblemType::MethodNotAllowed,
@@ -403,6 +417,7 @@ mod tests {
         ProblemType::RequestTimeout,
         ProblemType::LifecycleConflict,
         ProblemType::DuplicateTorrent,
+        ProblemType::TooManyPreloads,
         ProblemType::PreconditionFailed,
         ProblemType::ContentTooLarge,
         ProblemType::UnsupportedMediaType,

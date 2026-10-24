@@ -30,6 +30,8 @@ tags:
     description: Torrents the application tracks, with their configuration.
   - name: Files
     description: Files listed in torrent metadata and their content.
+  - name: Preloads
+    description: Parts of files fetched before playback starts.
   - name: Settings
     description: The application's settings, which tune streaming and shutdown.
   - name: Statistics
@@ -461,6 +463,7 @@ paths:
                         links:
                           self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
                           content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+                          preloads: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads
                           torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
                     links:
                       self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files
@@ -502,6 +505,7 @@ paths:
                     links:
                       self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
                       content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+                      preloads: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads
                       torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
         '404':
           $ref: '#/components/responses/NotFound'
@@ -670,6 +674,239 @@ paths:
           $ref: '#/components/responses/LifecycleConflict'
         '416':
           $ref: '#/components/responses/RangeNotSatisfiable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
+  /api/v1/torrents/{torrent_id}/files/{file_id}/preloads:
+    parameters:
+      - $ref: '#/components/parameters/TorrentId'
+      - $ref: '#/components/parameters/FileId'
+    get:
+      operationId: listFilePreloads
+      summary: List a file's preloads
+      description: >-
+        Returns the file's preloads in creation order: those queued,
+        downloading, or ready, and those that expired or failed in the last 5
+        minutes, at most 16 of them. The collection is never paginated.
+        Preloads are not stored, so a restart empties it.
+      tags: [Preloads]
+      responses:
+        '200':
+          description: The preloads of the file.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreloadPage'
+              examples:
+                one:
+                  summary: One downloading preload
+                  value:
+                    items:
+                    - id: prl_4qhvgmtq62qwv4xfuperelxpq
+                      state: downloading
+                      offset_bytes: null
+                      ranges:
+                        - start_bytes: 0
+                          length_bytes: 29360128
+                        - start_bytes: 1069546496
+                          length_bytes: 4194304
+                      target_bytes: 33554432
+                      completed_bytes: 8388608
+                      created_at: '2026-10-19T12:00:00Z'
+                      expires_at: '2026-10-19T12:02:00Z'
+                      ended_at: null
+                      failure: null
+                      links:
+                        self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads/prl_4qhvgmtq62qwv4xfuperelxpq
+                        file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
+                        content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+                    links:
+                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/LifecycleConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+    post:
+      operationId: createFilePreload
+      summary: Preload part of a file
+      description: >-
+        Creates a preload of the file, which fetches its head and tail, or
+        with offset_bytes its first and last pieces and a window around that
+        offset, before playback starts, and returns at once while it
+        downloads. docs/lifecycle.md describes what a preload covers, how
+        it queues, pins, and ranks against readers, and when it expires or
+        fails. The torrent must be started.
+      tags: [Preloads]
+      requestBody:
+        description: >-
+          The preload's offset and time to live, in a JSON body of at most
+          16384 bytes; an empty object asks for the head and tail for 120
+          seconds. Larger bodies are content-too-large, and a body that does
+          not arrive within 30 seconds is request-timeout.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreloadCreation'
+            examples:
+              head_and_tail:
+                summary: The head and tail, for the default time
+                value: {}
+              resume:
+                summary: A window where playback resumes, for 10 minutes
+                value:
+                  offset_bytes: 536870912
+                  ttl_seconds: 600
+      responses:
+        '201':
+          description: The preload was created.
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Preload'
+              examples:
+                created:
+                  summary: A preload of a file's head and tail
+                  value:
+                    id: prl_4qhvgmtq62qwv4xfuperelxpq
+                    state: queued
+                    offset_bytes: null
+                    ranges:
+                      - start_bytes: 0
+                        length_bytes: 29360128
+                      - start_bytes: 1069546496
+                        length_bytes: 4194304
+                    target_bytes: 33554432
+                    completed_bytes: 0
+                    created_at: '2026-10-19T12:00:00Z'
+                    expires_at: '2026-10-19T12:02:00Z'
+                    ended_at: null
+                    failure: null
+                    links:
+                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads/prl_4qhvgmtq62qwv4xfuperelxpq
+                      file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
+                      content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
+        '409':
+          $ref: '#/components/responses/PreloadConflict'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
+  /api/v1/torrents/{torrent_id}/files/{file_id}/preloads/{preload_id}:
+    parameters:
+      - $ref: '#/components/parameters/TorrentId'
+      - $ref: '#/components/parameters/FileId'
+      - $ref: '#/components/parameters/PreloadId'
+    get:
+      operationId: getFilePreload
+      summary: Read a preload
+      description: >-
+        Returns a preload's state and progress. An expired or failed preload
+        stays readable for 5 minutes after it ended; a canceled one is gone
+        at once.
+      tags: [Preloads]
+      responses:
+        '200':
+          description: The preload.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Preload'
+              examples:
+                downloading:
+                  summary: A preload that is downloading
+                  value:
+                    id: prl_4qhvgmtq62qwv4xfuperelxpq
+                    state: downloading
+                    offset_bytes: null
+                    ranges:
+                      - start_bytes: 0
+                        length_bytes: 29360128
+                      - start_bytes: 1069546496
+                        length_bytes: 4194304
+                    target_bytes: 33554432
+                    completed_bytes: 8388608
+                    created_at: '2026-10-19T12:00:00Z'
+                    expires_at: '2026-10-19T12:02:00Z'
+                    ended_at: null
+                    failure: null
+                    links:
+                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads/prl_4qhvgmtq62qwv4xfuperelxpq
+                      file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
+                      content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+                failed:
+                  summary: A preload whose torrent was paused
+                  value:
+                    id: prl_4qhvgmtq62qwv4xfuperelxpq
+                    state: failed
+                    offset_bytes: null
+                    ranges:
+                      - start_bytes: 0
+                        length_bytes: 29360128
+                      - start_bytes: 1069546496
+                        length_bytes: 4194304
+                    target_bytes: 33554432
+                    completed_bytes: 8388608
+                    created_at: '2026-10-19T12:00:00Z'
+                    expires_at: '2026-10-19T12:02:00Z'
+                    ended_at: '2026-10-19T12:00:30Z'
+                    failure:
+                      detail: The torrent was paused.
+                    links:
+                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads/prl_4qhvgmtq62qwv4xfuperelxpq
+                      file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
+                      content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/LifecycleConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+    delete:
+      operationId: deleteFilePreload
+      summary: Cancel a preload
+      description: >-
+        Cancels a preload, whatever its state, and removes it: its pins and
+        piece priorities are released at once, and the pieces it fetched
+        become ordinary eviction candidates.
+      tags: [Preloads]
+      responses:
+        '204':
+          description: The preload was canceled.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/LifecycleConflict'
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
@@ -901,6 +1138,14 @@ components:
       schema:
         type: string
       example: fil_xfuperelxpqq4qhvgmtq62qwv4
+    PreloadId:
+      name: preload_id
+      in: path
+      required: true
+      description: The preload's ID.
+      schema:
+        type: string
+      example: prl_4qhvgmtq62qwv4xfuperelxpq
     PageSize:
       name: page_size
       in: query
@@ -1203,6 +1448,31 @@ components:
                 status: 409
                 detail: A torrent with this info hash already exists.
                 torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+    PreloadConflict:
+      description: >-
+        The torrent's state does not allow a preload, or the file or the
+        application has the most active preloads it allows.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            paused:
+              summary: A preload of a paused torrent's file
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/lifecycle-conflict
+                title: Lifecycle conflict
+                status: 409
+                detail: The torrent is not started; start it to stream its files.
+            too_many:
+              summary: A fifth active preload of one file
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/too-many-preloads
+                title: Too many preloads
+                status: 409
+                detail: >-
+                  A file may have 4 active preloads, and all files 16; cancel
+                  one or let it end.
     PreconditionFailed:
       description: If-Match does not match the configuration's current ETag.
       content:
@@ -1978,7 +2248,7 @@ components:
         links:
           type: object
           description: Links from a file.
-          required: [self, content, torrent]
+          required: [self, content, preloads, torrent]
           properties:
             self:
               type: string
@@ -1990,6 +2260,11 @@ components:
               format: uri-reference
               description: The file's content.
               examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content]
+            preloads:
+              type: string
+              format: uri-reference
+              description: The file's preloads.
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads]
             torrent:
               type: string
               format: uri-reference
@@ -2022,6 +2297,179 @@ components:
               format: uri-reference
               description: The next page of files, omitted on the last page.
               examples: ['/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files?cursor=eyJhZnRlciI6ImZpbF94ZnVwZXJlbHhwcXE0cWh2Z210cTYycXd2NCJ9']
+
+    PreloadState:
+      type: string
+      description: >-
+        Where a preload is in its lifecycle. queued waits for room in the
+        preloads' share of the readahead budget, downloading fetches its
+        pieces, and ready holds them all; expired and failed preloads have
+        ended and released their pins and piece priorities.
+      enum: [queued, downloading, ready, expired, failed]
+      examples: [downloading]
+
+    PreloadCreation:
+      type: object
+      description: What a new preload covers, and for how long.
+      additionalProperties: false
+      properties:
+        offset_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            Where playback resumes in the file, below its size: the preload
+            covers the file's first and last pieces and a window that starts
+            an eighth of its length before this offset. Omitted, it covers
+            the file's head and tail.
+          examples: [536870912]
+        ttl_seconds:
+          type: integer
+          format: int32
+          minimum: 10
+          maximum: 3600
+          default: 120
+          description: How long after its creation the preload expires.
+          examples: [120]
+
+    Preload:
+      type: object
+      description: >-
+        A preload of part of a file, as docs/lifecycle.md describes. In
+        memory storage its pieces are pinned while it downloads or is ready.
+      required: [id, state, offset_bytes, ranges, target_bytes, completed_bytes, created_at, expires_at, ended_at, failure, links]
+      properties:
+        id:
+          type: string
+          description: >-
+            The preload's ID, valid until it is canceled or removed, or the
+            application restarts.
+          examples: [prl_4qhvgmtq62qwv4xfuperelxpq]
+        state:
+          $ref: '#/components/schemas/PreloadState'
+        offset_bytes:
+          type: [integer, 'null']
+          format: int64
+          minimum: 0
+          description: The offset the preload was created with, or null for the head and tail.
+          examples: [null]
+        ranges:
+          type: array
+          description: >-
+            The file's byte ranges the preload covers, in file order and
+            disjoint: whole pieces, clipped to the file, at most 33554432
+            bytes in all. A file that fits is covered whole.
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/PreloadRange'
+          examples:
+            - - start_bytes: 0
+                length_bytes: 29360128
+        target_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          description: The bytes of the ranges together.
+          examples: [33554432]
+        completed_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            The bytes of the ranges the torrent's storage holds now, at most
+            target_bytes, which it reaches when the preload is ready.
+          examples: [8388608]
+        created_at:
+          type: string
+          format: date-time
+          description: When the preload was created, in UTC.
+          examples: ['2026-10-19T12:00:00Z']
+        expires_at:
+          type: string
+          format: date-time
+          description: When the preload expires, or expired, in UTC.
+          examples: ['2026-10-19T12:02:00Z']
+        ended_at:
+          type: [string, 'null']
+          format: date-time
+          description: >-
+            When the preload expired or failed, in UTC, or null while it is
+            active. It is removed 5 minutes later.
+          examples: [null]
+        failure:
+          type: [object, 'null']
+          description: >-
+            Why the preload failed, or null unless its state is failed: its
+            torrent paused or failed, its pieces stopped arriving for the
+            piece wait bound, or the piece cache needed its pins.
+          required: [detail]
+          properties:
+            detail:
+              type: string
+              description: An explanation of how the preload failed.
+              examples: [The torrent was paused.]
+          examples: [null]
+        links:
+          type: object
+          description: Links from a preload.
+          required: [self, file, content]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: This preload.
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads/prl_4qhvgmtq62qwv4xfuperelxpq]
+            file:
+              type: string
+              format: uri-reference
+              description: The preloaded file.
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4]
+            content:
+              type: string
+              format: uri-reference
+              description: The preloaded file's content.
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content]
+
+    PreloadRange:
+      type: object
+      description: A byte range of a file.
+      required: [start_bytes, length_bytes]
+      properties:
+        start_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The offset in the file where the range starts.
+          examples: [0]
+        length_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          description: The range's length.
+          examples: [29360128]
+
+    PreloadPage:
+      type: object
+      description: A file's preloads.
+      required: [items, links]
+      properties:
+        items:
+          type: array
+          description: The preloads, in creation order.
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/Preload'
+          examples: [[]]
+        links:
+          type: object
+          description: Links from a file's preloads.
+          required: [self]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: These preloads.
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads]
 
     TorrentStatistics:
       type: object

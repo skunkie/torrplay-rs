@@ -153,6 +153,8 @@ pub struct TorrentFile {
 pub struct TorrentFileLinks {
     ///The file's content.
     pub content: String,
+    ///The file's preloads.
+    pub preloads: String,
     ///This file.
     #[serde(rename = "self")]
     pub self_field: String,
@@ -484,6 +486,114 @@ pub struct SettingsLinks {
     #[serde(rename = "self")]
     pub self_field: String,
 }
+///A file's preloads.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PreloadPage {
+    ///The preloads, in creation order.
+    ///Constraint: maxItems=16
+    pub items: Vec<Preload>,
+    ///Links from a file's preloads.
+    pub links: PreloadPageLinks,
+}
+///Links from a file's preloads.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PreloadPageLinks {
+    ///These preloads.
+    #[serde(rename = "self")]
+    pub self_field: String,
+}
+///A preload of part of a file, as docs/lifecycle.md describes. In memory storage its pieces are pinned while it downloads or is ready.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Preload {
+    ///The bytes of the ranges the torrent's storage holds now, at most target_bytes, which it reaches when the preload is ready.
+    ///Constraint: minimum=0
+    pub completed_bytes: i64,
+    ///When the preload was created, in UTC.
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    ///When the preload expired or failed, in UTC, or null while it is active. It is removed 5 minutes later.
+    pub ended_at: Option<chrono::DateTime<chrono::Utc>>,
+    ///When the preload expires, or expired, in UTC.
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+    ///Why the preload failed, or null unless its state is failed: its torrent paused or failed, its pieces stopped arriving for the piece wait bound, or the piece cache needed its pins.
+    pub failure: Option<PreloadFailure>,
+    ///The preload's ID, valid until it is canceled or removed, or the application restarts.
+    pub id: String,
+    ///Links from a preload.
+    pub links: PreloadLinks,
+    ///The offset the preload was created with, or null for the head and tail.
+    ///Constraint: minimum=0
+    pub offset_bytes: Option<i64>,
+    ///The file's byte ranges the preload covers, in file order and disjoint: whole pieces, clipped to the file, at most 33554432 bytes in all. A file that fits is covered whole.
+    ///Constraint: minItems=1
+    pub ranges: Vec<PreloadRange>,
+    pub state: PreloadState,
+    ///The bytes of the ranges together.
+    ///Constraint: minimum=1
+    pub target_bytes: i64,
+}
+///Where a preload is in its lifecycle. queued waits for room in the preloads' share of the readahead budget, downloading fetches its pieces, and ready holds them all; expired and failed preloads have ended and released their pins and piece priorities.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum PreloadState {
+    #[default]
+    #[serde(rename = "queued")]
+    Queued,
+    #[serde(rename = "downloading")]
+    Downloading,
+    #[serde(rename = "ready")]
+    Ready,
+    #[serde(rename = "expired")]
+    Expired,
+    #[serde(rename = "failed")]
+    Failed,
+}
+impl PreloadState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Downloading => "downloading",
+            Self::Ready => "ready",
+            Self::Expired => "expired",
+            Self::Failed => "failed",
+        }
+    }
+}
+impl ::std::fmt::Display for PreloadState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for PreloadState {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+///A byte range of a file.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PreloadRange {
+    ///The range's length.
+    ///Constraint: minimum=1
+    pub length_bytes: i64,
+    ///The offset in the file where the range starts.
+    ///Constraint: minimum=0
+    pub start_bytes: i64,
+}
+///Links from a preload.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PreloadLinks {
+    ///The preloaded file's content.
+    pub content: String,
+    ///The preloaded file.
+    pub file: String,
+    ///This preload.
+    #[serde(rename = "self")]
+    pub self_field: String,
+}
+///Why the preload failed, or null unless its state is failed: its torrent paused or failed, its pieces stopped arriving for the piece wait bound, or the piece cache needed its pins.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PreloadFailure {
+    ///An explanation of how the preload failed.
+    pub detail: String,
+}
 ///A protocol identifier of a torrent's info dictionary.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct InfoHash {
@@ -629,6 +739,18 @@ pub struct CacheStatisticsLinks {
     ///The cache statistics.
     #[serde(rename = "self")]
     pub self_field: String,
+}
+///What a new preload covers, and for how long.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct PreloadCreation {
+    ///Where playback resumes in the file, below its size: the preload covers the file's first and last pieces and a window that starts an eighth of its length before this offset. Omitted, it covers the file's head and tail.
+    ///Constraint: minimum=0
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offset_bytes: Option<i64>,
+    ///How long after its creation the preload expires.
+    ///Constraint: minimum=10, maximum=3600
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl_seconds: Option<i32>,
 }
 ///A JSON merge patch of the settings. Omitted members keep their values; a member set to null returns to its default.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]

@@ -91,6 +91,40 @@ pub fn random_torrent_id_bytes() -> Result<[u8; TORRENT_ID_RANDOM_BYTES], Random
     Ok(bytes)
 }
 
+/// The opaque, server-assigned identifier of a preload: `prl_` followed by
+/// 128 random bits in lowercase base32, drawn like a torrent ID's. Preloads
+/// are not stored, so an ID names its preload only while the process runs.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PreloadId(String);
+
+impl PreloadId {
+    /// The prefix of every preload ID the server issues.
+    pub const PREFIX: &str = "prl_";
+
+    /// Builds the ID that encodes `random`. Production IDs take these bytes
+    /// from [`random_torrent_id_bytes`].
+    pub fn from_random_bytes(random: [u8; TORRENT_ID_RANDOM_BYTES]) -> Self {
+        Self(format!("{}{}", Self::PREFIX, base32::encode(&random)))
+    }
+
+    /// Returns the ID's text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for PreloadId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl Borrow<str> for PreloadId {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
 /// The identifier of a file within its torrent, derived from the file's raw
 /// path components: `fil_` followed by the first 128 bits of a SHA-256
 /// digest in lowercase base32.
@@ -211,6 +245,18 @@ mod tests {
         for (bytes, expected) in cases {
             assert_eq!(TorrentId::from_random_bytes(bytes).as_str(), expected);
         }
+    }
+
+    #[test]
+    fn preload_ids_encode_their_random_bytes_with_their_own_prefix() {
+        assert_eq!(
+            PreloadId::from_random_bytes([0; 16]).as_str(),
+            "prl_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+        assert_eq!(
+            PreloadId::from_random_bytes([0xff; 16]).to_string(),
+            "prl_77777777777777777777777774"
+        );
     }
 
     #[test]

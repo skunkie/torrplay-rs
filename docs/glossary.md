@@ -172,9 +172,9 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 
 **Preload**
 : A client-requested operation, exposed as a resource, that fetches part of
-  a file, typically its beginning, before playback starts. A preload can be
-  created, inspected, replaced or canceled, and can expire or fail; its range
-  is pinned while it is active.
+  a file, typically its head and tail, before playback starts. A preload
+  can be created, inspected, or canceled, and expires or fails; in memory
+  storage its ranges are pinned while it is active.
 
 **Prefetch**
 : Any fetching of piece data before a reader requests it. Readahead,

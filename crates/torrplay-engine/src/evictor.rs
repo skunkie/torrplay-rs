@@ -64,9 +64,9 @@ async fn run(
         if needed > 0 {
             let batches = cache.eviction_candidates(needed)?;
             if batches.is_empty()
-                && playback
-                    .as_ref()
-                    .is_some_and(|playback| playback.release_oldest_idle_reader())
+                && playback.as_ref().is_some_and(|playback| {
+                    playback.release_oldest_idle_reader() || playback.end_newest_preload()
+                })
             {
                 // The released pins may have made pieces evictable.
                 continue;
