@@ -25,7 +25,7 @@ use sha2::{Digest, Sha256};
 use crate::base32;
 use crate::id::{AccessTokenId, InfoHashV1, ProfileId, TorrentId, UpNextEntryId};
 use crate::library::Kind;
-use crate::lifecycle::ObservedState;
+use crate::lifecycle::{ObservedState, Retention};
 use crate::registry::TorrentRecord;
 use crate::search::Rank;
 
@@ -313,8 +313,9 @@ impl SortKey for TorrentSortKey {
 }
 
 /// The filters of the torrents collection. Each matches any of its values,
-/// and a torrent must match every filter that has values.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// and a torrent must match every filter that has values. The default
+/// matches every persisted torrent.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TorrentFilter {
     observed_states: BTreeSet<ObservedState>,
     /// Normalized categories.
@@ -327,6 +328,22 @@ pub struct TorrentFilter {
     pub kinds: BTreeSet<Kind>,
     /// v1 info hashes.
     pub info_hashes: BTreeSet<InfoHashV1>,
+    /// The retention torrents must have, or `None` for any.
+    pub retention: Option<Retention>,
+}
+
+impl Default for TorrentFilter {
+    fn default() -> Self {
+        Self {
+            observed_states: BTreeSet::new(),
+            categories: BTreeSet::new(),
+            uncategorized: false,
+            genres: BTreeSet::new(),
+            kinds: BTreeSet::new(),
+            info_hashes: BTreeSet::new(),
+            retention: Some(Retention::Persisted),
+        }
+    }
 }
 
 /// What [`TorrentFilter::matches`] checks of a torrent.
@@ -355,10 +372,13 @@ impl TorrentFilter {
         self.matches_facet_base(torrent) && self.matches_menus(torrent)
     }
 
-    /// Returns whether a torrent matches the filters facets keep: observed
-    /// state, kind, and info hash.
+    /// Returns whether a torrent matches the filters facets keep: retention,
+    /// observed state, kind, and info hash.
     pub fn matches_facet_base(&self, torrent: Matched<'_>) -> bool {
-        (self.observed_states.is_empty() || self.observed_states.contains(&torrent.observed_state))
+        self.retention
+            .is_none_or(|retention| torrent.record.configuration.retention() == retention)
+            && (self.observed_states.is_empty()
+                || self.observed_states.contains(&torrent.observed_state))
             && (self.kinds.is_empty()
                 || torrent.kind.is_some_and(|kind| self.kinds.contains(&kind)))
             && (self.info_hashes.is_empty() || self.info_hashes.contains(&torrent.record.info_hash))
@@ -384,25 +404,33 @@ impl TorrentFilter {
     /// typo tolerance, if there is a search.
     pub fn fingerprint(&self, search: Option<(&str, bool)>) -> FilterFingerprint {
         let info_hashes: Vec<String> = self.info_hashes.iter().map(ToString::to_string).collect();
+        // The default, persisted torrents, leaves earlier cursors valid.
+        let retention = match self.retention {
+            Some(Retention::Persisted) => None,
+            Some(Retention::Temporary) => Some(("retention", "temporary")),
+            None => Some(("retention", "any")),
+        };
         FilterFingerprint::of(
-            self.observed_states
-                .iter()
-                .map(|state| ("observed_state", state.as_str()))
-                .chain(
-                    self.categories
-                        .iter()
-                        .map(|category| ("category", category.as_str())),
-                )
-                .chain(self.uncategorized.then_some(("uncategorized", "true")))
-                .chain(self.genres.iter().map(|genre| ("genre", genre.as_str())))
-                .chain(self.kinds.iter().map(|kind| ("kind", kind.as_str())))
-                .chain(info_hashes.iter().map(|hash| ("info_hash", hash.as_str())))
-                .chain(search.map(|(text, _)| ("search", text)))
-                .chain(
-                    search
-                        .filter(|&(_, typos)| typos)
-                        .map(|_| ("fuzzy", "true")),
-                ),
+            retention.into_iter().chain(
+                self.observed_states
+                    .iter()
+                    .map(|state| ("observed_state", state.as_str()))
+                    .chain(
+                        self.categories
+                            .iter()
+                            .map(|category| ("category", category.as_str())),
+                    )
+                    .chain(self.uncategorized.then_some(("uncategorized", "true")))
+                    .chain(self.genres.iter().map(|genre| ("genre", genre.as_str())))
+                    .chain(self.kinds.iter().map(|kind| ("kind", kind.as_str())))
+                    .chain(info_hashes.iter().map(|hash| ("info_hash", hash.as_str())))
+                    .chain(search.map(|(text, _)| ("search", text)))
+                    .chain(
+                        search
+                            .filter(|&(_, typos)| typos)
+                            .map(|_| ("fuzzy", "true")),
+                    ),
+            ),
         )
     }
 }
@@ -1002,6 +1030,7 @@ mod tests {
             metadata: None,
             desired_state: DesiredState::Started,
             storage_mode: StorageMode::Memory,
+            retention: crate::lifecycle::Retention::Persisted,
             library: Default::default(),
             created_at: SystemTime::UNIX_EPOCH + Duration::from_secs(created_at_secs),
         };
@@ -1009,6 +1038,41 @@ mod tests {
             Registration::Created(record) => record,
             Registration::Duplicate { .. } => panic!("info hash {n} was already registered"),
         }
+    }
+
+    #[test]
+    fn listings_hold_persisted_torrents_unless_asked() {
+        let registry = Registry::new();
+        let persisted = register(&registry, 1, 1);
+        let mut temporary = register(&registry, 2, 2);
+        temporary.configuration = temporary
+            .configuration
+            .clone()
+            .with_retention(Retention::Temporary);
+        let state = ObservedState::Downloading;
+        let listed = |filter: &TorrentFilter| {
+            [&persisted, &temporary]
+                .into_iter()
+                .filter(|record| filter.matches(matched(record, state)))
+                .count()
+        };
+        let mut filter = TorrentFilter::default();
+        assert_eq!(listed(&filter), 1);
+        assert!(filter.matches(matched(&persisted, state)));
+        assert_eq!(
+            filter.fingerprint(None),
+            TorrentFilter::new([]).fingerprint(None),
+            "the default keeps earlier cursors valid"
+        );
+        let default = filter.fingerprint(None);
+        filter.retention = Some(Retention::Temporary);
+        assert_eq!(listed(&filter), 1);
+        assert!(filter.matches(matched(&temporary, state)));
+        let temporaries = filter.fingerprint(None);
+        filter.retention = None;
+        assert_eq!(listed(&filter), 2);
+        let any = filter.fingerprint(None);
+        assert!(default != temporaries && temporaries != any && default != any);
     }
 
     /// A small deterministic generator for the traversal test.

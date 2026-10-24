@@ -3648,6 +3648,7 @@ dependencies = [
  "futures-util",
  "h2",
  "http",
+ "http-body",
  "http-body-util",
  "memchr",
  "reqwest",

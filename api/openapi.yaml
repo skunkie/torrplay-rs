@@ -212,6 +212,7 @@ paths:
         - $ref: '#/components/parameters/Fuzzy'
         - $ref: '#/components/parameters/IfNoneMatch'
         - $ref: '#/components/parameters/ObservedStateFilter'
+        - $ref: '#/components/parameters/RetentionFilter'
         - $ref: '#/components/parameters/CategoryFilter'
         - $ref: '#/components/parameters/UncategorizedFilter'
         - $ref: '#/components/parameters/GenreFilter'
@@ -241,6 +242,7 @@ paths:
                             value: 0123456789abcdef0123456789abcdef01234567
                         observed_state: downloading
                         storage_mode: memory
+                        retention: persisted
                         size_bytes: 1073740800
                         file_count: 1
                         created_at: '2026-10-19T12:00:00Z'
@@ -293,9 +295,11 @@ paths:
       summary: Create a torrent
       description: >-
         Creates a torrent from a magnet URI in JSON or from an uploaded torrent
-        file in a multipart form. The torrent exists as soon as this returns,
-        stored so that it survives restarts with its ID; metadata for a magnet
-        URI is retrieved in the background. Retrying is safe: a client whose
+        file in a multipart form. The torrent exists as soon as this returns;
+        a persisted torrent is stored so that it survives restarts with its
+        ID, while a temporary one lives in memory until it goes unwatched, as
+        retention describes. Metadata for a magnet URI is retrieved in the
+        background. Retrying is safe: a client whose
         request timed out receives either 201 or a duplicate-torrent problem
         that links to the torrent its first attempt created. A torrent created
         in disk storage keeps its files in the download directory, as
@@ -319,6 +323,11 @@ paths:
                 summary: A magnet URI
                 value:
                   magnet_uri: 'magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Example+Collection'
+              temporary:
+                summary: A magnet URI to play without keeping it
+                value:
+                  magnet_uri: 'magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Example+Collection'
+                  retention: temporary
               organized:
                 summary: A magnet URI with a title and categories
                 value:
@@ -359,6 +368,7 @@ paths:
                         value: 0123456789abcdef0123456789abcdef01234567
                     observed_state: retrieving_metadata
                     storage_mode: memory
+                    retention: persisted
                     size_bytes: null
                     file_count: null
                     created_at: '2026-10-19T12:00:00Z'
@@ -383,7 +393,7 @@ paths:
         '408':
           $ref: '#/components/responses/RequestTimeout'
         '409':
-          $ref: '#/components/responses/DuplicateTorrent'
+          $ref: '#/components/responses/CreationConflict'
         '413':
           $ref: '#/components/responses/ContentTooLarge'
         '415':
@@ -433,6 +443,7 @@ paths:
                         value: 0123456789abcdef0123456789abcdef01234567
                     observed_state: downloading
                     storage_mode: memory
+                    retention: persisted
                     size_bytes: 1073740800
                     file_count: 1
                     created_at: '2026-10-19T12:00:00Z'
@@ -512,6 +523,7 @@ paths:
                   value:
                     desired_state: started
                     storage_mode: memory
+                    retention: persisted
                     title: Example Film
                     kind: null
                     year: 2026
@@ -591,6 +603,7 @@ paths:
                   value:
                     desired_state: paused
                     storage_mode: memory
+                    retention: persisted
                     title: Example Film
                     kind: null
                     year: 2026
@@ -775,6 +788,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '408':
           $ref: '#/components/responses/RequestTimeout'
+        '409':
+          $ref: '#/components/responses/LifecycleConflict'
         '413':
           $ref: '#/components/responses/ContentTooLarge'
         '415':
@@ -2034,6 +2049,7 @@ paths:
                           value: 0123456789abcdef0123456789abcdef01234567
                       observed_state: downloading
                       storage_mode: memory
+                      retention: persisted
                       size_bytes: 2147481600
                       file_count: 2
                       created_at: '2026-10-19T12:00:00Z'
@@ -2152,6 +2168,8 @@ paths:
                     drain_period_seconds: 10
                     peer_limit: 50
                     cache_capacity_bytes: 268435456
+                    temporary_idle_seconds: 600
+                    temporary_torrents_max: 16
                     background_downloads: true
                     dlna_enabled: false
                     dlna_name: TorrPlay
@@ -2170,6 +2188,8 @@ paths:
                     drain_period_seconds: 10
                     peer_limit: 50
                     cache_capacity_bytes: 268435456
+                    temporary_idle_seconds: 600
+                    temporary_torrents_max: 16
                     background_downloads: true
                     dlna_enabled: true
                     dlna_name: Living room
@@ -2236,6 +2256,8 @@ paths:
                     drain_period_seconds: 10
                     peer_limit: 50
                     cache_capacity_bytes: 268435456
+                    temporary_idle_seconds: 600
+                    temporary_torrents_max: 16
                     background_downloads: true
                     dlna_enabled: false
                     dlna_name: TorrPlay
@@ -2775,6 +2797,18 @@ components:
         items:
           $ref: '#/components/schemas/ObservedState'
       example: [downloading, paused]
+    RetentionFilter:
+      name: retention
+      in: query
+      description: >-
+        Which torrents the page holds by retention: persisted ones by
+        default, temporary ones, or any. Facets and the listing version count
+        the same torrents.
+      schema:
+        type: string
+        enum: [persisted, temporary, any]
+        default: persisted
+      example: any
     Search:
       name: search
       in: query
@@ -3187,12 +3221,15 @@ components:
                 title: Lifecycle conflict
                 status: 409
                 detail: The torrent's storage mode transition is in progress.
-    DuplicateTorrent:
-      description: A torrent with the same info hash already exists.
+    CreationConflict:
+      description: >-
+        A torrent with the same info hash already exists, or a temporary
+        torrent cannot be added because every temporary torrent the
+        application allows is streaming.
       content:
         application/problem+json:
           schema:
-            $ref: '#/components/schemas/DuplicateTorrentProblem'
+            $ref: '#/components/schemas/CreationConflictProblem'
           examples:
             duplicate:
               summary: The torrent already exists
@@ -3202,6 +3239,15 @@ components:
                 status: 409
                 detail: A torrent with this info hash already exists.
                 torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+            too_many:
+              summary: Every temporary torrent is being watched
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/too-many-temporary-torrents
+                title: Too many temporary torrents
+                status: 409
+                detail: >-
+                  All 16 temporary torrents are streaming; stop one, or add
+                  this torrent as a persisted one.
     PreloadConflict:
       description: >-
         The torrent's state does not allow a preload, or the file or the
@@ -3677,6 +3723,8 @@ components:
           $ref: '#/components/schemas/CreationDesiredState'
         storage_mode:
           $ref: '#/components/schemas/CreationStorageMode'
+        retention:
+          $ref: '#/components/schemas/CreationRetention'
         title:
           $ref: '#/components/schemas/Title'
         kind:
@@ -3708,6 +3756,8 @@ components:
           $ref: '#/components/schemas/CreationDesiredState'
         storage_mode:
           $ref: '#/components/schemas/CreationStorageMode'
+        retention:
+          $ref: '#/components/schemas/CreationRetention'
         title:
           $ref: '#/components/schemas/Title'
         kind:
@@ -3727,6 +3777,31 @@ components:
       enum: [started, paused]
       default: started
       examples: [paused]
+
+    Retention:
+      type: string
+      description: >-
+        Whether the application keeps the torrent. A persisted torrent is
+        stored and survives restarts. A temporary torrent lives in memory
+        storage only: it is hidden from the listing by default and from the
+        DLNA media server, takes no library members, poster, or progress,
+        and is deleted once it has gone unwatched for the
+        temporary_idle_seconds setting, or when the application restarts.
+        Changing it to persisted keeps the torrent with its ID; a persisted
+        torrent cannot become temporary. Clients must handle values added
+        later.
+      enum: [persisted, temporary]
+      examples: [temporary]
+
+    CreationRetention:
+      type: string
+      description: >-
+        Whether the application keeps the new torrent, as Retention
+        describes. It defaults to persisted. A temporary torrent must use
+        memory storage and set no library members.
+      enum: [persisted, temporary]
+      default: persisted
+      examples: [temporary]
 
     CreationStorageMode:
       type: string
@@ -3862,6 +3937,7 @@ components:
         - info_hashes
         - observed_state
         - storage_mode
+        - retention
         - size_bytes
         - file_count
         - created_at
@@ -3901,6 +3977,8 @@ components:
           $ref: '#/components/schemas/ObservedState'
         storage_mode:
           $ref: '#/components/schemas/StorageMode'
+        retention:
+          $ref: '#/components/schemas/Retention'
         size_bytes:
           type: [integer, 'null']
           format: int64
@@ -4160,12 +4238,14 @@ components:
         The writable configuration of a torrent. Its storage_mode is the one
         the client asked for; while a transition runs, the torrent resource's
         storage_mode is still the previous one.
-      required: [desired_state, storage_mode, title, kind, year, description, categories, genres, links]
+      required: [desired_state, storage_mode, retention, title, kind, year, description, categories, genres, links]
       properties:
         desired_state:
           $ref: '#/components/schemas/DesiredState'
         storage_mode:
           $ref: '#/components/schemas/StorageMode'
+        retention:
+          $ref: '#/components/schemas/Retention'
         title:
           $ref: '#/components/schemas/Title'
         kind:
@@ -4199,7 +4279,9 @@ components:
       type: object
       description: >-
         A JSON merge patch of a torrent's configuration. Omitted members keep
-        their values. A library member set to null takes its default: null,
+        their values. Setting retention to persisted keeps a temporary
+        torrent; a temporary torrent takes no other change of storage mode
+        or library member until then. A library member set to null takes its default: null,
         or an empty list for categories and genres. A list replaces the
         whole list, as RFC 7396 replaces arrays.
       additionalProperties: false
@@ -4209,6 +4291,8 @@ components:
           $ref: '#/components/schemas/DesiredState'
         storage_mode:
           $ref: '#/components/schemas/StorageMode'
+        retention:
+          $ref: '#/components/schemas/Retention'
         title:
           $ref: '#/components/schemas/Title'
         kind:
@@ -4240,7 +4324,7 @@ components:
         The application's settings. Each value is the one set, or its default
         while it is unset. Command-line options may override some of them for
         one run, which overrides lists.
-      required: [piece_wait_seconds, idle_timeout_seconds, idle_readers_per_torrent, idle_readers_total, drain_period_seconds, peer_limit, cache_capacity_bytes, background_downloads, dlna_enabled, dlna_name, dht_enabled, log_level, overrides, links]
+      required: [piece_wait_seconds, idle_timeout_seconds, idle_readers_per_torrent, idle_readers_total, drain_period_seconds, peer_limit, cache_capacity_bytes, temporary_idle_seconds, temporary_torrents_max, background_downloads, dlna_enabled, dlna_name, dht_enabled, log_level, overrides, links]
       properties:
         piece_wait_seconds:
           type: integer
@@ -4324,6 +4408,31 @@ components:
             current pieces, cache usage may stay above the capacity, and no
             new piece is admitted.
           examples: [268435456]
+        temporary_idle_seconds:
+          type: integer
+          format: int32
+          minimum: 60
+          maximum: 86400
+          default: 600
+          description: >-
+            How long a temporary torrent may go unwatched before it is
+            deleted: with no response streaming its content, counted from
+            its last stream's end, its last preload's creation, or its own
+            creation. Applies at once, to the time each torrent has already
+            gone unwatched.
+          examples: [600]
+        temporary_torrents_max:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 64
+          default: 16
+          description: >-
+            The most temporary torrents the application holds. Adding one
+            more deletes the one unwatched longest, or fails with
+            too-many-temporary-torrents while every one is streaming. Applies
+            to torrents added afterward.
+          examples: [16]
         background_downloads:
           type: boolean
           default: true
@@ -4466,6 +4575,20 @@ components:
           maximum: 68719476736
           description: The new value, or null for the default, 268435456.
           examples: [268435456, null]
+        temporary_idle_seconds:
+          type: [integer, 'null']
+          format: int32
+          minimum: 60
+          maximum: 86400
+          description: The new value, or null for the default, 600.
+          examples: [600, null]
+        temporary_torrents_max:
+          type: [integer, 'null']
+          format: int32
+          minimum: 1
+          maximum: 64
+          description: The new limit of temporary torrents, or null for the default, 16.
+          examples: [16, null]
         background_downloads:
           type: [boolean, 'null']
           description: The new value, or null for the default, true.
@@ -5527,15 +5650,18 @@ components:
           description: When the token expires, in UTC, to the second.
           examples: ['2026-10-25T12:00:00Z']
 
-    DuplicateTorrentProblem:
-      description: A duplicate-torrent problem that links to the existing torrent.
+    CreationConflictProblem:
+      description: >-
+        A duplicate-torrent problem, which links to the existing torrent, or a
+        too-many-temporary-torrents problem, which does not.
       allOf:
         - $ref: '#/components/schemas/Problem'
         - type: object
-          required: [torrent]
           properties:
             torrent:
               type: string
               format: uri-reference
-              description: The existing torrent with the same info hash.
+              description: >-
+                The existing torrent with the same info hash, present only in
+                a duplicate-torrent problem.
               examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula]

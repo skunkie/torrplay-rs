@@ -26,7 +26,7 @@ use crate::id::{
 };
 use crate::image::ImageInfo;
 use crate::library::Library;
-use crate::lifecycle::{Configuration, DesiredState, EntityTag, StorageMode};
+use crate::lifecycle::{Configuration, DesiredState, EntityTag, Retention, StorageMode};
 use crate::metadata::Metadata;
 
 /// The number of torrent IDs drawn before registration gives up. A 128-bit
@@ -70,6 +70,8 @@ pub struct NewTorrent {
     pub desired_state: DesiredState,
     /// The storage mode the torrent uses.
     pub storage_mode: StorageMode,
+    /// Whether the application keeps the torrent.
+    pub retention: Retention,
     /// The library members, normalized.
     pub library: Library,
     /// The creation time.
@@ -224,6 +226,7 @@ impl Registry {
             created_at: new.created_at,
             configuration: Configuration::new(new.desired_state)
                 .with_storage_mode(new.storage_mode)
+                .with_retention(new.retention)
                 .with_library(new.library),
             storage_mode: new.storage_mode,
             metadata: new.metadata,
@@ -269,6 +272,7 @@ impl Registry {
             created_at: new.created_at,
             configuration: Configuration::new(new.desired_state)
                 .with_storage_mode(new.storage_mode)
+                .with_retention(new.retention)
                 .with_library(new.library),
             storage_mode: new.storage_mode,
             metadata: new.metadata,
@@ -420,6 +424,7 @@ mod tests {
             metadata,
             desired_state: DesiredState::Started,
             storage_mode: StorageMode::Memory,
+            retention: Retention::Persisted,
             library: Default::default(),
             created_at: SystemTime::UNIX_EPOCH + Duration::from_secs(u64::from(n)),
         }

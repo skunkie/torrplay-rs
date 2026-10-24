@@ -85,6 +85,14 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 : A torrent whose identity, metadata, and configuration survive application
   restarts. Only persisted torrents may use disk storage.
 
+**Temporary torrent**
+: A torrent kept in memory only to be played, never stored, hidden from the
+  library and the DLNA media server, and deleted once it goes unwatched for
+  a while or the application restarts. Making it persisted keeps it.
+
+**Retention**
+: Whether the application keeps a torrent: `persisted` or `temporary`.
+
 **Torrent file**
 : A metainfo file ([BEP 3](https://www.bittorrent.org/beps/bep_0003.html)):
   the bencoded dictionary of a torrent's metadata and trackers. A persisted

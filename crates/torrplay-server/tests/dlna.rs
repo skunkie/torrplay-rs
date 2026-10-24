@@ -17,7 +17,7 @@ mod common;
 use common::{Exchange, TestServer, form_request, json_request, request};
 use http::{Method, StatusCode, header};
 use serde_json::{Value, json};
-use torrplay_fixtures::{FileSpec, FixtureSpec, Layout, catalog};
+use torrplay_fixtures::{FileSpec, FixtureSpec, Layout, catalog, hex};
 
 const CONTENT_DIRECTORY: &str = "urn:schemas-upnp-org:service:ContentDirectory:1";
 
@@ -289,6 +289,52 @@ async fn the_media_server_answers_only_while_on() {
         )
         .await;
     assert!(text(&again).contains(&udn), "the UUID survives a restart");
+    server.stop().await;
+}
+
+/// TMP-08: a temporary torrent is never shown to televisions, and its media
+/// URL answers as an unknown one does.
+#[tokio::test]
+async fn temporary_torrents_stay_off_the_media_server() {
+    let server = TestServer::start().await;
+    let spec = catalog::media_names();
+    let created = server
+        .send(json_request(
+            Method::POST,
+            "/api/v1/torrents",
+            &json!({
+                "magnet_uri": format!("magnet:?xt=urn:btih:{}", hex(&spec.metainfo().info_hash)),
+                "retention": "temporary",
+            }),
+        ))
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    let id = created.json()["id"].as_str().unwrap().to_owned();
+    server.engine.set_metadata_retrievable(
+        torrplay_core::id::InfoHashV1::from_bytes(spec.metainfo().info_hash),
+        true,
+    );
+    let files = server
+        .get(&format!("/api/v1/torrents/{id}/files?page_size=200"))
+        .await
+        .json()["items"]
+        .as_array()
+        .unwrap()
+        .clone();
+    enable(&server, true).await;
+
+    let (all, body) = browse(&server, "all", "BrowseDirectChildren").await;
+    assert!(!all.contains(&id), "{all}");
+    assert!(body.contains("<TotalMatches>0</TotalMatches>"), "{body}");
+    let video = file_id(&files, "video.mkv");
+    let media = server
+        .send_raw(
+            request(Method::GET, &format!("/dlna/media/{id}/{video}/video.mkv"))
+                .body(Vec::new())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(media.status, StatusCode::NOT_FOUND);
     server.stop().await;
 }
 

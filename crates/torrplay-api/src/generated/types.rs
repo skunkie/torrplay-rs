@@ -198,6 +198,8 @@ pub struct TorrentFileUpload {
     )]
     pub kind: Option<Option<ConfiguredKind>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub retention: Option<CreationRetention>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub storage_mode: Option<CreationStorageMode>,
     #[serde(
         skip_serializing_if = "Option::is_none",
@@ -311,6 +313,8 @@ pub struct TorrentCreation {
     ///Constraint: maxLength=8192
     pub magnet_uri: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub retention: Option<CreationRetention>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub storage_mode: Option<CreationStorageMode>,
     #[serde(
         skip_serializing_if = "Option::is_none",
@@ -335,6 +339,7 @@ impl TorrentCreation {
             desired_state: None,
             genres: None,
             kind: None,
+            retention: None,
             storage_mode: None,
             title: None,
             year: None,
@@ -420,6 +425,12 @@ impl TorrentCreationBuilder {
         self.value.kind = None;
         self
     }
+    #[doc = concat!("Set the optional `", "retention", "` request field.")]
+    #[must_use]
+    pub fn retention(mut self, retention: CreationRetention) -> Self {
+        self.value.retention = Some(retention);
+        self
+    }
     #[doc = concat!("Set the optional `", "storage_mode", "` request field.")]
     #[must_use]
     pub fn storage_mode(mut self, storage_mode: CreationStorageMode) -> Self {
@@ -502,6 +513,33 @@ impl AsRef<str> for CreationStorageMode {
         self.as_str()
     }
 }
+///Whether the application keeps the new torrent, as Retention describes. It defaults to persisted. A temporary torrent must use memory storage and set no library members.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum CreationRetention {
+    #[default]
+    #[serde(rename = "persisted")]
+    Persisted,
+    #[serde(rename = "temporary")]
+    Temporary,
+}
+impl CreationRetention {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Persisted => "persisted",
+            Self::Temporary => "temporary",
+        }
+    }
+}
+impl ::std::fmt::Display for CreationRetention {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for CreationRetention {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
 ///The state a new torrent starts in. It defaults to started.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum CreationDesiredState {
@@ -529,7 +567,7 @@ impl AsRef<str> for CreationDesiredState {
         self.as_str()
     }
 }
-///A JSON merge patch of a torrent's configuration. Omitted members keep their values. A library member set to null takes its default: null, or an empty list for categories and genres. A list replaces the whole list, as RFC 7396 replaces arrays.
+///A JSON merge patch of a torrent's configuration. Omitted members keep their values. Setting retention to persisted keeps a temporary torrent; a temporary torrent takes no other change of storage mode or library member until then. A library member set to null takes its default: null, or an empty list for categories and genres. A list replaces the whole list, as RFC 7396 replaces arrays.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct TorrentConfigurationPatch {
     ///The categories, replacing the current ones; null clears them.
@@ -563,6 +601,8 @@ pub struct TorrentConfigurationPatch {
     )]
     pub kind: Option<Option<ConfiguredKind>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub retention: Option<Retention>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub storage_mode: Option<StorageMode>,
     #[serde(
         skip_serializing_if = "Option::is_none",
@@ -587,6 +627,7 @@ pub struct TorrentConfiguration {
     pub kind: Option<ConfiguredKind>,
     ///Links from a configuration.
     pub links: TorrentConfigurationLinks,
+    pub retention: Retention,
     pub storage_mode: StorageMode,
     pub title: Option<Title>,
     pub year: Option<Year>,
@@ -656,6 +697,7 @@ pub struct Torrent {
     pub observed_state: ObservedState,
     ///The torrent's poster, or null if it has none.
     pub poster: Option<TorrentPoster>,
+    pub retention: Retention,
     ///The total size of the torrent's files, or null until metadata is available.
     ///Constraint: minimum=0
     pub size_bytes: Option<i64>,
@@ -767,6 +809,33 @@ impl ::std::fmt::Display for StorageMode {
     }
 }
 impl AsRef<str> for StorageMode {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+///Whether the application keeps the torrent. A persisted torrent is stored and survives restarts. A temporary torrent lives in memory storage only: it is hidden from the listing by default and from the DLNA media server, takes no library members, poster, or progress, and is deleted once it has gone unwatched for the temporary_idle_seconds setting, or when the application restarts. Changing it to persisted keeps the torrent with its ID; a persisted torrent cannot become temporary. Clients must handle values added later.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum Retention {
+    #[default]
+    #[serde(rename = "persisted")]
+    Persisted,
+    #[serde(rename = "temporary")]
+    Temporary,
+}
+impl Retention {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Persisted => "persisted",
+            Self::Temporary => "temporary",
+        }
+    }
+}
+impl ::std::fmt::Display for Retention {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for Retention {
     fn as_ref(&self) -> &str {
         self.as_str()
     }
@@ -901,6 +970,22 @@ pub struct SettingsPatch {
         deserialize_with = "tri_state_serde::deserialize"
     )]
     pub piece_wait_seconds: Option<Option<i32>>,
+    ///The new value, or null for the default, 600.
+    ///Constraint: minimum=60, maximum=86400
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub temporary_idle_seconds: Option<Option<i32>>,
+    ///The new limit of temporary torrents, or null for the default, 16.
+    ///Constraint: minimum=1, maximum=64
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub temporary_torrents_max: Option<Option<i32>>,
 }
 ///The new value, or null for the default, info.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
@@ -992,6 +1077,14 @@ pub struct Settings {
     ///Constraint: minimum=1, maximum=600
     #[serde(default)]
     pub piece_wait_seconds: i32,
+    ///How long a temporary torrent may go unwatched before it is deleted: with no response streaming its content, counted from its last stream's end, its last preload's creation, or its own creation. Applies at once, to the time each torrent has already gone unwatched.
+    ///Constraint: minimum=60, maximum=86400
+    #[serde(default)]
+    pub temporary_idle_seconds: i32,
+    ///The most temporary torrents the application holds. Adding one more deletes the one unwatched longest, or fails with too-many-temporary-torrents while every one is streaming. Applies to torrents added afterward.
+    ///Constraint: minimum=1, maximum=64
+    #[serde(default)]
+    pub temporary_torrents_max: i32,
 }
 ///The settings that command-line options override in this run, each with the value in effect; empty when none are. The members above keep the stored values, which a PATCH still changes and which apply once the application runs without those options.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -1543,9 +1636,9 @@ pub struct EntryPointLinks {
     ///The torrents collection.
     pub torrents: String,
 }
-///A duplicate-torrent problem that links to the existing torrent.
+///A duplicate-torrent problem, which links to the existing torrent, or a too-many-temporary-torrents problem, which does not.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct DuplicateTorrentProblem {
+pub struct CreationConflictProblem {
     ///An explanation of this occurrence, omitted when there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
@@ -1557,8 +1650,9 @@ pub struct DuplicateTorrentProblem {
     pub status: i32,
     ///A short summary that is the same for every occurrence of the type.
     pub title: String,
-    ///The existing torrent with the same info hash.
-    pub torrent: String,
+    ///The existing torrent with the same info hash, present only in a duplicate-torrent problem.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub torrent: Option<String>,
     ///The problem type, a tag URI under tag:skunkie.github.io,2026:torrplay/problems/.
     pub r#type: url::Url,
 }

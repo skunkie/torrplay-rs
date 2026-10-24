@@ -40,6 +40,36 @@ impl DesiredState {
     }
 }
 
+/// Whether the application keeps a torrent.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Retention {
+    /// Stored, and restored after a restart.
+    #[default]
+    Persisted,
+    /// Kept in memory only to be played, and deleted once it goes
+    /// unwatched; it never becomes temporary again once persisted.
+    Temporary,
+}
+
+impl Retention {
+    /// Returns the contract's enum value.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Persisted => "persisted",
+            Self::Temporary => "temporary",
+        }
+    }
+
+    /// Parses the contract's enum value.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "persisted" => Some(Self::Persisted),
+            "temporary" => Some(Self::Temporary),
+            _ => None,
+        }
+    }
+}
+
 /// Where a torrent keeps piece data.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum StorageMode {
@@ -163,6 +193,7 @@ impl fmt::Display for EntityTag {
 pub struct Configuration {
     desired_state: DesiredState,
     storage_mode: StorageMode,
+    retention: Retention,
     // Shared, since records are cloned for every response and the library
     // holds most of their text.
     library: Arc<Library>,
@@ -175,9 +206,15 @@ impl Configuration {
         Self {
             desired_state,
             storage_mode: StorageMode::Memory,
+            retention: Retention::Persisted,
             library: Arc::default(),
             version: 1,
         }
+    }
+
+    /// The configuration with `retention` instead, for a new torrent.
+    pub fn with_retention(self, retention: Retention) -> Self {
+        Self { retention, ..self }
     }
 
     /// The configuration with `library` instead, for a new torrent.
@@ -204,9 +241,11 @@ impl Configuration {
         library: Library,
         version: u64,
     ) -> Option<Self> {
+        // Only persisted torrents are stored.
         (version >= 1).then_some(Self {
             desired_state,
             storage_mode,
+            retention: Retention::Persisted,
             library: Arc::new(library),
             version,
         })
@@ -221,6 +260,23 @@ impl Configuration {
     /// reaches.
     pub fn storage_mode(&self) -> StorageMode {
         self.storage_mode
+    }
+
+    /// Returns whether the application keeps the torrent.
+    pub fn retention(&self) -> Retention {
+        self.retention
+    }
+
+    /// Keeps a temporary torrent, and returns whether it was temporary, as
+    /// [`set_desired_state`](Self::set_desired_state) does. A persisted
+    /// torrent never becomes temporary, so there is no other change.
+    pub fn persist(&mut self) -> bool {
+        if self.retention == Retention::Persisted {
+            return false;
+        }
+        self.retention = Retention::Persisted;
+        self.version = self.version.wrapping_add(1);
+        true
     }
 
     /// Returns the library members.

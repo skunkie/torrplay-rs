@@ -42,6 +42,7 @@ mod progress;
 mod query;
 mod reference;
 mod representation;
+mod retention;
 mod service;
 mod settings;
 mod torrents;

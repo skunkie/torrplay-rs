@@ -21,7 +21,7 @@ use axum::response::{IntoResponse, Response};
 use sha2::{Digest, Sha256};
 use torrplay_core::engine::Engine;
 use torrplay_core::library::{self, Kind};
-use torrplay_core::lifecycle::ObservedState;
+use torrplay_core::lifecycle::{ObservedState, Retention};
 use torrplay_dlna::description::{self, Device};
 use torrplay_dlna::dlna;
 use torrplay_dlna::gena::{self, Refusal, Subscribe, Subscriptions};
@@ -383,6 +383,10 @@ async fn catalog<E: Engine>(app: &App<E>) -> Result<Option<Catalog>, Problem> {
     };
     let mut torrents = Vec::new();
     for record in registry.list().into_iter().rev() {
+        // Temporary torrents are never shown to televisions.
+        if record.configuration.retention() == Retention::Temporary {
+            continue;
+        }
         let view = app.observe(record).await?;
         if matches!(
             view.observed_state(),
@@ -484,7 +488,10 @@ async fn media<E: Engine>(
             "The transfer mode must be Streaming, Interactive, or Background.",
         )
     })?;
-    let (_, metadata) = files::with_metadata(&app, &torrent).await?;
+    let (view, metadata) = files::with_metadata(&app, &torrent).await?;
+    if view.record.configuration.retention() == Retention::Temporary {
+        return Err(Problem::not_found("The media server has no such torrent."));
+    }
     let (_, found) = metadata
         .file(&file)
         .ok_or_else(|| Problem::not_found("The torrent has no file with this ID."))?;

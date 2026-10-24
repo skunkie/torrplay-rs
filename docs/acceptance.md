@@ -212,6 +212,19 @@ mode (M6).
 | DSK-08 | Empty a disk torrent's file from outside, stream it, then pause and start the torrent | The stream ends and the torrent fails; starting it runs the full check and downloads the file again |
 | DSK-09 | A disk torrent uploads to a local leecher, then switches to memory | The leecher downloads the whole torrent; a leecher that connects after the switch receives nothing |
 
+### Temporary torrents
+
+| ID | Scenario | Expected |
+|---|---|---|
+| TMP-01 | Create a torrent with `retention: temporary`, read it, its configuration, and its files, and stream a file | `201`; `retention` is `temporary` in both resources; it streams like a persisted torrent (M7) |
+| TMP-02 | List torrents with no `retention`, then with `temporary` and `any` | The default page and its facets leave the temporary torrent out; the others include it (M7) |
+| TMP-03 | Create a temporary torrent with library members or disk storage; then patch its library or storage mode, upload a poster, and record progress | `422 validation-failed` naming each member; then `409 lifecycle-conflict` for each change (M7) |
+| TMP-04 | Let a temporary torrent go past `temporary_idle_seconds` unwatched, counting from its last stream, and keep another streaming | The idle one is deleted and `404`; the streaming one stays (M7) |
+| TMP-05 | Add temporary torrents past `temporary_torrents_max`, first with one idle, then with every one streaming | The one idle longest is deleted; then `409 too-many-temporary-torrents` and nothing changes (M7) |
+| TMP-06 | Patch a temporary torrent to `retention: persisted`, restart; patch a persisted torrent to `temporary` | It survives the restart with its ID and URLs; the second patch is `422` (M7) |
+| TMP-07 | Restart with a temporary torrent | It is gone and `404` (M7) |
+| TMP-08 | Browse the DLNA tree and fetch a temporary torrent's DLNA media URL | The torrent is absent and its media URL is `404` (M7) |
+
 ### Settings
 
 | ID | Scenario | Expected |

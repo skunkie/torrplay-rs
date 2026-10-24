@@ -215,6 +215,31 @@ fn put_progress(path: &str, position: f64, duration: f64, viewed: bool) -> http:
     )
 }
 
+/// A single file large enough that a stream of it outlasts the socket
+/// buffers of a client that stops reading.
+fn large(id: &str, seed: u64) -> FixtureSpec {
+    FixtureSpec {
+        id: id.into(),
+        torrent_name: format!("{id}.mkv"),
+        seed,
+        piece_length: 1 << 20,
+        layout: torrplay_fixtures::Layout::SingleFile {
+            size_bytes: 48 << 20,
+        },
+    }
+}
+
+/// Creates a temporary torrent from `spec`'s magnet URI.
+async fn create_temporary(server: &TestServer, spec: &FixtureSpec) -> Exchange {
+    server
+        .send(json_request(
+            Method::POST,
+            "/api/v1/torrents",
+            &json!({ "magnet_uri": magnet(spec), "retention": "temporary" }),
+        ))
+        .await
+}
+
 /// A series whose episodes come out of order in its metadata.
 fn series() -> FixtureSpec {
     FixtureSpec {
@@ -2271,6 +2296,228 @@ mod scenario {
         server.stop().await;
     }
 
+    /// TMP-01 to TMP-07: a temporary torrent plays, stays out of the
+    /// listing, refuses what only persisted torrents keep, expires once
+    /// unwatched, makes room for another, and becomes persisted.
+    pub async fn temporary_torrents() {
+        let server = TestServer::start().await;
+        let torrents = "/api/v1/torrents";
+        let etag = |exchange: &Exchange| exchange.header(header::ETAG).unwrap().to_owned();
+        let retrievable = |server: &TestServer, spec: &FixtureSpec| {
+            server.engine.set_metadata_retrievable(
+                torrplay_core::id::InfoHashV1::from_bytes(spec.metainfo().info_hash),
+                true,
+            );
+        };
+
+        // TMP-03: what a temporary torrent cannot be created with.
+        let small = catalog::single_small();
+        let refused = server
+            .send_unchecked(json_request(
+                Method::POST,
+                torrents,
+                &json!({
+                    "magnet_uri": magnet(&small),
+                    "retention": "temporary",
+                    "storage_mode": "disk",
+                    "title": "Kept",
+                }),
+            ))
+            .await;
+        assert_problem(
+            &refused,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation-failed",
+        );
+        let mut pointers = errors(&refused, "pointer");
+        pointers.sort();
+        assert_eq!(pointers, ["/storage_mode", "/title"]);
+
+        // TMP-01: it plays like any torrent.
+        let created = create_temporary(&server, &small).await;
+        assert_eq!(created.json()["retention"], "temporary");
+        let path = created.json()["links"]["self"].as_str().unwrap().to_owned();
+        retrievable(&server, &small);
+        assert_eq!(server.get(&path).await.json()["name"], "single-small.bin");
+        let configuration = server.get(&format!("{path}/configuration")).await;
+        assert_eq!(configuration.json()["retention"], "temporary");
+        let file_id = files_of(&server, &path).await[0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let content = format!("{path}/files/{file_id}/content");
+        assert_eq!(server.get(&content).await.status, StatusCode::OK);
+
+        // TMP-02: listed only on request.
+        let persisted = server.create_magnet(&magnet(&catalog::media_names())).await;
+        let persisted_path = persisted.json()["links"]["self"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        for (query, total) in [("", 1), ("?retention=temporary", 1), ("?retention=any", 2)] {
+            let page = server.get(&format!("{torrents}{query}")).await.json();
+            assert_eq!(page["total"], total, "{query}");
+            assert_eq!(page["facets"]["total"], total, "{query}");
+        }
+        assert_eq!(
+            server.get(torrents).await.json()["items"][0]["retention"],
+            "persisted"
+        );
+
+        // TMP-03: and what it cannot take later.
+        let config_path = format!("{path}/configuration");
+        let tag = etag(&configuration);
+        for patch in [
+            json!({ "title": "Kept" }),
+            json!({ "storage_mode": "disk" }),
+        ] {
+            assert_problem(
+                &server.send(merge_patch(&config_path, &tag, &patch)).await,
+                StatusCode::CONFLICT,
+                "lifecycle-conflict",
+            );
+        }
+        assert_problem(
+            &server
+                .send(put_poster(&format!("{path}/poster"), "image/png", PNG))
+                .await,
+            StatusCode::CONFLICT,
+            "lifecycle-conflict",
+        );
+        let profile = default_profile(&server).await;
+        let id = created.json()["id"].as_str().unwrap().to_owned();
+        assert_problem(
+            &server
+                .send(put_progress(
+                    &format!("{profile}/torrents/{id}/progress/{file_id}"),
+                    10.0,
+                    100.0,
+                    false,
+                ))
+                .await,
+            StatusCode::CONFLICT,
+            "lifecycle-conflict",
+        );
+        let persisted_configuration = format!("{persisted_path}/configuration");
+        let persisted_tag = etag(&server.get(&persisted_configuration).await);
+        let demoted = server
+            .send(merge_patch(
+                &persisted_configuration,
+                &persisted_tag,
+                &json!({ "retention": "temporary" }),
+            ))
+            .await;
+        assert_problem(
+            &demoted,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation-failed",
+        );
+        assert_eq!(errors(&demoted, "pointer"), ["/retention"]);
+
+        // TMP-04: idle time counts from the last stream.
+        server.advance_clock(Duration::from_secs(500));
+        assert_eq!(server.get(&content).await.status, StatusCode::OK);
+        server.advance_clock(Duration::from_secs(200));
+        server.app.expire_temporaries().await;
+        assert_eq!(server.get(&path).await.status, StatusCode::OK);
+        server.advance_clock(Duration::from_secs(450));
+        server.app.expire_temporaries().await;
+        assert_problem(&server.get(&path).await, StatusCode::NOT_FOUND, "not-found");
+        assert_eq!(server.get(&persisted_path).await.status, StatusCode::OK);
+
+        // A stream in progress keeps it however long it lasts.
+        let streamed = large("temporary-stream", 51);
+        server.engine.add_fixture(&streamed);
+        let watched = create_temporary(&server, &streamed).await;
+        let watched_path = watched.json()["links"]["self"].as_str().unwrap().to_owned();
+        retrievable(&server, &streamed);
+        let watched_file = files_of(&server, &watched_path).await[0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let stream = server
+            .open_stream(&format!("{watched_path}/files/{watched_file}/content"))
+            .await;
+        server.advance_clock(Duration::from_secs(10_000));
+        server.app.expire_temporaries().await;
+        assert_eq!(server.get(&watched_path).await.status, StatusCode::OK);
+
+        // TMP-05: at the limit, the one idle longest makes room, unless all
+        // are watched.
+        let settings = server.get("/api/v1/settings").await;
+        let limited = server
+            .send(merge_patch(
+                "/api/v1/settings",
+                &etag(&settings),
+                &json!({ "temporary_torrents_max": 2 }),
+            ))
+            .await;
+        assert_eq!(limited.status, StatusCode::OK);
+        let idle = create_temporary(&server, &catalog::multi_boundary()).await;
+        let idle_path = idle.json()["links"]["self"].as_str().unwrap().to_owned();
+        server.advance_clock(Duration::from_secs(1));
+        let newer = create_temporary(&server, &catalog::many_files()).await;
+        assert_eq!(newer.status, StatusCode::CREATED);
+        assert_problem(
+            &server.get(&idle_path).await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        let newer_path = newer.json()["links"]["self"].as_str().unwrap().to_owned();
+        let other = large("temporary-other", 52);
+        server.engine.add_fixture(&other);
+        let other_file = {
+            retrievable(&server, &other);
+            let other_created = create_temporary(&server, &other).await;
+            assert_eq!(other_created.status, StatusCode::CREATED, "newer made room");
+            let other_path = other_created.json()["links"]["self"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            let file = files_of(&server, &other_path).await[0]["id"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            format!("{other_path}/files/{file}/content")
+        };
+        assert_problem(
+            &server.get(&newer_path).await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        let second_stream = server.open_stream(&other_file).await;
+        let full = create_temporary(&server, &catalog::single_small()).await;
+        assert_problem(&full, StatusCode::CONFLICT, "too-many-temporary-torrents");
+        drop((stream, second_stream));
+
+        // TMP-06: persisting keeps it, with library members set at once.
+        let watched_configuration = format!("{watched_path}/configuration");
+        let watched_tag = etag(&server.get(&watched_configuration).await);
+        let kept = server
+            .send(merge_patch(
+                &watched_configuration,
+                &watched_tag,
+                &json!({ "retention": "persisted", "title": "Kept" }),
+            ))
+            .await;
+        assert_eq!(kept.status, StatusCode::OK);
+        assert_eq!(kept.json()["retention"], "persisted");
+        assert_eq!(kept.json()["title"], "Kept");
+
+        // TMP-07: a restart forgets the temporary torrent, not the kept one.
+        let forgotten_path = other_file.split("/files/").next().unwrap().to_owned();
+        let server = server.restart().await;
+        assert_problem(
+            &server.get(&forgotten_path).await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        let restored = server.get(&watched_path).await.json();
+        assert_eq!(restored["retention"], "persisted");
+        assert_eq!(restored["title"], "Kept");
+        server.stop().await;
+    }
+
     /// SET-10, SET-11, and SET-12: the DLNA name, DHT, and log level
     /// settings validate, reach the engine and the application's tasks, and
     /// yield to command-line overrides for one run.
@@ -2409,6 +2656,8 @@ mod scenario {
                 "drain_period_seconds": 10,
                 "peer_limit": 50,
                 "cache_capacity_bytes": 268_435_456,
+                "temporary_idle_seconds": 600,
+                "temporary_torrents_max": 16,
                 "background_downloads": true,
                 "dlna_enabled": false,
                 "dlna_name": "TorrPlay",
@@ -5650,6 +5899,7 @@ macro_rules! scenarios {
 
 scenarios!(
     service_endpoints,
+    temporary_torrents,
     named_dht_and_log_settings,
     api_reference,
     magnet_creation,

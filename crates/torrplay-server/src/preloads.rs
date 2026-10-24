@@ -165,6 +165,8 @@ pub(crate) async fn create<E: Engine>(
         .create_preload(&torrent, file, preload, request)
         .await
         .map_err(problem)?;
+    // A preload restarts a temporary torrent's idle time.
+    app.temporaries().touch(&torrent, app.now());
     let body = representation(&torrent, &file_id, &status);
     let location =
         HeaderValue::try_from(body.links.self_field.clone()).map_err(|_| Problem::internal())?;

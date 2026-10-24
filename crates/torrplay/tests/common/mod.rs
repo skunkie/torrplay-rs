@@ -68,6 +68,8 @@ fn settings_of(config: &EngineConfig) -> torrplay_core::settings::Explicit {
         drain_period_seconds: None,
         peer_limit: count(config.peer_limit),
         cache_capacity_bytes: Some(config.cache_capacity_bytes),
+        temporary_idle_seconds: None,
+        temporary_torrents_max: None,
         background_downloads: None,
         dlna_enabled: None,
         dlna_name: None,

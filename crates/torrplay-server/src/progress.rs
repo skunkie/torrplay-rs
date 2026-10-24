@@ -220,6 +220,9 @@ pub(crate) async fn put<E: Engine>(
     negotiate(&headers, JSON)?;
     let (profile, torrent, metadata) = resolve(&app, &profile, &torrent).await?;
     let file = file(&metadata, &file_id)?;
+    if app.temporaries().contains(&torrent) {
+        return Err(crate::torrents::temporary_conflict("record its progress"));
+    }
     if MediaType::of_request(&headers).is_none_or(|media| media.essence != JSON) {
         return Err(Problem::new(
             ProblemType::UnsupportedMediaType,

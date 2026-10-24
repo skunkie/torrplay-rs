@@ -14,7 +14,7 @@ use torrplay_core::engine;
 use torrplay_core::id::{FileId, ProfileId, TorrentId};
 use torrplay_core::image::{ImageInfo, ImageType};
 use torrplay_core::library::{self, Kind, Library};
-use torrplay_core::lifecycle::{self, Configuration, EntityTag, ObservedState};
+use torrplay_core::lifecycle::{self, Configuration, EntityTag, ObservedState, Retention};
 use torrplay_core::metadata::{Metadata, MetadataFile};
 use torrplay_core::profiles::{Profile, Progress};
 
@@ -107,6 +107,13 @@ pub(crate) fn reported_kind(library: &Library, metadata: Option<&Metadata>) -> O
     })
 }
 
+pub(crate) fn retention(value: Retention) -> api::Retention {
+    match value {
+        Retention::Persisted => api::Retention::Persisted,
+        Retention::Temporary => api::Retention::Temporary,
+    }
+}
+
 fn observed_state(value: ObservedState) -> api::ObservedState {
     match value {
         ObservedState::RetrievingMetadata => api::ObservedState::RetrievingMetadata,
@@ -122,6 +129,7 @@ pub(crate) fn torrent(view: &TorrentView) -> api::Torrent {
     let library = record.configuration.library();
     let path = torrent_path(&record.id);
     api::Torrent {
+        retention: retention(record.configuration.retention()),
         title: library.title.clone(),
         kind: reported_kind(library, metadata).map(kind),
         year: library.year.map(i32::from),
@@ -236,6 +244,7 @@ pub(crate) fn configuration(id: &TorrentId, value: &Configuration) -> api::Torre
     api::TorrentConfiguration {
         desired_state: desired_state(value.desired_state()),
         storage_mode: storage_mode(value.storage_mode()),
+        retention: retention(value.retention()),
         title: library.title.clone(),
         kind: library.kind.map(kind),
         year: library.year.map(i32::from),
