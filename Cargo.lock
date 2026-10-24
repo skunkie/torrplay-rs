@@ -3523,6 +3523,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "torrplay-core",
+ "torrplay-dlna",
  "torrplay-engine",
  "torrplay-fixtures",
  "torrplay-server",
@@ -3594,6 +3595,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "torrplay-dlna"
+version = "0.1.0"
+dependencies = [
+ "quick-xml",
+ "socket2",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "torrplay-engine"
 version = "0.1.0"
 dependencies = [
@@ -3646,6 +3658,7 @@ dependencies = [
  "torrplay-api",
  "torrplay-contract",
  "torrplay-core",
+ "torrplay-dlna",
  "torrplay-fixtures",
  "torrplay-store",
  "tracing",

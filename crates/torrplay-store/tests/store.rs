@@ -27,6 +27,10 @@ use torrplay_store::{
     FILE_NAME, Store, StoreError, StoredDismissal, StoredProgress, StoredSettings, StoredTorrent,
 };
 
+/// Turns a database back into version 9, before the media server.
+const UNDO_VERSION_10: &str = "DROP TABLE media_server;
+    ALTER TABLE settings DROP COLUMN dlna_enabled;";
+
 /// Turns a database back into version 8, before credentials.
 const UNDO_VERSION_9: &str = "DROP TABLE access_tokens;
     DROP TABLE credentials;";
@@ -222,7 +226,7 @@ async fn a_newer_schema_is_refused() {
         Store::open(dir.path()),
         Err(StoreError::TooNew {
             found: 99,
-            supported: 9
+            supported: 10
         })
     ));
 }
@@ -328,7 +332,7 @@ async fn a_version_1_database_is_copied_then_migrated() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  DROP TABLE settings;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
@@ -367,7 +371,7 @@ async fn a_version_1_database_is_copied_then_migrated() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  DROP TABLE settings;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
@@ -405,7 +409,7 @@ async fn settings_from_version_2_keep_their_values_and_lack_the_cache_capacity()
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  ALTER TABLE settings DROP COLUMN cache_capacity_bytes;
                  ALTER TABLE settings DROP COLUMN background_downloads;
@@ -459,7 +463,7 @@ async fn settings_from_version_5_lack_the_background_downloads_switch() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  ALTER TABLE settings DROP COLUMN background_downloads;
                  PRAGMA user_version = 5;",
@@ -490,7 +494,7 @@ async fn torrents_from_version_3_use_memory_storage() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  ALTER TABLE settings DROP COLUMN background_downloads;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
@@ -744,7 +748,7 @@ async fn torrents_from_version_6_have_empty_library_members() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7} PRAGMA user_version = 6;"
             ))
             .unwrap();
@@ -890,7 +894,7 @@ async fn a_version_7_database_gains_empty_profiles() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_9} {UNDO_VERSION_8} PRAGMA user_version = 7;"
+                "{UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8} PRAGMA user_version = 7;"
             ))
             .unwrap();
     }
@@ -1049,11 +1053,51 @@ async fn a_version_8_database_gains_credentials_without_a_password() {
     {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
-            .execute_batch(&format!("{UNDO_VERSION_9} PRAGMA user_version = 8;"))
+            .execute_batch(&format!(
+                "{UNDO_VERSION_10} {UNDO_VERSION_9} PRAGMA user_version = 8;"
+            ))
             .unwrap();
     }
     let (_store, contents) = Store::open(dir.path()).unwrap();
     assert_eq!(contents.torrents.len(), 1);
     assert_eq!(contents.credentials.password, None);
     assert!(dir.path().join(format!("{FILE_NAME}.v8.bak")).exists());
+}
+
+#[tokio::test]
+async fn the_media_server_keeps_its_uuid_and_switch() {
+    let dir = TempDir::new().unwrap();
+    let udn = {
+        let (store, contents) = Store::open(dir.path()).unwrap();
+        assert!(!contents.settings.explicit.effective().dlna_enabled);
+        store
+            .set_settings(StoredSettings {
+                explicit: Explicit {
+                    dlna_enabled: Some(true),
+                    ..Explicit::default()
+                },
+                version: 2,
+            })
+            .await
+            .unwrap();
+        contents.media_server_udn
+    };
+    let (_store, contents) = Store::open(dir.path()).unwrap();
+    assert_eq!(contents.media_server_udn, udn, "the UUID is drawn once");
+    assert_eq!(contents.settings.explicit.dlna_enabled, Some(true));
+}
+
+#[tokio::test]
+async fn a_version_9_database_gains_the_media_server_switch_unset() {
+    let dir = TempDir::new().unwrap();
+    drop(open(&dir));
+    {
+        let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
+        connection
+            .execute_batch(&format!("{UNDO_VERSION_10} PRAGMA user_version = 9;"))
+            .unwrap();
+    }
+    let (_store, contents) = Store::open(dir.path()).unwrap();
+    assert_eq!(contents.settings.explicit.dlna_enabled, None);
+    assert_eq!(contents.media_server_udn.len(), 36);
 }

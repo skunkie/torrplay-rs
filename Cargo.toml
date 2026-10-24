@@ -10,6 +10,7 @@ members = [
     "crates/torrplay-bench",
     "crates/torrplay-contract",
     "crates/torrplay-core",
+    "crates/torrplay-dlna",
     "crates/torrplay-engine",
     "crates/torrplay-fixtures",
     "crates/torrplay-server",
@@ -76,6 +77,9 @@ jsonschema = { version = "0.59", default-features = false }
 librqbit = { git = "https://github.com/skunkie/rqbit", rev = "fa0185ebc45080685a925734ad7bbd5426acbbfa", default-features = false, features = ["rust-tls"] }
 librqbit-core = { git = "https://github.com/skunkie/rqbit", rev = "fa0185ebc45080685a925734ad7bbd5426acbbfa", default-features = false }
 memchr = "2"
+# Reading the DLNA media server's SOAP requests; librqbit already depends on
+# it.
+quick-xml = { version = "0.41", default-features = false }
 # Tests reach the server over loopback HTTP only, so they need no TLS.
 reqwest = { version = "0.13", default-features = false }
 # The database ADR 8 chose, compiled from the bundled amalgamation so builds
@@ -85,6 +89,9 @@ serde = { version = "1", features = ["derive"] }
 serde-saphyr = "2"
 serde_json = "1"
 sha2 = "0.11.1"
+# The SSDP socket's address reuse and multicast membership, which tokio's
+# sockets do not set; already in the tree through tokio's dependents.
+socket2 = "0.6"
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
@@ -92,6 +99,7 @@ tokio-util = { version = "0.7", features = ["io"] }
 torrplay-api = { path = "crates/torrplay-api" }
 torrplay-contract = { path = "crates/torrplay-contract" }
 torrplay-core = { path = "crates/torrplay-core" }
+torrplay-dlna = { path = "crates/torrplay-dlna" }
 torrplay-engine = { path = "crates/torrplay-engine" }
 torrplay-fixtures = { path = "crates/torrplay-fixtures" }
 torrplay-server = { path = "crates/torrplay-server" }

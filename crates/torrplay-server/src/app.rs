@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime};
 
 use tokio::sync::MutexGuard as LaneGuard;
+use tokio::sync::watch;
 use torrplay_core::credentials::{AllowedHosts, AttemptLimiter, Credentials};
 use torrplay_core::engine::{CacheStatistics, Engine, EngineError, Source};
 use torrplay_core::id::{ProfileId, TorrentId, random_torrent_id_bytes};
@@ -26,6 +27,7 @@ use torrplay_core::lifecycle::{Failure, ObservedState, Readiness, StorageMode};
 use torrplay_core::metadata::Metadata;
 use torrplay_core::profiles::{DEFAULT_PROFILE_NAME, Profile, Viewing};
 use torrplay_core::registry::{Registry, TorrentRecord};
+use torrplay_dlna::description::Device;
 use torrplay_store::{
     Store, StoreError, StoredCredentials, StoredDismissal, StoredProgress, StoredSettings,
     StoredTorrent,
@@ -63,6 +65,9 @@ pub struct App<E> {
     limiter: Mutex<AttemptLimiter>,
     allowed_hosts: AllowedHosts,
     clock: Clock,
+    media_server: Option<crate::dlna::MediaServer>,
+    /// Whether the DLNA media server is on, for the task that announces it.
+    dlna_enabled: watch::Sender<bool>,
 }
 
 /// What the server last learned from the engine. Requests answered from
@@ -135,7 +140,26 @@ impl<E: Engine> App<E> {
             limiter: Mutex::new(AttemptLimiter::default()),
             allowed_hosts: AllowedHosts::default(),
             clock: Arc::new(SystemTime::now),
+            media_server: None,
+            dlna_enabled: watch::Sender::new(false),
         }
+    }
+
+    /// Serves the DLNA media server's resources as `device`, while the
+    /// `dlna_enabled` setting is on.
+    pub fn with_media_server(mut self, device: Device) -> Self {
+        self.media_server = Some(crate::dlna::MediaServer::new(device));
+        self
+    }
+
+    pub(crate) fn media_server(&self) -> Option<&crate::dlna::MediaServer> {
+        self.media_server.as_ref()
+    }
+
+    /// Follows the `dlna_enabled` setting, for the task that announces the
+    /// media server.
+    pub fn dlna_enabled(&self) -> watch::Receiver<bool> {
+        self.dlna_enabled.subscribe()
     }
 
     /// Runs with the password, signing key, and access tokens the store held
@@ -273,6 +297,10 @@ impl<E: Engine> App<E> {
 
     pub(crate) fn set_settings(&self, stored: StoredSettings) {
         *self.settings.lock().unwrap_or_else(PoisonError::into_inner) = stored;
+        self.dlna_enabled.send_if_modified(|enabled| {
+            let now = stored.explicit.effective().dlna_enabled;
+            std::mem::replace(enabled, now) != now
+        });
     }
 
     /// Registers the torrents the store held at startup, in creation order,

@@ -182,7 +182,12 @@ impl TestServer {
             .with_settings(contents.settings)
             .with_viewing(contents.profiles, contents.progress, contents.dismissals)
             .with_credentials(contents.credentials)
-            .with_allowed_hosts(allowed_hosts.clone());
+            .with_allowed_hosts(allowed_hosts.clone())
+            .with_media_server(torrplay_dlna::description::Device {
+                friendly_name: "TorrPlay test".into(),
+                uuid: contents.media_server_udn.clone(),
+                version: "0.1.0".into(),
+            });
         let clock_offset = Arc::new(AtomicU64::new(0));
         let offset = Arc::clone(&clock_offset);
         app = app.with_clock(Arc::new(move || {
@@ -207,11 +212,14 @@ impl TestServer {
         let base = format!("http://{addr}");
         let (shutdown, signal) = oneshot::channel();
         let task = tokio::spawn(
-            axum::serve(listener, router(Arc::clone(&app)))
-                .with_graceful_shutdown(async {
-                    let _ = signal.await;
-                })
-                .into_future(),
+            axum::serve(
+                listener,
+                router(Arc::clone(&app)).into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(async {
+                let _ = signal.await;
+            })
+            .into_future(),
         );
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())

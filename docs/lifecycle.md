@@ -693,8 +693,8 @@ local filesystem, as [ADR 8](adr/0008-database.md) requires.
 
 `/api/v1/settings` holds the application's settings: the piece wait bound,
 the idle timeout, the idle reader limits per torrent and in total, the drain
-period, the peer limit per torrent, the cache capacity, and whether
-background downloads run. The contract gives each one's bounds and default.
+period, the peer limit per torrent, the cache capacity, whether
+background downloads run, and whether the DLNA media server is on. The contract gives each one's bounds and default.
 
 - A `PATCH` is an RFC 7396 merge patch with `If-Match`. A member set to
   `null` returns to its default; an omitted member keeps its value; explicit
@@ -731,6 +731,8 @@ background downloads run. The contract gives each one's bounds and default.
 - Turning background downloads off applies at once: torrents then request
   only the pieces readers need, and requests already sent finish. Turning
   them on resumes them at once unless playback is active.
+- Turning the DLNA media server on or off applies at once, as
+  [the DLNA contract](dlna.md#enabling-it) describes.
 - Changing settings returns `engine-unavailable` while the engine is
   unavailable, while stored torrents are being restored, and while the
   application shuts down; reading them is always served.

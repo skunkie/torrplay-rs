@@ -103,7 +103,9 @@ cargo run -p torrplay -- --help
 `torrplay` serves the API on `127.0.0.1:8080` by default; `--listen` may
 name any address, and the application warns when one beyond loopback is
 served while authentication is off. `--allowed-host` adds a host name
-requests may give, such as a reverse proxy's. Its other options set the
+requests may give, such as a reverse proxy's, and `--dlna-name` the DLNA
+media server's name, which the `dlna_enabled` setting turns on
+([the DLNA contract](dlna.md)). Its other options set the
 BitTorrent peer port (4240) and the log level of TorrPlay's own logs, which
 go to standard error; other crates log warnings and errors only.
 
@@ -278,7 +280,7 @@ Rust 1.99.1 with rustfmt and Clippy, and rustup installs it on first use, so
 local and CI builds use the same version. `clippy.toml` lets tests use
 `unwrap` and `expect`, which the workspace lints flag in production code.
 
-The workspace has eight members:
+The workspace has ten members:
 
 - `crates/torrplay` is the application: the `torrplay` executable, which
   serves `torrplay-server` over `LibrqbitEngine`, and the library that holds
@@ -297,6 +299,11 @@ The workspace has eight members:
   file IDs, the registry, lifecycle state, pagination cursors, and the
   `Engine` trait the server talks to. Its `fake` feature adds `FakeEngine`, a
   scripted engine over the fixtures for tests that run without librqbit.
+- `crates/torrplay-dlna` holds the DLNA media server's protocols, as
+  [the DLNA contract](dlna.md) specifies them: SSDP, the descriptions, SOAP
+  actions, object IDs, and the content tree over a catalog the server
+  builds. It knows nothing of torrents or axum; its SSDP tests announce
+  over loopback to a test socket instead of the multicast group.
 - `crates/torrplay-engine` holds `LibrqbitEngine`, which implements the
   `Engine` trait over librqbit, and beneath it the piece cache, its evictor
   task, the librqbit storage over it, and the scheduler that turns readers
@@ -314,6 +321,8 @@ The workspace has eight members:
   logs engine errors with URLs and magnet URIs redacted.
 - `crates/torrplay-fixtures` generates the deterministic payloads and the
   v1, v2-only, and hybrid metainfo that `docs/acceptance.md` defines.
+- `crates/torrplay-store` is the SQLite store ADR 8 decides: the torrents,
+  settings, profiles, and credentials, written through one worker thread.
 
 librqbit is a git dependency on a commit of the `torrplay/patches` branch of
 the [skunkie/rqbit](https://github.com/skunkie/rqbit) fork, which ADR 2

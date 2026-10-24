@@ -84,8 +84,13 @@ pub const BACKGROUND_DOWNLOADS: &str = "background_downloads";
 /// Whether background downloads run while unset.
 pub const BACKGROUND_DOWNLOADS_DEFAULT: bool = true;
 
+/// The name of the DLNA media server switch.
+pub const DLNA_ENABLED: &str = "dlna_enabled";
+/// Whether the DLNA media server runs while unset.
+pub const DLNA_ENABLED_DEFAULT: bool = false;
+
 /// Every numeric setting, in the order representations list them; the
-/// background downloads switch follows them.
+/// background downloads and DLNA switches follow them.
 pub const ALL: [Bounds; 7] = [
     PIECE_WAIT_SECONDS,
     IDLE_TIMEOUT_SECONDS,
@@ -117,6 +122,9 @@ pub struct Settings {
     /// Whether started torrents in disk storage download the pieces they
     /// lack while no reader exists.
     pub background_downloads: bool,
+    /// Whether the DLNA media server announces the library to the local
+    /// network.
+    pub dlna_enabled: bool,
 }
 
 impl Settings {
@@ -130,6 +138,7 @@ impl Settings {
         peer_limit: PEER_LIMIT.default as usize,
         cache_capacity_bytes: CACHE_CAPACITY_BYTES.default,
         background_downloads: BACKGROUND_DOWNLOADS_DEFAULT,
+        dlna_enabled: DLNA_ENABLED_DEFAULT,
     };
 }
 
@@ -152,6 +161,8 @@ pub struct Explicit {
     pub cache_capacity_bytes: Option<u64>,
     /// [`BACKGROUND_DOWNLOADS`].
     pub background_downloads: Option<bool>,
+    /// [`DLNA_ENABLED`].
+    pub dlna_enabled: Option<bool>,
 }
 
 /// A value a setting cannot take, with the setting's name.
@@ -246,6 +257,7 @@ impl Explicit {
             background_downloads: self
                 .background_downloads
                 .unwrap_or(BACKGROUND_DOWNLOADS_DEFAULT),
+            dlna_enabled: self.dlna_enabled.unwrap_or(DLNA_ENABLED_DEFAULT),
         }
     }
 }
@@ -304,6 +316,16 @@ mod tests {
         };
         assert!(!off.validate().unwrap().background_downloads);
         assert_ne!(off, Explicit::default(), "explicit false is kept");
+    }
+
+    #[test]
+    fn the_media_server_is_off_unless_turned_on() {
+        assert!(!Explicit::default().effective().dlna_enabled);
+        let on = Explicit {
+            dlna_enabled: Some(true),
+            ..Explicit::default()
+        };
+        assert!(on.validate().unwrap().dlna_enabled);
     }
 
     #[test]

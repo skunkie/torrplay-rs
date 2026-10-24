@@ -25,7 +25,7 @@ use crate::images::{self, Images};
 use crate::{StoreError, StoredTorrent};
 
 /// The schema version this build creates and migrates to.
-pub(crate) const VERSION: u32 = 9;
+pub(crate) const VERSION: u32 = 10;
 
 /// The schema at each version, applied in order to reach the next one.
 const MIGRATIONS: [&str; VERSION as usize] = [
@@ -163,6 +163,14 @@ const MIGRATIONS: [&str; VERSION as usize] = [
         expires_at_ns INTEGER CHECK (expires_at_ns >= 0),
         last_used_at_ns INTEGER CHECK (last_used_at_ns >= 0),
         CONSTRAINT access_tokens_secret_digest_key UNIQUE (secret_digest)
+    ) STRICT;",
+    // Version 10: the DLNA media server switch, NULL while unset, and the
+    // media server's device UUID, one row, drawn when the store first opens.
+    "ALTER TABLE settings
+        ADD COLUMN dlna_enabled INTEGER CHECK (dlna_enabled IN (0, 1));
+    CREATE TABLE media_server (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        udn TEXT NOT NULL
     ) STRICT;",
 ];
 
@@ -369,6 +377,28 @@ pub(crate) fn version(configuration: &Configuration) -> Result<i64, StoreError> 
         .map_err(|_| StoreError::Corrupt("the configuration version is out of range".into()))
 }
 
+/// Returns the media server's device UUID, drawing and storing one the first
+/// time.
+pub(crate) fn media_server_udn(connection: &mut Connection) -> Result<String, StoreError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let stored = transaction
+        .query_row("SELECT udn FROM media_server WHERE id = 1", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .optional()?;
+    let udn = match stored {
+        Some(udn) => udn,
+        None => {
+            let udn = torrplay_core::id::random_uuid()
+                .map_err(|error| StoreError::Corrupt(error.to_string()))?;
+            transaction.execute("INSERT INTO media_server (id, udn) VALUES (1, ?1)", [&udn])?;
+            udn
+        }
+    };
+    transaction.commit()?;
+    Ok(udn)
+}
+
 /// Returns whether the last run shut down cleanly, and records this run as
 /// not yet shut down. A database no run recorded counts as clean.
 pub(crate) fn begin_run(connection: &mut Connection) -> Result<bool, StoreError> {
@@ -394,7 +424,7 @@ pub(crate) fn settings(connection: &Connection) -> Result<Stored, StoreError> {
         .query_row(
             "SELECT version, piece_wait_seconds, idle_timeout_seconds, idle_readers_per_torrent,
                     idle_readers_total, drain_period_seconds, peer_limit, cache_capacity_bytes,
-                    background_downloads
+                    background_downloads, dlna_enabled
              FROM settings WHERE id = 1",
             [],
             |row| {
@@ -402,12 +432,15 @@ pub(crate) fn settings(connection: &Connection) -> Result<Stored, StoreError> {
                 for (index, value) in values.iter_mut().enumerate() {
                     *value = row.get::<_, Option<i64>>(index + 1)?;
                 }
-                let background_downloads = row.get::<_, Option<bool>>(settings::ALL.len() + 1)?;
-                Ok((row.get::<_, i64>(0)?, values, background_downloads))
+                let switches = (
+                    row.get::<_, Option<bool>>(settings::ALL.len() + 1)?,
+                    row.get::<_, Option<bool>>(settings::ALL.len() + 2)?,
+                );
+                Ok((row.get::<_, i64>(0)?, values, switches))
             },
         )
         .optional()?;
-    let Some((version, values, background_downloads)) = row else {
+    let Some((version, values, (background_downloads, dlna_enabled))) = row else {
         return Ok(Stored::default());
     };
     let corrupt = |what: &str| StoreError::Corrupt(format!("settings: {what}"));
@@ -417,6 +450,7 @@ pub(crate) fn settings(connection: &Connection) -> Result<Stored, StoreError> {
         .ok_or_else(|| corrupt("the version is out of range"))?;
     let mut explicit = Explicit {
         background_downloads,
+        dlna_enabled,
         ..Explicit::default()
     };
     for (bounds, value) in settings::ALL.iter().zip(values) {
@@ -463,8 +497,8 @@ pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(
         "INSERT INTO settings (id, version, piece_wait_seconds, idle_timeout_seconds,
                                idle_readers_per_torrent, idle_readers_total,
                                drain_period_seconds, peer_limit, cache_capacity_bytes,
-                               background_downloads)
-         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                               background_downloads, dlna_enabled)
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
          ON CONFLICT (id) DO UPDATE SET
              version = excluded.version,
              piece_wait_seconds = excluded.piece_wait_seconds,
@@ -474,7 +508,8 @@ pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(
              drain_period_seconds = excluded.drain_period_seconds,
              peer_limit = excluded.peer_limit,
              cache_capacity_bytes = excluded.cache_capacity_bytes,
-             background_downloads = excluded.background_downloads",
+             background_downloads = excluded.background_downloads,
+             dlna_enabled = excluded.dlna_enabled",
         rusqlite::params![
             version,
             piece_wait,
@@ -484,7 +519,8 @@ pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(
             drain,
             peers,
             capacity,
-            explicit.background_downloads
+            explicit.background_downloads,
+            explicit.dlna_enabled
         ],
     )?;
     Ok(())

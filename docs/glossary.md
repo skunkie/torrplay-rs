@@ -295,6 +295,30 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 : A profile's choice to hide an up next entry until it saves progress for
   that entry again.
 
+## Media server
+
+**UPnP AV**
+: The UPnP Forum's standard for media servers and players on a local
+  network: SSDP discovery, device and service descriptions, and SOAP
+  actions such as ContentDirectory's `Browse`.
+
+**DLNA**
+: Industry guidelines layered on UPnP AV, adding the media flags and
+  HTTP headers televisions check. TorrPlay's **media server** is a UPnP AV
+  MediaServer with these extensions, enabled by the `dlna_enabled`
+  setting.
+
+**SSDP**
+: The UDP multicast protocol a media server announces itself with and
+  answers searches on.
+
+**Control point**
+: A device that browses a media server, such as a television.
+
+**Object ID**
+: The ID of a container or item in the media server's content tree, as
+  [the DLNA contract](dlna.md#object-ids) structures it.
+
 ## Authentication
 
 **Authentication**

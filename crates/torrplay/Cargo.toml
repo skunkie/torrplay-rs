@@ -23,6 +23,7 @@ tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 torrplay-core.workspace = true
+torrplay-dlna.workspace = true
 torrplay-engine.workspace = true
 torrplay-server.workspace = true
 torrplay-store.workspace = true

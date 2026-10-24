@@ -1,0 +1,489 @@
+// SPDX-FileCopyrightText: 2026 TorrPlay
+//
+// SPDX-License-Identifier: MIT
+
+//! The content tree over a [`Catalog`]: which containers and items each
+//! object ID names, and browsing them as the contract's content tree
+//! section describes.
+
+use std::collections::BTreeMap;
+
+use crate::didl::{self, Object};
+use crate::id::{ObjectId, ROOT_PARENT, encode};
+
+/// How many torrents `recent` holds.
+pub const RECENT_COUNT: usize = 20;
+
+/// The library a media server presents: the torrents it lists, newest
+/// first, each with its playable files in tree order.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Catalog {
+    /// The torrents, newest first.
+    pub torrents: Vec<Torrent>,
+}
+
+/// A torrent the media server lists.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Torrent {
+    /// Its native ID.
+    pub id: String,
+    /// Its library title, or else its name.
+    pub title: String,
+    /// Its reported kind.
+    pub kind: Option<Kind>,
+    /// Its normalized categories.
+    pub categories: Vec<String>,
+    /// Its normalized genres.
+    pub genres: Vec<String>,
+    /// Whether it has a poster.
+    pub has_poster: bool,
+    /// Its playable files, at least one, in metadata or episode order.
+    pub files: Vec<File>,
+}
+
+/// A torrent's reported kind, which places it in `movies` or `series`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// A movie.
+    Movie,
+    /// A series.
+    Series,
+    /// Anything else.
+    Other,
+}
+
+/// A playable file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct File {
+    /// Its native ID within its torrent.
+    pub id: String,
+    /// Its name: the last component of its path.
+    pub name: String,
+    /// Its size.
+    pub size_bytes: u64,
+    /// The media type the native API serves it with.
+    pub media_type: &'static str,
+}
+
+impl File {
+    /// The item class of its media type.
+    pub fn class(&self) -> &'static str {
+        match self.media_type.split('/').next() {
+            Some("audio") => "object.item.audioItem.musicTrack",
+            Some("image") => "object.item.imageItem.photo",
+            _ => "object.item.videoItem",
+        }
+    }
+}
+
+/// What a `Browse` asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BrowseFlag {
+    /// The object itself.
+    Metadata,
+    /// The object's children.
+    DirectChildren,
+}
+
+/// A page of a `Browse`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Browsed {
+    /// The DIDL-Lite document of the page.
+    pub didl: String,
+    /// How many objects the page holds.
+    pub returned: usize,
+    /// How many objects match in all.
+    pub total: usize,
+}
+
+/// The object ID names nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("no such object")]
+pub struct NoSuchObject;
+
+/// Where resources live: the scheme and authority the request named, such
+/// as `http://192.168.1.10:8080`.
+#[derive(Clone, Copy, Debug)]
+pub struct Base<'a>(pub &'a str);
+
+impl Base<'_> {
+    /// The URL of a file's content.
+    pub fn media(&self, torrent: &str, file: &File) -> String {
+        format!(
+            "{}/dlna/media/{torrent}/{}/{}",
+            self.0,
+            file.id,
+            encode(&file.name)
+        )
+    }
+
+    /// The URL of a torrent's poster.
+    pub fn poster(&self, torrent: &str) -> String {
+        format!("{}/dlna/posters/{torrent}", self.0)
+    }
+}
+
+impl Catalog {
+    fn torrent(&self, id: &str) -> Option<&Torrent> {
+        self.torrents.iter().find(|torrent| torrent.id == id)
+    }
+
+    fn of_kind(&self, kind: Kind) -> impl Iterator<Item = &Torrent> {
+        self.torrents
+            .iter()
+            .filter(move |torrent| torrent.kind == Some(kind))
+    }
+
+    /// Each category's or genre's name with its torrents' count, by name.
+    fn labels(&self, of: fn(&Torrent) -> &[String]) -> BTreeMap<&str, usize> {
+        let mut labels = BTreeMap::new();
+        for torrent in &self.torrents {
+            for label in of(torrent) {
+                *labels.entry(label.as_str()).or_default() += 1;
+            }
+        }
+        labels
+    }
+
+    /// The torrents a container of torrents lists, or `None` if `id` is not
+    /// one.
+    fn torrents_of<'a>(&'a self, id: &ObjectId) -> Option<Vec<&'a Torrent>> {
+        let labeled = |of: fn(&Torrent) -> &[String], name: &str| -> Vec<&Torrent> {
+            self.torrents
+                .iter()
+                .filter(|torrent| of(torrent).iter().any(|label| label == name))
+                .collect()
+        };
+        Some(match id {
+            ObjectId::All => self.torrents.iter().collect(),
+            ObjectId::Recent => self.torrents.iter().take(RECENT_COUNT).collect(),
+            ObjectId::Movies => self.of_kind(Kind::Movie).collect(),
+            ObjectId::Series => self.of_kind(Kind::Series).collect(),
+            ObjectId::Category(name) => {
+                let torrents = labeled(categories, name);
+                if torrents.is_empty() {
+                    return None;
+                }
+                torrents
+            }
+            ObjectId::Genre(name) => {
+                let torrents = labeled(genres, name);
+                if torrents.is_empty() {
+                    return None;
+                }
+                torrents
+            }
+            _ => return None,
+        })
+    }
+
+    /// Browses object `id`, returning at most `count` objects from
+    /// `start`, or every one when `count` is zero.
+    pub fn browse(
+        &self,
+        id: &ObjectId,
+        flag: BrowseFlag,
+        start: usize,
+        count: usize,
+        base: Base<'_>,
+    ) -> Result<Browsed, NoSuchObject> {
+        let objects = match flag {
+            BrowseFlag::Metadata => vec![self.metadata(id, base)?],
+            BrowseFlag::DirectChildren => self.children(id, base)?,
+        };
+        let total = objects.len();
+        let page: Vec<Object> = objects
+            .into_iter()
+            .skip(start)
+            .take(if count == 0 { usize::MAX } else { count })
+            .collect();
+        Ok(Browsed {
+            returned: page.len(),
+            didl: didl::render(&page),
+            total,
+        })
+    }
+
+    fn container(
+        &self,
+        id: &ObjectId,
+        parent: &str,
+        base: Base<'_>,
+    ) -> Result<Object, NoSuchObject> {
+        let (title, children) = match id {
+            ObjectId::Root => ("TorrPlay".to_owned(), 6),
+            ObjectId::All => ("All".to_owned(), self.torrents.len()),
+            ObjectId::Recent => (
+                "Recently added".to_owned(),
+                self.torrents.len().min(RECENT_COUNT),
+            ),
+            ObjectId::Movies => ("Movies".to_owned(), self.of_kind(Kind::Movie).count()),
+            ObjectId::Series => ("Series".to_owned(), self.of_kind(Kind::Series).count()),
+            ObjectId::Categories => ("Categories".to_owned(), self.labels(categories).len()),
+            ObjectId::Genres => ("Genres".to_owned(), self.labels(genres).len()),
+            ObjectId::Category(name) | ObjectId::Genre(name) => (
+                name.clone(),
+                self.torrents_of(id).ok_or(NoSuchObject)?.len(),
+            ),
+            ObjectId::Torrent(torrent) => {
+                let torrent = self.torrent(torrent).ok_or(NoSuchObject)?;
+                return Ok(Object::torrent(torrent, parent, base));
+            }
+            ObjectId::File(..) => return Err(NoSuchObject),
+        };
+        Ok(Object::Container {
+            id: id.to_string(),
+            parent: parent.to_owned(),
+            title,
+            child_count: children,
+            album_art: None,
+        })
+    }
+
+    fn metadata(&self, id: &ObjectId, base: Base<'_>) -> Result<Object, NoSuchObject> {
+        let parent = match id {
+            ObjectId::Root => ROOT_PARENT.to_owned(),
+            ObjectId::Category(_) => ObjectId::Categories.to_string(),
+            ObjectId::Genre(_) => ObjectId::Genres.to_string(),
+            ObjectId::Torrent(_) => ObjectId::All.to_string(),
+            ObjectId::File(torrent, file) => {
+                let found = self.torrent(torrent).ok_or(NoSuchObject)?;
+                let file = found
+                    .files
+                    .iter()
+                    .find(|candidate| candidate.id == *file)
+                    .ok_or(NoSuchObject)?;
+                return Ok(Object::item(found, file, base));
+            }
+            _ => ObjectId::Root.to_string(),
+        };
+        self.container(id, &parent, base)
+    }
+
+    fn children(&self, id: &ObjectId, base: Base<'_>) -> Result<Vec<Object>, NoSuchObject> {
+        let parent = id.to_string();
+        let containers = |ids: Vec<ObjectId>| -> Result<Vec<Object>, NoSuchObject> {
+            ids.iter()
+                .map(|child| self.container(child, &parent, base))
+                .collect()
+        };
+        Ok(match id {
+            ObjectId::Root => containers(vec![
+                ObjectId::All,
+                ObjectId::Recent,
+                ObjectId::Movies,
+                ObjectId::Series,
+                ObjectId::Categories,
+                ObjectId::Genres,
+            ])?,
+            ObjectId::Categories => containers(
+                self.labels(categories)
+                    .into_keys()
+                    .map(|name| ObjectId::Category(name.to_owned()))
+                    .collect(),
+            )?,
+            ObjectId::Genres => containers(
+                self.labels(genres)
+                    .into_keys()
+                    .map(|name| ObjectId::Genre(name.to_owned()))
+                    .collect(),
+            )?,
+            ObjectId::Torrent(torrent) => {
+                let torrent = self.torrent(torrent).ok_or(NoSuchObject)?;
+                torrent
+                    .files
+                    .iter()
+                    .map(|file| Object::item(torrent, file, base))
+                    .collect()
+            }
+            ObjectId::File(..) => {
+                self.metadata(id, base)?;
+                Vec::new()
+            }
+            _ => self
+                .torrents_of(id)
+                .ok_or(NoSuchObject)?
+                .into_iter()
+                .map(|torrent| Object::torrent(torrent, &parent, base))
+                .collect(),
+        })
+    }
+}
+
+fn categories(torrent: &Torrent) -> &[String] {
+    &torrent.categories
+}
+
+fn genres(torrent: &Torrent) -> &[String] {
+    &torrent.genres
+}
+
+impl Object {
+    fn torrent(torrent: &Torrent, parent: &str, base: Base<'_>) -> Self {
+        Self::Container {
+            id: ObjectId::Torrent(torrent.id.clone()).to_string(),
+            parent: parent.to_owned(),
+            title: torrent.title.clone(),
+            child_count: torrent.files.len(),
+            album_art: torrent.has_poster.then(|| base.poster(&torrent.id)),
+        }
+    }
+
+    fn item(torrent: &Torrent, file: &File, base: Base<'_>) -> Self {
+        Self::Item {
+            id: ObjectId::File(torrent.id.clone(), file.id.clone()).to_string(),
+            parent: ObjectId::Torrent(torrent.id.clone()).to_string(),
+            title: file.name.clone(),
+            class: file.class(),
+            media_type: file.media_type,
+            size_bytes: file.size_bytes,
+            url: base.media(&torrent.id, file),
+            album_art: torrent.has_poster.then(|| base.poster(&torrent.id)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BASE: Base<'static> = Base("http://192.168.1.10:8080");
+
+    fn file(id: &str, name: &str, media_type: &'static str) -> File {
+        File {
+            id: id.into(),
+            name: name.into(),
+            size_bytes: 1000,
+            media_type,
+        }
+    }
+
+    fn catalog() -> Catalog {
+        let torrent = |id: &str, kind, categories: &[&str]| Torrent {
+            id: id.into(),
+            title: format!("Title {id}"),
+            kind: Some(kind),
+            categories: categories.iter().map(|&name| name.to_owned()).collect(),
+            genres: vec!["Drama".into()],
+            has_poster: id == "trr_a",
+            files: vec![
+                file("fil_1", "Film & Sons.mkv", "video/x-matroska"),
+                file("fil_2", "theme.mp3", "audio/mpeg"),
+            ],
+        };
+        Catalog {
+            torrents: vec![
+                torrent("trr_a", Kind::Movie, &["Films/1970s"]),
+                torrent("trr_b", Kind::Series, &["TV"]),
+                torrent("trr_c", Kind::Other, &[]),
+            ],
+        }
+    }
+
+    fn browse(id: &str, flag: BrowseFlag) -> Result<Browsed, NoSuchObject> {
+        catalog().browse(&ObjectId::parse(id).ok_or(NoSuchObject)?, flag, 0, 0, BASE)
+    }
+
+    #[test]
+    fn the_root_holds_the_fixed_containers_with_counts() {
+        let root = browse("0", BrowseFlag::DirectChildren).unwrap();
+        assert_eq!((root.returned, root.total), (6, 6));
+        for expected in [
+            r#"<container id="all" parentID="0" restricted="1" childCount="3""#,
+            r#"<container id="recent" parentID="0" restricted="1" childCount="3""#,
+            r#"<container id="movies" parentID="0" restricted="1" childCount="1""#,
+            r#"<container id="series" parentID="0" restricted="1" childCount="1""#,
+            r#"<container id="categories" parentID="0" restricted="1" childCount="2""#,
+            r#"<container id="genres" parentID="0" restricted="1" childCount="1""#,
+        ] {
+            assert!(root.didl.contains(expected), "{expected}\n{}", root.didl);
+        }
+        let metadata = browse("0", BrowseFlag::Metadata).unwrap();
+        assert!(metadata.didl.contains(r#"id="0" parentID="-1""#));
+    }
+
+    #[test]
+    fn containers_list_torrents_newest_first_with_their_parent() {
+        let all = browse("all", BrowseFlag::DirectChildren).unwrap();
+        let positions: Vec<usize> = ["t:trr_a", "t:trr_b", "t:trr_c"]
+            .iter()
+            .map(|id| all.didl.find(id).unwrap())
+            .collect();
+        assert!(positions.is_sorted(), "{}", all.didl);
+        assert!(
+            all.didl
+                .contains(r#"<container id="t:trr_a" parentID="all""#)
+        );
+        assert!(all.didl.contains(
+            "<upnp:albumArtURI>http://192.168.1.10:8080/dlna/posters/trr_a</upnp:albumArtURI>"
+        ));
+        let movies = browse("movies", BrowseFlag::DirectChildren).unwrap();
+        assert_eq!(movies.total, 1);
+        assert!(movies.didl.contains(r#"id="t:trr_a" parentID="movies""#));
+    }
+
+    #[test]
+    fn categories_with_separators_round_trip() {
+        let categories = browse("categories", BrowseFlag::DirectChildren).unwrap();
+        assert!(
+            categories.didl.contains(r#"id="category:Films%2F1970s""#),
+            "{}",
+            categories.didl
+        );
+        let category = browse("category:Films%2F1970s", BrowseFlag::DirectChildren).unwrap();
+        assert_eq!(category.total, 1);
+        assert!(category.didl.contains("t:trr_a"));
+        assert_eq!(
+            browse("category:Unknown", BrowseFlag::DirectChildren),
+            Err(NoSuchObject)
+        );
+        let metadata = browse("category:TV", BrowseFlag::Metadata).unwrap();
+        assert!(
+            metadata
+                .didl
+                .contains(r#"id="category:TV" parentID="categories""#)
+        );
+    }
+
+    #[test]
+    fn a_torrent_lists_its_files_as_items_with_resources() {
+        let torrent = browse("t:trr_a", BrowseFlag::DirectChildren).unwrap();
+        assert_eq!(torrent.total, 2);
+        assert!(torrent.didl.contains(
+            r#"<item id="f:trr_a:fil_1" parentID="t:trr_a" restricted="1"><dc:title>Film &amp; Sons.mkv</dc:title><upnp:class>object.item.videoItem</upnp:class>"#
+        ), "{}", torrent.didl);
+        assert!(torrent.didl.contains(
+            r#"<res protocolInfo="http-get:*:video/x-matroska:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" size="1000">http://192.168.1.10:8080/dlna/media/trr_a/fil_1/Film%20%26%20Sons.mkv</res>"#
+        ), "{}", torrent.didl);
+        assert!(torrent.didl.contains("object.item.audioItem.musicTrack"));
+        let item = browse("f:trr_a:fil_2", BrowseFlag::Metadata).unwrap();
+        assert_eq!(item.total, 1);
+        assert!(
+            item.didl
+                .contains(r#"<item id="f:trr_a:fil_2" parentID="t:trr_a""#)
+        );
+        assert_eq!(
+            browse("f:trr_a:fil_9", BrowseFlag::Metadata),
+            Err(NoSuchObject)
+        );
+        assert_eq!(
+            browse("t:trr_z", BrowseFlag::DirectChildren),
+            Err(NoSuchObject)
+        );
+    }
+
+    #[test]
+    fn pages_skip_and_take() {
+        let catalog = catalog();
+        let page = catalog
+            .browse(&ObjectId::Root, BrowseFlag::DirectChildren, 2, 3, BASE)
+            .unwrap();
+        assert_eq!((page.returned, page.total), (3, 6));
+        assert!(page.didl.starts_with("<DIDL-Lite"));
+        assert!(page.didl.contains(r#"id="movies""#) && !page.didl.contains(r#"id="all""#));
+        let past = catalog
+            .browse(&ObjectId::Root, BrowseFlag::DirectChildren, 10, 0, BASE)
+            .unwrap();
+        assert_eq!((past.returned, past.total), (0, 6));
+    }
+}

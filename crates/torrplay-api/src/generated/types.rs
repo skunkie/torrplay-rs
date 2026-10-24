@@ -816,6 +816,9 @@ pub struct Settings {
     ///Constraint: minimum=4194304, maximum=68719476736
     #[serde(default)]
     pub cache_capacity_bytes: i64,
+    ///Whether the DLNA media server announces the library to the local network, as docs/dlna.md describes. Turning it on grants every client with a private address read-only access to torrents' playable files and posters without a token, even while a password is set. Applies at once.
+    #[serde(default)]
+    pub dlna_enabled: bool,
     ///How long streams in progress may continue after a termination signal before they are canceled, within the 30-second shutdown limit. Applies to the next shutdown.
     ///Constraint: minimum=0, maximum=25
     #[serde(default)]
@@ -1642,6 +1645,13 @@ pub struct SettingsPatch {
         deserialize_with = "tri_state_serde::deserialize"
     )]
     pub cache_capacity_bytes: Option<Option<i64>>,
+    ///The new value, or null for the default, false.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub dlna_enabled: Option<Option<bool>>,
     ///The new value, or null for the default, 10.
     ///Constraint: minimum=0, maximum=25
     #[serde(

@@ -69,6 +69,7 @@ fn settings_of(config: &EngineConfig) -> torrplay_core::settings::Explicit {
         peer_limit: count(config.peer_limit),
         cache_capacity_bytes: Some(config.cache_capacity_bytes),
         background_downloads: None,
+        dlna_enabled: None,
     }
 }
 
@@ -193,7 +194,7 @@ impl Running {
             engine.clone(),
             store,
             contents,
-            torrplay_core::credentials::AllowedHosts::default(),
+            torrplay::ServeOptions::default(),
             timings,
             async {
                 let _ = triggered.await;
