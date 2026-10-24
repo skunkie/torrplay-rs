@@ -178,6 +178,22 @@ These scenarios accept the lifecycle's background downloads (M6).
 | BGD-03 | Pause a disk torrent mid-download, then start it | Nothing is downloaded while it is paused; starting it resumes its background download |
 | BGD-04 | Turn background downloads off with a disk torrent mid-download, then on | Nothing more is downloaded while they are off, and the setting survives a restart; turning them on resumes the download |
 
+### Preloads
+
+These scenarios accept the lifecycle's preloads (M6).
+
+| ID | Scenario | Expected |
+|---|---|---|
+| PRL-01 | Preload a `large` file of a memory torrent with no readers | `201` with `queued` or `downloading`; it becomes `ready` holding its head and tail, whose pieces stay pinned through eviction until it ends |
+| PRL-02 | Preload with `offset_bytes`, then stream from that offset | The ranges cover the first and last pieces and a window around the offset; the stream's first bytes need no new piece |
+| PRL-03 | Let a preload expire, and cancel another while it downloads | The expired one reports `expired` with `ended_at` for 5 minutes, then `not-found`; the canceled one is `not-found` at once; both release their pins and priorities |
+| PRL-04 | Preload while a reader of another file streams | The reader's pieces are requested before the preload's; the stream stays byte-correct and the preload still becomes `ready` |
+| PRL-05 | Preload more than the preloads' share of the readahead budget, in memory storage | Later preloads stay `queued` until earlier ones end, in creation order; pinned bytes stay within the share |
+| PRL-06 | Fill the cache with active readers' current pieces while preloads are ready | The bounded fallback fails preloads, newest first, after releasing idle readers |
+| PRL-07 | Preload a paused torrent's file, pause a torrent with preloads, and preload a torrent without peers | `409 lifecycle-conflict`; the paused torrent's preloads fail; the preload without peers fails after the piece wait bound |
+| PRL-08 | Create 5 preloads of one file | The fifth is `409 too-many-preloads`; after one ends, another can be created |
+| PRL-09 | Preload a disk torrent's file, change its storage mode, restart, and delete a torrent with preloads | The disk preload pins nothing and never queues; the transition keeps its preload; a restart and the deletion leave the preloads `not-found` |
+
 ### Disk storage
 
 These scenarios accept [ADR 9](adr/0009-disk-storage.md)'s disk storage

@@ -11,8 +11,7 @@ prototype, and what the API returns at each point. Terms follow the
 [glossary](glossary.md), status codes and problem types follow the
 [API conventions](api-conventions.md), and `api/openapi.yaml` is the contract
 these rules constrain. Every torrent is a persisted torrent, in memory or
-disk storage; [Planned changes](#planned-changes) lists what later
-milestones add.
+disk storage.
 
 ## State dimensions
 
@@ -234,6 +233,68 @@ so that the whole torrent is there for later playback.
 - A transition to disk storage starts a torrent's background download, and
   one to memory storage ends it.
 
+## Preloads
+
+A preload fetches part of a file before playback starts, so the first
+range requests a player sends find their pieces there. Preloads are
+resources in the file's `preloads` collection, which the contract
+describes.
+
+- A `POST` creates a preload of a started torrent's file and returns
+  `201 Created` at once, while the preload downloads. A torrent that is
+  paused or failed is a `lifecycle-conflict`, and so is a torrent without
+  metadata, whose files are not listed yet.
+- Without `offset_bytes`, a preload covers the file's head and tail, where
+  players read container headers and indexes: the last 4 MiB of the file,
+  or its last piece if that is longer, and as much of its beginning as the
+  rest of the preload's size allows. With `offset_bytes`, for playback that
+  resumes there, it covers the file's first and last pieces and a window
+  that starts an eighth of its length before the offset and fills the rest
+  of the size. Its `ranges` list what it covers, in whole pieces, and a
+  file no larger than the size is preloaded whole.
+- A preload is at most 32 MiB. In memory storage it is also at most half of
+  the readahead budget, the share of the budget that preloads may pin
+  together.
+- A preload is `queued`, `downloading`, `ready`, `expired`, or `failed`. A
+  memory torrent's preload is `queued` while the pins of earlier preloads
+  leave no room for its own in the preloads' share of the budget; preloads
+  leave the queue in the order they were created. It is then
+  `downloading` until it holds every piece of its ranges, and `ready`
+  from then on. A disk torrent's preload never queues.
+- A preload's pieces have the piece priority of preloads: below every
+  reader's pieces and above background downloads. Preloads do not pause
+  for active playback, and a preload is not a reader, so it neither pauses
+  background downloads nor counts in the reader counts. Where a reader's
+  range and a preload's overlap, the higher priority applies.
+- In memory storage, a `downloading` or `ready` preload pins the pieces of
+  its ranges; readers share what preload pins leave of the readahead
+  budget. In disk storage, a preload pins nothing; its pieces stay in the
+  torrent's files.
+- A preload expires at its `expires_at`, `ttl_seconds` after its creation:
+  120 seconds by default, from 10 to 3600. Expiry is the end of a preload
+  that nothing else ends, whether or not its file was read; to keep its
+  pieces longer, a client creates another preload.
+- A preload fails, with a `failure` that says why, when its torrent is
+  paused or fails, when no piece of its ranges arrives within the piece
+  wait bound while it is downloading, or when the piece cache's bounded
+  fallback needs its pins. The fallback ends preloads, newest first, one
+  at a time, after it releases idle readers, refining
+  [ADR 5](adr/0005-storage.md)'s order.
+- `DELETE` cancels a preload: it is removed at once, and later requests for
+  it are `not-found`. Expiry, failure, and cancellation release the
+  preload's pins and piece priorities at once.
+- An expired or failed preload stays in its collection, with `ended_at`
+  set, for 5 minutes, so clients can read how it ended, and is then
+  removed. At most 4 preloads of one file and 16 in total may be queued,
+  downloading, or ready at once; creating another is
+  `too-many-preloads`, a `409 Conflict`.
+- A storage mode transition keeps a torrent's preloads. A transition to
+  memory storage copies the pieces of `ready` and `downloading` preloads
+  into the cache with the pieces readers need first, as far as the budget
+  allows, and a preload with no room returns to `queued`. Deleting a torrent
+  deletes its preloads. Preloads are not stored, so a restart ends them,
+  and their links are `not-found` afterward.
+
 ## Cache behavior
 
 - Verified pieces of a torrent count toward cache usage until they are
@@ -385,9 +446,3 @@ background downloads run. The contract gives each one's bounds and default.
 - Changing settings returns `engine-unavailable` while the engine is
   unavailable, while stored torrents are being restored, and while the
   application shuts down; reading them is always served.
-
-## Planned changes
-
-Later milestones extend these rules before the behavior ships:
-
-- Preloads add pinned ranges with their own lifecycle.
