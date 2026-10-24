@@ -159,7 +159,7 @@ After the feasibility decision:
 
 ## 7. Expand toward the application
 
-- Inventory the retained native TorrPlay features and track each as planned, implemented, verified, deferred, or excluded.
+- Inventory the retained native TorrPlay features and track each as planned, implemented, verified, deferred, or excluded, in [the feature inventory](feature-inventory.md).
 - Design remaining REST resources before implementing them: library organization, search, viewing progress, playlists, authentication, and scoped playback access.
 - Reuse the existing React player and presentation components through an API adapter or generated client. Update all consumers and demo fixtures for the new contract.
 - Add Stremio, DLNA, and MCP through their own protocol adapters. Keep native naming conventions separate from externally mandated protocols. MCP should use the application API rather than open its database.
