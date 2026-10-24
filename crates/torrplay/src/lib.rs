@@ -25,6 +25,7 @@ use std::time::Duration;
 use anyhow::Context;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
+pub use torrplay_core::credentials::AllowedHosts;
 use torrplay_core::id::TorrentId;
 use torrplay_core::lifecycle::StorageMode;
 use torrplay_engine::{DEFAULT_PEER_PORT, EngineConfig, LibrqbitEngine, NetworkConfig};
@@ -44,11 +45,20 @@ const DRAIN_POLL: Duration = Duration::from_millis(50);
 /// The usage text `--help` prints.
 pub const USAGE: &str = "\
 Usage: torrplay [OPTIONS]
+       torrplay password set [--data-dir <DIR>]
+       torrplay password remove [--data-dir <DIR>]
 
-Streams torrents through the TorrPlay REST API on a loopback address.
+Streams torrents through the TorrPlay REST API. Authentication is off until a
+password is set. `password set` reads a new password from the first line of
+standard input, and `password remove` turns authentication off and revokes
+every token; both need the application stopped.
 
 Options:
-  --listen <ADDRESS>         The API's loopback address [default: 127.0.0.1:8080]
+  --listen <ADDRESS>         The API's address; any but a loopback one reaches the
+                             network [default: 127.0.0.1:8080]
+  --allowed-host <NAME>      A host name requests may give besides IP addresses,
+                             localhost, and .local names, such as a reverse
+                             proxy's; repeat for each
   --peer-port <PORT>         The BitTorrent peer port on every interface [default: 4240]
   --data-dir <DIR>           Where the torrents database lives, on a local
                              filesystem [default: the platform's data directory]
@@ -66,8 +76,11 @@ Options:
 /// The application's configuration from its command line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
-    /// The API's listen address, always a loopback address.
+    /// The API's listen address.
     pub listen: SocketAddr,
+    /// The host names requests may give beyond those always allowed,
+    /// normalized.
+    pub allowed_hosts: Vec<String>,
     /// The peer listener's port, on every interface.
     pub peer_port: u16,
     /// The most verbose level TorrPlay's own logs record; other crates log
@@ -90,6 +103,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             listen: (Ipv4Addr::LOCALHOST, DEFAULT_PORT).into(),
+            allowed_hosts: Vec::new(),
             peer_port: DEFAULT_PEER_PORT,
             log_level: Level::INFO,
             log_filter: None,
@@ -139,10 +153,22 @@ impl Config {
 pub enum Command {
     /// Run the application.
     Run(Config),
+    /// Change the password of the stopped application whose data directory
+    /// the configuration names.
+    Password(PasswordChange, Config),
     /// Print [`USAGE`].
     Help,
     /// Print the version.
     Version,
+}
+
+/// A change `torrplay password` makes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PasswordChange {
+    /// Set a new password, read from standard input.
+    Set,
+    /// Remove the password and revoke every token.
+    Remove,
 }
 
 /// A command line the application cannot run with.
@@ -151,6 +177,10 @@ pub enum ArgsError {
     /// An option the application does not know.
     #[error("unknown option {0}")]
     Unknown(String),
+    /// A `password` command other than `set` and `remove`, or an option
+    /// it does not take.
+    #[error("torrplay password takes set or remove, and only --data-dir")]
+    PasswordUsage,
     /// An option without its value.
     #[error("{0} needs a value")]
     MissingValue(String),
@@ -169,7 +199,18 @@ pub enum ArgsError {
 /// Parses the command line's arguments, without the program name.
 pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, ArgsError> {
     let mut config = Config::default();
-    let mut args = args.into_iter();
+    let mut args = args.into_iter().peekable();
+    let password = if args.peek().map(String::as_str) == Some("password") {
+        args.next();
+        match args.next().as_deref() {
+            Some("set") => Some(PasswordChange::Set),
+            Some("remove") => Some(PasswordChange::Remove),
+            Some("-h" | "--help") => return Ok(Command::Help),
+            _ => return Err(ArgsError::PasswordUsage),
+        }
+    } else {
+        None
+    };
     while let Some(arg) = args.next() {
         let (option, inline) = match arg.split_once('=') {
             Some((option, value)) if option.starts_with("--") => {
@@ -188,22 +229,24 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, Arg
             value,
             reason,
         };
+        if password.is_some() && !matches!(option.as_str(), "--data-dir" | "-h" | "--help") {
+            return Err(ArgsError::PasswordUsage);
+        }
         match option.as_str() {
             "-h" | "--help" => return Ok(Command::Help),
             "-V" | "--version" => return Ok(Command::Version),
             "--no-dht" if inline.is_none() => config.dht = false,
             "--listen" => {
                 let value = value()?;
-                let listen: SocketAddr = value
+                config.listen = value
                     .parse()
                     .map_err(|_| invalid(value.clone(), "an IP address and port"))?;
-                if !listen.ip().is_loopback() {
-                    return Err(invalid(
-                        value,
-                        "a loopback address, since the API has no authentication",
-                    ));
-                }
-                config.listen = listen;
+            }
+            "--allowed-host" => {
+                let value = value()?;
+                let name = AllowedHosts::normalize(&value)
+                    .ok_or_else(|| invalid(value, "a DNS name such as torrplay.home.arpa"))?;
+                config.allowed_hosts.push(name);
             }
             "--peer-port" => {
                 let value = value()?;
@@ -246,7 +289,74 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, Arg
             _ => return Err(ArgsError::Unknown(option)),
         }
     }
-    Ok(Command::Run(config))
+    Ok(match password {
+        Some(change) => Command::Password(change, config),
+        None => Command::Run(config),
+    })
+}
+
+/// What [`change_password`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PasswordChanged {
+    /// A password was set where none was, turning authentication on.
+    Set,
+    /// The password was replaced; access tokens keep working.
+    Replaced,
+    /// The password was removed and every token revoked.
+    Removed,
+    /// There was no password to remove.
+    NoneSet,
+}
+
+/// Changes the password of the stopped application whose database is in
+/// `data_dir`: sets `password`, the first line of the input, for
+/// [`PasswordChange::Set`], or removes it and revokes every token. Fails if
+/// the application is running, since it holds the database's lock.
+pub async fn change_password(
+    data_dir: &Path,
+    change: PasswordChange,
+    password: Option<String>,
+) -> anyhow::Result<PasswordChanged> {
+    use torrplay_core::credentials::{PasswordHash, SigningKey, normalize_password};
+
+    let hash = match (change, password) {
+        (PasswordChange::Set, Some(password)) => {
+            let password = normalize_password(&password)
+                .map_err(|error| anyhow::anyhow!("the password is invalid: {error}"))?;
+            Some(
+                tokio::task::spawn_blocking(move || PasswordHash::new(&password))
+                    .await
+                    .context("hashing the password")??,
+            )
+        }
+        (PasswordChange::Set, None) => anyhow::bail!("no password was given on standard input"),
+        (PasswordChange::Remove, _) => None,
+    };
+    let opening = data_dir.to_path_buf();
+    let (store, contents) = tokio::task::spawn_blocking(move || Store::open(&opening))
+        .await
+        .context("opening the store")?
+        .with_context(|| format!("opening the store in {}", data_dir.display()))?;
+    let enabled = contents.credentials.password.is_some();
+    let changed = match hash {
+        Some(hash) => {
+            store
+                .set_password(&hash, std::time::SystemTime::now(), false)
+                .await?;
+            if enabled {
+                PasswordChanged::Replaced
+            } else {
+                PasswordChanged::Set
+            }
+        }
+        None if enabled => {
+            store.remove_password(&SigningKey::new()?).await?;
+            PasswordChanged::Removed
+        }
+        None => PasswordChanged::NoneSet,
+    };
+    store.close().await.context("closing the store")?;
+    Ok(changed)
 }
 
 /// Records logs to standard error: TorrPlay's own at `level` and more
@@ -300,8 +410,9 @@ impl Default for ShutdownTimings {
 }
 
 /// Serves the API on `listener` over `engine`, which must not be started
-/// yet, and `store` with what it held, until `shutdown` completes, then
-/// shuts down in the lifecycle's order.
+/// yet, and `store` with what it held, allowing requests to name
+/// `allowed_hosts`, until `shutdown` completes, then shuts down in the
+/// lifecycle's order.
 ///
 /// The stored settings apply at once. The listener serves before the engine
 /// starts, and the stored torrents are restored once it has. Fails if the engine cannot start, if restoring or
@@ -311,6 +422,7 @@ pub async fn serve(
     engine: Arc<LibrqbitEngine>,
     store: Store,
     contents: Contents,
+    allowed_hosts: AllowedHosts,
     timings: ShutdownTimings,
     shutdown: impl Future<Output = ()>,
 ) -> anyhow::Result<()> {
@@ -320,6 +432,7 @@ pub async fn serve(
         profiles,
         progress,
         dismissals,
+        credentials,
         clean_shutdown,
     } = contents;
     if !clean_shutdown {
@@ -351,8 +464,20 @@ pub async fn serve(
     let app = Arc::new(
         App::new(engine.clone(), store)
             .with_settings(settings)
-            .with_viewing(profiles, progress, dismissals),
+            .with_viewing(profiles, progress, dismissals)
+            .with_credentials(credentials)
+            .with_allowed_hosts(allowed_hosts),
     );
+    if let Ok(address) = listener.local_addr()
+        && !address.ip().is_loopback()
+        && !app.authentication_enabled()
+    {
+        tracing::warn!(
+            %address,
+            "authentication is off and the API listens beyond loopback; anyone who can reach \
+             it may use it until a password is set"
+        );
+    }
     let (close_listener, listener_closed) = oneshot::channel::<()>();
     let mut server = tokio::spawn(
         axum::serve(listener, torrplay_server::router(app.clone()))
@@ -527,6 +652,7 @@ mod tests {
             config,
             Config {
                 listen: "[::1]:9000".parse().unwrap(),
+                allowed_hosts: Vec::new(),
                 peer_port: 6881,
                 log_level: Level::DEBUG,
                 log_filter: Some("librqbit=debug,torrplay_engine=trace".into()),
@@ -546,15 +672,50 @@ mod tests {
     }
 
     #[test]
-    fn the_api_listens_on_loopback_only() {
+    fn the_api_may_listen_on_any_address() {
         for address in ["0.0.0.0:8080", "192.0.2.1:8080", "[::]:8080"] {
-            assert!(
-                matches!(
-                    parse(&["--listen", address]),
-                    Err(ArgsError::InvalidValue { .. })
-                ),
-                "{address}"
-            );
+            let Ok(Command::Run(config)) = parse(&["--listen", address]) else {
+                panic!("{address} parses");
+            };
+            assert_eq!(config.listen, address.parse::<SocketAddr>().unwrap());
+        }
+    }
+
+    #[test]
+    fn allowed_hosts_repeat_and_are_normalized() {
+        let Ok(Command::Run(config)) = parse(&[
+            "--allowed-host",
+            "TorrPlay.Home.Arpa.",
+            "--allowed-host=nas.lan",
+        ]) else {
+            panic!("the hosts parse");
+        };
+        assert_eq!(config.allowed_hosts, ["torrplay.home.arpa", "nas.lan"]);
+        assert!(matches!(
+            parse(&["--allowed-host", "evil example"]),
+            Err(ArgsError::InvalidValue { .. })
+        ));
+    }
+
+    #[test]
+    fn password_commands_take_only_a_data_directory() {
+        let Ok(Command::Password(PasswordChange::Set, config)) =
+            parse(&["password", "set", "--data-dir", "/srv/torrplay"])
+        else {
+            panic!("the command parses");
+        };
+        assert_eq!(config.data_dir, Some("/srv/torrplay".into()));
+        assert!(matches!(
+            parse(&["password", "remove"]),
+            Ok(Command::Password(PasswordChange::Remove, _))
+        ));
+        assert_eq!(parse(&["password", "--help"]), Ok(Command::Help));
+        for args in [
+            &["password"][..],
+            &["password", "show"],
+            &["password", "set", "--listen", "0.0.0.0:80"],
+        ] {
+            assert_eq!(parse(args), Err(ArgsError::PasswordUsage), "{args:?}");
         }
     }
 

@@ -193,6 +193,7 @@ impl Running {
             engine.clone(),
             store,
             contents,
+            torrplay_core::credentials::AllowedHosts::default(),
             timings,
             async {
                 let _ = triggered.await;

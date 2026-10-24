@@ -17,9 +17,9 @@ use torrplay_core::library::Library;
 use torrplay_core::lifecycle::Configuration;
 
 use crate::images::{self, Images};
-use crate::profiles;
 use crate::schema::{self, to_ns, version};
 use crate::{Command, StoreError, StoredTorrent};
+use crate::{credentials, profiles};
 
 pub(crate) struct Worker {
     pub(crate) connection: Connection,
@@ -136,6 +136,30 @@ impl Worker {
                 Command::SetDismissal(dismissal, reply) => {
                     let _ = reply.send(
                         self.write(|connection| profiles::set_dismissal(connection, &dismissal)),
+                    );
+                }
+                Command::SetPassword(hash, at, revoke, reply) => {
+                    let _ = reply.send(self.write(|connection| {
+                        credentials::set_password(connection, &hash, at, revoke)
+                    }));
+                }
+                Command::RemovePassword(key, reply) => {
+                    let _ = reply.send(
+                        self.write(|connection| credentials::remove_password(connection, &key)),
+                    );
+                }
+                Command::InsertAccessToken(token, expired, reply) => {
+                    let _ = reply.send(self.write(|connection| {
+                        credentials::insert_token(connection, &token, &expired)
+                    }));
+                }
+                Command::DeleteAccessToken(id, reply) => {
+                    let _ = reply
+                        .send(self.write(|connection| credentials::delete_token(connection, &id)));
+                }
+                Command::TouchAccessToken(id, at, reply) => {
+                    let _ = reply.send(
+                        self.write(|connection| credentials::touch_token(connection, &id, at)),
                     );
                 }
                 Command::Delete(id, reply) => {

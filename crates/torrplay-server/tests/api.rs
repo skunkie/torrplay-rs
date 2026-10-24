@@ -260,6 +260,110 @@ async fn file_ids(server: &TestServer, torrent: &str) -> std::collections::HashM
         .collect()
 }
 
+/// The password the authentication scenarios set.
+const PASSWORD: &str = "correct horse battery staple";
+
+/// A request builder that carries `secret` as a bearer token.
+fn bearer(method: Method, path: &str, secret: &str) -> http::request::Builder {
+    request(method, path).header(header::AUTHORIZATION, format!("Bearer {secret}"))
+}
+
+/// A request without a body that carries `secret` as a bearer token.
+fn bearer_empty(method: Method, path: &str, secret: &str) -> http::Request<Vec<u8>> {
+    bearer(method, path, secret).body(Vec::new()).unwrap()
+}
+
+/// A JSON request that carries `secret` as a bearer token.
+fn bearer_json(method: Method, path: &str, secret: &str, body: &Value) -> http::Request<Vec<u8>> {
+    bearer(method, path, secret)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(serde_json::to_vec(body).unwrap())
+        .unwrap()
+}
+
+/// Sets the first password.
+async fn set_first_password(server: &TestServer) {
+    let set = server
+        .send(json_request(
+            Method::PUT,
+            "/api/v1/password",
+            &json!({ "password": PASSWORD }),
+        ))
+        .await;
+    assert_eq!(set.status, StatusCode::CREATED, "{set:?}");
+    assert_eq!(set.header(header::LOCATION), Some("/api/v1/password"));
+}
+
+/// Signs in with `scope`, returning the new token's ID and secret.
+async fn sign_in(server: &TestServer, name: &str, scope: &str) -> (String, String) {
+    let created = server
+        .send(json_request(
+            Method::POST,
+            "/api/v1/access-tokens",
+            &json!({ "password": PASSWORD, "name": name, "scope": scope }),
+        ))
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{created:?}");
+    assert_eq!(created.header(header::CACHE_CONTROL), Some("no-store"));
+    let body = created.json();
+    (
+        body["id"].as_str().unwrap().to_owned(),
+        body["secret"].as_str().unwrap().to_owned(),
+    )
+}
+
+/// Issues a playback token with `secret` for `torrent`, or for every
+/// torrent.
+async fn playback_token(server: &TestServer, secret: &str, torrent: Option<&str>) -> String {
+    let issued = server
+        .send(bearer_json(
+            Method::POST,
+            "/api/v1/playback-tokens",
+            secret,
+            &json!({ "torrent_id": torrent }),
+        ))
+        .await;
+    assert_eq!(issued.status, StatusCode::OK, "{issued:?}");
+    assert_eq!(issued.header(header::CACHE_CONTROL), Some("no-store"));
+    assert_eq!(issued.json()["torrent_id"].as_str(), torrent);
+    issued.json()["token"].as_str().unwrap().to_owned()
+}
+
+/// The content path of a torrent's first file, uploaded from `spec`.
+async fn uploaded_content(server: &TestServer, spec: &FixtureSpec) -> (String, String) {
+    let torrent = server.upload(&spec.metainfo().bytes, None).await.json();
+    let path = torrent["links"]["self"].as_str().unwrap().to_owned();
+    let file = files_of(server, &path).await[0]["links"]["self"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    (
+        torrent["id"].as_str().unwrap().to_owned(),
+        format!("{file}/content"),
+    )
+}
+
+/// Asserts a `401` whose challenge names `error`, if any.
+fn assert_unauthenticated(exchange: &Exchange, error: Option<&str>) {
+    assert_problem(
+        exchange,
+        StatusCode::UNAUTHORIZED,
+        "authentication-required",
+    );
+    let challenge = exchange.header(header::WWW_AUTHENTICATE).unwrap();
+    assert!(
+        challenge.starts_with(r#"Bearer realm="TorrPlay""#),
+        "{challenge}"
+    );
+    match error {
+        Some(error) => assert!(
+            challenge.ends_with(&format!(r#"error="{error}""#)),
+            "{challenge}"
+        ),
+        None => assert!(!challenge.contains("error="), "{challenge}"),
+    }
+}
+
 mod scenario {
     use super::*;
 
@@ -4454,6 +4558,819 @@ mod scenario {
         server.stop().await;
     }
 
+    /// AUT-01: without a password requests need no token, and nothing
+    /// issues one; invalid bodies are refused first.
+    pub async fn authentication_off() {
+        let server = TestServer::start().await;
+        assert_problem(
+            &server.get("/api/v1/password").await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        let listed = server
+            .send(bearer_empty(Method::GET, "/api/v1/torrents", "tpa_unknown"))
+            .await;
+        assert_eq!(listed.status, StatusCode::OK, "credentials are ignored");
+        let sign_in = json!({ "password": PASSWORD, "name": "Laptop" });
+        assert_problem(
+            &server
+                .send(json_request(
+                    Method::POST,
+                    "/api/v1/access-tokens",
+                    &sign_in,
+                ))
+                .await,
+            StatusCode::CONFLICT,
+            "lifecycle-conflict",
+        );
+        assert_problem(
+            &server
+                .send(json_request(
+                    Method::POST,
+                    "/api/v1/playback-tokens",
+                    &json!({}),
+                ))
+                .await,
+            StatusCode::CONFLICT,
+            "lifecycle-conflict",
+        );
+        let tokens = server.get("/api/v1/access-tokens").await;
+        assert_eq!(tokens.json()["items"], json!([]));
+        assert_problem(
+            &server
+                .send_unchecked(empty(Method::GET, "/api/v1/access-tokens?page_size=0"))
+                .await,
+            StatusCode::BAD_REQUEST,
+            "malformed-request",
+        );
+        let unknown = "/api/v1/access-tokens/atk_aaaaaaaaaaaaaaaaaaaaaaaaaa";
+        assert_problem(
+            &server.get(unknown).await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        assert_problem(
+            &server.send(empty(Method::DELETE, unknown)).await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        assert_problem(
+            &server.send(empty(Method::DELETE, "/api/v1/password")).await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+
+        for path in [
+            "/api/v1/password",
+            "/api/v1/access-tokens",
+            "/api/v1/playback-tokens",
+        ] {
+            let method = if path == "/api/v1/password" {
+                Method::PUT
+            } else {
+                Method::POST
+            };
+            let malformed = request(method.clone(), path)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(b"{".to_vec())
+                .unwrap();
+            assert_problem(
+                &server.send_unchecked(malformed).await,
+                StatusCode::BAD_REQUEST,
+                "malformed-request",
+            );
+            let text = request(method.clone(), path)
+                .header(header::CONTENT_TYPE, "text/plain")
+                .body(b"{}".to_vec())
+                .unwrap();
+            let refused = server.send_unchecked(text).await;
+            assert_problem(
+                &refused,
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "unsupported-media-type",
+            );
+            assert_eq!(refused.header(header::ACCEPT), Some("application/json"));
+        }
+        let invalid = [
+            (
+                Method::PUT,
+                "/api/v1/password",
+                json!({ "password": "short" }),
+                "/password",
+            ),
+            (
+                Method::PUT,
+                "/api/v1/password",
+                json!({ "password": PASSWORD, "current_password": PASSWORD }),
+                "/current_password",
+            ),
+            (
+                Method::PUT,
+                "/api/v1/password",
+                json!({ "password": PASSWORD, "revoke_access_tokens": "yes" }),
+                "/revoke_access_tokens",
+            ),
+            (Method::PUT, "/api/v1/password", json!({}), "/password"),
+            (
+                Method::POST,
+                "/api/v1/access-tokens",
+                json!({ "password": PASSWORD, "name": " " }),
+                "/name",
+            ),
+            (
+                Method::POST,
+                "/api/v1/access-tokens",
+                json!({ "password": PASSWORD, "name": "TV", "scope": "admin" }),
+                "/scope",
+            ),
+            (
+                Method::POST,
+                "/api/v1/access-tokens",
+                json!({ "password": PASSWORD, "name": "TV", "expires_in_seconds": 60 }),
+                "/expires_in_seconds",
+            ),
+            (
+                Method::POST,
+                "/api/v1/access-tokens",
+                json!({ "name": "TV" }),
+                "/password",
+            ),
+            (
+                Method::POST,
+                "/api/v1/playback-tokens",
+                json!({ "expires_in_seconds": 59 }),
+                "/expires_in_seconds",
+            ),
+            (
+                Method::POST,
+                "/api/v1/playback-tokens",
+                json!({ "issuer": "me" }),
+                "/issuer",
+            ),
+        ];
+        for (method, path, body, member) in invalid {
+            let refused = server
+                .send_unchecked(json_request(method, path, &body))
+                .await;
+            assert_problem(
+                &refused,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation-failed",
+            );
+            assert_eq!(errors(&refused, "pointer"), [member], "{body}");
+        }
+        server.stop().await;
+    }
+
+    /// AUT-02 and AUT-04 to AUT-07: a password turns authentication on;
+    /// tokens grant by scope and torrent, and revoking them takes effect at
+    /// once.
+    pub async fn authentication_on() {
+        let logs = LogCapture::start();
+        let server = TestServer::start().await;
+        let (torrent, content) = uploaded_content(&server, &catalog::single_small()).await;
+        let (other_torrent, other_content) =
+            uploaded_content(&server, &catalog::multi_boundary()).await;
+        let poster = format!("/api/v1/torrents/{torrent}/poster");
+        server.send(put_poster(&poster, "image/png", PNG)).await;
+        set_first_password(&server).await;
+
+        // AUT-02: every operation but the public ones needs a token.
+        assert_unauthenticated(&server.get("/api/v1/torrents").await, None);
+        assert_unauthenticated(&server.get("/api/v1/password").await, None);
+        assert_unauthenticated(
+            &server
+                .send(bearer_empty(Method::GET, "/api/v1/torrents", "tpa_unknown"))
+                .await,
+            Some("invalid_token"),
+        );
+        assert_unauthenticated(
+            &server
+                .send(with_header(
+                    Method::GET,
+                    "/api/v1/torrents",
+                    header::AUTHORIZATION,
+                    "Basic dXNlcjpwYXNz",
+                ))
+                .await,
+            Some("invalid_request"),
+        );
+        for public in ["/api/v1", "/api/v1/openapi.yaml", "/livez", "/readyz"] {
+            let accept = if public.ends_with(".yaml") {
+                "application/yaml"
+            } else {
+                "application/json"
+            };
+            let answered = server
+                .send(with_header(Method::GET, public, header::ACCEPT, accept))
+                .await;
+            assert_eq!(answered.status, StatusCode::OK, "{public}");
+        }
+        let wrong = server
+            .send(json_request(
+                Method::POST,
+                "/api/v1/access-tokens",
+                &json!({ "password": "not the password", "name": "Laptop" }),
+            ))
+            .await;
+        assert_problem(&wrong, StatusCode::FORBIDDEN, "invalid-credentials");
+        let (laptop, api) = sign_in(&server, "  Laptop  ", "api").await;
+        assert_eq!(
+            server
+                .send(bearer_empty(Method::GET, "/api/v1/torrents", &api))
+                .await
+                .status,
+            StatusCode::OK
+        );
+        let password = server
+            .send(bearer_empty(Method::GET, "/api/v1/password", &api))
+            .await;
+        assert_eq!(password.status, StatusCode::OK);
+        assert_eq!(password.header(header::CACHE_CONTROL), Some("no-cache"));
+        let token_path = format!("/api/v1/access-tokens/{laptop}");
+        let token = server
+            .send(bearer_empty(Method::GET, &token_path, &api))
+            .await;
+        assert_eq!(token.json()["name"], "Laptop", "the name is normalized");
+        assert_eq!(token.json()["scope"], "api");
+        assert!(
+            token.json().get("secret").is_none(),
+            "only creation shows it"
+        );
+        let listed = server
+            .send(bearer_empty(Method::GET, "/api/v1/access-tokens", &api))
+            .await;
+        assert_eq!(listed.json()["items"][0]["id"], laptop.as_str());
+
+        // AUT-04: a change needs the current password.
+        let change = |body: Value| bearer_json(Method::PUT, "/api/v1/password", &api, &body);
+        let missing = server
+            .send_unchecked(change(json!({ "password": "a new passphrase" })))
+            .await;
+        assert_problem(
+            &missing,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation-failed",
+        );
+        assert_eq!(errors(&missing, "pointer"), ["/current_password"]);
+        assert_problem(
+            &server
+                .send(change(json!({
+                    "password": "a new passphrase",
+                    "current_password": "a wrong one",
+                })))
+                .await,
+            StatusCode::FORBIDDEN,
+            "invalid-credentials",
+        );
+        let changed = server
+            .send(change(json!({
+                "password": PASSWORD,
+                "current_password": PASSWORD,
+            })))
+            .await;
+        assert_eq!(changed.status, StatusCode::OK);
+        assert_eq!(
+            server
+                .send(bearer_empty(Method::GET, "/api/v1/torrents", &api))
+                .await
+                .status,
+            StatusCode::OK,
+            "a change keeps tokens unless it revokes them"
+        );
+
+        // AUT-05: a playback access token reads content and posters only.
+        let (_, television) = sign_in(&server, "Living room TV", "playback").await;
+        for path in [content.clone(), format!("{content}?token={television}")] {
+            let mut streamed = request(Method::GET, &path);
+            if !path.contains("token=") {
+                streamed = streamed.header(header::AUTHORIZATION, format!("Bearer {television}"));
+            }
+            let streamed = server.send(streamed.body(Vec::new()).unwrap()).await;
+            assert_eq!(streamed.status, StatusCode::OK, "{path}");
+        }
+        assert_eq!(
+            server
+                .send(empty(Method::HEAD, &format!("{poster}?token={television}")))
+                .await
+                .status,
+            StatusCode::OK
+        );
+        let scoped = server
+            .send(bearer_empty(Method::GET, "/api/v1/torrents", &television))
+            .await;
+        assert_problem(&scoped, StatusCode::FORBIDDEN, "insufficient-scope");
+        assert!(
+            scoped
+                .header(header::WWW_AUTHENTICATE)
+                .unwrap()
+                .contains(r#"error="insufficient_scope""#)
+        );
+        assert_problem(
+            &server
+                .send(bearer_json(
+                    Method::POST,
+                    "/api/v1/playback-tokens",
+                    &television,
+                    &json!({}),
+                ))
+                .await,
+            StatusCode::FORBIDDEN,
+            "insufficient-scope",
+        );
+
+        // AUT-06: a playback token of one torrent.
+        let one = playback_token(&server, &api, Some(&torrent)).await;
+        assert_eq!(
+            server
+                .send(empty(Method::GET, &format!("{content}?token={one}")))
+                .await
+                .status,
+            StatusCode::OK
+        );
+        assert_problem(
+            &server
+                .send(empty(Method::GET, &format!("{other_content}?token={one}")))
+                .await,
+            StatusCode::FORBIDDEN,
+            "insufficient-scope",
+        );
+        let every = playback_token(&server, &api, None).await;
+        assert_eq!(
+            server
+                .send(empty(
+                    Method::GET,
+                    &format!("{other_content}?token={every}")
+                ))
+                .await
+                .status,
+            StatusCode::OK
+        );
+        let unknown_torrent = server
+            .send_unchecked(bearer_json(
+                Method::POST,
+                "/api/v1/playback-tokens",
+                &api,
+                &json!({ "torrent_id": "trr_aaaaaaaaaaaaaaaaaaaaaaaaaa" }),
+            ))
+            .await;
+        assert_problem(
+            &unknown_torrent,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation-failed",
+        );
+        assert_eq!(errors(&unknown_torrent, "pointer"), ["/torrent_id"]);
+        assert_eq!(other_torrent.len(), torrent.len());
+
+        // AUT-07: an api token never travels in a URL, and a playback token
+        // must be intact and current.
+        assert_unauthenticated(
+            &server
+                .send(empty(Method::GET, &format!("{content}?token={api}")))
+                .await,
+            Some("invalid_token"),
+        );
+        let mut tampered = one.clone().into_bytes();
+        let last = tampered.len() - 1;
+        tampered[last] = if tampered[last] == b'a' { b'b' } else { b'a' };
+        let tampered = String::from_utf8(tampered).unwrap();
+        assert_unauthenticated(
+            &server
+                .send(empty(Method::GET, &format!("{content}?token={tampered}")))
+                .await,
+            Some("invalid_token"),
+        );
+        server.advance_clock(Duration::from_secs(86_400));
+        assert_unauthenticated(
+            &server
+                .send(empty(Method::GET, &format!("{content}?token={one}")))
+                .await,
+            Some("invalid_token"),
+        );
+
+        // Revoking the issuer revokes its playback tokens.
+        let fresh = playback_token(&server, &api, None).await;
+        let (spare, spare_secret) = sign_in(&server, "Phone", "api").await;
+        let revoked = server
+            .send(bearer_empty(Method::DELETE, &token_path, &spare_secret))
+            .await;
+        assert_eq!(revoked.status, StatusCode::NO_CONTENT);
+        assert_unauthenticated(
+            &server
+                .send(empty(Method::GET, &format!("{content}?token={fresh}")))
+                .await,
+            Some("invalid_token"),
+        );
+        assert_unauthenticated(
+            &server
+                .send(bearer_empty(Method::GET, "/api/v1/torrents", &api))
+                .await,
+            Some("invalid_token"),
+        );
+        assert_problem(
+            &server
+                .send(bearer_empty(Method::GET, &token_path, &spare_secret))
+                .await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        assert_problem(
+            &server
+                .send(bearer_empty(Method::DELETE, &token_path, &spare_secret))
+                .await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+
+        // A change that revokes every token signs every client out.
+        let revoking = server
+            .send(bearer_json(
+                Method::PUT,
+                "/api/v1/password",
+                &spare_secret,
+                &json!({
+                    "password": PASSWORD,
+                    "current_password": PASSWORD,
+                    "revoke_access_tokens": true,
+                }),
+            ))
+            .await;
+        assert_eq!(revoking.status, StatusCode::OK);
+        for secret in [&spare_secret, &television] {
+            assert_unauthenticated(
+                &server
+                    .send(bearer_empty(Method::GET, &content, secret))
+                    .await,
+                Some("invalid_token"),
+            );
+        }
+        let _ = spare;
+
+        // Removing the password turns authentication off.
+        let (_, last) = sign_in(&server, "Laptop", "api").await;
+        let removed = server
+            .send(bearer_empty(Method::DELETE, "/api/v1/password", &last))
+            .await;
+        assert_eq!(removed.status, StatusCode::NO_CONTENT);
+        assert_eq!(server.get("/api/v1/torrents").await.status, StatusCode::OK);
+        assert_problem(
+            &server.get("/api/v1/password").await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        set_first_password(&server).await;
+        assert_unauthenticated(
+            &server
+                .send(bearer_empty(Method::GET, "/api/v1/torrents", &last))
+                .await,
+            Some("invalid_token"),
+        );
+
+        let text = logs.text();
+        for secret in [&api, &television, &one, &last] {
+            assert!(!text.contains(secret.as_str()), "a credential was logged");
+        }
+        assert!(!text.contains(PASSWORD), "the password was logged");
+        server.stop().await;
+    }
+
+    /// AUT-03: wrong passwords make every password check wait.
+    pub async fn sign_in_limits() {
+        let server = TestServer::start().await;
+        set_first_password(&server).await;
+        let (_, secret) = sign_in(&server, "Laptop", "api").await;
+        let wrong = json!({ "password": "not the password", "name": "Laptop" });
+        for _ in 0..5 {
+            assert_problem(
+                &server
+                    .send(json_request(Method::POST, "/api/v1/access-tokens", &wrong))
+                    .await,
+                StatusCode::FORBIDDEN,
+                "invalid-credentials",
+            );
+        }
+        let waiting = server
+            .send(json_request(
+                Method::POST,
+                "/api/v1/access-tokens",
+                &json!({ "password": PASSWORD, "name": "Laptop" }),
+            ))
+            .await;
+        assert_problem(&waiting, StatusCode::TOO_MANY_REQUESTS, "too-many-attempts");
+        assert_eq!(waiting.header(header::RETRY_AFTER), Some("1"));
+        let change = server
+            .send(bearer_json(
+                Method::PUT,
+                "/api/v1/password",
+                &secret,
+                &json!({ "password": PASSWORD, "current_password": PASSWORD }),
+            ))
+            .await;
+        assert_problem(&change, StatusCode::TOO_MANY_REQUESTS, "too-many-attempts");
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        sign_in(&server, "Laptop", "api").await;
+        server.stop().await;
+    }
+
+    /// The application keeps at most 64 access tokens, and drops expired
+    /// ones when it creates another.
+    pub async fn access_token_limits() {
+        let server = TestServer::start().await;
+        set_first_password(&server).await;
+        let now = std::time::SystemTime::now();
+        for n in 0..64_u8 {
+            let token = torrplay_core::credentials::AccessToken {
+                id: torrplay_core::id::AccessTokenId::from_random_bytes([n; 16]),
+                name: format!("Device {n}"),
+                scope: torrplay_core::credentials::Scope::Api,
+                created_at: now,
+                // One expires within the day.
+                expires_at: (n == 0).then(|| now + Duration::from_secs(3600)),
+                last_used_at: None,
+                digest: torrplay_core::credentials::new_secret().unwrap().1,
+            };
+            server
+                .app
+                .store()
+                .insert_access_token(&token, &[])
+                .await
+                .unwrap();
+        }
+        let server = server.restart().await;
+        let sign_in_body = json!({ "password": PASSWORD, "name": "One too many" });
+        assert_problem(
+            &server
+                .send(json_request(
+                    Method::POST,
+                    "/api/v1/access-tokens",
+                    &sign_in_body,
+                ))
+                .await,
+            StatusCode::CONFLICT,
+            "too-many-access-tokens",
+        );
+        server.advance_clock(Duration::from_secs(7200));
+        let (_, secret) = sign_in(&server, "Replacing an expired one", "api").await;
+        let listed = server
+            .send(bearer_empty(
+                Method::GET,
+                "/api/v1/access-tokens?page_size=200",
+                &secret,
+            ))
+            .await;
+        assert_eq!(listed.json()["items"].as_array().unwrap().len(), 64);
+        let first = server
+            .send(bearer_empty(
+                Method::GET,
+                "/api/v1/access-tokens?page_size=1",
+                &secret,
+            ))
+            .await;
+        let next = first.json()["links"]["next"].as_str().unwrap().to_owned();
+        assert_eq!(
+            server
+                .send(bearer_empty(Method::GET, &next, &secret))
+                .await
+                .json()["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        server.stop().await;
+    }
+
+    /// AUT-09: the password and tokens survive a restart.
+    pub async fn authentication_restart() {
+        let server = TestServer::start().await;
+        set_first_password(&server).await;
+        let (_, secret) = sign_in(&server, "Laptop", "api").await;
+        let token = playback_token(&server, &secret, None).await;
+        let server = server.restart().await;
+        assert_unauthenticated(&server.get("/api/v1/torrents").await, None);
+        assert_eq!(
+            server
+                .send(bearer_empty(Method::GET, "/api/v1/torrents", &secret))
+                .await
+                .status,
+            StatusCode::OK
+        );
+        let (_, content) = {
+            let removed = server
+                .send(bearer_empty(Method::DELETE, "/api/v1/password", &secret))
+                .await;
+            assert_eq!(removed.status, StatusCode::NO_CONTENT);
+            uploaded_content(&server, &catalog::single_small()).await
+        };
+        let server = server.restart().await;
+        set_first_password(&server).await;
+        assert_unauthenticated(
+            &server
+                .send(empty(Method::GET, &format!("{content}?token={token}")))
+                .await,
+            Some("invalid_token"),
+        );
+        server.stop().await;
+    }
+
+    /// AUT-10: failed writes change no credential.
+    pub async fn authentication_store_failures() {
+        let server = TestServer::start().await;
+        server.app.store().fail_writes(true);
+        assert_problem(
+            &server
+                .send(json_request(
+                    Method::PUT,
+                    "/api/v1/password",
+                    &json!({ "password": PASSWORD }),
+                ))
+                .await,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal-error",
+        );
+        server.app.store().fail_writes(false);
+        assert_problem(
+            &server.get("/api/v1/password").await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        set_first_password(&server).await;
+        let (laptop, secret) = sign_in(&server, "Laptop", "api").await;
+        server.app.store().fail_writes(true);
+        for exchange in [
+            server
+                .send(json_request(
+                    Method::POST,
+                    "/api/v1/access-tokens",
+                    &json!({ "password": PASSWORD, "name": "Phone" }),
+                ))
+                .await,
+            server
+                .send(bearer_empty(
+                    Method::DELETE,
+                    &format!("/api/v1/access-tokens/{laptop}"),
+                    &secret,
+                ))
+                .await,
+            server
+                .send(bearer_empty(Method::DELETE, "/api/v1/password", &secret))
+                .await,
+        ] {
+            assert_problem(
+                &exchange,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal-error",
+            );
+        }
+        server.app.store().fail_writes(false);
+        let listed = server
+            .send(bearer_empty(Method::GET, "/api/v1/access-tokens", &secret))
+            .await;
+        assert_eq!(listed.json()["items"].as_array().unwrap().len(), 1);
+        assert_eq!(listed.json()["items"][0]["id"], laptop.as_str());
+        server.stop().await;
+    }
+
+    /// Credential changes are refused once shutdown begins, and playback
+    /// tokens for a torrent wait for the stored torrents.
+    pub async fn authentication_unavailable() {
+        let server = TestServer::start().await;
+        let (torrent, _) = uploaded_content(&server, &catalog::single_small()).await;
+        set_first_password(&server).await;
+        let (laptop, secret) = sign_in(&server, "Laptop", "api").await;
+        let server = server
+            .restart_with(torrplay_core::fake::FakeEngine::with_catalog(), false)
+            .await;
+        assert_problem(
+            &server
+                .send(bearer_json(
+                    Method::POST,
+                    "/api/v1/playback-tokens",
+                    &secret,
+                    &json!({ "torrent_id": torrent }),
+                ))
+                .await,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "engine-unavailable",
+        );
+        server.finish_restore().await;
+        server.app.begin_shutdown();
+        for exchange in [
+            server
+                .send(json_request(
+                    Method::POST,
+                    "/api/v1/access-tokens",
+                    &json!({ "password": PASSWORD, "name": "Phone" }),
+                ))
+                .await,
+            server
+                .send(bearer_json(
+                    Method::PUT,
+                    "/api/v1/password",
+                    &secret,
+                    &json!({ "password": PASSWORD, "current_password": PASSWORD }),
+                ))
+                .await,
+            server
+                .send(bearer_empty(
+                    Method::DELETE,
+                    &format!("/api/v1/access-tokens/{laptop}"),
+                    &secret,
+                ))
+                .await,
+            server
+                .send(bearer_empty(Method::DELETE, "/api/v1/password", &secret))
+                .await,
+        ] {
+            assert_problem(
+                &exchange,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "engine-unavailable",
+            );
+        }
+        server.stop().await;
+    }
+
+    /// Bodies of credential operations are bounded in size and time.
+    pub async fn authentication_bodies() {
+        let server = TestServer::start_with_body_timeout(Duration::from_millis(200)).await;
+        set_first_password(&server).await;
+        let (_, secret) = sign_in(&server, "Laptop", "api").await;
+        let authorization = format!("Bearer {secret}");
+        let partial = br#"{"password":"#.to_vec();
+        let length = (partial.len() + 10).to_string();
+        for (method, path) in [
+            (Method::PUT, "/api/v1/password"),
+            (Method::POST, "/api/v1/access-tokens"),
+            (Method::POST, "/api/v1/playback-tokens"),
+        ] {
+            let headers = [
+                ("Content-Type", "application/json"),
+                ("Authorization", authorization.as_str()),
+            ];
+            let mut slow = headers.to_vec();
+            slow.push(("Content-Length", length.as_str()));
+            let timed_out = server
+                .send_before_body_ends(method.clone(), path, &slow, partial.clone())
+                .await;
+            assert_problem(&timed_out, StatusCode::REQUEST_TIMEOUT, "request-timeout");
+            let mut large = headers.to_vec();
+            large.push(("Content-Length", "20000"));
+            let refused = server
+                .send_before_body_ends(method, path, &large, Vec::new())
+                .await;
+            assert_problem(&refused, StatusCode::PAYLOAD_TOO_LARGE, "content-too-large");
+        }
+        server.stop().await;
+    }
+
+    /// AUT-08: requests name an allowed host, except for the health checks.
+    pub async fn allowed_hosts() {
+        let server = TestServer::start_allowing(&["torrplay.home.arpa"]).await;
+        let port = server.get("/api/v1").await.status;
+        assert_eq!(port, StatusCode::OK);
+        for host in [
+            "192.168.1.10:8080",
+            "localhost:8080",
+            "mypc.local",
+            "TorrPlay.home.arpa.",
+        ] {
+            let answered = server
+                .send(with_header(Method::GET, "/api/v1", header::HOST, host))
+                .await;
+            assert_eq!(answered.status, StatusCode::OK, "{host}");
+        }
+        let refused = server
+            .send(with_header(
+                Method::GET,
+                "/api/v1/torrents",
+                header::HOST,
+                "evil.example:8080",
+            ))
+            .await;
+        assert_problem(
+            &refused,
+            StatusCode::MISDIRECTED_REQUEST,
+            "misdirected-request",
+        );
+        assert!(
+            refused.json()["detail"]
+                .as_str()
+                .unwrap()
+                .contains("--allowed-host")
+        );
+        let live = server
+            .send(with_header(
+                Method::GET,
+                "/livez",
+                header::HOST,
+                "evil.example",
+            ))
+            .await;
+        assert_eq!(live.status, StatusCode::OK, "health checks name no host");
+        server.stop().await;
+    }
+
     async fn listed_len(server: &TestServer) -> usize {
         server.get("/api/v1/torrents").await.json()["items"]
             .as_array()
@@ -4486,6 +5403,13 @@ const EXEMPT: &[(&str, u16)] = &[
     ("getFileProgress", 500),
     ("listUpNext", 500),
     ("getUpNextEntry", 500),
+    // These answer from the credentials in memory, and issuing a playback
+    // token stores nothing, so only a failed serialization or signature,
+    // which a key the store gave cannot cause, could make them 500.
+    ("getPassword", 500),
+    ("listAccessTokens", 500),
+    ("getAccessToken", 500),
+    ("createPlaybackToken", 500),
 ];
 
 macro_rules! scenarios {
@@ -4551,4 +5475,13 @@ scenarios!(
     up_next,
     profiles_restart,
     profiles_store_failures,
+    authentication_off,
+    authentication_on,
+    sign_in_limits,
+    access_token_limits,
+    authentication_restart,
+    authentication_store_failures,
+    authentication_unavailable,
+    authentication_bodies,
+    allowed_hosts,
 );

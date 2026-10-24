@@ -1135,6 +1135,79 @@ pub struct PreloadFailure {
     ///An explanation of how the preload failed.
     pub detail: String,
 }
+///A new password. Changing a password that is set needs the current one.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PasswordChange {
+    ///The current password, required while a password is set and rejected while none is.
+    ///Constraint: maxLength=256
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_password: Option<String>,
+    pub password: PasswordText,
+    ///Whether the change revokes every access token, with the playback tokens they issued, so every client signs in again.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revoke_access_tokens: Option<bool>,
+}
+impl PasswordChange {
+    /// Construct this request with every required wire field.
+    pub fn new(password: PasswordText) -> Self {
+        Self {
+            password,
+            current_password: None,
+            revoke_access_tokens: None,
+        }
+    }
+    /// Start a dependency-free builder with every required wire field.
+    pub fn builder(password: PasswordText) -> PasswordChangeBuilder {
+        PasswordChangeBuilder::new(password)
+    }
+}
+/// Dependency-free builder for [`#struct_name`].
+#[derive(Debug, Clone)]
+#[must_use]
+pub struct PasswordChangeBuilder {
+    value: PasswordChange,
+}
+impl PasswordChangeBuilder {
+    /// Start a builder with every required wire field.
+    pub fn new(password: PasswordText) -> Self {
+        Self {
+            value: PasswordChange::new(password),
+        }
+    }
+    #[doc = concat!("Set the optional `", "current_password", "` request field.")]
+    #[must_use]
+    pub fn current_password(mut self, current_password: String) -> Self {
+        self.value.current_password = Some(current_password);
+        self
+    }
+    #[doc = concat!("Set the optional `", "revoke_access_tokens", "` request field.")]
+    #[must_use]
+    pub fn revoke_access_tokens(mut self, revoke_access_tokens: bool) -> Self {
+        self.value.revoke_access_tokens = Some(revoke_access_tokens);
+        self
+    }
+    /// Finish building the request model.
+    pub fn build(self) -> PasswordChange {
+        self.value
+    }
+}
+///A password of 8 to 256 characters, compared after Unicode NFC normalization, so composed and decomposed accents match.
+pub type PasswordText = String;
+///The password, which is never returned, as when it was set.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Password {
+    ///Links from the password.
+    pub links: PasswordLinks,
+    ///When the password was last set, in UTC.
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+///Links from the password.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PasswordLinks {
+    ///The password.
+    #[serde(rename = "self")]
+    pub self_field: String,
+}
 ///A protocol identifier of a torrent's info dictionary.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct InfoHash {
@@ -1211,8 +1284,14 @@ pub struct EntryPoint {
 ///Links to the top-level resources and the OpenAPI document.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EntryPointLinks {
+    ///The access tokens collection, where clients sign in.
+    pub access_tokens: String,
     ///The piece cache's statistics.
     pub cache_statistics: String,
+    ///The password, not-found while authentication is off.
+    pub password: String,
+    ///Where clients get playback tokens.
+    pub playback_tokens: String,
     ///The profiles collection.
     pub profiles: String,
     ///The entry point.
@@ -1262,6 +1341,27 @@ pub struct Problem {
     ///The problem type, a tag URI under tag:skunkie.github.io,2026:torrplay/problems/.
     pub r#type: url::Url,
 }
+///A new access token with its secret, which no other response holds.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CreatedAccessToken {
+    ///When the token was created, in UTC.
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    ///When the token expires, in UTC, or null if it never does.
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ///The access token's opaque, stable ID, which is not its secret.
+    pub id: String,
+    ///About when a request last carried the token, in UTC, to within an hour, or null if none has.
+    pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
+    ///Links from an access token.
+    pub links: AccessTokenLinks,
+    ///What the token is for, normalized as a profile's name is to 1 to 64 characters. Names need not be unique.
+    ///Constraint: minLength=1, maxLength=64
+    pub name: String,
+    pub scope: AccessTokenScope,
+    ///The token to send, as Authorization: Bearer or, for a playback token, as the token query parameter.
+    ///Constraint: pattern=`^tpa_[a-z2-7]{52}$`
+    pub secret: String,
+}
 ///The torrent's categories, distinct after normalization and in the order given; clients may treat the first as the primary one. It defaults to an empty list.
 pub type Categories = Vec<Category>;
 ///A category: the user's own grouping of torrents, such as a menu entry. Normalized on write to 1 to 128 characters without control characters, and compared exactly; a slash is an ordinary character.
@@ -1290,6 +1390,215 @@ pub struct CacheStatisticsLinks {
     ///The cache statistics.
     #[serde(rename = "self")]
     pub self_field: String,
+}
+///A page of access tokens.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AccessTokenPage {
+    ///The access tokens on this page.
+    pub items: Vec<AccessToken>,
+    ///Links from a page of access tokens.
+    pub links: AccessTokenPageLinks,
+}
+///Links from a page of access tokens.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AccessTokenPageLinks {
+    ///The next page of access tokens, omitted on the last page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+    ///This page of access tokens.
+    #[serde(rename = "self")]
+    pub self_field: String,
+}
+///The input that signs in and creates an access token.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AccessTokenCreation {
+    ///How long the token lasts, from one hour to a year, or null for a token that lasts until it is revoked.
+    ///Constraint: minimum=3600, maximum=31536000
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub expires_in_seconds: Option<Option<i64>>,
+    ///What the token is for, as AccessToken's name.
+    ///Constraint: minLength=1, maxLength=64
+    pub name: String,
+    ///The password to sign in with.
+    ///Constraint: maxLength=256
+    pub password: String,
+    ///What the token allows, as AccessTokenScope describes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<AccessTokenCreationScope>,
+}
+impl AccessTokenCreation {
+    /// Construct this request with every required wire field.
+    pub fn new(name: String, password: String) -> Self {
+        Self {
+            name,
+            password,
+            expires_in_seconds: None,
+            scope: None,
+        }
+    }
+    /// Start a dependency-free builder with every required wire field.
+    pub fn builder(name: String, password: String) -> AccessTokenCreationBuilder {
+        AccessTokenCreationBuilder::new(name, password)
+    }
+}
+/// Dependency-free builder for [`#struct_name`].
+#[derive(Debug, Clone)]
+#[must_use]
+pub struct AccessTokenCreationBuilder {
+    value: AccessTokenCreation,
+}
+impl AccessTokenCreationBuilder {
+    /// Start a builder with every required wire field.
+    pub fn new(name: String, password: String) -> Self {
+        Self {
+            value: AccessTokenCreation::new(name, password),
+        }
+    }
+    #[doc = concat!(
+        "Set the optional nullable `", "expires_in_seconds",
+        "` request field to a value."
+    )]
+    #[must_use]
+    pub fn expires_in_seconds(mut self, expires_in_seconds: i64) -> Self {
+        self.value.expires_in_seconds = Some(Some(expires_in_seconds));
+        self
+    }
+    #[doc = concat!(
+        "Set the optional nullable `", "expires_in_seconds",
+        "` request field to JSON null."
+    )]
+    #[must_use]
+    pub fn expires_in_seconds_null(mut self) -> Self {
+        self.value.expires_in_seconds = Some(None);
+        self
+    }
+    #[doc = concat!(
+        "Omit the optional nullable `", "expires_in_seconds", "` request field."
+    )]
+    #[must_use]
+    pub fn expires_in_seconds_absent(mut self) -> Self {
+        self.value.expires_in_seconds = None;
+        self
+    }
+    #[doc = concat!("Set the optional `", "scope", "` request field.")]
+    #[must_use]
+    pub fn scope(mut self, scope: AccessTokenCreationScope) -> Self {
+        self.value.scope = Some(scope);
+        self
+    }
+    /// Finish building the request model.
+    pub fn build(self) -> AccessTokenCreation {
+        self.value
+    }
+}
+///What the token allows, as AccessTokenScope describes.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum AccessTokenCreationScope {
+    #[default]
+    #[serde(rename = "api")]
+    Api,
+    #[serde(rename = "playback")]
+    Playback,
+}
+impl AccessTokenCreationScope {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Api => "api",
+            Self::Playback => "playback",
+        }
+    }
+}
+impl ::std::fmt::Display for AccessTokenCreationScope {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for AccessTokenCreationScope {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+///A credential a client sends as a bearer token.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AccessToken {
+    ///When the token was created, in UTC.
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    ///When the token expires, in UTC, or null if it never does.
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ///The access token's opaque, stable ID, which is not its secret.
+    pub id: String,
+    ///About when a request last carried the token, in UTC, to within an hour, or null if none has.
+    pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
+    ///Links from an access token.
+    pub links: AccessTokenLinks,
+    ///What the token is for, normalized as a profile's name is to 1 to 64 characters. Names need not be unique.
+    ///Constraint: minLength=1, maxLength=64
+    pub name: String,
+    pub scope: AccessTokenScope,
+}
+///What an access token allows. An api token allows every operation. A playback token allows only reading torrents' file content and posters, and may travel in a URL's token query parameter.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum AccessTokenScope {
+    #[default]
+    #[serde(rename = "api")]
+    Api,
+    #[serde(rename = "playback")]
+    Playback,
+}
+impl AccessTokenScope {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Api => "api",
+            Self::Playback => "playback",
+        }
+    }
+}
+impl ::std::fmt::Display for AccessTokenScope {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for AccessTokenScope {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+///Links from an access token.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AccessTokenLinks {
+    ///This access token.
+    #[serde(rename = "self")]
+    pub self_field: String,
+}
+///A signed playback token, which the server does not store.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PlaybackToken {
+    ///When the token expires, in UTC, to the second.
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+    ///The token to send as the token query parameter.
+    ///Constraint: pattern=`^tpp_[a-z2-7]+$`
+    pub token: String,
+    ///The torrent the token allows, or null for every torrent.
+    pub torrent_id: Option<String>,
+}
+///The scope and lifetime of a playback token to issue.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct PlaybackTokenRequest {
+    ///How long the token lasts, from a minute to 30 days.
+    ///Constraint: minimum=60, maximum=2592000
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_in_seconds: Option<i64>,
+    ///The torrent whose content and poster the token allows, or null for every torrent. An unknown torrent is validation-failed.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub torrent_id: Option<Option<String>>,
 }
 ///What a new preload covers, and for how long.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]

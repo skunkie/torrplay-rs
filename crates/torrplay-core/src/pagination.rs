@@ -23,7 +23,7 @@ use std::time::{Duration, SystemTime};
 use sha2::{Digest, Sha256};
 
 use crate::base32;
-use crate::id::{InfoHashV1, ProfileId, TorrentId, UpNextEntryId};
+use crate::id::{AccessTokenId, InfoHashV1, ProfileId, TorrentId, UpNextEntryId};
 use crate::library::Kind;
 use crate::lifecycle::ObservedState;
 use crate::registry::TorrentRecord;
@@ -491,6 +491,38 @@ impl ProfileSortKey {
 
 impl SortKey for ProfileSortKey {
     const KIND: u8 = 4;
+
+    fn encode(&self, out: &mut Vec<u8>) {
+        encode_time(self.created_at, out);
+        out.extend_from_slice(self.id.as_bytes());
+    }
+
+    fn decode(bytes: &[u8]) -> Option<Self> {
+        let (created_at, id) = decode_time(bytes)?;
+        Some(Self { created_at, id })
+    }
+}
+
+/// The sort key of the access tokens collection: oldest first by creation
+/// time, then by access token ID.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct AccessTokenSortKey {
+    created_at: SystemTime,
+    id: String,
+}
+
+impl AccessTokenSortKey {
+    /// Returns the key of an access token created at `created_at`.
+    pub fn of(id: &AccessTokenId, created_at: SystemTime) -> Self {
+        Self {
+            created_at,
+            id: id.as_str().to_owned(),
+        }
+    }
+}
+
+impl SortKey for AccessTokenSortKey {
+    const KIND: u8 = 6;
 
     fn encode(&self, out: &mut Vec<u8>) {
         encode_time(self.created_at, out);

@@ -4,14 +4,16 @@
 
 //! The `torrplay` executable: parses the command line, starts logging and
 //! the runtime, opens the store in the data directory, binds the API's
-//! loopback listener, and serves until a termination signal.
+//! listener, and serves until a termination signal. `torrplay password`
+//! changes a stopped application's password instead.
 
 use std::process::ExitCode;
 use std::time::Duration;
 
 use anyhow::Context;
 use tokio::net::TcpListener;
-use torrplay::{Command, Config, ShutdownTimings, USAGE};
+use torrplay::{Command, Config, PasswordChange, PasswordChanged, ShutdownTimings, USAGE};
+use torrplay_core::credentials::AllowedHosts;
 use torrplay_engine::LibrqbitEngine;
 use torrplay_store::Store;
 
@@ -21,6 +23,7 @@ const RUNTIME_SHUTDOWN: Duration = Duration::from_secs(1);
 fn main() -> ExitCode {
     let config = match torrplay::parse_args(std::env::args().skip(1)) {
         Ok(Command::Run(config)) => config,
+        Ok(Command::Password(change, config)) => return password(change, &config),
         Ok(Command::Help) => {
             print!("{USAGE}");
             return ExitCode::SUCCESS;
@@ -91,10 +94,54 @@ async fn run(config: &Config) -> anyhow::Result<()> {
         LibrqbitEngine::new(config.engine_config(folder.path(), &download_dir)),
         store,
         contents,
+        AllowedHosts::new(config.allowed_hosts.clone()),
         ShutdownTimings::default(),
         termination(),
     )
     .await
+}
+
+/// Runs `torrplay password`, reading a new password from standard input.
+fn password(change: PasswordChange, config: &Config) -> ExitCode {
+    let input = match change {
+        PasswordChange::Set => {
+            let mut line = String::new();
+            match std::io::stdin().read_line(&mut line) {
+                Ok(0) => None,
+                Ok(_) => Some(line.trim_end_matches(['\r', '\n']).to_owned()),
+                Err(error) => {
+                    eprintln!("torrplay: reading the password: {error}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+        PasswordChange::Remove => None,
+    };
+    let result = config.data_dir().and_then(|data_dir| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(torrplay::change_password(&data_dir, change, input))
+    });
+    match result {
+        Ok(changed) => {
+            eprintln!(
+                "torrplay: {}",
+                match changed {
+                    PasswordChanged::Set => "the password is set; authentication is on",
+                    PasswordChanged::Replaced => "the password is replaced",
+                    PasswordChanged::Removed =>
+                        "the password is removed and every token revoked; authentication is off",
+                    PasswordChanged::NoneSet => "no password is set; authentication is off",
+                }
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("torrplay: {error:#}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// Completes on the first termination signal: SIGTERM or SIGINT on Unix,

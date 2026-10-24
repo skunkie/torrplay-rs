@@ -13,6 +13,7 @@ use torrplay_api as api;
 use torrplay_core::engine::Engine;
 
 use crate::app::App;
+use crate::credentials::{access_tokens_path, password_path, playback_tokens_path};
 use crate::headers::negotiate;
 use crate::problem::Problem;
 use crate::representation::{BASE, JSON, json, torrents_path};
@@ -35,6 +36,9 @@ pub(crate) async fn entry_point(headers: HeaderMap) -> Result<Response, Problem>
                 profiles: format!("{BASE}/profiles"),
                 settings: format!("{BASE}/settings"),
                 torrents: torrents_path(),
+                password: password_path(),
+                access_tokens: access_tokens_path(),
+                playback_tokens: playback_tokens_path(),
             },
         },
     )

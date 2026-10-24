@@ -4,7 +4,7 @@
 
 //! Torrent IDs, file IDs, and v1 info hashes, as
 //! `docs/adr/0004-resource-identity.md` defines them, and the IDs of
-//! preloads, profiles, and up next entries.
+//! preloads, profiles, up next entries, and access tokens.
 //!
 //! Torrent and file IDs are opaque to clients. The server never validates
 //! the shape of a requested ID: lookups take any `&str`, and one that names
@@ -60,6 +60,12 @@ impl TorrentId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Returns the random bytes an issued ID encodes, or `None` for an ID
+    /// without the issued shape.
+    pub(crate) fn random_bytes(&self) -> Option<[u8; TORRENT_ID_RANDOM_BYTES]> {
+        random_bytes(&self.0, Self::PREFIX)
+    }
 }
 
 impl fmt::Display for TorrentId {
@@ -85,6 +91,20 @@ pub fn random_torrent_id_bytes() -> Result<[u8; TORRENT_ID_RANDOM_BYTES], Random
     let mut bytes = [0; TORRENT_ID_RANDOM_BYTES];
     getrandom::fill(&mut bytes).map_err(RandomnessError)?;
     Ok(bytes)
+}
+
+/// Fills `bytes` from the operating system's cryptographically secure random
+/// number generator.
+pub(crate) fn fill_random(bytes: &mut [u8]) -> Result<(), RandomnessError> {
+    getrandom::fill(bytes).map_err(RandomnessError)
+}
+
+/// Decodes the 128 bits an ID of `prefix` encodes, if it has the shape.
+fn random_bytes(text: &str, prefix: &str) -> Option<[u8; TORRENT_ID_RANDOM_BYTES]> {
+    if !has_shape(text, prefix) {
+        return None;
+    }
+    base32::decode(&text[prefix.len()..])?.try_into().ok()
 }
 
 /// Whether `text` is `prefix` and 26 lowercase base32 characters, the shape
@@ -132,6 +152,51 @@ impl fmt::Display for ProfileId {
 }
 
 impl Borrow<str> for ProfileId {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+/// The opaque, server-assigned identifier of an access token: `atk_`
+/// followed by 128 random bits in lowercase base32, drawn like a torrent
+/// ID's. It names the token and is not its secret.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct AccessTokenId(String);
+
+impl AccessTokenId {
+    /// The prefix of every access token ID the server issues.
+    pub const PREFIX: &str = "atk_";
+
+    /// Builds the ID that encodes `random`. Production IDs take these bytes
+    /// from [`random_torrent_id_bytes`].
+    pub fn from_random_bytes(random: [u8; TORRENT_ID_RANDOM_BYTES]) -> Self {
+        Self(format!("{}{}", Self::PREFIX, base32::encode(&random)))
+    }
+
+    /// Reads an ID the server issued and stored: `None` unless it has the
+    /// shape [`from_random_bytes`](Self::from_random_bytes) produces.
+    pub fn from_stored(text: &str) -> Option<Self> {
+        has_shape(text, Self::PREFIX).then(|| Self(text.to_owned()))
+    }
+
+    /// Returns the ID's text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Returns the random bytes the ID encodes.
+    pub(crate) fn random_bytes(&self) -> Option<[u8; TORRENT_ID_RANDOM_BYTES]> {
+        random_bytes(&self.0, Self::PREFIX)
+    }
+}
+
+impl fmt::Display for AccessTokenId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl Borrow<str> for AccessTokenId {
     fn borrow(&self) -> &str {
         &self.0
     }

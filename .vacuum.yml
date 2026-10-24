@@ -6,8 +6,9 @@
 # finding through a minimum score of 100.
 
 # The OWASP rules are off but for the ones enabled below, since most ask for
-# what a loopback-only prototype does not have yet, such as authentication
-# and rate limits.
+# what the prototype does not have, such as HTTPS servers and rate limits on
+# every operation, or for 401 and 403 on each operation, which the API
+# conventions assign to every operation instead.
 extends: [['vacuum:oas', recommended], ['vacuum:owasp', off]]
 
 rules:

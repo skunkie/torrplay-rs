@@ -10,19 +10,25 @@ info:
     The native REST API of the TorrPlay Rust prototype. It manages torrents,
     lists their files, and streams file content with byte ranges.
     docs/api-conventions.md defines the naming, linking, pagination, and error
-    conventions every operation follows, including the 405 and 406 responses
-    any operation may return.
+    conventions every operation follows, including the 401, 403, 405, 406,
+    and 421 responses any operation may return. Authentication is off until
+    a password is set; then every operation needs an access token unless
+    its security requirements include the empty one, and docs/lifecycle.md
+    describes access tokens, playback tokens, and the allowed hosts.
   version: 0.1.0
   license:
     name: MIT
     identifier: MIT
 servers:
   - url: http://127.0.0.1:{port}
-    description: The prototype, which listens on loopback only.
+    description: The application on its default loopback address.
     variables:
       port:
         default: '8080'
         description: The configured listen port.
+security:
+  - {}
+  - accessToken: []
 tags:
   - name: Service
     description: The entry point and the OpenAPI document.
@@ -40,6 +46,8 @@ tags:
     description: Parts of files fetched before playback starts.
   - name: Settings
     description: The application's settings, which tune streaming and shutdown.
+  - name: Authentication
+    description: The password, access tokens, and playback tokens.
   - name: Statistics
     description: Measurements of torrents and of the piece cache.
   - name: Health
@@ -54,6 +62,8 @@ paths:
         Returns links to the top-level resources and to the OpenAPI document.
         A request for /api/v1/ is redirected here with 308 Permanent Redirect.
       tags: [Service]
+      security:
+        - {}
       responses:
         '200':
           description: The entry point's links.
@@ -71,6 +81,9 @@ paths:
                       profiles: /api/v1/profiles
                       cache_statistics: /api/v1/cache/statistics
                       settings: /api/v1/settings
+                      password: /api/v1/password
+                      access_tokens: /api/v1/access-tokens
+                      playback_tokens: /api/v1/playback-tokens
                       service-desc: /api/v1/openapi.yaml
         '500':
           $ref: '#/components/responses/InternalError'
@@ -81,6 +94,8 @@ paths:
       summary: Read the OpenAPI document
       description: Returns this OpenAPI document.
       tags: [Service]
+      security:
+        - {}
       responses:
         '200':
           description: The OpenAPI document as YAML.
@@ -545,6 +560,10 @@ paths:
         is ignored. The poster is read from the database, so it needs no
         engine and works before metadata is available.
       tags: [Posters]
+      security:
+        - {}
+        - accessToken: []
+        - playbackToken: []
       parameters:
         - $ref: '#/components/parameters/IfNoneMatch'
       responses:
@@ -595,6 +614,10 @@ paths:
       summary: Read a torrent's poster headers
       description: Returns the headers and status a GET would return, without a body.
       tags: [Posters]
+      security:
+        - {}
+        - accessToken: []
+        - playbackToken: []
       parameters:
         - $ref: '#/components/parameters/IfNoneMatch'
       responses:
@@ -801,6 +824,10 @@ paths:
         request is a lifecycle-conflict while metadata is unavailable or the
         torrent is paused or failed.
       tags: [Files]
+      security:
+        - {}
+        - accessToken: []
+        - playbackToken: []
       parameters:
         - $ref: '#/components/parameters/Range'
         - $ref: '#/components/parameters/IfRange'
@@ -899,6 +926,10 @@ paths:
         Returns the headers and status a GET would return, without a body. It
         never creates readers or prefetches piece data.
       tags: [Files]
+      security:
+        - {}
+        - accessToken: []
+        - playbackToken: []
       parameters:
         - $ref: '#/components/parameters/Range'
         - $ref: '#/components/parameters/IfRange'
@@ -2124,12 +2155,387 @@ paths:
         '503':
           $ref: '#/components/responses/EngineUnavailable'
 
+  /api/v1/password:
+    get:
+      operationId: getPassword
+      summary: Read whether a password is set
+      description: >-
+        Returns when the password was last set. While no password is set,
+        authentication is off and this is not-found, so a client can tell an
+        open server from one that needs an access token, which answers 401.
+      tags: [Authentication]
+      responses:
+        '200':
+          description: A password is set.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Password'
+              examples:
+                set:
+                  summary: A password set at noon
+                  value:
+                    updated_at: '2026-10-24T12:00:00Z'
+                    links:
+                      self: /api/v1/password
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      operationId: setPassword
+      summary: Set or change the password
+      description: >-
+        Sets the password, which turns authentication on, or changes it.
+        While no password is set anyone who can reach the server may set
+        one, as anyone may change everything else. Changing it needs an
+        access token, as every request then does, and the current password.
+        Access tokens keep working across a change unless the request
+        revokes them. The password is stored only as an Argon2id hash before
+        this returns, and no operation returns it.
+      tags: [Authentication]
+      requestBody:
+        description: >-
+          The new password, in a JSON body of at most 16384 bytes. Larger
+          bodies are content-too-large, and a body that does not arrive within
+          30 seconds is request-timeout.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordChange'
+            examples:
+              first:
+                summary: The first password
+                value:
+                  password: correct horse battery staple
+              change:
+                summary: A new password that revokes every access token
+                value:
+                  password: a new and longer passphrase
+                  current_password: correct horse battery staple
+                  revoke_access_tokens: true
+      responses:
+        '200':
+          description: The password was changed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Password'
+              examples:
+                changed:
+                  summary: A changed password
+                  value:
+                    updated_at: '2026-10-24T13:00:00Z'
+                    links:
+                      self: /api/v1/password
+        '201':
+          description: The password was set, and authentication is on.
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Password'
+              examples:
+                set:
+                  summary: The first password
+                  value:
+                    updated_at: '2026-10-24T12:00:00Z'
+                    links:
+                      self: /api/v1/password
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '403':
+          $ref: '#/components/responses/InvalidCredentials'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyAttempts'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+    delete:
+      operationId: deletePassword
+      summary: Remove the password
+      description: >-
+        Removes the password, which turns authentication off, and revokes
+        every access token and every playback token, so none of them works
+        if a password is set again.
+      tags: [Authentication]
+      responses:
+        '204':
+          description: The password was removed.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
+  /api/v1/access-tokens:
+    get:
+      operationId: listAccessTokens
+      summary: List access tokens
+      description: >-
+        Returns a page of the access tokens that have not expired, oldest
+        first by creation time, with the access token ID as the
+        tie-breaker. Their secrets are never listed.
+      tags: [Authentication]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: The requested page of access tokens.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessTokenPage'
+              examples:
+                laptop:
+                  summary: One access token
+                  value:
+                    items:
+                      - id: atk_5mzb6hnd4rjpt5yc4ula3kq7xw
+                        name: Laptop
+                        scope: api
+                        created_at: '2026-10-24T12:00:00Z'
+                        expires_at: null
+                        last_used_at: '2026-10-24T12:30:00Z'
+                        links:
+                          self: /api/v1/access-tokens/atk_5mzb6hnd4rjpt5yc4ula3kq7xw
+                    links:
+                      self: /api/v1/access-tokens
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      operationId: createAccessToken
+      summary: Sign in with the password
+      description: >-
+        Creates an access token for a client, the password as the credential,
+        so the request itself needs none. The response is the only one that
+        holds the token's secret, which the store keeps only as a digest.
+        While no password is set requests need no token, and this is
+        lifecycle-conflict. A wrong password is invalid-credentials; after
+        repeated failures, any attempt waits for the time too-many-attempts
+        gives.
+      tags: [Authentication]
+      security:
+        - {}
+      requestBody:
+        description: >-
+          The password and the token's name, scope, and lifetime, in a JSON
+          body of at most 16384 bytes. Larger bodies are content-too-large,
+          and a body that does not arrive within 30 seconds is
+          request-timeout.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccessTokenCreation'
+            examples:
+              laptop:
+                summary: A token for a laptop's browser
+                value:
+                  password: correct horse battery staple
+                  name: Laptop
+              television:
+                summary: A playback token for a television, valid for a year
+                value:
+                  password: correct horse battery staple
+                  name: Living room TV
+                  scope: playback
+                  expires_in_seconds: 31536000
+      responses:
+        '201':
+          description: The access token was created.
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatedAccessToken'
+              examples:
+                laptop:
+                  summary: A new access token with its secret
+                  value:
+                    id: atk_5mzb6hnd4rjpt5yc4ula3kq7xw
+                    name: Laptop
+                    scope: api
+                    created_at: '2026-10-24T12:00:00Z'
+                    expires_at: null
+                    last_used_at: null
+                    secret: tpa_q7xw2mzb6hnd4rjpt5yc4ula3kq7xw2mzb6hnd4rjpt5yc4ulaxw
+                    links:
+                      self: /api/v1/access-tokens/atk_5mzb6hnd4rjpt5yc4ula3kq7xw
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '403':
+          $ref: '#/components/responses/InvalidCredentials'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
+        '409':
+          $ref: '#/components/responses/AccessTokenConflict'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyAttempts'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
+  /api/v1/access-tokens/{access_token_id}:
+    parameters:
+      - $ref: '#/components/parameters/AccessTokenId'
+    get:
+      operationId: getAccessToken
+      summary: Read an access token
+      description: >-
+        Returns the access token without its secret. An expired token is
+        not-found.
+      tags: [Authentication]
+      responses:
+        '200':
+          description: The access token.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessToken'
+              examples:
+                television:
+                  summary: A playback token for a television
+                  value:
+                    id: atk_hnd4rjpt5yc4ula3kq7xw2mzb6
+                    name: Living room TV
+                    scope: playback
+                    created_at: '2026-10-24T12:00:00Z'
+                    expires_at: '2027-10-24T12:00:00Z'
+                    last_used_at: null
+                    links:
+                      self: /api/v1/access-tokens/atk_hnd4rjpt5yc4ula3kq7xw2mzb6
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      operationId: deleteAccessToken
+      summary: Revoke an access token
+      description: >-
+        Revokes the access token durably, with every playback token it
+        issued. A client may revoke the token it sends, which signs it out.
+      tags: [Authentication]
+      responses:
+        '204':
+          description: The access token was revoked.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
+  /api/v1/playback-tokens:
+    post:
+      operationId: createPlaybackToken
+      summary: Issue a playback token
+      description: >-
+        Issues a signed playback token for URLs that cannot carry an
+        Authorization header, such as a media element's source or a link a
+        player opens. Nothing is stored: the token holds its scope and expiry
+        and is valid until it expires, until the access token that issued it
+        is revoked, or until the password is removed. Only an access token of
+        the api scope may issue one. While no password is set content URLs
+        need no token, and this is lifecycle-conflict.
+      tags: [Authentication]
+      requestBody:
+        description: >-
+          The token's torrent and lifetime, in a JSON body of at most 16384
+          bytes. Larger bodies are content-too-large, and a body that does not
+          arrive within 30 seconds is request-timeout.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaybackTokenRequest'
+            examples:
+              torrent:
+                summary: A day's playback of one torrent
+                value:
+                  torrent_id: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+              library:
+                summary: A week's playback of every torrent
+                value:
+                  expires_in_seconds: 604800
+      responses:
+        '200':
+          description: The playback token.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaybackToken'
+              examples:
+                torrent:
+                  summary: A day's playback of one torrent
+                  value:
+                    token: tpp_aeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcai
+                    torrent_id: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+                    expires_at: '2026-10-25T12:00:00Z'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
+        '409':
+          $ref: '#/components/responses/LifecycleConflict'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
   /livez:
     get:
       operationId: getLiveness
       summary: Check liveness
       description: Reports whether the process is running and serving requests.
       tags: [Health]
+      security:
+        - {}
       responses:
         '200':
           $ref: '#/components/responses/Healthy'
@@ -2145,6 +2551,8 @@ paths:
         unavailable while the engine is starting, while stored torrents are
         restored after a start, and while the application shuts down.
       tags: [Health]
+      security:
+        - {}
       responses:
         '200':
           $ref: '#/components/responses/Healthy'
@@ -2152,6 +2560,21 @@ paths:
           $ref: '#/components/responses/Unhealthy'
 
 components:
+  securitySchemes:
+    accessToken:
+      type: http
+      scheme: bearer
+      description: >-
+        An access token's secret, from createAccessToken, as an RFC 6750
+        bearer token. Requests need one only while a password is set.
+    playbackToken:
+      type: apiKey
+      in: query
+      name: token
+      description: >-
+        A playback token from createPlaybackToken, or the secret of an access
+        token of the playback scope, for URLs that cannot carry an
+        Authorization header. Logs never record it.
   parameters:
     TorrentId:
       name: torrent_id
@@ -2177,6 +2600,14 @@ components:
       schema:
         type: string
       example: upn_5hdq2m7kzb6hxw3rjpt4yc2ula
+    AccessTokenId:
+      name: access_token_id
+      in: path
+      required: true
+      description: The access token's ID.
+      schema:
+        type: string
+      example: atk_5mzb6hnd4rjpt5yc4ula3kq7xw
     ProfileIfMatch:
       name: If-Match
       in: header
@@ -2422,6 +2853,13 @@ components:
         type: string
         const: no-cache
       example: no-cache
+    NoStore:
+      description: Forbids caches from storing a response that holds a secret.
+      required: true
+      schema:
+        type: string
+        const: no-store
+      example: no-store
     AcceptRanges:
       description: Advertises byte-range support.
       required: true
@@ -2883,6 +3321,68 @@ components:
                 detail: >-
                   The torrent's files need 1073740800 bytes, and the download
                   directory has 52428800 free.
+    InvalidCredentials:
+      description: The password does not match.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            wrong:
+              summary: A wrong password
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/invalid-credentials
+                title: Invalid credentials
+                status: 403
+                detail: The password does not match.
+    TooManyAttempts:
+      description: >-
+        Recent attempts gave wrong passwords, so the password is not checked
+        until Retry-After seconds have passed.
+      headers:
+        Retry-After:
+          description: The number of seconds before the next attempt is checked.
+          required: true
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+          example: 4
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            backoff:
+              summary: An attempt during the backoff
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/too-many-attempts
+                title: Too many attempts
+                status: 429
+                detail: Too many wrong passwords; try again later.
+    AccessTokenConflict:
+      description: >-
+        No password is set, so requests need no token, or the application
+        has the most access tokens it allows.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            no_password:
+              summary: Signing in while authentication is off
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/lifecycle-conflict
+                title: Lifecycle conflict
+                status: 409
+                detail: No password is set, so requests need no token.
+            too_many:
+              summary: A 65th access token
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/too-many-access-tokens
+                title: Too many access tokens
+                status: 409
+                detail: The application keeps at most 64 access tokens; revoke one first.
     PreconditionRequired:
       description: The PATCH request omits If-Match.
       content:
@@ -2947,7 +3447,7 @@ components:
         links:
           type: object
           description: Links to the top-level resources and the OpenAPI document.
-          required: [self, torrents, profiles, cache_statistics, settings, service-desc]
+          required: [self, torrents, profiles, cache_statistics, settings, password, access_tokens, playback_tokens, service-desc]
           properties:
             self:
               type: string
@@ -2974,6 +3474,21 @@ components:
               format: uri-reference
               description: The application's settings.
               examples: [/api/v1/settings]
+            password:
+              type: string
+              format: uri-reference
+              description: The password, not-found while authentication is off.
+              examples: [/api/v1/password]
+            access_tokens:
+              type: string
+              format: uri-reference
+              description: The access tokens collection, where clients sign in.
+              examples: [/api/v1/access-tokens]
+            playback_tokens:
+              type: string
+              format: uri-reference
+              description: Where clients get playback tokens.
+              examples: [/api/v1/playback-tokens]
             service-desc:
               type: string
               format: uri-reference
@@ -4537,6 +5052,245 @@ components:
                 The profile that has the name, present only in a
                 duplicate-profile problem.
               examples: [/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula]
+
+    Password:
+      type: object
+      description: The password, which is never returned, as when it was set.
+      required: [updated_at, links]
+      properties:
+        updated_at:
+          type: string
+          format: date-time
+          description: When the password was last set, in UTC.
+          examples: ['2026-10-24T12:00:00Z']
+        links:
+          type: object
+          description: Links from the password.
+          required: [self]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: The password.
+              examples: [/api/v1/password]
+
+    PasswordText:
+      type: string
+      description: >-
+        A password of 8 to 256 characters, compared after Unicode NFC
+        normalization, so composed and decomposed accents match.
+      minLength: 8
+      maxLength: 256
+      format: password
+      writeOnly: true
+      examples: [correct horse battery staple]
+
+    PasswordChange:
+      type: object
+      description: >-
+        A new password. Changing a password that is set needs the current
+        one.
+      additionalProperties: false
+      required: [password]
+      properties:
+        password:
+          $ref: '#/components/schemas/PasswordText'
+        current_password:
+          description: >-
+            The current password, required while a password is set and
+            rejected while none is.
+          type: string
+          maxLength: 256
+          format: password
+          writeOnly: true
+          examples: [correct horse battery staple]
+        revoke_access_tokens:
+          type: boolean
+          description: >-
+            Whether the change revokes every access token, with the playback
+            tokens they issued, so every client signs in again.
+          default: false
+          examples: [true]
+
+    AccessTokenScope:
+      type: string
+      description: >-
+        What an access token allows. An api token allows every operation. A
+        playback token allows only reading torrents' file content and
+        posters, and may travel in a URL's token query parameter.
+      enum: [api, playback]
+      examples: [api]
+
+    AccessToken:
+      type: object
+      description: A credential a client sends as a bearer token.
+      required: [id, name, scope, created_at, expires_at, last_used_at, links]
+      properties:
+        id:
+          type: string
+          readOnly: true
+          description: The access token's opaque, stable ID, which is not its secret.
+          examples: [atk_5mzb6hnd4rjpt5yc4ula3kq7xw]
+        name:
+          type: string
+          description: >-
+            What the token is for, normalized as a profile's name is to 1 to
+            64 characters. Names need not be unique.
+          minLength: 1
+          maxLength: 64
+          examples: [Laptop]
+        scope:
+          $ref: '#/components/schemas/AccessTokenScope'
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+          description: When the token was created, in UTC.
+          examples: ['2026-10-24T12:00:00Z']
+        expires_at:
+          type: [string, 'null']
+          format: date-time
+          readOnly: true
+          description: When the token expires, in UTC, or null if it never does.
+          examples: ['2027-10-24T12:00:00Z']
+        last_used_at:
+          type: [string, 'null']
+          format: date-time
+          readOnly: true
+          description: >-
+            About when a request last carried the token, in UTC, to within
+            an hour, or null if none has.
+          examples: ['2026-10-24T12:30:00Z']
+        links:
+          type: object
+          readOnly: true
+          description: Links from an access token.
+          required: [self]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: This access token.
+              examples: [/api/v1/access-tokens/atk_5mzb6hnd4rjpt5yc4ula3kq7xw]
+
+    CreatedAccessToken:
+      description: A new access token with its secret, which no other response holds.
+      allOf:
+        - $ref: '#/components/schemas/AccessToken'
+        - type: object
+          required: [secret]
+          properties:
+            secret:
+              type: string
+              description: >-
+                The token to send, as Authorization: Bearer or, for a
+                playback token, as the token query parameter.
+              pattern: '^tpa_[a-z2-7]{52}$'
+              examples: [tpa_q7xw2mzb6hnd4rjpt5yc4ula3kq7xw2mzb6hnd4rjpt5yc4ulaxw]
+
+    AccessTokenCreation:
+      type: object
+      description: The input that signs in and creates an access token.
+      additionalProperties: false
+      required: [password, name]
+      properties:
+        password:
+          description: The password to sign in with.
+          type: string
+          maxLength: 256
+          format: password
+          writeOnly: true
+          examples: [correct horse battery staple]
+        name:
+          type: string
+          description: What the token is for, as AccessToken's name.
+          minLength: 1
+          maxLength: 64
+          examples: [Laptop]
+        scope:
+          type: string
+          description: What the token allows, as AccessTokenScope describes.
+          enum: [api, playback]
+          default: api
+          examples: [playback]
+        expires_in_seconds:
+          type: [integer, 'null']
+          format: int64
+          description: >-
+            How long the token lasts, from one hour to a year, or null for a
+            token that lasts until it is revoked.
+          minimum: 3600
+          maximum: 31536000
+          default: null
+          examples: [31536000]
+
+    AccessTokenPage:
+      type: object
+      description: A page of access tokens.
+      required: [items, links]
+      properties:
+        items:
+          type: array
+          description: The access tokens on this page.
+          items:
+            $ref: '#/components/schemas/AccessToken'
+          examples: [[]]
+        links:
+          type: object
+          description: Links from a page of access tokens.
+          required: [self]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: This page of access tokens.
+              examples: [/api/v1/access-tokens]
+            next:
+              type: string
+              format: uri-reference
+              description: The next page of access tokens, omitted on the last page.
+              examples: ['/api/v1/access-tokens?cursor=aebagbaf']
+
+    PlaybackTokenRequest:
+      type: object
+      description: The scope and lifetime of a playback token to issue.
+      additionalProperties: false
+      properties:
+        torrent_id:
+          type: [string, 'null']
+          description: >-
+            The torrent whose content and poster the token allows, or null
+            for every torrent. An unknown torrent is validation-failed.
+          default: null
+          examples: [trr_7ndq4m2kzb6hxw3rjpt5yc4ula]
+        expires_in_seconds:
+          type: integer
+          format: int64
+          description: How long the token lasts, from a minute to 30 days.
+          minimum: 60
+          maximum: 2592000
+          default: 86400
+          examples: [604800]
+
+    PlaybackToken:
+      type: object
+      description: A signed playback token, which the server does not store.
+      required: [token, torrent_id, expires_at]
+      properties:
+        token:
+          type: string
+          description: The token to send as the token query parameter.
+          pattern: '^tpp_[a-z2-7]+$'
+          examples: [tpp_aeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcai]
+        torrent_id:
+          type: [string, 'null']
+          description: The torrent the token allows, or null for every torrent.
+          examples: [trr_7ndq4m2kzb6hxw3rjpt5yc4ula]
+        expires_at:
+          type: string
+          format: date-time
+          description: When the token expires, in UTC, to the second.
+          examples: ['2026-10-25T12:00:00Z']
 
     DuplicateTorrentProblem:
       description: A duplicate-torrent problem that links to the existing torrent.

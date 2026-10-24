@@ -10,7 +10,8 @@
 //! changes its records only after the store committed. The database is read
 //! once, at startup, by [`Store::open`], which returns the stored torrents,
 //! except for poster and avatar images, which [`Store::poster`] and
-//! [`Store::avatar`] read when they are served.
+//! [`Store::avatar`] read when they are served. Access tokens are stored by
+//! their secrets' digests, never the secrets.
 //!
 //! One worker thread owns the database connection. The async methods send it
 //! commands over a bounded channel and await its reply, so async tasks never
@@ -29,12 +30,14 @@ use std::thread::JoinHandle;
 use std::time::SystemTime;
 
 use tokio::sync::{mpsc, oneshot};
-use torrplay_core::id::{FileId, InfoHashV1, ProfileId, TorrentId, UpNextEntryId};
+use torrplay_core::credentials::{AccessToken, PasswordHash, SigningKey};
+use torrplay_core::id::{AccessTokenId, FileId, InfoHashV1, ProfileId, TorrentId, UpNextEntryId};
 use torrplay_core::image::ImageInfo;
 use torrplay_core::lifecycle::{Configuration, StorageMode};
 use torrplay_core::profiles::{Profile, Progress};
 pub use torrplay_core::settings::Stored as StoredSettings;
 
+mod credentials;
 mod images;
 mod profiles;
 mod schema;
@@ -97,6 +100,18 @@ pub struct StoredDismissal {
     pub at: SystemTime,
 }
 
+/// The stored credentials.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredCredentials {
+    /// The password's hash and when it was set, while authentication is on.
+    pub password: Option<(PasswordHash, SystemTime)>,
+    /// The key that signs playback tokens, drawn when the store first opens.
+    pub key: SigningKey,
+    /// The access tokens that had not expired when the store was opened, in
+    /// no order.
+    pub tokens: Vec<AccessToken>,
+}
+
 /// What the store held when it was opened.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Contents {
@@ -111,6 +126,8 @@ pub struct Contents {
     pub progress: Vec<StoredProgress>,
     /// Every profile's stored dismissals.
     pub dismissals: Vec<StoredDismissal>,
+    /// The password, the signing key, and the access tokens.
+    pub credentials: StoredCredentials,
     /// Whether the last run recorded a clean shutdown. After a crash or a
     /// power loss, disk torrents' resume bitfields may be newer than their
     /// data.
@@ -188,6 +205,11 @@ enum Command {
     SetProgress(StoredProgress, Reply<()>),
     DeleteProgress(ProfileId, TorrentId, FileId, Reply<()>),
     SetDismissal(StoredDismissal, Reply<()>),
+    SetPassword(PasswordHash, SystemTime, bool, Reply<()>),
+    RemovePassword(SigningKey, Reply<()>),
+    InsertAccessToken(AccessToken, Vec<AccessTokenId>, Reply<()>),
+    DeleteAccessToken(AccessTokenId, Reply<()>),
+    TouchAccessToken(AccessTokenId, SystemTime, Reply<()>),
     Delete(TorrentId, Reply<()>),
 }
 
@@ -217,6 +239,7 @@ impl Store {
         let profiles = profiles::profiles(&connection)?;
         let progress = profiles::progress(&connection)?;
         let dismissals = profiles::dismissals(&connection)?;
+        let credentials = credentials::credentials(&mut connection, SystemTime::now())?;
         let clean_shutdown = schema::begin_run(&mut connection)?;
         let (sender, receiver) = mpsc::channel(QUEUE);
         #[cfg(feature = "test-support")]
@@ -248,6 +271,7 @@ impl Store {
                 profiles,
                 progress,
                 dismissals,
+                credentials,
                 clean_shutdown,
             },
         ))
@@ -406,6 +430,57 @@ impl Store {
     pub async fn set_dismissal(&self, dismissal: &StoredDismissal) -> Result<(), StoreError> {
         let dismissal = dismissal.clone();
         self.send(|reply| Command::SetDismissal(dismissal, reply))
+            .await
+    }
+
+    /// Stores the password's hash, set at `at`, deleting every access token
+    /// if `revoke`.
+    pub async fn set_password(
+        &self,
+        hash: &PasswordHash,
+        at: SystemTime,
+        revoke: bool,
+    ) -> Result<(), StoreError> {
+        let hash = hash.clone();
+        self.send(|reply| Command::SetPassword(hash, at, revoke, reply))
+            .await
+    }
+
+    /// Removes the password, deletes every access token, and stores `key`
+    /// as the new signing key.
+    pub async fn remove_password(&self, key: &SigningKey) -> Result<(), StoreError> {
+        let key = key.clone();
+        self.send(|reply| Command::RemovePassword(key, reply)).await
+    }
+
+    /// Stores a new access token, deleting the `expired` ones in the same
+    /// transaction.
+    pub async fn insert_access_token(
+        &self,
+        token: &AccessToken,
+        expired: &[AccessTokenId],
+    ) -> Result<(), StoreError> {
+        let (token, expired) = (token.clone(), expired.to_vec());
+        self.send(|reply| Command::InsertAccessToken(token, expired, reply))
+            .await
+    }
+
+    /// Deletes an access token, if it is stored.
+    pub async fn delete_access_token(&self, id: &AccessTokenId) -> Result<(), StoreError> {
+        let id = id.clone();
+        self.send(|reply| Command::DeleteAccessToken(id, reply))
+            .await
+    }
+
+    /// Records when a request last carried an access token, if it is still
+    /// stored.
+    pub async fn touch_access_token(
+        &self,
+        id: &AccessTokenId,
+        at: SystemTime,
+    ) -> Result<(), StoreError> {
+        let id = id.clone();
+        self.send(|reply| Command::TouchAccessToken(id, at, reply))
             .await
     }
 

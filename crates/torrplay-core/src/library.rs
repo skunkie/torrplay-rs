@@ -112,7 +112,7 @@ pub enum ListError {
     },
 }
 
-fn nfc(text: &str) -> Cow<'_, str> {
+pub(crate) fn nfc(text: &str) -> Cow<'_, str> {
     ComposingNormalizerBorrowed::new_nfc().normalize(text)
 }
 
