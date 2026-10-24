@@ -89,10 +89,14 @@ pub struct TorrentStatisticsLinks {
 ///A page of torrents.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TorrentPage {
+    pub facets: TorrentFacets,
     ///The torrents on this page.
     pub items: Vec<Torrent>,
     ///Links from a page of torrents.
     pub links: TorrentPageLinks,
+    ///The number of torrents that match every filter and the search, across all pages.
+    ///Constraint: minimum=0
+    pub total: i64,
 }
 ///Links from a page of torrents.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -188,6 +192,31 @@ pub struct TorrentFileLinks {
     pub self_field: String,
     ///The torrent the file belongs to.
     pub torrent: String,
+}
+///A summary of the torrents that match the request's observed_state, kind, and info_hash filters, before its search and its category, uncategorized, and genre filters, so a client's menus list every choice while one is selected.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TorrentFacets {
+    ///The categories of those torrents with how many have each, ordered by name in Unicode code point order. A torrent counts once in each of its categories, so the counts need not add up to total.
+    pub categories: Vec<LabelCount>,
+    ///The genres of those torrents, counted and ordered as categories are.
+    pub genres: Vec<LabelCount>,
+    ///The number of those torrents.
+    ///Constraint: minimum=0
+    pub total: i64,
+    ///The number of those torrents without categories.
+    ///Constraint: minimum=0
+    pub uncategorized: i64,
+    ///An opaque version of those torrents that changes whenever one of them is added, removed, or changes its representation, observed state and poster included. A client holding the full listing can compare it with the version of a filtered or searched response to tell whether its listing is still current.
+    pub version: String,
+}
+///A category or genre with the number of torrents that have it.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LabelCount {
+    ///The number of torrents that have it.
+    ///Constraint: minimum=1
+    pub count: i64,
+    ///The category or genre.
+    pub name: String,
 }
 ///The input that creates a torrent from a magnet URI.
 #[derive(Debug, Clone, Deserialize, Serialize)]

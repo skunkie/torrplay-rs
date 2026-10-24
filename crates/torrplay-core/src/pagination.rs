@@ -27,6 +27,7 @@ use crate::id::{InfoHashV1, TorrentId};
 use crate::library::Kind;
 use crate::lifecycle::ObservedState;
 use crate::registry::TorrentRecord;
+use crate::search::Rank;
 
 /// The query parameter that sets the page length.
 pub const PAGE_SIZE_PARAMETER: &str = "page_size";
@@ -351,6 +352,21 @@ impl TorrentFilter {
 
     /// Returns whether a torrent matches.
     pub fn matches(&self, torrent: Matched<'_>) -> bool {
+        self.matches_facet_base(torrent) && self.matches_menus(torrent)
+    }
+
+    /// Returns whether a torrent matches the filters facets keep: observed
+    /// state, kind, and info hash.
+    pub fn matches_facet_base(&self, torrent: Matched<'_>) -> bool {
+        (self.observed_states.is_empty() || self.observed_states.contains(&torrent.observed_state))
+            && (self.kinds.is_empty()
+                || torrent.kind.is_some_and(|kind| self.kinds.contains(&kind)))
+            && (self.info_hashes.is_empty() || self.info_hashes.contains(&torrent.record.info_hash))
+    }
+
+    /// Returns whether a torrent matches the filters facets ignore, which a
+    /// client's menus set: categories, uncategorized, and genres.
+    fn matches_menus(&self, torrent: Matched<'_>) -> bool {
         let library = torrent.record.configuration.library();
         let any = |values: &BTreeSet<String>, of: &[String]| {
             values.is_empty() || of.iter().any(|value| values.contains(value))
@@ -361,16 +377,12 @@ impl TorrentFilter {
                 .categories
                 .iter()
                 .any(|category| self.categories.contains(category));
-        (self.observed_states.is_empty() || self.observed_states.contains(&torrent.observed_state))
-            && categories
-            && any(&self.genres, &library.genres)
-            && (self.kinds.is_empty()
-                || torrent.kind.is_some_and(|kind| self.kinds.contains(&kind)))
-            && (self.info_hashes.is_empty() || self.info_hashes.contains(&torrent.record.info_hash))
+        categories && any(&self.genres, &library.genres)
     }
 
-    /// Returns the fingerprint cursors carry.
-    pub fn fingerprint(&self) -> FilterFingerprint {
+    /// Returns the fingerprint cursors carry, with the search's text and
+    /// typo tolerance, if there is a search.
+    pub fn fingerprint(&self, search: Option<(&str, bool)>) -> FilterFingerprint {
         let info_hashes: Vec<String> = self.info_hashes.iter().map(ToString::to_string).collect();
         FilterFingerprint::of(
             self.observed_states
@@ -384,8 +396,55 @@ impl TorrentFilter {
                 .chain(self.uncategorized.then_some(("uncategorized", "true")))
                 .chain(self.genres.iter().map(|genre| ("genre", genre.as_str())))
                 .chain(self.kinds.iter().map(|kind| ("kind", kind.as_str())))
-                .chain(info_hashes.iter().map(|hash| ("info_hash", hash.as_str()))),
+                .chain(info_hashes.iter().map(|hash| ("info_hash", hash.as_str())))
+                .chain(search.map(|(text, _)| ("search", text)))
+                .chain(
+                    search
+                        .filter(|&(_, typos)| typos)
+                        .map(|_| ("fuzzy", "true")),
+                ),
         )
+    }
+}
+
+/// The sort key of a search of the torrents collection: best matches first,
+/// then as [`TorrentSortKey`]. A torrent whose title changes between pages
+/// may repeat or be skipped, since its rank moves with it.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SearchSortKey {
+    rank: Rank,
+    torrent: TorrentSortKey,
+}
+
+impl SearchSortKey {
+    /// Returns the key of a torrent that matched with `rank`.
+    pub fn of(rank: Rank, record: &TorrentRecord) -> Self {
+        Self {
+            rank,
+            torrent: TorrentSortKey::of(record),
+        }
+    }
+}
+
+impl SortKey for SearchSortKey {
+    const KIND: u8 = 3;
+
+    fn encode(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.rank.typo_words.to_be_bytes());
+        out.extend_from_slice(&self.rank.quality.to_be_bytes());
+        self.torrent.encode(out);
+    }
+
+    fn decode(bytes: &[u8]) -> Option<Self> {
+        let (typo_words, rest) = bytes.split_first_chunk::<4>()?;
+        let (quality, torrent) = rest.split_first_chunk::<4>()?;
+        Some(Self {
+            rank: Rank {
+                typo_words: u32::from_be_bytes(*typo_words),
+                quality: u32::from_be_bytes(*quality),
+            },
+            torrent: TorrentSortKey::decode(torrent)?,
+        })
     }
 }
 
@@ -530,21 +589,24 @@ mod tests {
             ObservedState::Downloading,
             ObservedState::Paused,
         ]);
-        assert_eq!(both.fingerprint(), reordered.fingerprint());
-        assert_ne!(paused.fingerprint(), both.fingerprint());
-        assert_ne!(TorrentFilter::default().fingerprint(), paused.fingerprint());
+        assert_eq!(both.fingerprint(None), reordered.fingerprint(None));
+        assert_ne!(paused.fingerprint(None), both.fingerprint(None));
+        assert_ne!(
+            TorrentFilter::default().fingerprint(None),
+            paused.fingerprint(None)
+        );
 
         let records = registered(&Registry::new(), 3, u64::from);
         let first = paginate(
             records,
             TorrentSortKey::of,
-            &request(1, None, both.fingerprint()).unwrap(),
+            &request(1, None, both.fingerprint(None)).unwrap(),
         );
         let cursor = first.next_cursor.unwrap();
-        assert!(request::<TorrentSortKey>(1, Some(&cursor), reordered.fingerprint()).is_ok());
+        assert!(request::<TorrentSortKey>(1, Some(&cursor), reordered.fingerprint(None)).is_ok());
         for other in [paused, TorrentFilter::default()] {
             assert_eq!(
-                request::<TorrentSortKey>(1, Some(&cursor), other.fingerprint()),
+                request::<TorrentSortKey>(1, Some(&cursor), other.fingerprint(None)),
                 Err(PageError::CursorFilterMismatch)
             );
         }
@@ -569,6 +631,62 @@ mod tests {
             ObservedState::ALL
                 .into_iter()
                 .all(|state| TorrentFilter::default().matches(matched(record, state)))
+        );
+    }
+
+    #[test]
+    fn search_keys_rank_first_and_survive_a_cursor() {
+        let records = registered(&Registry::new(), 2, u64::from);
+        let rank = |typo_words, quality| Rank {
+            typo_words,
+            quality,
+        };
+        let (older, newer) = (&records[0], &records[1]);
+        let keys = [
+            SearchSortKey::of(rank(0, 8), older),
+            SearchSortKey::of(rank(0, 8), newer),
+            SearchSortKey::of(rank(0, 4), newer),
+            SearchSortKey::of(rank(1, 8), newer),
+        ];
+        let mut sorted = keys.clone();
+        sorted.reverse();
+        sorted.sort();
+        assert_eq!(
+            sorted,
+            [
+                keys[1].clone(),
+                keys[0].clone(),
+                keys[2].clone(),
+                keys[3].clone()
+            ],
+            "better ranks first, then newest first"
+        );
+        let filters = TorrentFilter::default().fingerprint(Some(("llama", false)));
+        let page = paginate(
+            keys.clone(),
+            Clone::clone,
+            &request(1, None, filters).unwrap(),
+        );
+        let cursor = page.next_cursor.unwrap();
+        let next = request::<SearchSortKey>(1, Some(&cursor), filters).unwrap();
+        assert_eq!(
+            paginate(keys.clone(), Clone::clone, &next).items,
+            [keys[0].clone()]
+        );
+        for other in [
+            TorrentFilter::default().fingerprint(Some(("llama", true))),
+            TorrentFilter::default().fingerprint(Some(("lama", false))),
+            TorrentFilter::default().fingerprint(None),
+        ] {
+            assert_eq!(
+                request::<SearchSortKey>(1, Some(&cursor), other),
+                Err(PageError::CursorFilterMismatch)
+            );
+        }
+        assert_eq!(
+            request::<TorrentSortKey>(1, Some(&cursor), filters),
+            Err(PageError::MalformedCursor),
+            "a search cursor is no listing cursor"
         );
     }
 
@@ -630,13 +748,13 @@ mod tests {
             .matches(matched(&record, state))
         );
         assert_ne!(
-            filter(&["Kids"], false, &[], &[]).fingerprint(),
-            filter(&[], false, &["Kids"], &[]).fingerprint(),
+            filter(&["Kids"], false, &[], &[]).fingerprint(None),
+            filter(&[], false, &["Kids"], &[]).fingerprint(None),
             "a value's parameter is part of the fingerprint"
         );
         assert_ne!(
-            filter(&[], true, &[], &[]).fingerprint(),
-            TorrentFilter::default().fingerprint()
+            filter(&[], true, &[], &[]).fingerprint(None),
+            TorrentFilter::default().fingerprint(None)
         );
     }
 

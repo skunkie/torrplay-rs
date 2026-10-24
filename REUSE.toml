@@ -22,3 +22,9 @@ SPDX-License-Identifier = "MIT"
 path = "bench/traces/*.jsonl"
 SPDX-FileCopyrightText = "2026 TorrPlay"
 SPDX-License-Identifier = "MIT"
+
+# JSON has no comment syntax for a header.
+[[annotations]]
+path = "fixtures/*.json"
+SPDX-FileCopyrightText = "2026 TorrPlay"
+SPDX-License-Identifier = "MIT"

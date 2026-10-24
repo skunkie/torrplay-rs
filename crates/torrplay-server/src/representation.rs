@@ -176,6 +176,44 @@ pub(crate) fn torrent_etag(torrent: &api::Torrent) -> Result<EntityTag, Problem>
     Ok(EntityTag::new(format!("st-{hex}")))
 }
 
+/// Returns the first 12 bytes of a SHA-256 digest in hexadecimal.
+fn short_hex(digest: &[u8]) -> String {
+    digest[..12]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// The listing version of `torrents`, in creation order: a digest of their
+/// representations, so it changes when one is added, removed, or changes.
+pub(crate) fn listing_version(torrents: &[&api::Torrent]) -> Result<String, Problem> {
+    let mut hasher = Sha256::new();
+    for torrent in torrents {
+        let body = serde_json::to_vec(torrent).map_err(|_| Problem::internal())?;
+        hasher.update((body.len() as u64).to_be_bytes());
+        hasher.update(&body);
+    }
+    Ok(format!("lv-{}", short_hex(&hasher.finalize())))
+}
+
+/// The ETag of a page of the torrents collection: a digest of the listing
+/// version and every query parameter, in a canonical order, since the page
+/// follows from those alone.
+pub(crate) fn listing_etag(version: &str, query: &crate::query::Query) -> EntityTag {
+    let mut pairs = query.pairs().to_vec();
+    pairs.sort();
+    let mut hasher = Sha256::new();
+    for part in std::iter::once(version).chain(
+        pairs
+            .iter()
+            .flat_map(|(name, value)| [name.as_str(), value.as_str()]),
+    ) {
+        hasher.update((part.len() as u64).to_be_bytes());
+        hasher.update(part);
+    }
+    EntityTag::new(format!("tl-{}", short_hex(&hasher.finalize())))
+}
+
 /// The configuration's ETag, from its version.
 pub(crate) fn configuration_etag(configuration: &Configuration) -> EntityTag {
     EntityTag::new(format!("cfg-{}", configuration.etag().opaque()))

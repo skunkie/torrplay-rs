@@ -42,6 +42,11 @@ impl Query {
         errors
     }
 
+    /// Returns every parameter as a name and value, in order.
+    pub(crate) fn pairs(&self) -> &[(String, String)] {
+        &self.pairs
+    }
+
     /// Returns the first value of `name`.
     pub(crate) fn first<'a>(&'a self, name: &'a str) -> Option<&'a str> {
         self.all(name).next()
