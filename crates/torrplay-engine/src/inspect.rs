@@ -35,6 +35,7 @@ pub(crate) struct InspectedFile {
     pub(crate) info_hash: InfoHashV1,
     pub(crate) metadata: ReportedMetadata,
     pub(crate) piece_length: u32,
+    pub(crate) piece_count: u32,
 }
 
 /// Inspects the bytes of a torrent file.
@@ -66,6 +67,7 @@ pub(crate) fn torrent_file(bytes: &[u8]) -> Result<InspectedFile, SourceRejectio
     Ok(InspectedFile {
         info_hash,
         piece_length: validated.info().piece_length,
+        piece_count: validated.lengths().total_pieces(),
         metadata: reported_metadata(&validated),
     })
 }

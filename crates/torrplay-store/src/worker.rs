@@ -35,17 +35,39 @@ impl Worker {
                 Command::SetConfiguration(id, configuration, reply) => {
                     let _ = reply.send(self.write(|connection| {
                         let updated = connection.execute(
-                            "UPDATE torrents SET desired_state = ?2, configuration_version = ?3
+                            "UPDATE torrents
+                             SET desired_state = ?2, desired_storage_mode = ?3,
+                                 configuration_version = ?4
                              WHERE id = ?1",
                             params![
                                 id.as_str(),
                                 configuration.desired_state().as_str(),
+                                configuration.storage_mode().as_str(),
                                 version(&configuration)?
                             ],
                         )?;
                         if updated == 0 {
                             return Err(StoreError::UnknownTorrent);
                         }
+                        Ok(())
+                    }));
+                }
+                Command::SetStorageMode(id, storage_mode, reply) => {
+                    let _ = reply.send(self.write(|connection| {
+                        let updated = connection.execute(
+                            "UPDATE torrents SET storage_mode = ?2 WHERE id = ?1",
+                            params![id.as_str(), storage_mode.as_str()],
+                        )?;
+                        if updated == 0 {
+                            return Err(StoreError::UnknownTorrent);
+                        }
+                        Ok(())
+                    }));
+                }
+                Command::RecordCleanShutdown(reply) => {
+                    let _ = reply.send(self.write(|connection| {
+                        connection
+                            .execute("UPDATE runs SET clean_shutdown = 1 WHERE id = 1", [])?;
                         Ok(())
                     }));
                 }
@@ -107,14 +129,17 @@ impl Worker {
 fn insert(connection: &Connection, torrent: &StoredTorrent) -> Result<(), StoreError> {
     connection.execute(
         "INSERT INTO torrents
-             (id, info_hash, created_at_ns, desired_state, configuration_version, magnet_uri)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             (id, info_hash, created_at_ns, desired_state, desired_storage_mode,
+              configuration_version, storage_mode, magnet_uri)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             torrent.id.as_str(),
             torrent.info_hash.as_bytes().as_slice(),
             created_at_ns(torrent.created_at)?,
             torrent.configuration.desired_state().as_str(),
+            torrent.configuration.storage_mode().as_str(),
             version(&torrent.configuration)?,
+            torrent.storage_mode.as_str(),
             torrent.magnet_uri,
         ],
     )?;

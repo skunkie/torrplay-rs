@@ -9,12 +9,14 @@ mod support;
 
 use std::time::Duration;
 
+use librqbit::AddTorrent;
 use support::{
-    MIB, Seeder, bounded, eventually, expected, futures_now, id, magnet, range, read, start, upload,
+    Leecher, MIB, Seeder, bounded, eventually, expected, futures_now, id, magnet, range, read,
+    start, start_with, upload,
 };
 use tokio::io::AsyncReadExt;
 use torrplay_core::engine::{ByteRange, Engine, EngineError, Source, SourceRejection};
-use torrplay_core::lifecycle::{DesiredState, Readiness};
+use torrplay_core::lifecycle::{DesiredState, Readiness, StorageMode};
 use torrplay_core::metadata::FileIndex;
 use torrplay_core::settings::Settings;
 use torrplay_engine::{EngineConfig, LibrqbitEngine, NetworkConfig};
@@ -356,12 +358,32 @@ async fn pieces_longer_than_the_cache_are_refused() -> anyhow::Result<()> {
     let started = start(vec![seeder.addr], 8 * MIB, Duration::from_secs(30)).await?;
     let engine = &started.engine;
 
-    match engine.inspect(&upload(&spec)).await {
+    match engine
+        .add(&id(2), &upload(&spec), DesiredState::Started)
+        .await
+    {
         Err(EngineError::Rejected(SourceRejection::Unsupported { detail })) => {
             assert!(detail.contains("8388608-byte cache capacity"), "{detail}");
         }
         other => anyhow::bail!("the upload was not refused: {other:?}"),
     }
+    // ADR 9: the cache never holds a disk torrent's pieces.
+    engine
+        .add_in(
+            &id(3),
+            &upload(&spec),
+            DesiredState::Paused,
+            StorageMode::Disk,
+        )
+        .await?;
+    let directory = engine.download_dir().join(id(3).as_str());
+    assert!(directory.is_dir());
+    engine.remove(&id(3)).await?;
+    assert!(
+        !directory.exists(),
+        "deleting a disk torrent deletes its data"
+    );
+    assert!(!directory.with_extension("have").exists());
     engine
         .add(&id(1), &magnet(&spec), DesiredState::Started)
         .await?;
@@ -379,6 +401,243 @@ async fn pieces_longer_than_the_cache_are_refused() -> anyhow::Result<()> {
 
     engine.shutdown().await?;
     seeder.stop().await;
+    Ok(())
+}
+
+/// DSK-01 through the facade: a torrent in disk storage streams every file
+/// byte for byte, and after a restart streams them again from its files
+/// with no peer reachable.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_disk_torrent_streams_again_from_its_files_after_a_restart() -> anyhow::Result<()> {
+    let spec = catalog::multi_boundary();
+    let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
+    let downloads = tempfile::tempdir()?;
+    let in_downloads = |config: &mut EngineConfig| {
+        config.download_dir = downloads.path().to_path_buf();
+    };
+    let read_all = async |engine: &LibrqbitEngine| -> anyhow::Result<()> {
+        for (index, file) in spec.files().iter().enumerate() {
+            let bytes = read(engine, &id(1), index, 0, file.size_bytes).await?;
+            assert!(
+                bytes == expected(&spec, index, 0, file.size_bytes),
+                "file {index}"
+            );
+        }
+        Ok(())
+    };
+
+    let started = start_with(vec![seeder.addr], in_downloads).await?;
+    let engine = &started.engine;
+    engine
+        .add_in(
+            &id(1),
+            &upload(&spec),
+            DesiredState::Started,
+            StorageMode::Disk,
+        )
+        .await?;
+    read_all(engine).await?;
+    assert_eq!(
+        engine
+            .cache()
+            .expect("a started cache")
+            .audit()?
+            .usage_bytes,
+        0,
+        "disk pieces never enter the cache"
+    );
+    engine.shutdown().await?;
+    seeder.stop().await;
+
+    let started = start_with(Vec::new(), in_downloads).await?;
+    let engine = &started.engine;
+    engine
+        .add_in(
+            &id(1),
+            &upload(&spec),
+            DesiredState::Started,
+            StorageMode::Disk,
+        )
+        .await?;
+    read_all(engine).await?;
+    engine.shutdown().await?;
+    Ok(())
+}
+
+/// DSK-02 through the facade: a stream continues byte for byte while its
+/// torrent moves from memory to disk storage and back; the move back
+/// deletes the torrent's directory.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_stream_continues_across_storage_mode_transitions() -> anyhow::Result<()> {
+    let spec = catalog::large(4 * MIB);
+    let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
+    let started = start(vec![seeder.addr], 8 * MIB, Duration::from_secs(30)).await?;
+    let engine = &started.engine;
+    engine
+        .add(&id(1), &upload(&spec), DesiredState::Started)
+        .await?;
+    let size = spec.total_size_bytes();
+    let third = size / 3;
+    let mut reader = engine
+        .open_reader(&id(1), FileIndex(0), range(0, size))
+        .await?;
+    let mut read_until = async |end: u64, from: u64| -> anyhow::Result<()> {
+        let mut bytes = vec![0; usize::try_from(end - from)?];
+        bounded("reading", async {
+            Ok(reader.read_exact(&mut bytes).await?)
+        })
+        .await?;
+        assert!(
+            bytes == expected(&spec, 0, from, end),
+            "bytes {from}..{end}"
+        );
+        Ok(())
+    };
+    read_until(third, 0).await?;
+
+    let directory = engine.download_dir().join(id(1).as_str());
+    // The reader reads while the torrent moves, waiting through the swap.
+    let (moved, read) = tokio::join!(
+        bounded("moving to disk", async {
+            Ok(engine
+                .change_storage_mode(&id(1), StorageMode::Disk)
+                .await?)
+        }),
+        read_until(2 * third, third),
+    );
+    moved?;
+    read?;
+    assert!(directory.is_dir());
+
+    bounded("moving to memory", async {
+        Ok(engine
+            .change_storage_mode(&id(1), StorageMode::Memory)
+            .await?)
+    })
+    .await?;
+    assert!(!directory.exists(), "memory storage keeps nothing on disk");
+    read_until(size, 2 * third).await?;
+    drop(read_until);
+    engine.cache().expect("a started cache").audit()?;
+
+    engine.shutdown().await?;
+    seeder.stop().await;
+    Ok(())
+}
+
+/// DSK-03 through the facade: a move to disk that cannot create the
+/// torrent's directory fails, the torrent stays in memory storage, and its
+/// stream continues.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_failed_transition_leaves_the_torrent_and_its_stream() -> anyhow::Result<()> {
+    let spec = catalog::single_small();
+    let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
+    let blocked = tempfile::NamedTempFile::new()?;
+    let blocked_path = blocked.path().to_path_buf();
+    let started = start_with(vec![seeder.addr], |config| {
+        // A file where the download directory should be.
+        config.download_dir = blocked_path.clone();
+    })
+    .await?;
+    let engine = &started.engine;
+    engine
+        .add(&id(1), &upload(&spec), DesiredState::Started)
+        .await?;
+    let size = spec.total_size_bytes();
+    let mut reader = engine
+        .open_reader(&id(1), FileIndex(0), range(0, size))
+        .await?;
+    let mut first = vec![0; 1000];
+    bounded("reading the first bytes", async {
+        Ok(reader.read_exact(&mut first).await?)
+    })
+    .await?;
+
+    let result = engine.change_storage_mode(&id(1), StorageMode::Disk).await;
+    assert!(
+        matches!(result, Err(EngineError::TransitionFailed { .. })),
+        "{result:?}"
+    );
+    let mut rest = Vec::new();
+    bounded("reading the rest", async {
+        Ok(reader.read_to_end(&mut rest).await?)
+    })
+    .await?;
+    first.extend(rest);
+    assert!(first == expected(&spec, 0, 0, size), "the whole file");
+    assert!(blocked_path.is_file(), "the blocking file is untouched");
+
+    engine.shutdown().await?;
+    seeder.stop().await;
+    Ok(())
+}
+
+/// DSK-09 through the facade: a disk torrent uploads to a leecher, as ADR 3
+/// decides, and once it moves to memory storage it uploads nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_disk_torrent_uploads_until_it_moves_to_memory() -> anyhow::Result<()> {
+    let spec = catalog::single_small();
+    let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
+    let downloads = tempfile::tempdir()?;
+    let started = start_with(vec![seeder.addr], |config| {
+        config.download_dir = downloads.path().to_path_buf();
+    })
+    .await?;
+    let engine = &started.engine;
+    engine
+        .add_in(
+            &id(1),
+            &upload(&spec),
+            DesiredState::Started,
+            StorageMode::Disk,
+        )
+        .await?;
+    let size = spec.total_size_bytes();
+    read(engine, &id(1), 0, 0, size).await?;
+    // Only the engine has the torrent now.
+    seeder.stop().await;
+    let ours = engine.listen_addr().expect("a peer listener");
+
+    let leecher = Leecher::start().await?;
+    let handle = leecher
+        .session
+        .add_torrent(
+            AddTorrent::from_bytes(spec.metainfo().bytes),
+            Some(leecher.add_options(&[ours])?),
+        )
+        .await?
+        .into_handle()
+        .expect("a torrent");
+    bounded(
+        "downloading from the disk torrent",
+        handle.wait_until_completed(),
+    )
+    .await?;
+
+    bounded("moving to memory", async {
+        Ok(engine
+            .change_storage_mode(&id(1), StorageMode::Memory)
+            .await?)
+    })
+    .await?;
+    let late = Leecher::start().await?;
+    let handle = late
+        .session
+        .add_torrent(
+            AddTorrent::from_bytes(spec.metainfo().bytes),
+            Some(late.add_options(&[ours])?),
+        )
+        .await?
+        .into_handle()
+        .expect("a torrent");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(
+        handle.stats().progress_bytes,
+        0,
+        "a memory torrent uploads nothing"
+    );
+
+    engine.shutdown().await?;
     Ok(())
 }
 

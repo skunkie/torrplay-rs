@@ -28,7 +28,7 @@ use std::time::SystemTime;
 
 use tokio::sync::{mpsc, oneshot};
 use torrplay_core::id::{InfoHashV1, TorrentId};
-use torrplay_core::lifecycle::Configuration;
+use torrplay_core::lifecycle::{Configuration, StorageMode};
 pub use torrplay_core::settings::Stored as StoredSettings;
 
 mod schema;
@@ -51,6 +51,9 @@ pub struct StoredTorrent {
     pub created_at: SystemTime,
     /// The configuration, whose version gives its entity tag.
     pub configuration: Configuration,
+    /// The storage mode in effect, which differs from the configuration's
+    /// while a transition is unfinished.
+    pub storage_mode: StorageMode,
     /// The magnet URI the torrent was created from, if it was.
     pub magnet_uri: Option<String>,
     /// The torrent file: an uploaded one's original bytes, or the one built
@@ -67,6 +70,10 @@ pub struct Contents {
     /// The stored settings: the explicit values and their version, or every
     /// setting unset at version 1 if none were stored.
     pub settings: StoredSettings,
+    /// Whether the last run recorded a clean shutdown. After a crash or a
+    /// power loss, disk torrents' resume bitfields may be newer than their
+    /// data.
+    pub clean_shutdown: bool,
 }
 
 /// A failure of the store.
@@ -121,6 +128,8 @@ type Reply<T> = oneshot::Sender<Result<T, StoreError>>;
 enum Command {
     Insert(StoredTorrent, Reply<()>),
     SetConfiguration(TorrentId, Configuration, Reply<()>),
+    SetStorageMode(TorrentId, StorageMode, Reply<()>),
+    RecordCleanShutdown(Reply<()>),
     SetSettings(StoredSettings, Reply<()>),
     SetTorrentFile(TorrentId, Vec<u8>, Reply<()>),
     Delete(TorrentId, Reply<()>),
@@ -149,6 +158,7 @@ impl Store {
         let mut connection = schema::open(&path)?;
         let torrents = schema::torrents(&mut connection)?;
         let settings = schema::settings(&connection)?;
+        let clean_shutdown = schema::begin_run(&mut connection)?;
         let (sender, receiver) = mpsc::channel(QUEUE);
         #[cfg(feature = "test-support")]
         let failing = Arc::new(AtomicBool::new(false));
@@ -171,7 +181,14 @@ impl Store {
             #[cfg(feature = "test-support")]
             failing,
         };
-        Ok((store, Contents { torrents, settings }))
+        Ok((
+            store,
+            Contents {
+                torrents,
+                settings,
+                clean_shutdown,
+            },
+        ))
     }
 
     /// The database file.
@@ -193,6 +210,24 @@ impl Store {
         let (id, configuration) = (id.clone(), configuration.clone());
         self.send(|reply| Command::SetConfiguration(id, configuration, reply))
             .await
+    }
+
+    /// Records the storage mode in effect for a torrent, once a transition
+    /// to it completed.
+    pub async fn set_storage_mode(
+        &self,
+        id: &TorrentId,
+        storage_mode: StorageMode,
+    ) -> Result<(), StoreError> {
+        let id = id.clone();
+        self.send(|reply| Command::SetStorageMode(id, storage_mode, reply))
+            .await
+    }
+
+    /// Records that this run shut down cleanly: disk torrents' data and
+    /// resume bitfields are flushed, so the next run may trust them.
+    pub async fn record_clean_shutdown(&self) -> Result<(), StoreError> {
+        self.send(Command::RecordCleanShutdown).await
     }
 
     /// Replaces the stored settings.

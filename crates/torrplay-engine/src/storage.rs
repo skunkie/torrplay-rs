@@ -23,6 +23,7 @@
 //! it next looks at the torrent.
 
 use std::collections::HashMap;
+use std::ops::Range;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
@@ -30,6 +31,7 @@ use std::sync::{Arc, Mutex, Weak};
 use anyhow::Context;
 use librqbit::storage::{BoxStorageFactory, StorageFactory, StorageFactoryExt, TorrentStorage};
 use librqbit::{ManagedTorrent, ManagedTorrentShared, TorrentMetadata};
+use librqbit_core::hash_id::Id20;
 use librqbit_core::lengths::{Lengths, ValidPieceIndex};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -46,7 +48,13 @@ pub struct MemoryStorageFactory {
     unattached: Arc<Mutex<HashMap<usize, Unattached>>>,
     // Where torrents whose storage failed a write are reported.
     failures: Option<UnboundedSender<TorrentKey>>,
+    // Verified pieces to store for torrents about to be added, by info hash.
+    seeds: Arc<Mutex<HashMap<Id20, Seeds>>>,
 }
+
+/// Verified pieces a torrent starts with in the cache: each piece index and
+/// its bytes.
+type Seeds = Vec<(u32, Vec<u8>)>;
 
 /// A torrent's storage that is not attached yet.
 struct Unattached {
@@ -73,6 +81,54 @@ pub(crate) struct Layout {
     pub(crate) files: Vec<(u64, u64)>,
 }
 
+impl Layout {
+    /// Where piece `piece` lies in the torrent's files: for each file it
+    /// touches, the file's index, the offset in the file, and the range of
+    /// the piece's bytes there.
+    pub(crate) fn piece_spans(
+        &self,
+        piece: u32,
+    ) -> anyhow::Result<Vec<(usize, u64, Range<usize>)>> {
+        let index = self
+            .lengths
+            .validate_piece_index(piece)
+            .with_context(|| format!("no piece {piece} in the torrent"))?;
+        let start = u64::from(piece) * u64::from(self.lengths.default_piece_length());
+        let end = start + u64::from(self.lengths.piece_length(index));
+        let mut spans = Vec::new();
+        for (file_id, &(file_start, file_length)) in self.files.iter().enumerate() {
+            let from = start.max(file_start);
+            let to = end.min(file_start + file_length);
+            if from < to {
+                spans.push((
+                    file_id,
+                    from - file_start,
+                    usize::try_from(from - start)?..usize::try_from(to - start)?,
+                ));
+            }
+        }
+        Ok(spans)
+    }
+
+    /// The length of piece `piece`.
+    pub(crate) fn piece_length(&self, piece: u32) -> Option<usize> {
+        let index = self.lengths.validate_piece_index(piece)?;
+        Some(self.lengths.piece_length(index) as usize)
+    }
+
+    /// The layout of a torrent with `metadata`.
+    pub(crate) fn of(metadata: &TorrentMetadata) -> Self {
+        Self {
+            lengths: *metadata.lengths(),
+            files: metadata
+                .file_infos
+                .iter()
+                .map(|file| (file.offset_in_torrent, file.len))
+                .collect(),
+        }
+    }
+}
+
 impl MemoryStorageFactory {
     /// Creates a factory whose torrents share `cache`.
     pub fn new(cache: Arc<PieceCache>) -> Self {
@@ -80,7 +136,20 @@ impl MemoryStorageFactory {
             cache,
             unattached: Arc::default(),
             failures: None,
+            seeds: Arc::default(),
         }
+    }
+
+    /// Makes the next torrent added with `info_hash` start with `pieces` in
+    /// the cache as verified pieces, each a piece index and its bytes, as a
+    /// transition from disk storage does. The addition fails if one does not
+    /// fit.
+    pub fn seed(&self, info_hash: Id20, pieces: Seeds) -> anyhow::Result<()> {
+        self.seeds
+            .lock()
+            .map_err(|_| anyhow::anyhow!("the factory was poisoned"))?
+            .insert(info_hash, pieces);
+        Ok(())
     }
 
     /// Reports the key of each torrent whose storage fails a write to
@@ -206,6 +275,19 @@ impl StorageFactory for MemoryStorageFactory {
         let key = self
             .cache
             .register_torrent(metadata.lengths().default_piece_length())?;
+        let seeds = self
+            .seeds
+            .lock()
+            .map_err(|_| anyhow::anyhow!("the factory was poisoned"))?
+            .remove(&shared.info_hash)
+            .unwrap_or_default();
+        for (piece, bytes) in seeds {
+            if let Err(error) = self.cache.seed(key, piece, &bytes) {
+                self.cache.release_torrent(key)?;
+                return Err(anyhow::Error::new(error)
+                    .context("the cache has no room for the pieces carried over"));
+            }
+        }
         let health = Arc::new(Health::default());
         self.unattached
             .lock()
@@ -214,14 +296,7 @@ impl StorageFactory for MemoryStorageFactory {
                 shared.id,
                 Unattached {
                     key,
-                    layout: Layout {
-                        lengths: *metadata.lengths(),
-                        files: metadata
-                            .file_infos
-                            .iter()
-                            .map(|file| (file.offset_in_torrent, file.len))
-                            .collect(),
-                    },
+                    layout: Layout::of(metadata),
                     health: health.clone(),
                 },
             );

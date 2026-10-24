@@ -903,12 +903,39 @@ impl PieceCache {
         offset: usize,
         buf: &mut [u8],
     ) -> Result<(), CacheError> {
+        self.read_slot(torrent, piece, offset, buf, false)
+    }
+
+    /// Reads a whole piece into `buf`, only if it is verified. A piece
+    /// evicted and requested again since it was verified is partial, and
+    /// reads as missing; readers rely on the engine's piece completion for
+    /// that instead.
+    pub(crate) fn read_verified(
+        &self,
+        torrent: TorrentKey,
+        piece: u32,
+        buf: &mut [u8],
+    ) -> Result<(), CacheError> {
+        self.read_slot(torrent, piece, 0, buf, true)
+    }
+
+    fn read_slot(
+        &self,
+        torrent: TorrentKey,
+        piece: u32,
+        offset: usize,
+        buf: &mut [u8],
+        verified_only: bool,
+    ) -> Result<(), CacheError> {
+        // A verified piece's buffer never changes: it is only removed, and
+        // the clone taken here keeps it from being reused.
         let (buffer, length) = {
             let mut state = self.lock()?;
             let now = state.tick();
             let slot = state
                 .slots
                 .get_mut(&(torrent, piece))
+                .filter(|slot| slot.verified || !verified_only)
                 .ok_or(CacheError::PieceMissing { torrent, piece })?;
             let buffer = slot
                 .bytes
@@ -927,6 +954,32 @@ impl PieceCache {
         })?;
         buf.copy_from_slice(source);
         Ok(())
+    }
+
+    /// The verified pieces of a torrent that the cache holds.
+    pub(crate) fn verified_pieces(&self, torrent: TorrentKey) -> Result<Vec<u32>, CacheError> {
+        let state = self.lock()?;
+        let mut pieces: Vec<u32> = state
+            .slots
+            .iter()
+            .filter(|((key, _), slot)| *key == torrent && slot.verified)
+            .map(|((_, piece), _)| *piece)
+            .collect();
+        pieces.sort_unstable();
+        Ok(pieces)
+    }
+
+    /// Stores `bytes` as verified piece `piece` of a torrent, as a storage
+    /// mode transition does with pieces read from disk. It fails, storing
+    /// nothing, when the piece does not fit in the room left.
+    pub(crate) fn seed(
+        &self,
+        torrent: TorrentKey,
+        piece: u32,
+        bytes: &[u8],
+    ) -> Result<(), CacheError> {
+        self.write(torrent, piece, bytes.len(), 0, bytes)?;
+        self.mark_verified(torrent, piece)
     }
 
     /// Records that a resident piece passed its hash check.
@@ -1363,6 +1416,26 @@ mod tests {
                 peak_bytes: 110,
                 capacity_bytes: 50
             })
+        );
+    }
+
+    #[test]
+    fn a_piece_downloaded_again_reads_as_missing_until_verified() {
+        let cache = PieceCache::new(100);
+        let torrent = evictable(&cache);
+        verified(&cache, torrent, 0, 10);
+        let mut buf = [0; 10];
+        cache.read_verified(torrent, 0, &mut buf).unwrap();
+        cache.evict(torrent, 0).unwrap();
+        // The engine requests it again, and its first block arrives.
+        cache.write(torrent, 0, 10, 0, &[1]).unwrap();
+        cache
+            .read(torrent, 0, 0, &mut buf)
+            .expect("readers read partial pieces, which the engine guards");
+        assert_eq!(
+            cache.read_verified(torrent, 0, &mut buf),
+            Err(CacheError::PieceMissing { torrent, piece: 0 }),
+            "a partial piece is not a verified one"
         );
     }
 

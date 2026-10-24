@@ -18,6 +18,8 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 bencode.workspace = true
+fs4.workspace = true
+icu_normalizer.workspace = true
 librqbit.workspace = true
 librqbit-core.workspace = true
 serde.workspace = true

@@ -16,7 +16,7 @@ use bytes::Bytes;
 use serde_json::{Map, Value};
 use torrplay_api as api;
 use torrplay_core::engine::{Engine, EngineError, Source, SourceRejection};
-use torrplay_core::lifecycle::{DesiredState, EntityTag, ObservedState};
+use torrplay_core::lifecycle::{DesiredState, EntityTag, ObservedState, StorageMode};
 use torrplay_core::metadata::Metadata;
 use torrplay_core::pagination::{
     CURSOR_PARAMETER, PAGE_SIZE_PARAMETER, PageRequest, TorrentFilter, TorrentSortKey, paginate,
@@ -120,7 +120,11 @@ pub(crate) async fn create<E: Engine>(
 ) -> Result<Response, Problem> {
     negotiate(&headers, JSON)?;
     let media_type = MediaType::of_request(&headers);
-    let (source, desired_state) = match media_type.as_ref().map(|media| media.essence.as_str()) {
+    let Creation {
+        source,
+        desired_state,
+        storage_mode,
+    } = match media_type.as_ref().map(|media| media.essence.as_str()) {
         Some(JSON) => {
             let bytes = read_limited(
                 &headers,
@@ -185,6 +189,7 @@ pub(crate) async fn create<E: Engine>(
         info_hash: inspection.info_hash,
         metadata: metadata.clone(),
         desired_state,
+        storage_mode,
         created_at: SystemTime::now(),
     };
     let record = {
@@ -232,7 +237,11 @@ pub(crate) async fn create<E: Engine>(
             }
         }
     };
-    if let Err(error) = app.engine().add(&record.id, &source, desired_state).await {
+    if let Err(error) = app
+        .engine()
+        .add_in(&record.id, &source, desired_state, storage_mode)
+        .await
+    {
         let _lane = app.write_lane().await;
         if let Err(error) = app.store().delete(&record.id).await {
             // The next start restores the torrent, and its engine refusal
@@ -245,6 +254,8 @@ pub(crate) async fn create<E: Engine>(
     let view = TorrentView {
         record,
         failure: None,
+        transition: None,
+        storage_failure: None,
     };
     let location = torrent_path(&view.record.id);
     let mut response = json(StatusCode::CREATED, &representation::torrent(&view))?;
@@ -264,6 +275,7 @@ fn stored(record: &torrplay_core::registry::TorrentRecord, source: &Source) -> S
         info_hash: record.info_hash,
         created_at: record.created_at,
         configuration: record.configuration.clone(),
+        storage_mode: record.storage_mode,
         magnet_uri,
         torrent_file,
     }
@@ -315,11 +327,31 @@ fn parse_desired_state(value: &Value, errors: &mut Vec<InvalidValue>) -> Option<
     state
 }
 
-fn creation_from_json(bytes: &Bytes) -> Result<(Source, DesiredState), Problem> {
+fn parse_storage_mode(value: &Value, errors: &mut Vec<InvalidValue>) -> Option<StorageMode> {
+    let mode = value.as_str().and_then(StorageMode::parse);
+    if mode.is_none() {
+        errors.push(InvalidValue::pointer(
+            "/storage_mode",
+            "Must be memory or disk.",
+        ));
+    }
+    mode
+}
+
+/// What a creation request asks for.
+#[derive(Debug)]
+struct Creation {
+    source: Source,
+    desired_state: DesiredState,
+    storage_mode: StorageMode,
+}
+
+fn creation_from_json(bytes: &Bytes) -> Result<Creation, Problem> {
     let members = object(parse_json(bytes)?)?;
     let mut errors = Vec::new();
     let mut magnet_uri = None;
     let mut desired_state = DesiredState::Started;
+    let mut storage_mode = StorageMode::Memory;
     for (member, value) in &members {
         match member.as_str() {
             "magnet_uri" => match value {
@@ -337,6 +369,11 @@ fn creation_from_json(bytes: &Bytes) -> Result<(Source, DesiredState), Problem> 
                     desired_state = state;
                 }
             }
+            "storage_mode" => {
+                if let Some(mode) = parse_storage_mode(value, &mut errors) {
+                    storage_mode = mode;
+                }
+            }
             other => errors.push(unknown_member(other)),
         }
     }
@@ -344,12 +381,16 @@ fn creation_from_json(bytes: &Bytes) -> Result<(Source, DesiredState), Problem> 
         errors.push(InvalidValue::pointer("/magnet_uri", "Is required."));
     }
     match magnet_uri {
-        Some(uri) if errors.is_empty() => Ok((Source::MagnetUri(uri), desired_state)),
+        Some(uri) if errors.is_empty() => Ok(Creation {
+            source: Source::MagnetUri(uri),
+            desired_state,
+            storage_mode,
+        }),
         _ => Err(Problem::invalid_body(errors)),
     }
 }
 
-fn creation_from_form(bytes: &Bytes, boundary: &str) -> Result<(Source, DesiredState), Problem> {
+fn creation_from_form(bytes: &Bytes, boundary: &str) -> Result<Creation, Problem> {
     let parts = parse_form(bytes, boundary).map_err(|_| {
         Problem::new(
             ProblemType::MalformedRequest,
@@ -359,6 +400,7 @@ fn creation_from_form(bytes: &Bytes, boundary: &str) -> Result<(Source, DesiredS
     let mut errors = Vec::new();
     let mut torrent_file = None;
     let mut desired_state = None;
+    let mut storage_mode = None;
     let mut seen = Vec::new();
     for part in parts {
         if seen.contains(&part.name) {
@@ -383,6 +425,10 @@ fn creation_from_form(bytes: &Bytes, boundary: &str) -> Result<(Source, DesiredS
                 let value = Value::String(String::from_utf8_lossy(&part.data).into_owned());
                 desired_state = parse_desired_state(&value, &mut errors);
             }
+            "storage_mode" => {
+                let value = Value::String(String::from_utf8_lossy(&part.data).into_owned());
+                storage_mode = parse_storage_mode(&value, &mut errors);
+            }
             other => errors.push(unknown_member(other)),
         }
     }
@@ -390,10 +436,11 @@ fn creation_from_form(bytes: &Bytes, boundary: &str) -> Result<(Source, DesiredS
         errors.push(InvalidValue::pointer("/torrent_file", "Is required."));
     }
     match torrent_file {
-        Some(file) if errors.is_empty() => Ok((
-            Source::TorrentFile(file.to_vec()),
-            desired_state.unwrap_or(DesiredState::Started),
-        )),
+        Some(file) if errors.is_empty() => Ok(Creation {
+            source: Source::TorrentFile(file.to_vec()),
+            desired_state: desired_state.unwrap_or(DesiredState::Started),
+            storage_mode: storage_mode.unwrap_or(StorageMode::Memory),
+        }),
         _ => Err(Problem::invalid_body(errors)),
     }
 }
@@ -516,7 +563,7 @@ pub(crate) async fn update_configuration<E: Engine>(
         app.body_timeout(),
     )
     .await?;
-    let desired_state = desired_state_from_patch(parse_json(&bytes)?)?;
+    let patch = configuration_patch(parse_json(&bytes)?)?;
     let stale = || {
         Problem::new(
             ProblemType::PreconditionFailed,
@@ -538,9 +585,32 @@ pub(crate) async fn update_configuration<E: Engine>(
         ));
     }
 
+    let new_storage_mode = patch
+        .storage_mode
+        .filter(|&mode| mode != record.configuration.storage_mode());
+    if new_storage_mode.is_some() {
+        if app.in_transition(&record.id) {
+            return Err(Problem::new(
+                ProblemType::LifecycleConflict,
+                "The torrent's storage mode transition is in progress.",
+            ));
+        }
+        let mode = new_storage_mode.unwrap_or_default();
+        app.engine()
+            .check_storage_mode(&record.id, mode)
+            .await
+            .map_err(|error| match error {
+                EngineError::Rejected(SourceRejection::Unsupported { detail }) => {
+                    Problem::new(ProblemType::UnsupportedTorrent, detail)
+                }
+                error => error.into(),
+            })?;
+    }
+
     // The engine takes the change before it is stored, so a change the
     // engine refuses leaves the configuration and its ETag untouched.
     let previous = record.configuration.desired_state();
+    let desired_state = patch.desired_state.unwrap_or(previous);
     if desired_state != previous {
         app.engine()
             .set_desired_state(&record.id, desired_state)
@@ -548,7 +618,14 @@ pub(crate) async fn update_configuration<E: Engine>(
     }
     let stored = {
         let _lane = app.write_lane().await;
-        store_desired_state(&app, &id, desired_state, &record.configuration.etag()).await
+        store_configuration(
+            &app,
+            &id,
+            desired_state,
+            new_storage_mode,
+            &record.configuration.etag(),
+        )
+        .await
     };
     let update = match stored {
         Ok(update) => update,
@@ -574,6 +651,11 @@ pub(crate) async fn update_configuration<E: Engine>(
     {
         app.clear_metadata_failure(&record.id);
     }
+    if let Some(mode) = new_storage_mode
+        && update.configuration.storage_mode() == mode
+    {
+        app.start_transition(record.id.clone(), mode);
+    }
     let body = representation::configuration(&record.id, &update.configuration);
     with_etag(
         json(StatusCode::OK, &body)?,
@@ -587,12 +669,14 @@ enum Stored {
     Failed(Problem),
 }
 
-/// Sets and stores a desired state if `expected` is still the current entity
-/// tag, under the write lane: the store first, then the registry.
-async fn store_desired_state<E: Engine>(
+/// Sets and stores a desired state and a storage mode if `expected` is still
+/// the current entity tag, under the write lane: the store first, then the
+/// registry.
+async fn store_configuration<E: Engine>(
     app: &App<E>,
     id: &str,
     desired_state: DesiredState,
+    storage_mode: Option<StorageMode>,
     expected: &EntityTag,
 ) -> Result<ConfigurationUpdate, Stored> {
     let registry = app.registry().map_err(Stored::Failed)?;
@@ -606,7 +690,10 @@ async fn store_desired_state<E: Engine>(
         }));
     }
     let mut configuration = current.configuration;
-    let changed = configuration.set_desired_state(desired_state);
+    let mut changed = configuration.set_desired_state(desired_state);
+    if let Some(mode) = storage_mode {
+        changed |= configuration.set_storage_mode(mode);
+    }
     if changed {
         app.store()
             .set_configuration(&current.id, &configuration)
@@ -622,28 +709,44 @@ async fn store_desired_state<E: Engine>(
     })
 }
 
-/// Reads the desired state a merge patch sets. The patch must change at
-/// least one member, and `desired_state` cannot be removed with `null`.
-fn desired_state_from_patch(value: Value) -> Result<DesiredState, Problem> {
+/// The members a configuration merge patch sets.
+#[derive(Debug, PartialEq, Eq)]
+struct ConfigurationPatch {
+    desired_state: Option<DesiredState>,
+    storage_mode: Option<StorageMode>,
+}
+
+/// Reads a configuration merge patch. It must set at least one member, and
+/// no member can be removed with `null`.
+fn configuration_patch(value: Value) -> Result<ConfigurationPatch, Problem> {
     let members = object(value)?;
     let mut errors = Vec::new();
-    let mut desired_state = None;
+    let mut patch = ConfigurationPatch {
+        desired_state: None,
+        storage_mode: None,
+    };
     for (member, value) in &members {
         match member.as_str() {
             "desired_state" if value.is_null() => errors.push(InvalidValue::pointer(
                 "/desired_state",
                 "Cannot be removed; must be started or paused.",
             )),
-            "desired_state" => desired_state = parse_desired_state(value, &mut errors),
+            "desired_state" => patch.desired_state = parse_desired_state(value, &mut errors),
+            "storage_mode" if value.is_null() => errors.push(InvalidValue::pointer(
+                "/storage_mode",
+                "Cannot be removed; must be memory or disk.",
+            )),
+            "storage_mode" => patch.storage_mode = parse_storage_mode(value, &mut errors),
             other => errors.push(unknown_member(other)),
         }
     }
     if members.is_empty() {
         errors.push(InvalidValue::pointer("", "Must set at least one member."));
     }
-    match desired_state {
-        Some(state) if errors.is_empty() => Ok(state),
-        _ => Err(Problem::invalid_body(errors)),
+    if errors.is_empty() {
+        Ok(patch)
+    } else {
+        Err(Problem::invalid_body(errors))
     }
 }
 
@@ -699,20 +802,37 @@ mod tests {
         let problem = creation_from_json(&bytes(json!({
             "id": "trr_x",
             "desired_state": "stopped",
+            "storage_mode": "tape",
             "a/b": 1,
         })))
         .unwrap_err();
         assert_eq!(
             pointers(problem),
-            ["/a~1b", "/desired_state", "/id", "/magnet_uri"]
+            [
+                "/a~1b",
+                "/desired_state",
+                "/id",
+                "/storage_mode",
+                "/magnet_uri"
+            ]
         );
-        let (source, state) = creation_from_json(&bytes(json!({
+        let creation = creation_from_json(&bytes(json!({
             "magnet_uri": "magnet:?xt=urn:btih:00",
             "desired_state": "paused",
+            "storage_mode": "disk",
         })))
         .unwrap();
-        assert_eq!(source, Source::MagnetUri("magnet:?xt=urn:btih:00".into()));
-        assert_eq!(state, DesiredState::Paused);
+        assert_eq!(
+            creation.source,
+            Source::MagnetUri("magnet:?xt=urn:btih:00".into())
+        );
+        assert_eq!(creation.desired_state, DesiredState::Paused);
+        assert_eq!(creation.storage_mode, StorageMode::Disk);
+        let defaults = creation_from_json(&bytes(json!({
+            "magnet_uri": "magnet:?xt=urn:btih:00",
+        })))
+        .unwrap();
+        assert_eq!(defaults.storage_mode, StorageMode::Memory);
     }
 
     #[test]
@@ -739,12 +859,26 @@ mod tests {
             ),
         ];
         for (patch, expected) in cases {
-            let problem = desired_state_from_patch(patch.clone()).unwrap_err();
+            let problem = configuration_patch(patch.clone()).unwrap_err();
             assert_eq!(pointers(problem), expected, "{patch}");
         }
         assert_eq!(
-            desired_state_from_patch(json!({ "desired_state": "paused" })).unwrap(),
-            DesiredState::Paused
+            configuration_patch(json!({ "desired_state": "paused" })).unwrap(),
+            ConfigurationPatch {
+                desired_state: Some(DesiredState::Paused),
+                storage_mode: None,
+            }
+        );
+        assert_eq!(
+            configuration_patch(json!({ "storage_mode": "disk" })).unwrap(),
+            ConfigurationPatch {
+                desired_state: None,
+                storage_mode: Some(StorageMode::Disk),
+            }
+        );
+        assert_eq!(
+            pointers(configuration_patch(json!({ "storage_mode": null })).unwrap_err()),
+            ["/storage_mode"]
         );
     }
 

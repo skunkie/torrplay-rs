@@ -10,9 +10,9 @@ This document defines how a torrent and its readers change state in the
 prototype, and what the API returns at each point. Terms follow the
 [glossary](glossary.md), status codes and problem types follow the
 [API conventions](api-conventions.md), and `api/openapi.yaml` is the contract
-these rules constrain. Every torrent is a persisted torrent in memory
-storage; [Planned changes](#planned-changes) lists what later milestones
-add.
+these rules constrain. Every torrent is a persisted torrent, in memory or
+disk storage; [Planned changes](#planned-changes) lists what later
+milestones add.
 
 ## State dimensions
 
@@ -24,7 +24,7 @@ A torrent's state has independent dimensions, each exposed separately:
 | Desired state | `started`, `paused` | `desired_state` in the configuration resource | the client |
 | Observed state | `retrieving_metadata`, `downloading`, `paused`, `failed` | `observed_state` in the torrent resource | the engine |
 | Failure | none, or a failure detail | `failure` in the torrent resource | the engine |
-| Storage mode | `memory` | `storage_mode` in the torrent resource | fixed in the prototype |
+| Storage mode | `memory`, `disk` | `storage_mode` in the configuration resource; the storage mode in effect in the torrent resource | the client, through a [storage mode transition](#storage-mode-transitions) |
 
 Observed state is derived from the others and may lag a change of desired
 state while the engine applies it:
@@ -57,10 +57,17 @@ at any moment. Clients must handle observed states added later.
   exception: if the existing torrent has no metadata yet and the request
   uploads a torrent file, the server uses that file's metadata and ends
   metadata retrieval. The response is still `duplicate-torrent`.
+- A creation request may set `storage_mode` to `disk`; it defaults to
+  `memory`. An uploaded torrent file is then checked as a change to disk
+  storage is, before the torrent exists; a magnet URI is checked once its
+  metadata arrives, as [Storage mode transitions](#storage-mode-transitions)
+  describes.
 - Input the engine cannot use is rejected before the torrent exists:
-  invalid metainfo or magnet URIs are `validation-failed`, and v2-only
-  torrents and uploaded torrents whose piece length exceeds cache capacity
-  are `unsupported-torrent`.
+  invalid metainfo or magnet URIs are `validation-failed`; v2-only
+  torrents, uploaded torrents in memory storage whose piece length exceeds
+  cache capacity, and uploaded torrents in disk storage whose files the
+  download directory cannot hold are `unsupported-torrent`; and too little
+  free space for a torrent in disk storage is `insufficient-storage`.
 - Torrent IDs are random, so they are not reused, including across restarts.
 
 ## Metadata retrieval
@@ -157,6 +164,53 @@ peers never fails a torrent.
   HTTP/1.1 and HTTP/2: a canceled stream never disturbs other requests on the
   same connection.
 
+## Storage mode transitions
+
+[ADR 9](adr/0009-disk-storage.md) decides how disk storage works. A torrent
+in disk storage keeps its verified pieces in files below the download
+directory, `downloads` in the data directory unless `--download-dir` moves
+it, in a directory named by its torrent ID, at the paths the API reports.
+TorrPlay owns these directories: others may read the files, but changing
+them is unsupported.
+
+- A PATCH of the configuration's `storage_mode` is checked first: a torrent
+  whose files the download directory cannot hold, for example two files
+  that differ only in case, is `unsupported-torrent`; too little free space
+  for its files is `insufficient-storage`; and memory storage for pieces
+  longer than cache capacity is `unsupported-torrent`. Nothing changes when
+  a check fails.
+- The change is then stored and answered at once. The transition runs
+  afterward, and the torrent resource's `storage_transition` names its
+  target until it completes; then the torrent resource's `storage_mode`
+  changes. Another change of `storage_mode` meanwhile is
+  `lifecycle-conflict`; other configuration changes and deletion are
+  allowed.
+- Memory to disk copies the cache's verified pieces of the torrent into its
+  files. Disk to memory copies its readers' pinned and readahead pieces into
+  the cache, and deletes the torrent's directory once the transition
+  completes. Pieces completed during the copy are downloaded again when
+  read.
+- Streams and readers, idle ones included, continue across a transition at
+  their positions: reads wait, within the piece wait bound, while the
+  engine adds the torrent again with the other storage. The torrent's peer
+  connections close and peers reconnect.
+- A transition that fails returns the torrent to the storage mode in
+  effect. The configuration's `storage_mode` returns to it too, with a new
+  ETag, and the torrent resource's `storage_failure` names the target and
+  the cause until the next change of storage mode or a restart. A failed
+  transition is not retried; a failed move to disk leaves no directory. If
+  returning fails as well, the torrent fails.
+- A torrent still retrieving metadata may be set to `disk`; it uses disk
+  storage once metadata arrives, or returns to `memory` as a failed
+  transition does if the checks fail then.
+- Torrents in disk storage upload, as
+  [ADR 3](adr/0003-peer-behavior-for-evicted-pieces.md) decides. Their
+  pieces never count toward cache usage, and their readers neither pin
+  pieces nor share the readahead budget.
+- A failed write or read of a disk torrent's files, for example on a full
+  filesystem, fails the torrent. Starting it again checks its data in full
+  and downloads whatever is missing. Its data stays through a failure.
+
 ## Cache behavior
 
 - Verified pieces of a torrent count toward cache usage until they are
@@ -180,6 +234,10 @@ peers never fails a torrent.
 - Partial pieces are discarded and their reservations released. Verified
   pieces are released in the background without counting as evictions;
   `/api/v1/cache/statistics` shows cache usage falling as they are.
+- Deleting a torrent in disk storage, or in a transition to or from it,
+  deletes its directory in the download directory, files included, after
+  the deletion is stored. Nothing else deletes disk data, except a
+  transition to memory storage.
 - Creating a torrent with the same info hash afterward creates a new torrent
   with a new ID.
 
@@ -217,9 +275,12 @@ local filesystem, as [ADR 8](adr/0008-database.md) requires.
 
 - For each torrent it stores the ID, the v1 info hash, the creation time to
   the nanosecond, the configuration with the version its ETag derives from,
-  the storage mode, and the source: an uploaded torrent file's original
-  bytes, or a magnet URI and, once metadata is recorded, the torrent file
-  built from it.
+  the storage mode in effect, and the source: an uploaded torrent file's
+  original bytes, or a magnet URI and, once metadata is recorded, the
+  torrent file built from it.
+- It records whether the application last shut down cleanly. A disk
+  torrent's resume bitfield, the record of its verified pieces, lives in the
+  download directory beside its files rather than in the database.
 - Creation, configuration changes, recorded metadata, and deletion are each
   stored in one transaction before their response, so an interrupted write
   leaves either the state before it or the state after it.
@@ -238,7 +299,15 @@ local filesystem, as [ADR 8](adr/0008-database.md) requires.
   before the restart keep working. Listing order and cursors stay valid.
 - A torrent with stored metadata starts from it, without retrieving
   metadata; one without starts retrieving it if its desired state is
-  `started`. The piece cache starts empty, so content is downloaded again.
+  `started`. The piece cache starts empty, so a memory torrent's content is
+  downloaded again.
+- A disk torrent starts from its resume bitfield, which the engine checks by
+  sampling, so its content is not read in full or downloaded again. After an
+  unclean shutdown the bitfields are not trusted, and disk torrents check
+  their data in full before `/readyz` reports ready.
+- A transition that a crash interrupted runs again from the start. Entries
+  in the download directory named like a torrent ID that belong to no disk
+  torrent, such as those an interrupted deletion left, are deleted.
 - A failure does not survive a restart: a started torrent that had failed
   starts again, and fails again if its cause remains.
 - A stored torrent the engine no longer accepts, such as one whose piece
@@ -295,8 +364,5 @@ gives each one's bounds and default.
 
 Later milestones extend these rules before the behavior ships:
 
-- Disk storage adds the `disk` storage mode, uploading as ADR 3 describes,
-  and storage mode transitions with rollback and active-reader behavior, as
-  [ADR 9](adr/0009-disk-storage.md) decides.
 - Background downloads pause during active playback.
 - Preloads add pinned ranges with their own lifecycle.

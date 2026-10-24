@@ -44,6 +44,7 @@ pub(crate) enum ProblemType {
     PreconditionRequired,
     InternalError,
     EngineUnavailable,
+    InsufficientStorage,
 }
 
 impl ProblemType {
@@ -65,6 +66,7 @@ impl ProblemType {
             Self::PreconditionRequired => "precondition-required",
             Self::InternalError => "internal-error",
             Self::EngineUnavailable => "engine-unavailable",
+            Self::InsufficientStorage => "insufficient-storage",
         }
     }
 
@@ -86,6 +88,7 @@ impl ProblemType {
             Self::PreconditionRequired => "Precondition required",
             Self::InternalError => "Internal error",
             Self::EngineUnavailable => "Engine unavailable",
+            Self::InsufficientStorage => "Insufficient storage",
         }
     }
 
@@ -105,6 +108,7 @@ impl ProblemType {
             Self::PreconditionRequired => StatusCode::PRECONDITION_REQUIRED,
             Self::InternalError => StatusCode::INTERNAL_SERVER_ERROR,
             Self::EngineUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+            Self::InsufficientStorage => StatusCode::INSUFFICIENT_STORAGE,
         }
     }
 
@@ -352,6 +356,15 @@ impl From<EngineError> for Problem {
                 "The torrent is not started; start it to stream its files.",
             ),
             EngineError::UnknownFile => Self::not_found("The torrent has no file with this ID."),
+            EngineError::InsufficientStorage {
+                needed_bytes,
+                available_bytes,
+            } => Self::new(
+                ProblemType::InsufficientStorage,
+                format!(
+                    "The torrent's files need {needed_bytes} bytes, and the download directory has {available_bytes} free."
+                ),
+            ),
             // Callers map an invalid source with the pointer of the member
             // that carried it; reaching here means an engine contradicted
             // its own inspection.
@@ -366,7 +379,8 @@ impl From<EngineError> for Problem {
             | EngineError::DuplicateTorrent
             | EngineError::MetadataMismatch
             | EngineError::RangeOutOfBounds
-            | EngineError::CapacityBelowPieceLength { .. }) => {
+            | EngineError::CapacityBelowPieceLength { .. }
+            | EngineError::TransitionFailed { .. }) => {
                 tracing::error!(
                     error = %redact(&error.to_string()),
                     "the torrent engine contradicted itself"
@@ -381,7 +395,7 @@ impl From<EngineError> for Problem {
 mod tests {
     use super::*;
 
-    const ALL: [ProblemType; 16] = [
+    const ALL: [ProblemType; 17] = [
         ProblemType::MalformedRequest,
         ProblemType::NotFound,
         ProblemType::MethodNotAllowed,
@@ -398,6 +412,7 @@ mod tests {
         ProblemType::PreconditionRequired,
         ProblemType::InternalError,
         ProblemType::EngineUnavailable,
+        ProblemType::InsufficientStorage,
     ];
 
     #[test]

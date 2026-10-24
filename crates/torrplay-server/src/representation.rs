@@ -64,6 +64,13 @@ fn desired_state(value: lifecycle::DesiredState) -> api::DesiredState {
     }
 }
 
+fn storage_mode(value: lifecycle::StorageMode) -> api::StorageMode {
+    match value {
+        lifecycle::StorageMode::Memory => api::StorageMode::Memory,
+        lifecycle::StorageMode::Disk => api::StorageMode::Disk,
+    }
+}
+
 fn observed_state(value: ObservedState) -> api::ObservedState {
     match value {
         ObservedState::RetrievingMetadata => api::ObservedState::RetrievingMetadata,
@@ -97,7 +104,16 @@ pub(crate) fn torrent(view: &TorrentView) -> api::Torrent {
         name: metadata.map(|metadata| metadata.display_name()),
         observed_state: observed_state(view.observed_state()),
         size_bytes: metadata.map(|metadata| count(metadata.size_bytes())),
-        storage_mode: api::TorrentStorageMode::Memory,
+        storage_mode: storage_mode(record.storage_mode),
+        storage_transition: view.transition.map(|target| api::TorrentStorageTransition {
+            target_storage_mode: storage_mode(target),
+        }),
+        storage_failure: view.storage_failure.as_ref().map(|(target, detail)| {
+            api::TorrentStorageFailure {
+                target_storage_mode: storage_mode(*target),
+                detail: detail.clone(),
+            }
+        }),
     }
 }
 
@@ -122,6 +138,7 @@ pub(crate) fn configuration(id: &TorrentId, value: &Configuration) -> api::Torre
     let torrent = torrent_path(id);
     api::TorrentConfiguration {
         desired_state: desired_state(value.desired_state()),
+        storage_mode: storage_mode(value.storage_mode()),
         links: api::TorrentConfigurationLinks {
             self_field: format!("{torrent}/configuration"),
             torrent,

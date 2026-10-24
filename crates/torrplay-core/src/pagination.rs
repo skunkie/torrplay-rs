@@ -363,7 +363,7 @@ mod tests {
 
     use super::*;
     use crate::id::InfoHashV1;
-    use crate::lifecycle::DesiredState;
+    use crate::lifecycle::{DesiredState, StorageMode};
     use crate::registry::{NewTorrent, Registration, Registry};
 
     fn request<K: SortKey>(
@@ -581,6 +581,7 @@ mod tests {
             info_hash: InfoHashV1::from_bytes(hash),
             metadata: None,
             desired_state: DesiredState::Started,
+            storage_mode: StorageMode::Memory,
             created_at: SystemTime::UNIX_EPOCH + Duration::from_secs(created_at_secs),
         };
         match registry.register(new).unwrap() {

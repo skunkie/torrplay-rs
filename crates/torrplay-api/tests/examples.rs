@@ -25,6 +25,7 @@ fn through(schema: &str, example: &Value) -> Option<Result<Value, String>> {
     Some(match schema {
         "CacheStatistics" => round_trip::<api::CacheStatistics>(example),
         "CreationDesiredState" => round_trip::<api::CreationDesiredState>(example),
+        "CreationStorageMode" => round_trip::<api::CreationStorageMode>(example),
         "DesiredState" => round_trip::<api::DesiredState>(example),
         "DuplicateTorrentProblem" => round_trip::<api::DuplicateTorrentProblem>(example),
         "EntryPoint" => round_trip::<api::EntryPoint>(example),
@@ -33,6 +34,7 @@ fn through(schema: &str, example: &Value) -> Option<Result<Value, String>> {
         "Problem" => round_trip::<api::Problem>(example),
         "Settings" => round_trip::<api::Settings>(example),
         "SettingsPatch" => round_trip::<api::SettingsPatch>(example),
+        "StorageMode" => round_trip::<api::StorageMode>(example),
         "Torrent" => round_trip::<api::Torrent>(example),
         "TorrentConfiguration" => round_trip::<api::TorrentConfiguration>(example),
         "TorrentConfigurationPatch" => round_trip::<api::TorrentConfigurationPatch>(example),

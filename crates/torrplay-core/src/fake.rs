@@ -27,7 +27,7 @@ use crate::engine::{
     TorrentStatistics, TorrentStatus,
 };
 use crate::id::{InfoHashV1, TorrentId};
-use crate::lifecycle::{DesiredState, Failure, Readiness};
+use crate::lifecycle::{DesiredState, Failure, Readiness, StorageMode};
 use crate::metadata::{FileIndex, ReportedFile, ReportedMetadata};
 use crate::settings::Settings;
 
@@ -58,6 +58,12 @@ struct State {
     settings: Settings,
     /// The piece length a smaller cache capacity is refused below.
     longest_piece_bytes: u64,
+    /// The free space a torrent in disk storage may use.
+    disk_free_bytes: u64,
+    /// The detail storage mode transitions fail with, while one is set.
+    transition_failure: Option<String>,
+    /// Holds transitions until notified, while set.
+    transition_gate: Option<Arc<tokio::sync::Notify>>,
     cache_statistics: CacheStatistics,
 }
 
@@ -71,6 +77,7 @@ struct Fixture {
 struct Torrent {
     info_hash: InfoHashV1,
     desired_state: DesiredState,
+    storage_mode: StorageMode,
     metadata: Option<Arc<ReportedMetadata>>,
     failure: Option<Failure>,
     statistics: TorrentStatistics,
@@ -102,6 +109,9 @@ impl FakeEngine {
                 fault: None,
                 settings: Settings::DEFAULT,
                 longest_piece_bytes: 0,
+                disk_free_bytes: u64::MAX,
+                transition_failure: None,
+                transition_gate: None,
                 cache_statistics: CacheStatistics::default(),
             }),
         }
@@ -256,6 +266,34 @@ impl FakeEngine {
         self.lock().settings
     }
 
+    /// Sets the free space torrent files added in disk storage may use;
+    /// larger ones are [`EngineError::InsufficientStorage`].
+    pub fn set_disk_free_bytes(&self, bytes: u64) {
+        self.lock().disk_free_bytes = bytes;
+    }
+
+    /// Makes storage mode transitions fail with `detail`, or succeed again
+    /// for `None`.
+    pub fn fail_transitions(&self, detail: Option<&str>) {
+        self.lock().transition_failure = detail.map(str::to_owned);
+    }
+
+    /// Holds every later storage mode transition until the returned gate is
+    /// notified, so tests can observe one in progress.
+    pub fn hold_transitions(&self) -> Arc<tokio::sync::Notify> {
+        let gate = Arc::new(tokio::sync::Notify::new());
+        self.lock().transition_gate = Some(gate.clone());
+        gate
+    }
+
+    /// The storage mode a torrent was added in.
+    pub fn storage_mode(&self, id: &TorrentId) -> Option<StorageMode> {
+        self.lock()
+            .torrents
+            .get(id)
+            .map(|torrent| torrent.storage_mode)
+    }
+
     /// Makes the engine refuse a cache capacity smaller than its current
     /// one and below `bytes`, as if a torrent had pieces of that length.
     pub fn set_longest_piece(&self, bytes: u64) {
@@ -393,27 +431,83 @@ impl Engine for FakeEngine {
         Ok(self.ready()?.inspect(source)?)
     }
 
-    async fn add(
+    async fn add_in(
         &self,
         id: &TorrentId,
         source: &Source,
         desired_state: DesiredState,
+        storage_mode: StorageMode,
     ) -> Result<(), EngineError> {
         let mut state = self.ready()?;
         let inspection = state.inspect(source)?;
         if state.torrents.contains_key(id) {
             return Err(EngineError::DuplicateTorrent);
         }
+        if storage_mode == StorageMode::Disk
+            && let Some(metadata) = &inspection.metadata
+        {
+            let needed_bytes = metadata.files.iter().map(|file| file.size_bytes).sum();
+            if needed_bytes > state.disk_free_bytes {
+                return Err(EngineError::InsufficientStorage {
+                    needed_bytes,
+                    available_bytes: state.disk_free_bytes,
+                });
+            }
+        }
         state.torrents.insert(
             id.clone(),
             Torrent {
                 info_hash: inspection.info_hash,
                 desired_state,
+                storage_mode,
                 metadata: inspection.metadata,
                 failure: None,
                 statistics: TorrentStatistics::default(),
             },
         );
+        Ok(())
+    }
+
+    async fn check_storage_mode(
+        &self,
+        id: &TorrentId,
+        storage_mode: StorageMode,
+    ) -> Result<(), EngineError> {
+        let mut state = self.ready()?;
+        let free = state.disk_free_bytes;
+        let torrent = state.torrent(id)?;
+        if storage_mode == StorageMode::Disk
+            && let Some(metadata) = &torrent.metadata
+        {
+            let needed_bytes = metadata.files.iter().map(|file| file.size_bytes).sum();
+            if needed_bytes > free {
+                return Err(EngineError::InsufficientStorage {
+                    needed_bytes,
+                    available_bytes: free,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    async fn change_storage_mode(
+        &self,
+        id: &TorrentId,
+        storage_mode: StorageMode,
+    ) -> Result<(), EngineError> {
+        let gate = {
+            let mut state = self.ready()?;
+            state.torrent(id)?;
+            state.transition_gate.clone()
+        };
+        if let Some(gate) = gate {
+            gate.notified().await;
+        }
+        let mut state = self.ready()?;
+        if let Some(detail) = state.transition_failure.clone() {
+            return Err(EngineError::TransitionFailed { detail });
+        }
+        state.torrent(id)?.storage_mode = storage_mode;
         Ok(())
     }
 
