@@ -31,9 +31,11 @@ below; everything it does not name is unsupported.
   ranges or link-local. Otherwise the media server is not announced and
   the application logs why, while its resources still answer and the
   setting keeps its value.
-- `--dlna-name` sets the device's friendly name, `TorrPlay` by default.
-  The device's UUID is drawn once and stored, so a television recognizes
-  the server after a restart.
+- The `dlna_name` setting is the device's friendly name, `TorrPlay` by
+  default. Renaming it applies at once: a running media server sends
+  `ssdp:byebye` and announces itself again, and the device description
+  carries the new name. The device's UUID is drawn once and stored, so a
+  television recognizes the server after a restart or a rename.
 
 ## Access
 

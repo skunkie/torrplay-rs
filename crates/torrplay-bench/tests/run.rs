@@ -54,6 +54,7 @@ async fn a_trace_runs_against_torrplay_through_the_local_tracker() -> anyhow::Re
         NetworkConfig {
             listen: (Ipv4Addr::LOCALHOST, 0).into(),
             dht: false,
+            dht_bootstrap: Some(Vec::new()),
             trackers: true,
             initial_peers: Vec::new(),
         },
@@ -67,7 +68,14 @@ async fn a_trace_runs_against_torrplay_through_the_local_tracker() -> anyhow::Re
         LibrqbitEngine::new(config),
         store,
         contents,
-        torrplay::ServeOptions::default(),
+        // As the benchmark's --no-dht does.
+        torrplay::ServeOptions {
+            overrides: torrplay::Overrides {
+                dht_enabled: Some(false),
+                log_level: None,
+            },
+            ..torrplay::ServeOptions::default()
+        },
         ShutdownTimings::default(),
         async {
             let _ = triggered.await;

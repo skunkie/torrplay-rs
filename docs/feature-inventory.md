@@ -72,12 +72,14 @@ document that schedules it.
 
 | Feature | Go TorrPlay | Status | Evidence or plan |
 |---|---|---|---|
-| Settings with merge patches and stored values | `PATCH /api/v1/settings` | Verified | SET-01 to SET-09, `settings` |
+| Settings with merge patches and stored values | `PATCH /api/v1/settings` | Verified | SET-01 to SET-12, `settings` |
 | Cache capacity | `max_memory` | Verified | SET-08, SET-09 |
 | Background downloads on or off | `enable_downloader` | Verified | BGD-04 |
 | Peer limit per torrent | `torrent_peers_high_water` | Verified | SET-07, `a_torrent_connects_to_at_most_its_peer_limit` |
-| DHT on or off | `disable_dht` | Implemented | `--no-dht`; not a setting |
-| Peer port, listen address, data and download directories, log level | Settings and flags | Implemented | Command-line flags of `torrplay` |
+| DHT on or off | `disable_dht` | Verified | SET-11, `named_dht_and_log_settings`; `--no-dht` overrides it for one run |
+| Log level | `log_level` | Verified | SET-12; `--log-level` and `--log-filter` override it for one run |
+| Command-line overrides of settings | `--port` over `http_server_port` | Verified | SET-12; `overrides` reports them, which Go TorrPlay does not |
+| Peer port, listen address, data and download directories | Settings and flags | Implemented | Command-line flags of `torrplay` |
 | Transfer rate limits, connection limits, uTP, PEX, seeding switches | `torrent_client` | Deferred | With the global peer budget |
 | Default trackers for magnet URIs | `torrent_trackers` | Deferred | After the global peer budget |
 | CORS origins | `cors_allowed_origins` | Planned | With the client |
@@ -103,7 +105,7 @@ document that schedules it.
 
 | Feature | Go TorrPlay | Status | Evidence or plan |
 |---|---|---|---|
-| DLNA/UPnP media server | `internal/dlna` | Verified | `torrplay-dlna` and [the DLNA contract](dlna.md); DLNA scenarios: discovery, browsing, search, sorting, eventing, and media |
+| DLNA/UPnP media server | `internal/dlna` | Verified | `torrplay-dlna` and [the DLNA contract](dlna.md); DLNA scenarios: discovery, browsing, search, sorting, eventing, and media; its name is the `dlna_name` setting (SET-10) |
 | Stremio addon | `internal/stremio` | Planned | Its own adapter, with path and query token authentication |
 | MCP server | `internal/mcp` | Planned | Over the application's HTTP API |
 | qBittorrent API | `POST /api/v2/torrents/add` | Deferred | Optional; only if a later product scope includes it |

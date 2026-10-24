@@ -89,8 +89,67 @@ pub const DLNA_ENABLED: &str = "dlna_enabled";
 /// Whether the DLNA media server runs while unset.
 pub const DLNA_ENABLED_DEFAULT: bool = false;
 
+/// The name of the DLNA media server's friendly name.
+pub const DLNA_NAME: &str = "dlna_name";
+/// The friendly name while unset.
+pub const DLNA_NAME_DEFAULT: &str = "TorrPlay";
+/// The most characters a friendly name holds; UPnP recommends fewer than
+/// 64.
+pub const DLNA_NAME_MAX_CHARS: usize = 64;
+
+/// The name of the DHT switch.
+pub const DHT_ENABLED: &str = "dht_enabled";
+/// Whether torrents use the DHT while unset.
+pub const DHT_ENABLED_DEFAULT: bool = true;
+
+/// The name of the log level setting.
+pub const LOG_LEVEL: &str = "log_level";
+
+/// The least severe level of the application's own log messages.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum LogLevel {
+    /// Errors only.
+    Error,
+    /// Warnings and errors.
+    Warn,
+    /// Informational messages and above; the default.
+    #[default]
+    Info,
+    /// Debugging messages and above.
+    Debug,
+    /// Everything.
+    Trace,
+}
+
+impl LogLevel {
+    /// Every level, least verbose first.
+    pub const ALL: [Self; 5] = [
+        Self::Error,
+        Self::Warn,
+        Self::Info,
+        Self::Debug,
+        Self::Trace,
+    ];
+
+    /// The level's name in the contract and on the command line.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Warn => "warn",
+            Self::Info => "info",
+            Self::Debug => "debug",
+            Self::Trace => "trace",
+        }
+    }
+
+    /// The level named `name`, as [`as_str`](Self::as_str) spells it.
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|level| level.as_str() == name)
+    }
+}
+
 /// Every numeric setting, in the order representations list them; the
-/// background downloads and DLNA switches follow them.
+/// other settings follow them.
 pub const ALL: [Bounds; 7] = [
     PIECE_WAIT_SECONDS,
     IDLE_TIMEOUT_SECONDS,
@@ -125,6 +184,10 @@ pub struct Settings {
     /// Whether the DLNA media server announces the library to the local
     /// network.
     pub dlna_enabled: bool,
+    /// Whether torrents find peers through the DHT.
+    pub dht_enabled: bool,
+    /// The least severe level of the application's own log messages.
+    pub log_level: LogLevel,
 }
 
 impl Settings {
@@ -139,11 +202,44 @@ impl Settings {
         cache_capacity_bytes: CACHE_CAPACITY_BYTES.default,
         background_downloads: BACKGROUND_DOWNLOADS_DEFAULT,
         dlna_enabled: DLNA_ENABLED_DEFAULT,
+        dht_enabled: DHT_ENABLED_DEFAULT,
+        log_level: LogLevel::Info,
     };
+
+    /// These settings as the overrides leave them in effect.
+    pub fn overridden(self, overrides: &Overrides) -> Self {
+        Self {
+            dht_enabled: overrides.dht_enabled.unwrap_or(self.dht_enabled),
+            log_level: match overrides.log_level {
+                Some(LogOverride::Level(level)) => level,
+                _ => self.log_level,
+            },
+            ..self
+        }
+    }
+}
+
+/// The settings command-line options override for one run. They are never
+/// stored.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Overrides {
+    /// `false` while `--no-dht` is given.
+    pub dht_enabled: Option<bool>,
+    /// What `--log-level` or `--log-filter` sets.
+    pub log_level: Option<LogOverride>,
+}
+
+/// How a command-line option sets the log level.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LogOverride {
+    /// One level for the application's messages.
+    Level(LogLevel),
+    /// Levels per component, from a filter.
+    Custom,
 }
 
 /// The explicitly set values: `None` is unset.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Explicit {
     /// [`PIECE_WAIT_SECONDS`].
     pub piece_wait_seconds: Option<u64>,
@@ -163,6 +259,12 @@ pub struct Explicit {
     pub background_downloads: Option<bool>,
     /// [`DLNA_ENABLED`].
     pub dlna_enabled: Option<bool>,
+    /// [`DLNA_NAME`].
+    pub dlna_name: Option<String>,
+    /// [`DHT_ENABLED`].
+    pub dht_enabled: Option<bool>,
+    /// [`LOG_LEVEL`].
+    pub log_level: Option<LogLevel>,
 }
 
 /// A value a setting cannot take, with the setting's name.
@@ -221,7 +323,15 @@ impl Explicit {
             })
             .collect();
         let [_, _, per_torrent, total, _, _, _] = values;
-        if invalid.is_empty() && per_torrent > total {
+        if let Some(name) = &self.dlna_name
+            && let Err(detail) = check_dlna_name(name)
+        {
+            invalid.push(InvalidSetting {
+                name: DLNA_NAME,
+                detail,
+            });
+        }
+        if invalid.iter().all(|invalid| invalid.name == DLNA_NAME) && per_torrent > total {
             invalid.push(InvalidSetting {
                 name: IDLE_READERS_PER_TORRENT.name,
                 detail: format!("Must not exceed idle_readers_total, {total}."),
@@ -258,13 +368,33 @@ impl Explicit {
                 .background_downloads
                 .unwrap_or(BACKGROUND_DOWNLOADS_DEFAULT),
             dlna_enabled: self.dlna_enabled.unwrap_or(DLNA_ENABLED_DEFAULT),
+            dht_enabled: self.dht_enabled.unwrap_or(DHT_ENABLED_DEFAULT),
+            log_level: self.log_level.unwrap_or_default(),
         }
     }
+
+    /// The DLNA media server's friendly name, explicit or default.
+    pub fn dlna_name(&self) -> &str {
+        self.dlna_name.as_deref().unwrap_or(DLNA_NAME_DEFAULT)
+    }
+}
+
+/// Checks a friendly name: 1 to 64 characters, none of them C0 controls or
+/// DEL, as the contract's pattern says.
+fn check_dlna_name(name: &str) -> Result<(), String> {
+    let chars = name.chars().count();
+    if !(1..=DLNA_NAME_MAX_CHARS).contains(&chars) || name.chars().any(|c| c < ' ' || c == '\u{7f}')
+    {
+        return Err(format!(
+            "Must be 1 to {DLNA_NAME_MAX_CHARS} characters without control characters."
+        ));
+    }
+    Ok(())
 }
 
 /// The stored settings: the explicit values and the version their entity
 /// tag derives from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stored {
     /// The explicit values.
     pub explicit: Explicit,
@@ -326,6 +456,86 @@ mod tests {
             ..Explicit::default()
         };
         assert!(on.validate().unwrap().dlna_enabled);
+    }
+
+    #[test]
+    fn the_dht_is_on_and_the_name_is_torrplay_unless_set() {
+        let defaults = Explicit::default();
+        assert!(defaults.effective().dht_enabled);
+        assert_eq!(defaults.dlna_name(), "TorrPlay");
+        assert_eq!(defaults.effective().log_level, LogLevel::Info);
+        let set = Explicit {
+            dht_enabled: Some(false),
+            dlna_name: Some("Living room".into()),
+            log_level: Some(LogLevel::Debug),
+            ..Explicit::default()
+        };
+        let settings = set.validate().unwrap();
+        assert!(!settings.dht_enabled);
+        assert_eq!(settings.log_level, LogLevel::Debug);
+        assert_eq!(set.dlna_name(), "Living room");
+    }
+
+    #[test]
+    fn friendly_names_are_short_and_printable() {
+        let valid = ["T", "Кино в гостиной", &"x".repeat(64), &"ё".repeat(64)];
+        for name in valid {
+            assert_eq!(check_dlna_name(name), Ok(()), "{name:?}");
+        }
+        let invalid = [
+            "",
+            &"x".repeat(65),
+            "Living\nroom",
+            "Tab\there",
+            "Del\u{7f}",
+        ];
+        for name in invalid {
+            let explicit = Explicit {
+                dlna_name: Some(name.to_owned()),
+                ..Explicit::default()
+            };
+            let names: Vec<&str> = explicit
+                .validate()
+                .unwrap_err()
+                .iter()
+                .map(|invalid| invalid.name)
+                .collect();
+            assert_eq!(names, ["dlna_name"], "{name:?}");
+        }
+    }
+
+    #[test]
+    fn overrides_win_over_stored_values() {
+        let stored = Explicit {
+            dht_enabled: Some(true),
+            log_level: Some(LogLevel::Warn),
+            ..Explicit::default()
+        }
+        .effective();
+        assert_eq!(stored.overridden(&Overrides::default()), stored);
+        let overridden = stored.overridden(&Overrides {
+            dht_enabled: Some(false),
+            log_level: Some(LogOverride::Level(LogLevel::Trace)),
+        });
+        assert!(!overridden.dht_enabled);
+        assert_eq!(overridden.log_level, LogLevel::Trace);
+        let custom = stored.overridden(&Overrides {
+            dht_enabled: None,
+            log_level: Some(LogOverride::Custom),
+        });
+        assert_eq!(
+            custom.log_level,
+            LogLevel::Warn,
+            "a filter has no one level"
+        );
+    }
+
+    #[test]
+    fn log_levels_round_trip_their_names() {
+        for level in LogLevel::ALL {
+            assert_eq!(LogLevel::parse(level.as_str()), Some(level));
+        }
+        assert_eq!(LogLevel::parse("INFO"), None);
     }
 
     #[test]

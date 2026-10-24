@@ -70,6 +70,10 @@ fn settings_of(config: &EngineConfig) -> torrplay_core::settings::Explicit {
         cache_capacity_bytes: Some(config.cache_capacity_bytes),
         background_downloads: None,
         dlna_enabled: None,
+        dlna_name: None,
+        // An isolated network has no DHT, and serve applies the setting.
+        dht_enabled: Some(config.network.dht),
+        log_level: None,
     }
 }
 
@@ -185,7 +189,7 @@ impl Running {
             explicit,
             version: contents.settings.version + 1,
         };
-        store.set_settings(contents.settings).await?;
+        store.set_settings(contents.settings.clone()).await?;
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let address = listener.local_addr()?;
         let (shutdown, triggered) = oneshot::channel::<()>();

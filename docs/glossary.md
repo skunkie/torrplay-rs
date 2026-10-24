@@ -222,6 +222,14 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
   retrieval and download status. It may lag or differ from the desired
   state.
 
+**Setting**
+: A stored, writable value of `/api/v1/settings` that tunes the whole
+  application, such as the cache capacity or the log level.
+
+**Override**
+: A command-line option that sets a setting's value for one run without
+  storing it. The settings report each override with the value in effect.
+
 ## Library
 
 **Library**

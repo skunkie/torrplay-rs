@@ -31,22 +31,16 @@ use torrplay_dlna::description::Device;
 mod media_server;
 use torrplay_core::id::TorrentId;
 use torrplay_core::lifecycle::StorageMode;
+pub use torrplay_core::settings::{LogLevel, LogOverride, Overrides};
 use torrplay_engine::{DEFAULT_PEER_PORT, EngineConfig, LibrqbitEngine, NetworkConfig};
 use torrplay_server::App;
 use torrplay_store::{Contents, Store};
-use tracing::Level;
 
 /// The default API port, as the contract's server URL documents.
 pub const DEFAULT_PORT: u16 = 8080;
 
 /// How long the whole shutdown may take before the process exits anyway.
 pub const DEFAULT_SHUTDOWN_LIMIT: Duration = Duration::from_secs(30);
-
-/// The DLNA media server's friendly name unless `--dlna-name` sets one.
-pub const DEFAULT_DLNA_NAME: &str = "TorrPlay";
-
-/// The longest friendly name `--dlna-name` takes.
-const DLNA_NAME_MAX_CHARS: usize = 64;
 
 /// How often the drain checks whether streams are still in progress.
 const DRAIN_POLL: Duration = Duration::from_millis(50);
@@ -68,19 +62,23 @@ Options:
   --allowed-host <NAME>      A host name requests may give besides IP addresses,
                              localhost, and .local names, such as a reverse
                              proxy's; repeat for each
-  --dlna-name <NAME>         The name televisions show for the DLNA media server,
-                             which the dlna_enabled setting turns on
-                             [default: TorrPlay]
   --peer-port <PORT>         The BitTorrent peer port on every interface [default: 4240]
   --data-dir <DIR>           Where the torrents database lives, on a local
                              filesystem [default: the platform's data directory]
   --download-dir <DIR>       Where torrents in disk storage keep their files, a
                              directory for TorrPlay alone [default: downloads in
                              the data directory]
-  --log-level <LEVEL>        error, warn, info, debug, or trace [default: info]
+
+These options override a setting for this run only, without storing it:
+  --log-level <LEVEL>        error, warn, info, debug, or trace, instead of the
+                             log_level setting
   --log-filter <TARGETS>     Per-target levels, as in librqbit=debug,torrplay=info,
-                             replacing --log-level's filter, for diagnosing the engine
-  --no-dht                   Find peers through trackers only, as benchmarks do
+                             instead of the log_level setting, for diagnosing the
+                             engine
+  --no-dht                   Find peers through trackers only, whatever the
+                             dht_enabled setting says, as benchmarks do
+
+The DLNA media server, its name, and the DHT are settings of the API.
   -h, --help                 Print this help
   -V, --version              Print the version
 ";
@@ -93,17 +91,17 @@ pub struct Config {
     /// The host names requests may give beyond those always allowed,
     /// normalized.
     pub allowed_hosts: Vec<String>,
-    /// The DLNA media server's friendly name.
-    pub dlna_name: String,
     /// The peer listener's port, on every interface.
     pub peer_port: u16,
-    /// The most verbose level TorrPlay's own logs record; other crates log
-    /// warnings and errors only.
-    pub log_level: Level,
+    /// The most verbose level TorrPlay's own logs record, overriding the
+    /// `log_level` setting; other crates log warnings and errors only.
+    pub log_level: Option<LogLevel>,
     /// Per-target levels in `tracing-subscriber`'s `Targets` syntax that
-    /// replace the filter `log_level` sets, so other crates can log too.
+    /// replace the filter a level sets, so other crates can log too,
+    /// overriding the `log_level` setting.
     pub log_filter: Option<String>,
-    /// Whether DHT finds peers.
+    /// Whether DHT may find peers; `false` overrides the `dht_enabled`
+    /// setting.
     pub dht: bool,
     /// The data directory, or `None` for the platform's; see
     /// [`Config::data_dir`].
@@ -118,9 +116,8 @@ impl Default for Config {
         Self {
             listen: (Ipv4Addr::LOCALHOST, DEFAULT_PORT).into(),
             allowed_hosts: Vec::new(),
-            dlna_name: DEFAULT_DLNA_NAME.to_owned(),
             peer_port: DEFAULT_PEER_PORT,
-            log_level: Level::INFO,
+            log_level: None,
             log_filter: None,
             dht: true,
             data_dir: None,
@@ -148,6 +145,18 @@ impl Config {
         self.download_dir
             .clone()
             .unwrap_or_else(|| data_dir.join("downloads"))
+    }
+
+    /// The settings this command line overrides for the run.
+    pub fn overrides(&self) -> Overrides {
+        Overrides {
+            dht_enabled: (!self.dht).then_some(false),
+            log_level: if self.log_filter.is_some() {
+                Some(LogOverride::Custom)
+            } else {
+                self.log_level.map(LogOverride::Level)
+            },
+        }
     }
 
     /// The engine configuration for this configuration, with `folder` as
@@ -257,20 +266,6 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, Arg
                     .parse()
                     .map_err(|_| invalid(value.clone(), "an IP address and port"))?;
             }
-            "--dlna-name" => {
-                let value = value()?;
-                let name = value.trim();
-                if name.is_empty()
-                    || name.chars().count() > DLNA_NAME_MAX_CHARS
-                    || name.chars().any(char::is_control)
-                {
-                    return Err(invalid(
-                        value,
-                        "1 to 64 characters without control characters",
-                    ));
-                }
-                config.dlna_name = name.to_owned();
-            }
             "--allowed-host" => {
                 let value = value()?;
                 let name = AllowedHosts::normalize(&value)
@@ -287,9 +282,10 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, Arg
             }
             "--log-level" => {
                 let value = value()?;
-                config.log_level = value
-                    .parse()
-                    .map_err(|_| invalid(value.clone(), "error, warn, info, debug, or trace"))?;
+                config.log_level =
+                    Some(LogLevel::parse(&value.to_ascii_lowercase()).ok_or_else(|| {
+                        invalid(value.clone(), "error, warn, info, debug, or trace")
+                    })?);
             }
             "--data-dir" => {
                 let value = value()?;
@@ -388,35 +384,72 @@ pub async fn change_password(
     Ok(changed)
 }
 
+/// Changes the level of TorrPlay's own log messages after
+/// [`init_logging`].
+#[derive(Clone)]
+pub struct LogControl(Arc<dyn Fn(LogLevel) + Send + Sync>);
+
+impl LogControl {
+    /// Records TorrPlay's own messages at `level` and more severe, and
+    /// other crates' warnings and errors.
+    pub fn set_level(&self, level: LogLevel) {
+        (self.0)(level);
+    }
+}
+
+impl std::fmt::Debug for LogControl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LogControl")
+    }
+}
+
+/// The filter for TorrPlay's own messages at `level` and other crates'
+/// warnings and errors.
+fn level_filter(level: LogLevel) -> tracing_subscriber::filter::Targets {
+    use tracing_subscriber::filter::{LevelFilter, Targets};
+
+    let level = match level {
+        LogLevel::Error => LevelFilter::ERROR,
+        LogLevel::Warn => LevelFilter::WARN,
+        LogLevel::Info => LevelFilter::INFO,
+        LogLevel::Debug => LevelFilter::DEBUG,
+        LogLevel::Trace => LevelFilter::TRACE,
+    };
+    [
+        "torrplay",
+        "torrplay_core",
+        "torrplay_engine",
+        "torrplay_server",
+    ]
+    .into_iter()
+    .fold(
+        Targets::new().with_default(LevelFilter::WARN),
+        |filter, target| filter.with_target(target, level),
+    )
+}
+
 /// Records logs to standard error: TorrPlay's own at `level` and more
 /// severe, other crates' warnings and errors only, unless `filter`, already
-/// validated by [`parse_args`], sets every target's level instead.
-pub fn init_logging(level: Level, filter: Option<&str>) {
-    use tracing_subscriber::filter::{LevelFilter, Targets};
+/// validated by [`parse_args`], sets every target's level instead. The
+/// returned control changes the level later.
+pub fn init_logging(level: LogLevel, filter: Option<&str>) -> LogControl {
     use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::reload;
     use tracing_subscriber::util::SubscriberInitExt;
 
-    let level = LevelFilter::from_level(level);
-    let default = || {
-        [
-            "torrplay",
-            "torrplay_core",
-            "torrplay_engine",
-            "torrplay_server",
-        ]
-        .into_iter()
-        .fold(
-            Targets::new().with_default(LevelFilter::WARN),
-            |filter, target| filter.with_target(target, level),
-        )
-    };
     let filter = filter
-        .and_then(|filter| filter.parse::<Targets>().ok())
-        .unwrap_or_else(default);
+        .and_then(|filter| filter.parse().ok())
+        .unwrap_or_else(|| level_filter(level));
+    let (filter, handle) = reload::Layer::new(filter);
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .with(filter)
         .init();
+    LogControl(Arc::new(move |level| {
+        if let Err(error) = handle.reload(level_filter(level)) {
+            tracing::warn!(%error, "the log level could not be changed");
+        }
+    }))
 }
 
 /// The bounds of the shutdown sequence.
@@ -439,21 +472,16 @@ impl Default for ShutdownTimings {
 }
 
 /// What [`serve`] serves beyond the store's contents.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ServeOptions {
     /// The host names requests may give beyond those always allowed.
     pub allowed_hosts: AllowedHosts,
-    /// The DLNA media server's friendly name.
-    pub dlna_name: String,
-}
-
-impl Default for ServeOptions {
-    fn default() -> Self {
-        Self {
-            allowed_hosts: AllowedHosts::default(),
-            dlna_name: DEFAULT_DLNA_NAME.to_owned(),
-        }
-    }
+    /// The settings the command line overrides for the run.
+    pub overrides: Overrides,
+    /// Sets the level of the application's own logs to the `log_level`
+    /// setting while no override sets it; `None` leaves logging alone, as
+    /// tests do.
+    pub log: Option<LogControl>,
 }
 
 /// Serves the API on `listener` over `engine`, which must not be started
@@ -512,12 +540,12 @@ pub async fn serve(
     }
     let app = Arc::new(
         App::new(engine.clone(), store)
+            .with_overrides(options.overrides)
             .with_settings(settings)
             .with_viewing(profiles, progress, dismissals)
             .with_credentials(credentials)
             .with_allowed_hosts(options.allowed_hosts)
             .with_media_server(Device {
-                friendly_name: options.dlna_name,
                 uuid: media_server_udn.clone(),
                 version: env!("CARGO_PKG_VERSION").to_owned(),
             }),
@@ -536,7 +564,7 @@ pub async fn serve(
     let (stop_media_server, media_server_stopped) = oneshot::channel::<()>();
     let notifying = Arc::clone(&app);
     let media_server = tokio::spawn(media_server::supervise(
-        app.dlna_enabled(),
+        app.media_server_setting(),
         media_server_udn,
         listen,
         media_server_stopped,
@@ -559,6 +587,13 @@ pub async fn serve(
         .into_future(),
     );
     let mut shutdown = std::pin::pin!(shutdown);
+    // The log level follows its setting unless the command line sets it.
+    let logging = options
+        .log
+        .filter(|_| app.overrides().log_level.is_none())
+        .map(|control| tokio::spawn(follow_log_level(app.log_level(), control)));
+    // The engine starts with the DHT as the settings and overrides leave it.
+    app.apply_dht().await.context("configuring the DHT")?;
 
     let started = tokio::select! {
         started = engine.start() => started.context("the engine did not start"),
@@ -618,6 +653,9 @@ pub async fn serve(
         app.record_clean_shutdown()
             .await
             .context("recording the clean shutdown")?;
+        if let Some(logging) = &logging {
+            logging.abort();
+        }
         app.close_store().await.context("closing the store")
     };
     let stopped = tokio::time::timeout(timings.limit, sequence)
@@ -628,6 +666,17 @@ pub async fn serve(
         tracing::info!("stopped");
     }
     result.and(stopped)
+}
+
+/// Sets the log level to the setting's value, now and whenever it changes,
+/// until the application's state is dropped.
+async fn follow_log_level(mut level: tokio::sync::watch::Receiver<LogLevel>, control: LogControl) {
+    loop {
+        control.set_level(*level.borrow_and_update());
+        if level.changed().await.is_err() {
+            return;
+        }
+    }
 }
 
 /// Waits until no stream is in progress, for at most `period`.
@@ -728,9 +777,8 @@ mod tests {
             Config {
                 listen: "[::1]:9000".parse().unwrap(),
                 allowed_hosts: Vec::new(),
-                dlna_name: DEFAULT_DLNA_NAME.to_owned(),
                 peer_port: 6881,
-                log_level: Level::DEBUG,
+                log_level: Some(LogLevel::Debug),
                 log_filter: Some("librqbit=debug,torrplay_engine=trace".into()),
                 dht: false,
                 data_dir: Some("/srv/torrplay".into()),
@@ -774,21 +822,49 @@ mod tests {
     }
 
     #[test]
-    fn the_media_server_name_is_trimmed_and_bounded() {
-        let Ok(Command::Run(config)) = parse(&["--dlna-name", "  Living room  "]) else {
-            panic!("the name parses");
+    fn overriding_options_override_their_settings() {
+        assert_eq!(Config::default().overrides(), Overrides::default());
+        let Ok(Command::Run(config)) = parse(&["--no-dht", "--log-level", "TRACE"]) else {
+            panic!("the options parse");
         };
-        assert_eq!(config.dlna_name, "Living room");
-        assert_eq!(Config::default().dlna_name, DEFAULT_DLNA_NAME);
-        for name in ["", "   ", &"x".repeat(65), "tab\there"] {
-            assert!(
-                matches!(
-                    parse(&["--dlna-name", name]),
-                    Err(ArgsError::InvalidValue { .. })
-                ),
-                "{name:?}"
-            );
-        }
+        assert_eq!(
+            config.overrides(),
+            Overrides {
+                dht_enabled: Some(false),
+                log_level: Some(LogOverride::Level(LogLevel::Trace)),
+            }
+        );
+        let Ok(Command::Run(config)) =
+            parse(&["--log-level=warn", "--log-filter", "librqbit=debug"])
+        else {
+            panic!("the options parse");
+        };
+        assert_eq!(
+            config.overrides().log_level,
+            Some(LogOverride::Custom),
+            "a filter sets levels per component"
+        );
+    }
+
+    #[test]
+    fn a_log_level_applies_to_torrplay_alone() {
+        use tracing::Level;
+
+        let debug = level_filter(LogLevel::Debug);
+        assert!(debug.would_enable("torrplay_server::settings", &Level::DEBUG));
+        assert!(!debug.would_enable("torrplay_server", &Level::TRACE));
+        assert!(!debug.would_enable("librqbit::session", &Level::INFO));
+        assert!(debug.would_enable("librqbit::session", &Level::WARN));
+        let error = level_filter(LogLevel::Error);
+        assert!(!error.would_enable("torrplay_engine", &Level::WARN));
+    }
+
+    #[test]
+    fn the_media_server_name_is_no_option() {
+        assert_eq!(
+            parse(&["--dlna-name", "Living room"]),
+            Err(ArgsError::Unknown("--dlna-name".into()))
+        );
     }
 
     #[test]

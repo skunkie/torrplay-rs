@@ -271,6 +271,16 @@ pub trait Engine: Send + Sync + 'static {
     /// changes nothing.
     fn apply_settings(&self, settings: &Settings) -> Result<(), EngineError>;
 
+    /// Turns the DHT on or off, before the engine starts or while it runs.
+    /// Turning it off ends every torrent's DHT search at once, while their
+    /// trackers and connected peers remain; turning it on serves torrents
+    /// as they start. Settings' own `dht_enabled` is not read by
+    /// [`apply_settings`](Self::apply_settings), since the application
+    /// decides it with the command line's override. A DHT that cannot start,
+    /// such as when its socket cannot be bound, leaves it off and is
+    /// [`EngineError::Internal`].
+    fn set_dht(&self, enabled: bool) -> impl Future<Output = Result<(), EngineError>> + Send;
+
     /// Inspects a source without adding a torrent, contacting peers, or
     /// prefetching. Returns the v1 info hash and, for a torrent file, its
     /// metadata as the engine would report it, or

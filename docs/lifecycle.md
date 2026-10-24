@@ -694,7 +694,24 @@ local filesystem, as [ADR 8](adr/0008-database.md) requires.
 `/api/v1/settings` holds the application's settings: the piece wait bound,
 the idle timeout, the idle reader limits per torrent and in total, the drain
 period, the peer limit per torrent, the cache capacity, whether
-background downloads run, and whether the DLNA media server is on. The contract gives each one's bounds and default.
+background downloads run, whether the DLNA media server is on and its name,
+whether torrents use the DHT, and the log level. The contract gives each
+one's bounds and default.
+
+Command-line options set what the application needs before it serves the
+API: its listen address, allowed hosts, peer port, data directory, and
+download directory. A few options instead override a setting for one run:
+`--no-dht` turns the DHT off, and `--log-level` and `--log-filter` set the
+log level. Overrides follow one rule:
+
+- A command-line option wins for the run it is given in. It is never
+  stored, so the next run without it uses the stored value, and without a
+  stored value the default.
+- `GET` reports the stored values as usual and lists each overridden
+  setting in `overrides` with the value in effect. A `PATCH` still changes
+  the stored value, which applies once the application runs without the
+  option. The settings' ETag covers the overrides, so a restart with
+  different options changes it.
 
 - A `PATCH` is an RFC 7396 merge patch with `If-Match`. A member set to
   `null` returns to its default; an omitted member keeps its value; explicit
@@ -731,8 +748,19 @@ background downloads run, and whether the DLNA media server is on. The contract 
 - Turning background downloads off applies at once: torrents then request
   only the pieces readers need, and requests already sent finish. Turning
   them on resumes them at once unless playback is active.
-- Turning the DLNA media server on or off applies at once, as
-  [the DLNA contract](dlna.md#enabling-it) describes.
+- Turning the DLNA media server on or off, and renaming it, apply at once,
+  as [the DLNA contract](dlna.md#enabling-it) describes.
+- Turning the DHT off applies at once: the DHT stops, and every torrent's
+  DHT search ends while its trackers and connected peers remain. Turning
+  it on starts the DHT, which serves torrents as they start, as the peer
+  limit does. Private torrents never use the DHT. While `--no-dht` is
+  given, the stored value changes but the DHT stays off. Starting the DHT
+  is applied before it is stored, since binding its socket can fail; a
+  failure is an `internal-error` that leaves the settings as they were.
+- The log level applies at once to TorrPlay's own log messages; other
+  components log only warnings and errors. While `--log-level` or
+  `--log-filter` is given, the stored value changes but the option's level
+  stays in effect.
 - Changing settings returns `engine-unavailable` while the engine is
   unavailable, while stored torrents are being restored, and while the
   application shuts down; reading them is always served.

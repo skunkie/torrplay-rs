@@ -10,11 +10,10 @@ use crate::services::{CONNECTION_MANAGER, CONTENT_DIRECTORY};
 /// The device type the media server announces.
 pub const DEVICE_TYPE: &str = "urn:schemas-upnp-org:device:MediaServer:1";
 
-/// The media server's identity.
+/// The media server's identity. Its name televisions show is a setting,
+/// which [`description`](Self::description) takes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Device {
-    /// The name televisions show.
-    pub friendly_name: String,
     /// Its stored UUID, without the `uuid:` prefix.
     pub uuid: String,
     /// The application's version.
@@ -27,8 +26,8 @@ impl Device {
         format!("uuid:{}", self.uuid)
     }
 
-    /// The device description document.
-    pub fn description(&self) -> String {
+    /// The device description document, naming the device `friendly_name`.
+    pub fn description(&self, friendly_name: &str) -> String {
         let service = |service_type: &str, path: &str, id: &str| {
             format!(
                 "<service><serviceType>{service_type}</serviceType><serviceId>urn:upnp-org:serviceId:{id}</serviceId><SCPDURL>/dlna/{path}.xml</SCPDURL><controlURL>/dlna/{path}/control</controlURL><eventSubURL>/dlna/{path}/events</eventSubURL></service>"
@@ -36,7 +35,7 @@ impl Device {
         };
         format!(
             r#"<?xml version="1.0" encoding="utf-8"?><root xmlns="urn:schemas-upnp-org:device-1-0" xmlns:dlna="urn:schemas-dlna-org:device-1-0"><specVersion><major>1</major><minor>0</minor></specVersion><device><deviceType>{DEVICE_TYPE}</deviceType><friendlyName>{}</friendlyName><manufacturer>TorrPlay</manufacturer><manufacturerURL>https://github.com/skunkie/torrplay-rs</manufacturerURL><modelDescription>TorrPlay media server</modelDescription><modelName>TorrPlay</modelName><modelNumber>{}</modelNumber><UDN>{}</UDN><dlna:X_DLNADOC>DMS-1.50</dlna:X_DLNADOC><serviceList>{}{}</serviceList></device></root>"#,
-            escape(&self.friendly_name),
+            escape(friendly_name),
             escape(&self.version),
             escape(&self.udn()),
             service(CONTENT_DIRECTORY, "content-directory", "ContentDirectory"),
@@ -227,11 +226,10 @@ mod tests {
     #[test]
     fn the_description_names_the_device_and_its_services() {
         let device = Device {
-            friendly_name: "TorrPlay & friends".into(),
             uuid: "4b1c0b2a-6f5e-4d3c-8b2a-1f0e9d8c7b6a".into(),
             version: "0.1.0".into(),
         };
-        let description = device.description();
+        let description = device.description("TorrPlay & friends");
         for expected in [
             "<friendlyName>TorrPlay &amp; friends</friendlyName>",
             "<UDN>uuid:4b1c0b2a-6f5e-4d3c-8b2a-1f0e9d8c7b6a</UDN>",

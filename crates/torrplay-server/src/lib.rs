@@ -58,7 +58,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get, post};
 use torrplay_core::engine::Engine;
 
-pub use crate::app::{App, Clock};
+pub use crate::app::{App, Clock, MediaServerSetting};
 use crate::problem::{Problem, ProblemType};
 
 /// Returns the router of the API over `app`.

@@ -23,6 +23,12 @@ const CONTENT_DIRECTORY: &str = "urn:schemas-upnp-org:service:ContentDirectory:1
 
 /// Sets `dlna_enabled`.
 async fn enable(server: &TestServer, on: bool) {
+    let patched = change_settings(server, json!({ "dlna_enabled": on })).await;
+    assert_eq!(patched.json()["dlna_enabled"], on);
+}
+
+/// Applies a merge patch to the settings.
+async fn change_settings(server: &TestServer, patch: serde_json::Value) -> Exchange {
     let etag = server
         .get("/api/v1/settings")
         .await
@@ -34,12 +40,12 @@ async fn enable(server: &TestServer, on: bool) {
             request(Method::PATCH, "/api/v1/settings")
                 .header(header::CONTENT_TYPE, "application/merge-patch+json")
                 .header(header::IF_MATCH, etag)
-                .body(serde_json::to_vec(&json!({ "dlna_enabled": on })).unwrap())
+                .body(serde_json::to_vec(&patch).unwrap())
                 .unwrap(),
         )
         .await;
     assert_eq!(patched.status, StatusCode::OK, "{patched:?}");
-    assert_eq!(patched.json()["dlna_enabled"], on);
+    patched
 }
 
 /// Calls a ContentDirectory action with `arguments`.
@@ -191,8 +197,15 @@ async fn the_media_server_answers_only_while_on() {
     );
     let body = text(&found);
     assert!(
-        body.contains("<friendlyName>TorrPlay test</friendlyName>"),
+        body.contains("<friendlyName>TorrPlay</friendlyName>"),
         "{body}"
+    );
+    // SET-10: the description carries a new name at once.
+    change_settings(&server, json!({ "dlna_name": "Den & kitchen" })).await;
+    let renamed = text(&description().await);
+    assert!(
+        renamed.contains("<friendlyName>Den &amp; kitchen</friendlyName>"),
+        "{renamed}"
     );
     let udn = between(&body, "<UDN>", "</UDN>").to_owned();
     assert!(udn.starts_with("uuid:") && udn.len() == 41, "{udn}");

@@ -27,6 +27,7 @@ use torrplay_core::lifecycle::{Failure, ObservedState, Readiness, StorageMode};
 use torrplay_core::metadata::Metadata;
 use torrplay_core::profiles::{DEFAULT_PROFILE_NAME, Profile, Viewing};
 use torrplay_core::registry::{Registry, TorrentRecord};
+use torrplay_core::settings::{LogLevel, Overrides, Settings};
 use torrplay_dlna::description::Device;
 use torrplay_store::{
     Store, StoreError, StoredCredentials, StoredDismissal, StoredProgress, StoredSettings,
@@ -66,8 +67,23 @@ pub struct App<E> {
     allowed_hosts: AllowedHosts,
     clock: Clock,
     media_server: Option<crate::dlna::MediaServer>,
-    /// Whether the DLNA media server is on, for the task that announces it.
-    dlna_enabled: watch::Sender<bool>,
+    /// Whether the DLNA media server is on and its name, for the task that
+    /// announces it.
+    media_server_setting: watch::Sender<MediaServerSetting>,
+    /// The stored log level, for the task that sets the log filter.
+    log_level: watch::Sender<LogLevel>,
+    /// The settings the command line overrides in this run.
+    overrides: Overrides,
+}
+
+/// The settings the DLNA media server's announcer follows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MediaServerSetting {
+    /// Whether it is announced.
+    pub enabled: bool,
+    /// The friendly name; announcing again under a new one makes
+    /// televisions read it.
+    pub name: String,
 }
 
 /// What the server last learned from the engine. Requests answered from
@@ -141,8 +157,25 @@ impl<E: Engine> App<E> {
             allowed_hosts: AllowedHosts::default(),
             clock: Arc::new(SystemTime::now),
             media_server: None,
-            dlna_enabled: watch::Sender::new(false),
+            media_server_setting: watch::Sender::new(MediaServerSetting {
+                enabled: false,
+                name: torrplay_core::settings::DLNA_NAME_DEFAULT.to_owned(),
+            }),
+            log_level: watch::Sender::new(LogLevel::default()),
+            overrides: Overrides::default(),
         }
+    }
+
+    /// Runs with the settings the command line overrides. Call it before
+    /// [`with_settings`](Self::with_settings), which applies them.
+    pub fn with_overrides(mut self, overrides: Overrides) -> Self {
+        self.overrides = overrides;
+        self
+    }
+
+    /// The settings the command line overrides in this run.
+    pub fn overrides(&self) -> &Overrides {
+        &self.overrides
     }
 
     /// Serves the DLNA media server's resources as `device`, while the
@@ -163,10 +196,16 @@ impl<E: Engine> App<E> {
         crate::dlna::notify(self).await;
     }
 
-    /// Follows the `dlna_enabled` setting, for the task that announces the
-    /// media server.
-    pub fn dlna_enabled(&self) -> watch::Receiver<bool> {
-        self.dlna_enabled.subscribe()
+    /// Follows the `dlna_enabled` and `dlna_name` settings, for the task
+    /// that announces the media server.
+    pub fn media_server_setting(&self) -> watch::Receiver<MediaServerSetting> {
+        self.media_server_setting.subscribe()
+    }
+
+    /// Follows the stored `log_level` setting, for the task that sets the
+    /// log filter while no command-line option overrides it.
+    pub fn log_level(&self) -> watch::Receiver<LogLevel> {
+        self.log_level.subscribe()
     }
 
     /// Runs with the password, signing key, and access tokens the store held
@@ -220,13 +259,13 @@ impl<E: Engine> App<E> {
     /// the engine. Stored values outside the current bounds count as unset,
     /// with a warning, and stay stored until a change replaces them.
     pub fn with_settings(self, stored: StoredSettings) -> Self {
-        let explicit = crate::settings::usable(stored.explicit);
+        let explicit = crate::settings::usable(stored.explicit.clone());
         if explicit != stored.explicit {
             tracing::warn!("stored settings outside the current bounds take their defaults");
         }
         let stored = StoredSettings { explicit, ..stored };
         // The engine holds no torrent yet, so it refuses nothing.
-        if let Err(error) = self.engine.apply_settings(&explicit.effective()) {
+        if let Err(error) = self.engine.apply_settings(&stored.explicit.effective()) {
             tracing::error!(%error, "the engine did not apply the stored settings");
         }
         self.set_settings(stored);
@@ -294,7 +333,28 @@ impl<E: Engine> App<E> {
 
     /// The stored settings.
     pub fn settings(&self) -> StoredSettings {
-        *self.settings.lock().unwrap_or_else(PoisonError::into_inner)
+        self.settings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Gives the engine the DHT switch as the settings and the command line
+    /// leave it. [`with_settings`](Self::with_settings) cannot, since it
+    /// does not wait; call this before the engine starts.
+    pub async fn apply_dht(&self) -> Result<(), EngineError> {
+        self.engine
+            .set_dht(self.effective_settings().dht_enabled)
+            .await
+    }
+
+    /// The settings in effect: the stored ones, or their defaults, as the
+    /// command line overrides them.
+    pub fn effective_settings(&self) -> Settings {
+        self.settings()
+            .explicit
+            .effective()
+            .overridden(&self.overrides)
     }
 
     /// The effective drain period, for shutting down.
@@ -303,10 +363,18 @@ impl<E: Engine> App<E> {
     }
 
     pub(crate) fn set_settings(&self, stored: StoredSettings) {
+        let effective = stored.explicit.effective();
+        let on = effective.dlna_enabled;
+        let wanted = MediaServerSetting {
+            enabled: on,
+            name: stored.explicit.dlna_name().to_owned(),
+        };
         *self.settings.lock().unwrap_or_else(PoisonError::into_inner) = stored;
-        let on = stored.explicit.effective().dlna_enabled;
-        self.dlna_enabled
-            .send_if_modified(|enabled| std::mem::replace(enabled, on) != on);
+        self.media_server_setting
+            .send_if_modified(|setting| std::mem::replace(setting, wanted.clone()) != wanted);
+        self.log_level.send_if_modified(|level| {
+            std::mem::replace(level, effective.log_level) != effective.log_level
+        });
         if !on && let Some(server) = &self.media_server {
             // Turned off, the media server forgets its control points.
             server.subscriptions.clear();

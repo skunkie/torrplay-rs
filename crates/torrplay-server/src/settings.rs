@@ -15,7 +15,7 @@ use serde_json::Value;
 use torrplay_api as api;
 use torrplay_core::engine::{Engine, EngineError};
 use torrplay_core::lifecycle::EntityTag;
-use torrplay_core::settings::{self, Explicit, Stored};
+use torrplay_core::settings::{self, Explicit, LogLevel, LogOverride, Overrides, Stored};
 
 use crate::app::{App, store_failed};
 use crate::body::{JSON_LIMIT_BYTES, read_limited};
@@ -30,11 +30,46 @@ pub(crate) fn settings_path() -> String {
     format!("{BASE}/settings")
 }
 
-fn settings_etag(stored: &Stored) -> EntityTag {
-    EntityTag::new(format!("set-{}", stored.etag().opaque()))
+/// The settings' entity tag, which also changes with the overrides, since
+/// they are part of the representation.
+fn settings_etag(stored: &Stored, overrides: &Overrides) -> EntityTag {
+    let mut tag = format!("set-{}", stored.etag().opaque());
+    if overrides.dht_enabled == Some(false) {
+        tag.push_str("-nodht");
+    }
+    match overrides.log_level {
+        Some(LogOverride::Level(level)) => {
+            tag.push_str("-log.");
+            tag.push_str(level.as_str());
+        }
+        Some(LogOverride::Custom) => tag.push_str("-log.custom"),
+        None => {}
+    }
+    EntityTag::new(tag)
 }
 
-fn representation(stored: &Stored) -> api::Settings {
+fn log_level(level: LogLevel) -> api::SettingsLogLevel {
+    match level {
+        LogLevel::Error => api::SettingsLogLevel::Error,
+        LogLevel::Warn => api::SettingsLogLevel::Warn,
+        LogLevel::Info => api::SettingsLogLevel::Info,
+        LogLevel::Debug => api::SettingsLogLevel::Debug,
+        LogLevel::Trace => api::SettingsLogLevel::Trace,
+    }
+}
+
+fn log_override(level: LogOverride) -> api::SettingsOverridesLogLevel {
+    match level {
+        LogOverride::Level(LogLevel::Error) => api::SettingsOverridesLogLevel::Error,
+        LogOverride::Level(LogLevel::Warn) => api::SettingsOverridesLogLevel::Warn,
+        LogOverride::Level(LogLevel::Info) => api::SettingsOverridesLogLevel::Info,
+        LogOverride::Level(LogLevel::Debug) => api::SettingsOverridesLogLevel::Debug,
+        LogOverride::Level(LogLevel::Trace) => api::SettingsOverridesLogLevel::Trace,
+        LogOverride::Custom => api::SettingsOverridesLogLevel::Custom,
+    }
+}
+
+fn representation(stored: &Stored, overrides: &Overrides) -> api::Settings {
     let [
         piece_wait,
         idle_timeout,
@@ -57,6 +92,13 @@ fn representation(stored: &Stored) -> api::Settings {
         cache_capacity_bytes: i64::try_from(capacity).unwrap_or(i64::MAX),
         background_downloads: stored.explicit.effective().background_downloads,
         dlna_enabled: stored.explicit.effective().dlna_enabled,
+        dlna_name: stored.explicit.dlna_name().to_owned(),
+        dht_enabled: stored.explicit.effective().dht_enabled,
+        log_level: log_level(stored.explicit.effective().log_level),
+        overrides: api::SettingsOverrides {
+            dht_enabled: overrides.dht_enabled,
+            log_level: overrides.log_level.map(log_override),
+        },
         links: api::SettingsLinks {
             self_field: settings_path(),
         },
@@ -69,11 +111,14 @@ pub(crate) async fn get<E: Engine>(
 ) -> Result<Response, Problem> {
     negotiate(&headers, JSON)?;
     let stored = app.settings();
-    let etag = settings_etag(&stored);
+    let etag = settings_etag(&stored, app.overrides());
     if let Some(response) = not_modified(&headers, &etag) {
         return Ok(response);
     }
-    let mut response = with_etag(json(StatusCode::OK, &representation(&stored))?, &etag)?;
+    let mut response = with_etag(
+        json(StatusCode::OK, &representation(&stored, app.overrides()))?,
+        &etag,
+    )?;
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, NO_CACHE);
@@ -115,13 +160,16 @@ pub(crate) async fn update<E: Engine>(
 
     let _lane = app.write_lane().await;
     let current = app.settings();
-    if !if_match.is_ok_and(|tags| tags.matches_strongly(settings_etag(&current).opaque())) {
+    let overrides = *app.overrides();
+    if !if_match
+        .is_ok_and(|tags| tags.matches_strongly(settings_etag(&current, &overrides).opaque()))
+    {
         return Err(Problem::new(
             ProblemType::PreconditionFailed,
             "The settings changed since the ETag was issued.",
         ));
     }
-    let mut explicit = current.explicit;
+    let mut explicit = current.explicit.clone();
     for change in patch {
         match change {
             Change::Number(name, value) => {
@@ -129,13 +177,13 @@ pub(crate) async fn update<E: Engine>(
                     *slot = value;
                 }
             }
-            Change::Switch(name, value) => {
-                if name == settings::DLNA_ENABLED {
-                    explicit.dlna_enabled = value;
-                } else {
-                    explicit.background_downloads = value;
-                }
-            }
+            Change::Switch(name, value) => match name {
+                settings::DLNA_ENABLED => explicit.dlna_enabled = value,
+                settings::DHT_ENABLED => explicit.dht_enabled = value,
+                _ => explicit.background_downloads = value,
+            },
+            Change::Name(value) => explicit.dlna_name = value,
+            Change::LogLevel(value) => explicit.log_level = value,
         }
     }
     let effective = explicit.validate().map_err(|invalid| {
@@ -155,28 +203,49 @@ pub(crate) async fn update<E: Engine>(
             version: current.version + 1,
         };
         let previous = current.explicit.effective();
-        // Only a smaller cache capacity can be refused, so it is applied
-        // before it is stored, and anything else after.
+        // Only a smaller cache capacity and starting the DHT can fail, so
+        // they are applied before the change is stored, and anything else
+        // after.
         let shrinks = effective.cache_capacity_bytes < previous.cache_capacity_bytes;
         if shrinks {
             apply(&app, &effective)?;
         }
-        if let Err(error) = app.store().set_settings(stored).await {
+        let dht = effective.overridden(&overrides).dht_enabled;
+        let dht_before = previous.overridden(&overrides).dht_enabled;
+        if dht != dht_before
+            && let Err(error) = app.engine().set_dht(dht).await
+        {
+            tracing::error!(%error, "the DHT could not be turned {}", on_off(dht));
             if shrinks && let Err(error) = app.engine().apply_settings(&previous) {
                 tracing::error!(%error, "the previous settings could not be applied again");
             }
+            return Err(Problem::internal());
+        }
+        if let Err(error) = app.store().set_settings(stored.clone()).await {
+            if shrinks && let Err(error) = app.engine().apply_settings(&previous) {
+                tracing::error!(%error, "the previous settings could not be applied again");
+            }
+            if dht != dht_before
+                && let Err(error) = app.engine().set_dht(dht_before).await
+            {
+                tracing::error!(%error, "the DHT could not be turned {} again", on_off(dht_before));
+            }
             return Err(store_failed(error));
         }
-        app.set_settings(stored);
+        app.set_settings(stored.clone());
         if !shrinks {
             apply(&app, &effective)?;
         }
         stored
     };
     with_etag(
-        json(StatusCode::OK, &representation(&stored))?,
-        &settings_etag(&stored),
+        json(StatusCode::OK, &representation(&stored, &overrides))?,
+        &settings_etag(&stored, &overrides),
     )
+}
+
+fn on_off(on: bool) -> &'static str {
+    if on { "on" } else { "off" }
 }
 
 /// Gives the engine `settings`, which it refuses only for a cache capacity
@@ -206,8 +275,13 @@ fn apply<E: Engine>(app: &App<E>, settings: &settings::Settings) -> Result<(), P
 enum Change {
     /// A numeric setting, by name.
     Number(&'static str, Option<u64>),
-    /// A switch, by name: background downloads or the DLNA media server.
+    /// A switch, by name: background downloads, the DLNA media server, or
+    /// the DHT.
     Switch(&'static str, Option<bool>),
+    /// The DLNA media server's friendly name, validated with the others.
+    Name(Option<String>),
+    /// The log level.
+    LogLevel(Option<LogLevel>),
 }
 
 /// Reads a merge patch of the settings. The patch must set at least one
@@ -223,6 +297,7 @@ fn parse_patch(value: Value) -> Result<Vec<Change>, Problem> {
                 settings::BACKGROUND_DOWNLOADS_DEFAULT,
             ),
             (settings::DLNA_ENABLED, settings::DLNA_ENABLED_DEFAULT),
+            (settings::DHT_ENABLED, settings::DHT_ENABLED_DEFAULT),
         ]
         .into_iter()
         .find(|(name, _)| name == member);
@@ -233,6 +308,33 @@ fn parse_patch(value: Value) -> Result<Vec<Change>, Problem> {
                 _ => errors.push(InvalidValue::pointer(
                     pointer(member),
                     format!("Must be true, false, or null for the default, {default}."),
+                )),
+            }
+            continue;
+        }
+        if member == settings::DLNA_NAME {
+            match value {
+                Value::Null => patch.push(Change::Name(None)),
+                Value::String(name) => patch.push(Change::Name(Some(name.clone()))),
+                _ => errors.push(InvalidValue::pointer(
+                    pointer(member),
+                    format!(
+                        "Must be a string, or null for the default, {}.",
+                        settings::DLNA_NAME_DEFAULT
+                    ),
+                )),
+            }
+            continue;
+        }
+        if member == settings::LOG_LEVEL {
+            match value {
+                Value::Null => patch.push(Change::LogLevel(None)),
+                Value::String(name) if LogLevel::parse(name).is_some() => {
+                    patch.push(Change::LogLevel(LogLevel::parse(name)));
+                }
+                _ => errors.push(InvalidValue::pointer(
+                    pointer(member),
+                    "Must be error, warn, info, debug, trace, or null for the default, info.",
                 )),
             }
             continue;
@@ -273,7 +375,9 @@ pub(crate) fn usable(explicit: Explicit) -> Explicit {
     };
     let mut usable = explicit;
     for invalid in invalid {
-        if let Some(slot) = usable.slot(invalid.name) {
+        if invalid.name == settings::DLNA_NAME {
+            usable.dlna_name = None;
+        } else if let Some(slot) = usable.slot(invalid.name) {
             *slot = None;
         }
     }

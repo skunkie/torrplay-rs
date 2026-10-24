@@ -225,6 +225,9 @@ mode (M6).
 | SET-07 | Change the piece wait bound and the peer limit | A wait that begins afterward uses the new bound; torrents started afterward use the new peer limit (M6) |
 | SET-08 | Shrink the cache capacity below cache usage while a reader streams, then grow it | Streams stay byte-correct; verified, unpinned pieces are evicted until usage is within the new capacity, which no reservation exceeds meanwhile; the statistics report the new capacity; growing admits waiting pieces (M6) |
 | SET-09 | PATCH a cache capacity below a torrent's piece length | `422 validation-failed` naming `cache_capacity_bytes`; nothing changes (M6) |
+| SET-10 | PATCH `dlna_name` with the media server running, then an empty name and one with a control character | The device description and a new `ssdp:alive` carry the new name; the invalid names are `422 validation-failed` (M7) |
+| SET-11 | PATCH `dht_enabled` false with a torrent searching the DHT, then true and add a torrent | The DHT stops and the running torrent's search ends; the torrent added afterward searches through the restarted DHT (M7) |
+| SET-12 | Start with `--no-dht` and `--log-level debug`, PATCH both settings, restart without the options | `overrides` lists both with their values in effect, which the PATCH does not change; after the restart `overrides` is empty, the stored values apply, and the ETag differs (M7) |
 
 ### Library
 

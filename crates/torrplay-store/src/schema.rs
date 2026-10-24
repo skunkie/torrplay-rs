@@ -25,7 +25,7 @@ use crate::images::{self, Images};
 use crate::{StoreError, StoredTorrent};
 
 /// The schema version this build creates and migrates to.
-pub(crate) const VERSION: u32 = 10;
+pub(crate) const VERSION: u32 = 11;
 
 /// The schema at each version, applied in order to reach the next one.
 const MIGRATIONS: [&str; VERSION as usize] = [
@@ -172,6 +172,14 @@ const MIGRATIONS: [&str; VERSION as usize] = [
         id INTEGER PRIMARY KEY CHECK (id = 1),
         udn TEXT NOT NULL
     ) STRICT;",
+    // Version 11: the media server's friendly name, the DHT switch, and the
+    // log level, each NULL while unset.
+    "ALTER TABLE settings ADD COLUMN dlna_name TEXT;
+    ALTER TABLE settings
+        ADD COLUMN dht_enabled INTEGER CHECK (dht_enabled IN (0, 1));
+    ALTER TABLE settings
+        ADD COLUMN log_level TEXT
+        CHECK (log_level IN ('error', 'warn', 'info', 'debug', 'trace'));",
 ];
 
 /// Opens the database at `path`, takes its lock, and migrates it.
@@ -424,7 +432,7 @@ pub(crate) fn settings(connection: &Connection) -> Result<Stored, StoreError> {
         .query_row(
             "SELECT version, piece_wait_seconds, idle_timeout_seconds, idle_readers_per_torrent,
                     idle_readers_total, drain_period_seconds, peer_limit, cache_capacity_bytes,
-                    background_downloads, dlna_enabled
+                    background_downloads, dlna_enabled, dlna_name, dht_enabled, log_level
              FROM settings WHERE id = 1",
             [],
             |row| {
@@ -432,15 +440,24 @@ pub(crate) fn settings(connection: &Connection) -> Result<Stored, StoreError> {
                 for (index, value) in values.iter_mut().enumerate() {
                     *value = row.get::<_, Option<i64>>(index + 1)?;
                 }
+                let others = settings::ALL.len() + 1;
                 let switches = (
-                    row.get::<_, Option<bool>>(settings::ALL.len() + 1)?,
-                    row.get::<_, Option<bool>>(settings::ALL.len() + 2)?,
+                    row.get::<_, Option<bool>>(others)?,
+                    row.get::<_, Option<bool>>(others + 1)?,
+                    row.get::<_, Option<String>>(others + 2)?,
+                    row.get::<_, Option<bool>>(others + 3)?,
+                    row.get::<_, Option<String>>(others + 4)?,
                 );
                 Ok((row.get::<_, i64>(0)?, values, switches))
             },
         )
         .optional()?;
-    let Some((version, values, (background_downloads, dlna_enabled))) = row else {
+    let Some((
+        version,
+        values,
+        (background_downloads, dlna_enabled, dlna_name, dht_enabled, log_level),
+    )) = row
+    else {
         return Ok(Stored::default());
     };
     let corrupt = |what: &str| StoreError::Corrupt(format!("settings: {what}"));
@@ -448,9 +465,15 @@ pub(crate) fn settings(connection: &Connection) -> Result<Stored, StoreError> {
         .ok()
         .filter(|&version| version >= 1)
         .ok_or_else(|| corrupt("the version is out of range"))?;
+    let log_level = log_level
+        .map(|name| settings::LogLevel::parse(&name).ok_or_else(|| corrupt("the log level")))
+        .transpose()?;
     let mut explicit = Explicit {
         background_downloads,
         dlna_enabled,
+        dlna_name,
+        dht_enabled,
+        log_level,
         ..Explicit::default()
     };
     for (bounds, value) in settings::ALL.iter().zip(values) {
@@ -497,8 +520,9 @@ pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(
         "INSERT INTO settings (id, version, piece_wait_seconds, idle_timeout_seconds,
                                idle_readers_per_torrent, idle_readers_total,
                                drain_period_seconds, peer_limit, cache_capacity_bytes,
-                               background_downloads, dlna_enabled)
-         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                               background_downloads, dlna_enabled, dlna_name,
+                               dht_enabled, log_level)
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
          ON CONFLICT (id) DO UPDATE SET
              version = excluded.version,
              piece_wait_seconds = excluded.piece_wait_seconds,
@@ -509,7 +533,10 @@ pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(
              peer_limit = excluded.peer_limit,
              cache_capacity_bytes = excluded.cache_capacity_bytes,
              background_downloads = excluded.background_downloads,
-             dlna_enabled = excluded.dlna_enabled",
+             dlna_enabled = excluded.dlna_enabled,
+             dlna_name = excluded.dlna_name,
+             dht_enabled = excluded.dht_enabled,
+             log_level = excluded.log_level",
         rusqlite::params![
             version,
             piece_wait,
@@ -520,7 +547,10 @@ pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(
             peers,
             capacity,
             explicit.background_downloads,
-            explicit.dlna_enabled
+            explicit.dlna_enabled,
+            explicit.dlna_name,
+            explicit.dht_enabled,
+            explicit.log_level.map(settings::LogLevel::as_str)
         ],
     )?;
     Ok(())
