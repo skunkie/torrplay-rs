@@ -90,7 +90,7 @@ fn has_invalid_body(found: &[Violation], needle: &str) -> bool {
 #[test]
 fn the_contract_parses_with_every_operation() {
     let contract = fresh();
-    assert_eq!(contract.operations.len(), 22);
+    assert_eq!(contract.operations.len(), 26);
     assert!(
         contract
             .documented_responses()
@@ -374,6 +374,22 @@ fn multipart_forms_are_checked_part_by_part() {
     assert!(
         has_invalid_body(&found, "torrent_file"),
         "a missing part: {found:?}"
+    );
+    contract
+        .check_request(&upload(&[
+            ("torrent_file", Some("application/x-bittorrent"), torrent),
+            ("categories", None, b"Movies"),
+            ("categories", None, b"Kids"),
+            ("year", None, b"2026"),
+        ]))
+        .expect("an array property's parts are its items, and an integer is text");
+    let found = violations(contract.check_request(&upload(&[
+        ("torrent_file", Some("application/x-bittorrent"), torrent),
+        ("year", None, b"twenty"),
+    ])));
+    assert!(
+        has_invalid_body(&found, "year"),
+        "an integer part that is not a number: {found:?}"
     );
 }
 

@@ -104,15 +104,43 @@ pub struct TorrentPageLinks {
     #[serde(rename = "self")]
     pub self_field: String,
 }
-///The multipart form that creates a torrent from a torrent file.
+///The multipart form that creates a torrent from a torrent file. Each member is one part, except categories and genres, which take one part per value; year is a decimal integer.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TorrentFileUpload {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub categories: Option<Categories>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub description: Option<Option<Description>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub desired_state: Option<CreationDesiredState>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub genres: Option<Genres>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub kind: Option<Option<ConfiguredKind>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub storage_mode: Option<CreationStorageMode>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub title: Option<Option<Title>>,
     ///The torrent file, at most 10485760 bytes.
     pub torrent_file: String,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub year: Option<Option<Year>>,
 }
 ///A page of a torrent's files.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -165,20 +193,54 @@ pub struct TorrentFileLinks {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TorrentCreation {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub categories: Option<Categories>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub description: Option<Option<Description>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub desired_state: Option<CreationDesiredState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub genres: Option<Genres>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub kind: Option<Option<ConfiguredKind>>,
     ///A magnet URI with a BitTorrent v1 or hybrid info hash, at most 8192 characters.
     ///Constraint: maxLength=8192
     pub magnet_uri: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub storage_mode: Option<CreationStorageMode>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub title: Option<Option<Title>>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub year: Option<Option<Year>>,
 }
 impl TorrentCreation {
     /// Construct this request with every required wire field.
     pub fn new(magnet_uri: String) -> Self {
         Self {
             magnet_uri,
+            categories: None,
+            description: None,
             desired_state: None,
+            genres: None,
+            kind: None,
             storage_mode: None,
+            title: None,
+            year: None,
         }
     }
     /// Start a dependency-free builder with every required wire field.
@@ -199,16 +261,116 @@ impl TorrentCreationBuilder {
             value: TorrentCreation::new(magnet_uri),
         }
     }
+    #[doc = concat!("Set the optional `", "categories", "` request field.")]
+    #[must_use]
+    pub fn categories(mut self, categories: Categories) -> Self {
+        self.value.categories = Some(categories);
+        self
+    }
+    #[doc = concat!(
+        "Set the optional nullable `", "description", "` request field to a value."
+    )]
+    #[must_use]
+    pub fn description(mut self, description: Description) -> Self {
+        self.value.description = Some(Some(description));
+        self
+    }
+    #[doc = concat!(
+        "Set the optional nullable `", "description", "` request field to JSON null."
+    )]
+    #[must_use]
+    pub fn description_null(mut self) -> Self {
+        self.value.description = Some(None);
+        self
+    }
+    #[doc = concat!("Omit the optional nullable `", "description", "` request field.")]
+    #[must_use]
+    pub fn description_absent(mut self) -> Self {
+        self.value.description = None;
+        self
+    }
     #[doc = concat!("Set the optional `", "desired_state", "` request field.")]
     #[must_use]
     pub fn desired_state(mut self, desired_state: CreationDesiredState) -> Self {
         self.value.desired_state = Some(desired_state);
         self
     }
+    #[doc = concat!("Set the optional `", "genres", "` request field.")]
+    #[must_use]
+    pub fn genres(mut self, genres: Genres) -> Self {
+        self.value.genres = Some(genres);
+        self
+    }
+    #[doc = concat!(
+        "Set the optional nullable `", "kind", "` request field to a value."
+    )]
+    #[must_use]
+    pub fn kind(mut self, kind: ConfiguredKind) -> Self {
+        self.value.kind = Some(Some(kind));
+        self
+    }
+    #[doc = concat!(
+        "Set the optional nullable `", "kind", "` request field to JSON null."
+    )]
+    #[must_use]
+    pub fn kind_null(mut self) -> Self {
+        self.value.kind = Some(None);
+        self
+    }
+    #[doc = concat!("Omit the optional nullable `", "kind", "` request field.")]
+    #[must_use]
+    pub fn kind_absent(mut self) -> Self {
+        self.value.kind = None;
+        self
+    }
     #[doc = concat!("Set the optional `", "storage_mode", "` request field.")]
     #[must_use]
     pub fn storage_mode(mut self, storage_mode: CreationStorageMode) -> Self {
         self.value.storage_mode = Some(storage_mode);
+        self
+    }
+    #[doc = concat!(
+        "Set the optional nullable `", "title", "` request field to a value."
+    )]
+    #[must_use]
+    pub fn title(mut self, title: Title) -> Self {
+        self.value.title = Some(Some(title));
+        self
+    }
+    #[doc = concat!(
+        "Set the optional nullable `", "title", "` request field to JSON null."
+    )]
+    #[must_use]
+    pub fn title_null(mut self) -> Self {
+        self.value.title = Some(None);
+        self
+    }
+    #[doc = concat!("Omit the optional nullable `", "title", "` request field.")]
+    #[must_use]
+    pub fn title_absent(mut self) -> Self {
+        self.value.title = None;
+        self
+    }
+    #[doc = concat!(
+        "Set the optional nullable `", "year", "` request field to a value."
+    )]
+    #[must_use]
+    pub fn year(mut self, year: Year) -> Self {
+        self.value.year = Some(Some(year));
+        self
+    }
+    #[doc = concat!(
+        "Set the optional nullable `", "year", "` request field to JSON null."
+    )]
+    #[must_use]
+    pub fn year_null(mut self) -> Self {
+        self.value.year = Some(None);
+        self
+    }
+    #[doc = concat!("Omit the optional nullable `", "year", "` request field.")]
+    #[must_use]
+    pub fn year_absent(mut self) -> Self {
+        self.value.year = None;
         self
     }
     /// Finish building the request model.
@@ -270,21 +432,67 @@ impl AsRef<str> for CreationDesiredState {
         self.as_str()
     }
 }
-///A JSON merge patch of a torrent's configuration. Omitted members keep their values.
+///A JSON merge patch of a torrent's configuration. Omitted members keep their values. A library member set to null takes its default: null, or an empty list for categories and genres. A list replaces the whole list, as RFC 7396 replaces arrays.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct TorrentConfigurationPatch {
+    ///The categories, replacing the current ones; null clears them.
+    ///Constraint: maxItems=16, uniqueItems=true
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub categories: Option<Option<Vec<Category>>>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub description: Option<Option<Description>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub desired_state: Option<DesiredState>,
+    ///The genres, replacing the current ones; null clears them.
+    ///Constraint: maxItems=16, uniqueItems=true
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub genres: Option<Option<Vec<Genre>>>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub kind: Option<Option<ConfiguredKind>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub storage_mode: Option<StorageMode>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub title: Option<Option<Title>>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub year: Option<Option<Year>>,
 }
 ///The writable configuration of a torrent. Its storage_mode is the one the client asked for; while a transition runs, the torrent resource's storage_mode is still the previous one.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TorrentConfiguration {
+    pub categories: Categories,
+    pub description: Option<Description>,
     pub desired_state: DesiredState,
+    pub genres: Genres,
+    pub kind: Option<ConfiguredKind>,
     ///Links from a configuration.
     pub links: TorrentConfigurationLinks,
     pub storage_mode: StorageMode,
+    pub title: Option<Title>,
+    pub year: Option<Year>,
 }
 ///Links from a configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -322,26 +530,35 @@ impl AsRef<str> for DesiredState {
         self.as_str()
     }
 }
+///What the torrent holds, or null to infer it from the file names, as the torrent resource's kind describes. It defaults to null.
+pub type ConfiguredKind = TorrentKind;
 ///A torrent the application tracks. Its storage_mode is the storage mode in effect, which changes when a transition to the configuration's storage_mode completes.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Torrent {
+    pub categories: Categories,
     ///When the torrent was created, in UTC.
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub description: Option<Description>,
     ///Why the torrent failed, or null unless its observed state is failed. Pausing and then starting the torrent clears it.
     pub failure: Option<TorrentFailure>,
     ///The number of files, or null until metadata is available.
     ///Constraint: minimum=0
     pub file_count: Option<i64>,
+    pub genres: Genres,
     ///The torrent's opaque, stable ID.
     pub id: String,
     ///The torrent's protocol identifiers.
     ///Constraint: minItems=1
     pub info_hashes: Vec<InfoHash>,
+    ///The configuration's kind, or, while it is null, the kind inferred from the file names: series if a video file's name has an episode pattern, movie if the torrent has another video file, and other otherwise. It is null while neither is known, before metadata is available.
+    pub kind: Option<TorrentKind>,
     ///Links from a torrent to its related resources.
     pub links: TorrentLinks,
     ///The name from the metadata, or null until metadata is available.
     pub name: Option<String>,
     pub observed_state: ObservedState,
+    ///The torrent's poster, or null if it has none.
+    pub poster: Option<TorrentPoster>,
     ///The total size of the torrent's files, or null until metadata is available.
     ///Constraint: minimum=0
     pub size_bytes: Option<i64>,
@@ -350,7 +567,11 @@ pub struct Torrent {
     pub storage_mode: StorageMode,
     ///The storage mode transition in progress, or null when there is none.
     pub storage_transition: Option<TorrentStorageTransition>,
+    pub title: Option<Title>,
+    pub year: Option<Year>,
 }
+///The release year, or null if unknown. It defaults to null.
+pub type Year = i32;
 ///The storage mode transition in progress, or null when there is none.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TorrentStorageTransition {
@@ -363,6 +584,16 @@ pub struct TorrentStorageFailure {
     pub detail: String,
     pub target_storage_mode: StorageMode,
 }
+///The torrent's poster, or null if it has none.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TorrentPoster {
+    pub media_type: PosterMediaType,
+    ///The image's size.
+    ///Constraint: minimum=1, maximum=1048576
+    pub size_bytes: i64,
+    ///When the image was uploaded, in UTC.
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
 ///Links from a torrent to its related resources.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TorrentLinks {
@@ -370,11 +601,43 @@ pub struct TorrentLinks {
     pub configuration: String,
     ///The torrent's files, which return lifecycle-conflict until metadata is available.
     pub files: String,
+    ///The torrent's poster, which is not-found while the torrent has none.
+    pub poster: String,
     ///This torrent.
     #[serde(rename = "self")]
     pub self_field: String,
     ///The torrent's statistics.
     pub statistics: String,
+}
+///What a torrent holds. Clients must handle values added later.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum TorrentKind {
+    #[default]
+    #[serde(rename = "movie")]
+    Movie,
+    #[serde(rename = "series")]
+    Series,
+    #[serde(rename = "other")]
+    Other,
+}
+impl TorrentKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Movie => "movie",
+            Self::Series => "series",
+            Self::Other => "other",
+        }
+    }
+}
+impl ::std::fmt::Display for TorrentKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for TorrentKind {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
 }
 ///Why the torrent failed, or null unless its observed state is failed. Pausing and then starting the torrent clears it.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -382,6 +645,8 @@ pub struct TorrentFailure {
     ///An explanation of the failure.
     pub detail: String,
 }
+///The title clients show instead of the metadata's name, or null to show the name. Normalized on write, as docs/lifecycle.md describes, to 1 to 1024 characters without control characters. It defaults to null.
+pub type Title = String;
 ///Where a torrent keeps piece data. In memory storage it holds pieces in the global piece cache, which evicts them, downloads the pieces its readers need, and never uploads, because evicted pieces cannot be served. In disk storage it keeps verified pieces in files below the download directory and uploads them, and deleting the torrent deletes the files. Clients must handle values added later.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum StorageMode {
@@ -405,6 +670,42 @@ impl ::std::fmt::Display for StorageMode {
     }
 }
 impl AsRef<str> for StorageMode {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+///The media type of a poster image. Clients must handle values added later.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum PosterMediaType {
+    #[default]
+    #[serde(rename = "image/avif")]
+    ImageAvif,
+    #[serde(rename = "image/gif")]
+    ImageGif,
+    #[serde(rename = "image/jpeg")]
+    ImageJpeg,
+    #[serde(rename = "image/png")]
+    ImagePng,
+    #[serde(rename = "image/webp")]
+    ImageWebp,
+}
+impl PosterMediaType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ImageAvif => "image/avif",
+            Self::ImageGif => "image/gif",
+            Self::ImageJpeg => "image/jpeg",
+            Self::ImagePng => "image/png",
+            Self::ImageWebp => "image/webp",
+        }
+    }
+}
+impl ::std::fmt::Display for PosterMediaType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for PosterMediaType {
     fn as_ref(&self) -> &str {
         self.as_str()
     }
@@ -442,6 +743,8 @@ impl AsRef<str> for ObservedState {
         self.as_str()
     }
 }
+///A plain-text synopsis, or null. Normalized on write to 1 to 4096 characters, keeping line feeds and tabs and no other control characters. It defaults to null.
+pub type Description = String;
 ///The application's settings. Each value is the one set, or its default while it is unset.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Settings {
@@ -657,6 +960,10 @@ impl AsRef<str> for HealthStatus {
         self.as_str()
     }
 }
+///The torrent's genres, distinct after normalization and in the order given. It defaults to an empty list.
+pub type Genres = Vec<Genre>;
+///A genre that describes the content. Normalized and compared as a category is.
+pub type Genre = String;
 ///The API's entry point.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EntryPoint {
@@ -715,6 +1022,10 @@ pub struct Problem {
     ///The problem type, a tag URI under tag:skunkie.github.io,2026:torrplay/problems/.
     pub r#type: url::Url,
 }
+///The torrent's categories, distinct after normalization and in the order given; clients may treat the first as the primary one. It defaults to an empty list.
+pub type Categories = Vec<Category>;
+///A category: the user's own grouping of torrents, such as a menu entry. Normalized on write to 1 to 128 characters without control characters, and compared exactly; a slash is an ordinary character.
+pub type Category = String;
 ///The global piece cache's capacity and usage. Cache usage is reported separately from process memory and does not bound it.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CacheStatistics {

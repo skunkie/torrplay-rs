@@ -357,6 +357,69 @@ forces exit if it has not finished after 30 seconds:
 5. The engine closes its peer connections and stops.
 6. The process exits.
 
+## Library
+
+A torrent's configuration also holds its library members: `title`, `kind`,
+`year`, `description`, `categories`, and `genres`. They are set at creation
+or by a merge patch, need no engine, and can change in any lifecycle state,
+including during metadata retrieval, a transition, or a failure. Each change
+gives the configuration a new ETag, and the torrent resource shows the new
+values with a new state ETag.
+
+- Text is normalized when it is written, and what the server stores and
+  returns is the normalized text:
+  - A title, category, or genre is put in Unicode Normalization Form C, its
+    surrounding whitespace is removed, and each run of whitespace inside it,
+    tabs and line breaks included, becomes one space. It must then have 1
+    to 1024 characters for a title or 1 to 128 for a category or genre, and
+    no control character. Characters are Unicode scalar values.
+  - A description is put in Normalization Form C, each CR LF or lone CR
+    becomes LF, and its surrounding whitespace is removed. It must then have
+    1 to 4096 characters, with no control character other than LF and tab.
+  - Text that is empty after normalization is `validation-failed`; `null`
+    clears a member instead.
+- `categories` and `genres` are lists of at most 16 entries, each normalized
+  as above. Entries equal after normalization are `validation-failed`,
+  naming the later one, rather than merged, so the stored list is the one
+  sent. Order is kept. Matching, in filters and in the adapters, compares
+  normalized text exactly, case included; a slash is an ordinary character
+  and makes no hierarchy.
+- `year` is an integer from 1800 to 2200, or `null`.
+- A configured `kind` is `movie`, `series`, or `other`. While it is `null`
+  the torrent resource reports the kind inferred from the metadata's files,
+  and `null` until metadata is available:
+  - A file is a video file if it is served with a `video/` media type, by
+    its name's extension.
+  - The torrent is a `series` if the name of a video file, its last path
+    component, has an episode pattern; a `movie` if it has another video
+    file; and `other` otherwise.
+  - Episode patterns ignore case and must not be part of a longer word or
+    number: `S` with 1 or 2 digits, `E`, and 1 to 3 digits, as in `S01E02`;
+    1 or 2 digits, `x`, and 2 or 3 digits, as in `1x02`; and `episode`, an
+    optional space, dot, underscore, or hyphen, and 1 to 4 digits, as in
+    `episode 2`.
+- The torrents collection filters by `category`, `uncategorized`, `genre`,
+  the reported `kind`, and `info_hash`, as the contract describes. Filter
+  values are normalized like the members they match; one that is invalid
+  after normalization is `malformed-request`. Category facets and the
+  listing version come with search.
+
+A torrent may also have a poster: an image at `/poster`, outside the
+configuration.
+
+- `PUT` stores an AVIF, GIF, JPEG, PNG, or WebP image of at most 1 MiB,
+  whose bytes must begin with the signature of the type its `Content-Type`
+  names. It answers `201` with `Location` when the torrent had no poster and
+  `204` when it replaces one, both with the poster's ETag, a digest of its
+  bytes. The server never fetches an image from a URL.
+- `GET` serves the image as uploaded, with `X-Content-Type-Options: nosniff`
+  and `Content-Security-Policy: sandbox`, and `DELETE` removes it; without a
+  poster both are `not-found`. The torrent resource's `poster` gives its
+  media type, size, and upload time, or `null`.
+- A poster needs no engine and no metadata. Changing it changes the torrent's
+  state ETag but not the configuration's. Deleting the torrent deletes its
+  poster.
+
 ## Persistence
 
 The application keeps a database in its data directory, which must be on a
@@ -366,13 +429,16 @@ local filesystem, as [ADR 8](adr/0008-database.md) requires.
   the nanosecond, the configuration with the version its ETag derives from,
   the storage mode in effect, and the source: an uploaded torrent file's
   original bytes, or a magnet URI and, once metadata is recorded, the
-  torrent file built from it.
+  torrent file built from it. The configuration includes the library
+  members, and a poster is stored with its bytes, media type, digest, and
+  upload time.
 - It records whether the application last shut down cleanly. A disk
   torrent's resume bitfield, the record of its verified pieces, lives in the
   download directory beside its files rather than in the database.
-- Creation, configuration changes, recorded metadata, and deletion are each
-  stored in one transaction before their response, so an interrupted write
-  leaves either the state before it or the state after it.
+- Creation, configuration changes, poster changes, recorded metadata, and
+  deletion are each stored in one transaction before their response, so an
+  interrupted write leaves either the state before it or the state after
+  it.
 - A write that fails is an `internal-error`, and nothing changes: the
   application's own records change only after the database's.
 - Observed state, failures, statistics, readers, and the piece cache are not

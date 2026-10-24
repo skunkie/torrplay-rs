@@ -23,7 +23,8 @@ use std::time::{Duration, SystemTime};
 use sha2::{Digest, Sha256};
 
 use crate::base32;
-use crate::id::TorrentId;
+use crate::id::{InfoHashV1, TorrentId};
+use crate::library::Kind;
 use crate::lifecycle::ObservedState;
 use crate::registry::TorrentRecord;
 
@@ -310,10 +311,32 @@ impl SortKey for TorrentSortKey {
     }
 }
 
-/// The filters of the torrents collection.
+/// The filters of the torrents collection. Each matches any of its values,
+/// and a torrent must match every filter that has values.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TorrentFilter {
     observed_states: BTreeSet<ObservedState>,
+    /// Normalized categories.
+    pub categories: BTreeSet<String>,
+    /// Whether torrents without categories match the category filter.
+    pub uncategorized: bool,
+    /// Normalized genres.
+    pub genres: BTreeSet<String>,
+    /// Reported kinds.
+    pub kinds: BTreeSet<Kind>,
+    /// v1 info hashes.
+    pub info_hashes: BTreeSet<InfoHashV1>,
+}
+
+/// What [`TorrentFilter::matches`] checks of a torrent.
+#[derive(Clone, Copy, Debug)]
+pub struct Matched<'a> {
+    /// The torrent's record.
+    pub record: &'a TorrentRecord,
+    /// Its observed state.
+    pub observed_state: ObservedState,
+    /// The kind it reports, if known.
+    pub kind: Option<Kind>,
 }
 
 impl TorrentFilter {
@@ -322,20 +345,46 @@ impl TorrentFilter {
     pub fn new(observed_states: impl IntoIterator<Item = ObservedState>) -> Self {
         Self {
             observed_states: observed_states.into_iter().collect(),
+            ..Self::default()
         }
     }
 
-    /// Returns whether a torrent in `observed_state` matches.
-    pub fn matches(&self, observed_state: ObservedState) -> bool {
-        self.observed_states.is_empty() || self.observed_states.contains(&observed_state)
+    /// Returns whether a torrent matches.
+    pub fn matches(&self, torrent: Matched<'_>) -> bool {
+        let library = torrent.record.configuration.library();
+        let any = |values: &BTreeSet<String>, of: &[String]| {
+            values.is_empty() || of.iter().any(|value| values.contains(value))
+        };
+        let categories = (self.categories.is_empty() && !self.uncategorized)
+            || (self.uncategorized && library.categories.is_empty())
+            || library
+                .categories
+                .iter()
+                .any(|category| self.categories.contains(category));
+        (self.observed_states.is_empty() || self.observed_states.contains(&torrent.observed_state))
+            && categories
+            && any(&self.genres, &library.genres)
+            && (self.kinds.is_empty()
+                || torrent.kind.is_some_and(|kind| self.kinds.contains(&kind)))
+            && (self.info_hashes.is_empty() || self.info_hashes.contains(&torrent.record.info_hash))
     }
 
     /// Returns the fingerprint cursors carry.
     pub fn fingerprint(&self) -> FilterFingerprint {
+        let info_hashes: Vec<String> = self.info_hashes.iter().map(ToString::to_string).collect();
         FilterFingerprint::of(
             self.observed_states
                 .iter()
-                .map(|state| ("observed_state", state.as_str())),
+                .map(|state| ("observed_state", state.as_str()))
+                .chain(
+                    self.categories
+                        .iter()
+                        .map(|category| ("category", category.as_str())),
+                )
+                .chain(self.uncategorized.then_some(("uncategorized", "true")))
+                .chain(self.genres.iter().map(|genre| ("genre", genre.as_str())))
+                .chain(self.kinds.iter().map(|kind| ("kind", kind.as_str())))
+                .chain(info_hashes.iter().map(|hash| ("info_hash", hash.as_str()))),
         )
     }
 }
@@ -502,15 +551,92 @@ mod tests {
         assert_eq!(PageError::CursorFilterMismatch.parameter(), "cursor");
     }
 
+    fn matched(record: &TorrentRecord, observed_state: ObservedState) -> Matched<'_> {
+        Matched {
+            record,
+            observed_state,
+            kind: None,
+        }
+    }
+
     #[test]
     fn torrent_filters_match_any_listed_state() {
+        let record = &registered(&Registry::new(), 1, u64::from)[0];
         let filter = TorrentFilter::new([ObservedState::Downloading, ObservedState::Paused]);
-        assert!(filter.matches(ObservedState::Paused));
-        assert!(!filter.matches(ObservedState::Failed));
+        assert!(filter.matches(matched(record, ObservedState::Paused)));
+        assert!(!filter.matches(matched(record, ObservedState::Failed)));
         assert!(
             ObservedState::ALL
                 .into_iter()
-                .all(|state| TorrentFilter::default().matches(state))
+                .all(|state| TorrentFilter::default().matches(matched(record, state)))
+        );
+    }
+
+    #[test]
+    fn library_filters_match_any_value_and_combine() {
+        let mut record = registered(&Registry::new(), 1, u64::from).remove(0);
+        let uncategorized = record.clone();
+        record.configuration.set_library(crate::library::Library {
+            categories: vec!["Movies".into(), "Kids".into()],
+            genres: vec!["Comedy".into()],
+            ..Default::default()
+        });
+        let state = ObservedState::Downloading;
+        let movie = |record| Matched {
+            record,
+            observed_state: state,
+            kind: Some(Kind::Movie),
+        };
+        let filter = |categories: &[&str], uncategorized: bool, genres: &[&str], kinds: &[Kind]| {
+            TorrentFilter {
+                categories: categories.iter().map(|&value| value.into()).collect(),
+                uncategorized,
+                genres: genres.iter().map(|&value| value.into()).collect(),
+                kinds: kinds.iter().copied().collect(),
+                ..TorrentFilter::default()
+            }
+        };
+        let cases = [
+            (filter(&["Kids", "Docs"], false, &[], &[]), true, false),
+            (filter(&["Docs"], false, &[], &[]), false, false),
+            (filter(&["kids"], false, &[], &[]), false, false),
+            (filter(&[], true, &[], &[]), false, true),
+            (filter(&["Docs"], true, &[], &[]), false, true),
+            (filter(&["Kids"], true, &[], &[]), true, true),
+            (filter(&["Kids"], false, &["Comedy"], &[]), true, false),
+            (filter(&["Kids"], false, &["Drama"], &[]), false, false),
+            (filter(&[], false, &[], &[Kind::Movie]), true, true),
+            (filter(&[], false, &[], &[Kind::Series]), false, false),
+        ];
+        for (index, (filter, categorized, plain)) in cases.into_iter().enumerate() {
+            assert_eq!(filter.matches(movie(&record)), categorized, "case {index}");
+            assert_eq!(filter.matches(movie(&uncategorized)), plain, "case {index}");
+        }
+        let kinded = filter(&[], false, &[], &[Kind::Movie]);
+        assert!(
+            !kinded.matches(matched(&record, state)),
+            "an unknown kind matches no kind"
+        );
+        let hashes = TorrentFilter {
+            info_hashes: [record.info_hash].into(),
+            ..TorrentFilter::default()
+        };
+        assert!(hashes.matches(matched(&record, state)));
+        assert!(
+            !TorrentFilter {
+                info_hashes: [InfoHashV1::from_bytes([9; 20])].into(),
+                ..TorrentFilter::default()
+            }
+            .matches(matched(&record, state))
+        );
+        assert_ne!(
+            filter(&["Kids"], false, &[], &[]).fingerprint(),
+            filter(&[], false, &["Kids"], &[]).fingerprint(),
+            "a value's parameter is part of the fingerprint"
+        );
+        assert_ne!(
+            filter(&[], true, &[], &[]).fingerprint(),
+            TorrentFilter::default().fingerprint()
         );
     }
 
@@ -582,6 +708,7 @@ mod tests {
             metadata: None,
             desired_state: DesiredState::Started,
             storage_mode: StorageMode::Memory,
+            library: Default::default(),
             created_at: SystemTime::UNIX_EPOCH + Duration::from_secs(created_at_secs),
         };
         match registry.register(new).unwrap() {

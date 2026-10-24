@@ -16,10 +16,13 @@ use bytes::Bytes;
 use serde_json::{Map, Value};
 use torrplay_api as api;
 use torrplay_core::engine::{Engine, EngineError, Source, SourceRejection};
+use torrplay_core::id::InfoHashV1;
+use torrplay_core::library::{self as core_library, Kind, Library, TextError};
 use torrplay_core::lifecycle::{DesiredState, EntityTag, ObservedState, StorageMode};
 use torrplay_core::metadata::Metadata;
 use torrplay_core::pagination::{
-    CURSOR_PARAMETER, PAGE_SIZE_PARAMETER, PageRequest, TorrentFilter, TorrentSortKey, paginate,
+    CURSOR_PARAMETER, Matched, PAGE_SIZE_PARAMETER, PageRequest, TorrentFilter, TorrentSortKey,
+    paginate,
 };
 use torrplay_core::registry::{ConfigurationError, ConfigurationUpdate, NewTorrent, Prepared};
 use torrplay_store::StoredTorrent;
@@ -29,6 +32,7 @@ use crate::body::{
     FORM_LIMIT_BYTES, JSON_LIMIT_BYTES, TORRENT_FILE_LIMIT_BYTES, parse_form, read_limited,
 };
 use crate::headers::{EntityTags, MediaType, negotiate};
+use crate::library::{self, LibraryPatch};
 use crate::problem::{InvalidValue, Problem, ProblemType};
 use crate::query::{Paging, Query, page_error, reject};
 use crate::representation::{
@@ -37,6 +41,24 @@ use crate::representation::{
 
 /// The query parameter that filters torrents by observed state.
 const OBSERVED_STATE_PARAMETER: &str = "observed_state";
+
+/// The query parameters that filter torrents by library members and info
+/// hash, in the order links carry them.
+const CATEGORY_PARAMETER: &str = "category";
+const UNCATEGORIZED_PARAMETER: &str = "uncategorized";
+const GENRE_PARAMETER: &str = "genre";
+const KIND_PARAMETER: &str = "kind";
+const INFO_HASH_PARAMETER: &str = "info_hash";
+
+/// The filter parameters, in the order links carry them.
+const FILTER_PARAMETERS: [&str; 6] = [
+    OBSERVED_STATE_PARAMETER,
+    CATEGORY_PARAMETER,
+    UNCATEGORIZED_PARAMETER,
+    GENRE_PARAMETER,
+    KIND_PARAMETER,
+    INFO_HASH_PARAMETER,
+];
 
 /// The longest magnet URI accepted, in characters.
 const MAGNET_URI_MAX_CHARS: usize = 8192;
@@ -58,27 +80,19 @@ pub(crate) async fn list<E: Engine>(
 ) -> Result<Response, Problem> {
     negotiate(&headers, JSON)?;
     let query = Query::parse(uri.query());
+    let mut allowed = vec![PAGE_SIZE_PARAMETER, CURSOR_PARAMETER];
+    allowed.extend(FILTER_PARAMETERS);
     let mut errors = query.unexpected(
+        &allowed,
         &[
             PAGE_SIZE_PARAMETER,
             CURSOR_PARAMETER,
-            OBSERVED_STATE_PARAMETER,
+            UNCATEGORIZED_PARAMETER,
         ],
-        &[PAGE_SIZE_PARAMETER, CURSOR_PARAMETER],
     );
     let paging = Paging::parse(&query, &mut errors);
-    let mut states = Vec::new();
-    for value in query.all(OBSERVED_STATE_PARAMETER) {
-        match ObservedState::parse(value) {
-            Some(state) => states.push(state),
-            None => errors.push(InvalidValue::parameter(
-                OBSERVED_STATE_PARAMETER,
-                "Must be retrieving_metadata, downloading, paused, or failed.",
-            )),
-        }
-    }
+    let filter = torrent_filter(&query, &mut errors);
     reject(errors)?;
-    let filter = TorrentFilter::new(states);
     let request =
         PageRequest::<TorrentSortKey>::new(paging.page_size, paging.cursor, filter.fingerprint())
             .map_err(|error| Problem::malformed(vec![page_error(error)]))?;
@@ -86,14 +100,23 @@ pub(crate) async fn list<E: Engine>(
     let mut views = Vec::new();
     for record in app.registry()?.list() {
         let view = app.observe(record).await?;
-        if filter.matches(view.observed_state()) {
+        let record = &view.record;
+        let matched = Matched {
+            record,
+            observed_state: view.observed_state(),
+            kind: representation::reported_kind(
+                record.configuration.library(),
+                record.metadata.as_deref(),
+            ),
+        };
+        if filter.matches(matched) {
             views.push(view);
         }
     }
     let page = paginate(views, |view| TorrentSortKey::of(&view.record), &request);
-    let filters: Vec<(&str, &str)> = query
-        .all(OBSERVED_STATE_PARAMETER)
-        .map(|value| (OBSERVED_STATE_PARAMETER, value))
+    let filters: Vec<(&str, &str)> = FILTER_PARAMETERS
+        .iter()
+        .flat_map(|&name| query.all(name).map(move |value| (name, value)))
         .collect();
     let path = torrents_path();
     let body = api::TorrentPage {
@@ -113,6 +136,72 @@ pub(crate) async fn list<E: Engine>(
     Ok(response)
 }
 
+/// Reads the filter parameters of the torrents collection, adding an error
+/// for each invalid value.
+fn torrent_filter(query: &Query, errors: &mut Vec<InvalidValue>) -> TorrentFilter {
+    let mut states = Vec::new();
+    for value in query.all(OBSERVED_STATE_PARAMETER) {
+        match ObservedState::parse(value) {
+            Some(state) => states.push(state),
+            None => errors.push(InvalidValue::parameter(
+                OBSERVED_STATE_PARAMETER,
+                "Must be retrieving_metadata, downloading, paused, or failed.",
+            )),
+        }
+    }
+    let mut filter = TorrentFilter::new(states);
+    for (name, values) in [
+        (CATEGORY_PARAMETER, &mut filter.categories),
+        (GENRE_PARAMETER, &mut filter.genres),
+    ] {
+        for value in query.all(name) {
+            match core_library::normalize_label(value) {
+                Ok(label) => {
+                    values.insert(label);
+                }
+                Err(TextError::Empty) => errors.push(InvalidValue::parameter(
+                    name,
+                    "Must not be empty or only whitespace.",
+                )),
+                Err(error) => errors.push(InvalidValue::parameter(name, error.to_string())),
+            }
+        }
+    }
+    if let Some(value) = query.first(UNCATEGORIZED_PARAMETER) {
+        if value == "true" {
+            filter.uncategorized = true;
+        } else {
+            errors.push(InvalidValue::parameter(
+                UNCATEGORIZED_PARAMETER,
+                "Must be true.",
+            ));
+        }
+    }
+    for value in query.all(KIND_PARAMETER) {
+        match Kind::parse(value) {
+            Some(kind) => {
+                filter.kinds.insert(kind);
+            }
+            None => errors.push(InvalidValue::parameter(
+                KIND_PARAMETER,
+                "Must be movie, series, or other.",
+            )),
+        }
+    }
+    for value in query.all(INFO_HASH_PARAMETER) {
+        match InfoHashV1::from_hex(value) {
+            Some(hash) => {
+                filter.info_hashes.insert(hash);
+            }
+            None => errors.push(InvalidValue::parameter(
+                INFO_HASH_PARAMETER,
+                "Must be 40 hexadecimal digits.",
+            )),
+        }
+    }
+    filter
+}
+
 pub(crate) async fn create<E: Engine>(
     State(app): State<Arc<App<E>>>,
     headers: HeaderMap,
@@ -124,6 +213,7 @@ pub(crate) async fn create<E: Engine>(
         source,
         desired_state,
         storage_mode,
+        library,
     } = match media_type.as_ref().map(|media| media.essence.as_str()) {
         Some(JSON) => {
             let bytes = read_limited(
@@ -190,6 +280,7 @@ pub(crate) async fn create<E: Engine>(
         metadata: metadata.clone(),
         desired_state,
         storage_mode,
+        library,
         created_at: SystemTime::now(),
     };
     let record = {
@@ -278,6 +369,7 @@ fn stored(record: &torrplay_core::registry::TorrentRecord, source: &Source) -> S
         storage_mode: record.storage_mode,
         magnet_uri,
         torrent_file,
+        poster: None,
     }
 }
 
@@ -344,6 +436,7 @@ struct Creation {
     source: Source,
     desired_state: DesiredState,
     storage_mode: StorageMode,
+    library: Library,
 }
 
 fn creation_from_json(bytes: &Bytes) -> Result<Creation, Problem> {
@@ -352,8 +445,10 @@ fn creation_from_json(bytes: &Bytes) -> Result<Creation, Problem> {
     let mut magnet_uri = None;
     let mut desired_state = DesiredState::Started;
     let mut storage_mode = StorageMode::Memory;
+    let mut library = LibraryPatch::default();
     for (member, value) in &members {
         match member.as_str() {
+            member if library::is_member(member) => library.read(member, value, &mut errors),
             "magnet_uri" => match value {
                 Value::String(uri) if uri.chars().count() <= MAGNET_URI_MAX_CHARS => {
                     magnet_uri = Some(uri.clone());
@@ -385,6 +480,7 @@ fn creation_from_json(bytes: &Bytes) -> Result<Creation, Problem> {
             source: Source::MagnetUri(uri),
             desired_state,
             storage_mode,
+            library: library.apply(&Library::default()),
         }),
         _ => Err(Problem::invalid_body(errors)),
     }
@@ -401,8 +497,20 @@ fn creation_from_form(bytes: &Bytes, boundary: &str) -> Result<Creation, Problem
     let mut torrent_file = None;
     let mut desired_state = None;
     let mut storage_mode = None;
+    let mut library_members = Map::new();
     let mut seen = Vec::new();
     for part in parts {
+        let text = || Value::String(String::from_utf8_lossy(&part.data).into_owned());
+        // Categories and genres take one part per value.
+        if let "categories" | "genres" = part.name.as_str() {
+            if let Value::Array(values) = library_members
+                .entry(part.name.clone())
+                .or_insert_with(|| Value::Array(Vec::new()))
+            {
+                values.push(text());
+            }
+            continue;
+        }
         if seen.contains(&part.name) {
             errors.push(InvalidValue::pointer(
                 pointer(&part.name),
@@ -429,8 +537,25 @@ fn creation_from_form(bytes: &Bytes, boundary: &str) -> Result<Creation, Problem
                 let value = Value::String(String::from_utf8_lossy(&part.data).into_owned());
                 storage_mode = parse_storage_mode(&value, &mut errors);
             }
+            "year" => {
+                // A decimal integer, or text the member's own check refuses.
+                let value = text();
+                let year = value
+                    .as_str()
+                    .filter(|year| year.bytes().all(|byte| byte.is_ascii_digit()))
+                    .and_then(|year| year.parse::<u64>().ok())
+                    .map_or(value, Value::from);
+                library_members.insert(part.name.clone(), year);
+            }
+            member if library::is_member(member) => {
+                library_members.insert(part.name.clone(), text());
+            }
             other => errors.push(unknown_member(other)),
         }
+    }
+    let mut library = LibraryPatch::default();
+    for (member, value) in &library_members {
+        library.read(member, value, &mut errors);
     }
     if !seen.iter().any(|name| name == "torrent_file") {
         errors.push(InvalidValue::pointer("/torrent_file", "Is required."));
@@ -440,6 +565,7 @@ fn creation_from_form(bytes: &Bytes, boundary: &str) -> Result<Creation, Problem
             source: Source::TorrentFile(file.to_vec()),
             desired_state: desired_state.unwrap_or(DesiredState::Started),
             storage_mode: storage_mode.unwrap_or(StorageMode::Memory),
+            library: library.apply(&Library::default()),
         }),
         _ => Err(Problem::invalid_body(errors)),
     }
@@ -574,15 +700,21 @@ pub(crate) async fn update_configuration<E: Engine>(
     if !if_match.is_ok_and(|tags| tags.matches_strongly(current.opaque())) {
         return Err(stale());
     }
-    app.require_engine()?;
-    if let Some(failure) = app.restore_failure(&record.id) {
-        return Err(Problem::new(
-            ProblemType::LifecycleConflict,
-            format!(
-                "The torrent could not be restored: {} Delete it.",
-                failure.detail
-            ),
-        ));
+    // Library members need no engine, so they change in any lifecycle
+    // state; the desired state and storage mode go through the engine.
+    if patch.desired_state.is_some() || patch.storage_mode.is_some() {
+        app.require_engine()?;
+        if let Some(failure) = app.restore_failure(&record.id) {
+            return Err(Problem::new(
+                ProblemType::LifecycleConflict,
+                format!(
+                    "The torrent could not be restored: {} Delete it.",
+                    failure.detail
+                ),
+            ));
+        }
+    } else {
+        app.require_running()?;
     }
 
     let new_storage_mode = patch
@@ -621,8 +753,11 @@ pub(crate) async fn update_configuration<E: Engine>(
         store_configuration(
             &app,
             &id,
-            desired_state,
-            new_storage_mode,
+            Change {
+                desired_state,
+                storage_mode: new_storage_mode,
+                library: &patch.library,
+            },
             &record.configuration.etag(),
         )
         .await
@@ -669,14 +804,20 @@ enum Stored {
     Failed(Problem),
 }
 
-/// Sets and stores a desired state and a storage mode if `expected` is still
-/// the current entity tag, under the write lane: the store first, then the
-/// registry.
+/// What a configuration patch changes, once the engine took its desired
+/// state.
+struct Change<'a> {
+    desired_state: DesiredState,
+    storage_mode: Option<StorageMode>,
+    library: &'a LibraryPatch,
+}
+
+/// Sets and stores a change if `expected` is still the current entity tag,
+/// under the write lane: the store first, then the registry.
 async fn store_configuration<E: Engine>(
     app: &App<E>,
     id: &str,
-    desired_state: DesiredState,
-    storage_mode: Option<StorageMode>,
+    change: Change<'_>,
     expected: &EntityTag,
 ) -> Result<ConfigurationUpdate, Stored> {
     let registry = app.registry().map_err(Stored::Failed)?;
@@ -690,10 +831,12 @@ async fn store_configuration<E: Engine>(
         }));
     }
     let mut configuration = current.configuration;
-    let mut changed = configuration.set_desired_state(desired_state);
-    if let Some(mode) = storage_mode {
+    let library = change.library.apply(configuration.library());
+    let mut changed = configuration.set_desired_state(change.desired_state);
+    if let Some(mode) = change.storage_mode {
         changed |= configuration.set_storage_mode(mode);
     }
+    changed |= configuration.set_library(library);
     if changed {
         app.store()
             .set_configuration(&current.id, &configuration)
@@ -714,19 +857,23 @@ async fn store_configuration<E: Engine>(
 struct ConfigurationPatch {
     desired_state: Option<DesiredState>,
     storage_mode: Option<StorageMode>,
+    library: LibraryPatch,
 }
 
 /// Reads a configuration merge patch. It must set at least one member, and
-/// no member can be removed with `null`.
+/// only library members can be removed with `null`, which returns them to
+/// their defaults.
 fn configuration_patch(value: Value) -> Result<ConfigurationPatch, Problem> {
     let members = object(value)?;
     let mut errors = Vec::new();
     let mut patch = ConfigurationPatch {
         desired_state: None,
         storage_mode: None,
+        library: LibraryPatch::default(),
     };
     for (member, value) in &members {
         match member.as_str() {
+            member if library::is_member(member) => patch.library.read(member, value, &mut errors),
             "desired_state" if value.is_null() => errors.push(InvalidValue::pointer(
                 "/desired_state",
                 "Cannot be removed; must be started or paused.",
@@ -867,6 +1014,7 @@ mod tests {
             ConfigurationPatch {
                 desired_state: Some(DesiredState::Paused),
                 storage_mode: None,
+                library: LibraryPatch::default(),
             }
         );
         assert_eq!(
@@ -874,6 +1022,7 @@ mod tests {
             ConfigurationPatch {
                 desired_state: None,
                 storage_mode: Some(StorageMode::Disk),
+                library: LibraryPatch::default(),
             }
         );
         assert_eq!(

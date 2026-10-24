@@ -15,9 +15,19 @@ use std::time::{Duration, SystemTime};
 
 use tempfile::TempDir;
 use torrplay_core::id::{InfoHashV1, TORRENT_ID_RANDOM_BYTES, TorrentId};
+use torrplay_core::library::{Kind, Library, PosterInfo, PosterType};
 use torrplay_core::lifecycle::{Configuration, DesiredState, StorageMode};
 use torrplay_core::settings::Explicit;
 use torrplay_store::{FILE_NAME, Store, StoreError, StoredSettings, StoredTorrent};
+
+/// Turns a database back into version 6, before the library.
+const UNDO_VERSION_7: &str = "DROP TABLE torrent_posters;
+    DROP TABLE torrent_genres;
+    DROP TABLE torrent_categories;
+    ALTER TABLE torrents DROP COLUMN description;
+    ALTER TABLE torrents DROP COLUMN year;
+    ALTER TABLE torrents DROP COLUMN kind;
+    ALTER TABLE torrents DROP COLUMN title;";
 
 fn id(n: u32) -> TorrentId {
     let mut bytes = [0; TORRENT_ID_RANDOM_BYTES];
@@ -51,6 +61,7 @@ fn torrent(n: u32, nanos: u64) -> StoredTorrent {
         storage_mode: StorageMode::Memory,
         magnet_uri: (!file).then(|| format!("magnet:?xt=urn:btih:{}", info_hash(n))),
         torrent_file: file.then(|| vec![(n % 251) as u8; 1000 + n as usize]),
+        poster: None,
     }
 }
 
@@ -194,7 +205,7 @@ async fn a_newer_schema_is_refused() {
         Store::open(dir.path()),
         Err(StoreError::TooNew {
             found: 99,
-            supported: 6
+            supported: 7
         })
     ));
 }
@@ -299,12 +310,13 @@ async fn a_version_1_database_is_copied_then_migrated() {
     {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
-            .execute_batch(
-                "DROP TABLE settings;
+            .execute_batch(&format!(
+                "{UNDO_VERSION_7}
+                 DROP TABLE settings;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
                  DROP TABLE runs;
                  PRAGMA user_version = 1;",
-            )
+            ))
             .unwrap();
     }
     let (store, contents) = Store::open(dir.path()).unwrap();
@@ -336,12 +348,13 @@ async fn a_version_1_database_is_copied_then_migrated() {
     {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
-            .execute_batch(
-                "DROP TABLE settings;
+            .execute_batch(&format!(
+                "{UNDO_VERSION_7}
+                 DROP TABLE settings;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
                  DROP TABLE runs;
                  PRAGMA user_version = 1;",
-            )
+            ))
             .unwrap();
     }
     drop(Store::open(dir.path()).unwrap());
@@ -372,13 +385,14 @@ async fn settings_from_version_2_keep_their_values_and_lack_the_cache_capacity()
     {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
-            .execute_batch(
-                "ALTER TABLE settings DROP COLUMN cache_capacity_bytes;
+            .execute_batch(&format!(
+                "{UNDO_VERSION_7}
+                 ALTER TABLE settings DROP COLUMN cache_capacity_bytes;
                  ALTER TABLE settings DROP COLUMN background_downloads;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
                  DROP TABLE runs;
                  PRAGMA user_version = 2;",
-            )
+            ))
             .unwrap();
     }
     let (store, contents) = Store::open(dir.path()).unwrap();
@@ -424,10 +438,11 @@ async fn settings_from_version_5_lack_the_background_downloads_switch() {
     {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
-            .execute_batch(
-                "ALTER TABLE settings DROP COLUMN background_downloads;
+            .execute_batch(&format!(
+                "{UNDO_VERSION_7}
+                 ALTER TABLE settings DROP COLUMN background_downloads;
                  PRAGMA user_version = 5;",
-            )
+            ))
             .unwrap();
     }
     let (_store, contents) = Store::open(dir.path()).unwrap();
@@ -453,12 +468,13 @@ async fn torrents_from_version_3_use_memory_storage() {
     {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
-            .execute_batch(
-                "ALTER TABLE settings DROP COLUMN background_downloads;
+            .execute_batch(&format!(
+                "{UNDO_VERSION_7}
+                 ALTER TABLE settings DROP COLUMN background_downloads;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
                  DROP TABLE runs;
                  PRAGMA user_version = 3;",
-            )
+            ))
             .unwrap();
     }
     let (_store, stored) = open(&dir);
@@ -592,4 +608,124 @@ fn inserts_killed_at_any_moment_leave_whole_torrents() {
         );
         stored_before = count;
     }
+}
+
+fn library() -> Library {
+    Library {
+        title: Some("Example Film".into()),
+        kind: Some(Kind::Movie),
+        year: Some(2026),
+        description: Some("Line one.\n\tLine two.".into()),
+        categories: vec!["Movies".into(), "Kids".into()],
+        genres: vec!["Comedy".into(), "Animation".into()],
+    }
+}
+
+#[tokio::test]
+async fn library_members_survive_a_reopen_in_order() {
+    let dir = TempDir::new().unwrap();
+    let mut created = torrent(1, 10);
+    created.configuration = created.configuration.clone().with_library(library());
+    let plain = torrent(2, 20);
+    let mut changed = plain.configuration.clone();
+    changed.set_library(Library {
+        categories: vec!["Z".into(), "A".into(), "M".into()],
+        ..Library::default()
+    });
+    let mut cleared = created.configuration.clone();
+    cleared.set_library(Library::default());
+    {
+        let (store, _) = open(&dir);
+        store.insert(created.clone()).await.unwrap();
+        store.insert(plain.clone()).await.unwrap();
+        store.set_configuration(&plain.id, &changed).await.unwrap();
+    }
+    {
+        let (store, stored) = open(&dir);
+        assert_eq!(stored[0], created, "set at creation");
+        assert_eq!(stored[1].configuration, changed, "replaced, in order");
+        store
+            .set_configuration(&created.id, &cleared)
+            .await
+            .unwrap();
+    }
+    let (_store, stored) = open(&dir);
+    assert_eq!(stored[0].configuration.library(), &Library::default());
+    assert_eq!(stored[0].configuration.etag(), cleared.etag());
+}
+
+#[tokio::test]
+async fn posters_are_stored_replaced_and_deleted_with_their_torrent() {
+    let dir = TempDir::new().unwrap();
+    let at = SystemTime::UNIX_EPOCH + Duration::from_nanos(1_700_000_000_000_000_007);
+    let png = b"\x89PNG\r\n\x1a\nfirst".to_vec();
+    let jpeg = vec![0xff, 0xd8, 0xff, 0xe0, 1, 2, 3];
+    let first = PosterInfo::of(PosterType::Png, &png, at);
+    let second = PosterInfo::of(PosterType::Jpeg, &jpeg, at + Duration::from_secs(1));
+    {
+        let (store, _) = open(&dir);
+        store.insert(torrent(1, 10)).await.unwrap();
+        store.insert(torrent(2, 20)).await.unwrap();
+        assert_eq!(store.poster(&id(1)).await.unwrap(), None);
+        store.set_poster(&id(1), &first, png.clone()).await.unwrap();
+        store.set_poster(&id(2), &first, png.clone()).await.unwrap();
+        assert_eq!(
+            store.poster(&id(1)).await.unwrap(),
+            Some((first.clone(), png.clone()))
+        );
+        store
+            .set_poster(&id(1), &second, jpeg.clone())
+            .await
+            .unwrap();
+        assert!(matches!(
+            store.set_poster(&id(9), &first, png.clone()).await,
+            Err(StoreError::UnknownTorrent)
+        ));
+        assert!(matches!(
+            store.delete_poster(&id(9)).await,
+            Err(StoreError::UnknownTorrent)
+        ));
+    }
+    {
+        let (store, stored) = open(&dir);
+        assert_eq!(stored[0].poster.as_ref(), Some(&second), "the replacement");
+        assert_eq!(stored[1].poster.as_ref(), Some(&first));
+        assert_eq!(
+            store.poster(&id(1)).await.unwrap(),
+            Some((second.clone(), jpeg))
+        );
+        store.delete_poster(&id(1)).await.unwrap();
+        store.delete_poster(&id(1)).await.unwrap();
+        store.delete(&id(2)).await.unwrap();
+    }
+    let (store, stored) = open(&dir);
+    assert_eq!(stored[0].poster, None);
+    assert_eq!(store.poster(&id(1)).await.unwrap(), None);
+    drop(store);
+    assert_eq!(
+        rusqlite_count(&dir, "SELECT count(*) FROM torrent_posters"),
+        0,
+        "the deleted torrent's poster went with it"
+    );
+}
+
+#[tokio::test]
+async fn torrents_from_version_6_have_empty_library_members() {
+    let dir = TempDir::new().unwrap();
+    let stored_torrent = torrent(1, 10);
+    {
+        let (store, _) = open(&dir);
+        store.insert(stored_torrent.clone()).await.unwrap();
+    }
+    // A database as version 6 left it.
+    {
+        let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
+        connection
+            .execute_batch(&format!("{UNDO_VERSION_7} PRAGMA user_version = 6;"))
+            .unwrap();
+    }
+    let (_store, stored) = open(&dir);
+    assert_eq!(stored, [stored_torrent]);
+    assert_eq!(stored[0].configuration.library(), &Library::default());
+    assert!(dir.path().join(format!("{FILE_NAME}.v6.bak")).exists());
 }

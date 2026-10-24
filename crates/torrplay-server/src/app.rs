@@ -193,6 +193,7 @@ impl<E: Engine> App<E> {
                 configuration: stored.configuration,
                 storage_mode: stored.storage_mode,
                 metadata,
+                poster: stored.poster,
             };
             if self.registry.insert(record).is_err() {
                 // The store's keys are unique; a second record is skipped.
@@ -287,15 +288,22 @@ impl<E: Engine> App<E> {
             .and_then(|observation| observation.restore_failure.clone())
     }
 
-    /// Fails with `engine-unavailable` unless the engine can serve requests
-    /// that read or change its state.
-    pub(crate) fn require_engine(&self) -> Result<(), Problem> {
+    /// Fails with `engine-unavailable` once shutdown began, for changes that
+    /// need only the application's own records and the store.
+    pub(crate) fn require_running(&self) -> Result<(), Problem> {
         if self.shutting_down.load(Ordering::SeqCst) {
             return Err(Problem::engine_unavailable(
                 "The application is shutting down.",
                 None,
             ));
         }
+        Ok(())
+    }
+
+    /// Fails with `engine-unavailable` unless the engine can serve requests
+    /// that read or change its state.
+    pub(crate) fn require_engine(&self) -> Result<(), Problem> {
+        self.require_running()?;
         if self.restoring.load(Ordering::SeqCst) {
             return Err(Problem::engine_unavailable(
                 "The stored torrents are being restored.",

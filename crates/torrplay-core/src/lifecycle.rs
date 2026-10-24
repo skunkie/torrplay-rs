@@ -6,7 +6,10 @@
 //! `docs/lifecycle.md` defines them.
 
 use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
+
+use crate::library::Library;
 
 /// The client-writable target state of a torrent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -160,6 +163,9 @@ impl fmt::Display for EntityTag {
 pub struct Configuration {
     desired_state: DesiredState,
     storage_mode: StorageMode,
+    // Shared, since records are cloned for every response and the library
+    // holds most of their text.
+    library: Arc<Library>,
     version: u64,
 }
 
@@ -169,7 +175,16 @@ impl Configuration {
         Self {
             desired_state,
             storage_mode: StorageMode::Memory,
+            library: Arc::default(),
             version: 1,
+        }
+    }
+
+    /// The configuration with `library` instead, for a new torrent.
+    pub fn with_library(self, library: Library) -> Self {
+        Self {
+            library: Arc::new(library),
+            ..self
         }
     }
 
@@ -186,11 +201,13 @@ impl Configuration {
     pub fn from_stored(
         desired_state: DesiredState,
         storage_mode: StorageMode,
+        library: Library,
         version: u64,
     ) -> Option<Self> {
         (version >= 1).then_some(Self {
             desired_state,
             storage_mode,
+            library: Arc::new(library),
             version,
         })
     }
@@ -206,6 +223,11 @@ impl Configuration {
         self.storage_mode
     }
 
+    /// Returns the library members.
+    pub fn library(&self) -> &Library {
+        &self.library
+    }
+
     /// Returns the version the entity tag derives from, which starts at 1 and
     /// grows with every change of a writable member.
     pub fn version(&self) -> u64 {
@@ -216,6 +238,17 @@ impl Configuration {
     /// member changes.
     pub fn etag(&self) -> EntityTag {
         EntityTag(self.version.to_string())
+    }
+
+    /// Sets the library members and returns whether any changed, as
+    /// [`set_desired_state`](Self::set_desired_state) does.
+    pub fn set_library(&mut self, library: Library) -> bool {
+        if *self.library == library {
+            return false;
+        }
+        self.library = Arc::new(library);
+        self.version = self.version.wrapping_add(1);
+        true
     }
 
     /// Sets the storage mode and returns whether it changed, as
@@ -327,6 +360,7 @@ mod tests {
         let stored = Configuration::from_stored(
             DesiredState::Paused,
             StorageMode::Memory,
+            Library::default(),
             configuration.version(),
         );
         assert_eq!(
@@ -334,7 +368,12 @@ mod tests {
             Some(configuration.etag())
         );
         assert_eq!(
-            Configuration::from_stored(DesiredState::Paused, StorageMode::Disk, 0),
+            Configuration::from_stored(
+                DesiredState::Paused,
+                StorageMode::Disk,
+                Library::default(),
+                0
+            ),
             None
         );
     }
@@ -355,6 +394,23 @@ mod tests {
         assert!(configuration.set_desired_state(DesiredState::Started));
         assert_ne!(configuration.etag(), initial, "tags are never reused");
         assert_ne!(configuration.etag(), paused);
+    }
+
+    #[test]
+    fn library_changes_change_the_etag_once() {
+        let mut configuration = Configuration::new(DesiredState::Started);
+        let initial = configuration.etag();
+        assert!(!configuration.set_library(Library::default()));
+        assert_eq!(configuration.etag(), initial);
+        let library = Library {
+            categories: vec!["Movies".into()],
+            ..Library::default()
+        };
+        assert!(configuration.set_library(library.clone()));
+        let changed = configuration.etag();
+        assert_ne!(changed, initial);
+        assert!(!configuration.set_library(library));
+        assert_eq!(configuration.etag(), changed);
     }
 
     #[test]
