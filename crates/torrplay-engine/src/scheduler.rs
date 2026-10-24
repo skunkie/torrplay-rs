@@ -566,8 +566,11 @@ impl PieceSelector for TorrentScheduler {
         }
     }
 
+    // A disk torrent downloads the rest of itself in the background while
+    // no reader exists anywhere; reader changes replan every torrent, which
+    // reselects its pieces, so this takes effect at once.
     fn download_other_pieces(&self) -> bool {
-        false
+        !self.cached.load(Ordering::Acquire) && self.playback.readers() == 0
     }
 
     // librqbit fetches a piece from one peer unless it is shared; sharing

@@ -641,6 +641,151 @@ async fn a_disk_torrent_uploads_until_it_moves_to_memory() -> anyhow::Result<()>
     Ok(())
 }
 
+/// Waits until torrent `n` holds every piece.
+async fn completed(engine: &LibrqbitEngine, n: u8) -> anyhow::Result<()> {
+    eventually("the whole torrent downloading", || {
+        let ratio = futures_now(engine.torrent_statistics(&id(n)))?.completion_ratio;
+        Ok(ratio.is_some_and(|ratio| ratio.get() >= 1.0).then_some(()))
+    })
+    .await
+}
+
+async fn downloaded(engine: &LibrqbitEngine, n: u8) -> anyhow::Result<u64> {
+    Ok(engine.torrent_statistics(&id(n)).await?.downloaded_bytes)
+}
+
+/// BGD-01: a started disk torrent downloads every piece without a reader;
+/// a memory torrent without readers downloads nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_disk_torrent_downloads_in_the_background_and_a_memory_one_does_not() -> anyhow::Result<()>
+{
+    let large = catalog::large(4 * MIB);
+    let small = catalog::single_small();
+    let large_seeder = Seeder::start(&large, &large.metainfo().bytes).await?;
+    let small_seeder = Seeder::start(&small, &small.metainfo().bytes).await?;
+    let downloads = tempfile::tempdir()?;
+    let started = start_with(vec![large_seeder.addr, small_seeder.addr], |config| {
+        config.download_dir = downloads.path().to_path_buf();
+    })
+    .await?;
+    let engine = &started.engine;
+    engine
+        .add_in(
+            &id(1),
+            &upload(&large),
+            DesiredState::Started,
+            StorageMode::Disk,
+        )
+        .await?;
+    engine
+        .add(&id(2), &upload(&small), DesiredState::Started)
+        .await?;
+    completed(engine, 1).await?;
+    assert!(downloaded(engine, 1).await? >= large.total_size_bytes());
+    assert_eq!(
+        downloaded(engine, 2).await?,
+        0,
+        "a memory torrent fetches only what readers need"
+    );
+
+    engine.shutdown().await?;
+    large_seeder.stop().await;
+    small_seeder.stop().await;
+    Ok(())
+}
+
+/// BGD-02: any reader pauses background downloads, an idle one included,
+/// and releasing the last resumes them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn readers_pause_background_downloads_until_the_last_is_released() -> anyhow::Result<()> {
+    let large = catalog::large(4 * MIB);
+    let small = catalog::single_small();
+    let large_seeder = Seeder::start(&large, &large.metainfo().bytes).await?;
+    let small_seeder = Seeder::start(&small, &small.metainfo().bytes).await?;
+    let downloads = tempfile::tempdir()?;
+    let started = start_with(vec![large_seeder.addr, small_seeder.addr], |config| {
+        config.download_dir = downloads.path().to_path_buf();
+    })
+    .await?;
+    let engine = &started.engine;
+    engine
+        .add(&id(2), &upload(&small), DesiredState::Started)
+        .await?;
+    let mut reader = engine
+        .open_reader(&id(2), FileIndex(0), range(0, 1000))
+        .await?;
+    let mut bytes = Vec::new();
+    bounded("reading", async {
+        Ok(reader.read_to_end(&mut bytes).await?)
+    })
+    .await?;
+
+    engine
+        .add_in(
+            &id(1),
+            &upload(&large),
+            DesiredState::Started,
+            StorageMode::Disk,
+        )
+        .await?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        downloaded(engine, 1).await?,
+        0,
+        "an active reader pauses it"
+    );
+    // The stream ends; its reader stays idle.
+    drop(reader);
+    let playback = engine.playback().expect("a started engine");
+    assert_eq!(playback.stats().idle_readers, 1);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        downloaded(engine, 1).await?,
+        0,
+        "an idle reader pauses it too"
+    );
+
+    playback.release_idle_readers();
+    completed(engine, 1).await?;
+
+    engine.shutdown().await?;
+    large_seeder.stop().await;
+    small_seeder.stop().await;
+    Ok(())
+}
+
+/// BGD-03: a paused disk torrent downloads nothing; starting it starts its
+/// background download.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_paused_disk_torrent_downloads_once_started() -> anyhow::Result<()> {
+    let spec = catalog::large(4 * MIB);
+    let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
+    let downloads = tempfile::tempdir()?;
+    let started = start_with(vec![seeder.addr], |config| {
+        config.download_dir = downloads.path().to_path_buf();
+    })
+    .await?;
+    let engine = &started.engine;
+    engine
+        .add_in(
+            &id(1),
+            &upload(&spec),
+            DesiredState::Paused,
+            StorageMode::Disk,
+        )
+        .await?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(downloaded(engine, 1).await?, 0);
+    engine
+        .set_desired_state(&id(1), DesiredState::Started)
+        .await?;
+    completed(engine, 1).await?;
+
+    engine.shutdown().await?;
+    seeder.stop().await;
+    Ok(())
+}
+
 /// A paused torrent opens no reader, and a reader whose piece never comes
 /// fails after the piece wait bound.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

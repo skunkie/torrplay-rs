@@ -211,6 +211,28 @@ them is unsupported.
   filesystem, fails the torrent. Starting it again checks its data in full
   and downloads whatever is missing. Its data stays through a failure.
 
+## Background downloads
+
+A background download fetches the pieces of a torrent that no reader needs,
+so that the whole torrent is there for later playback.
+
+- Every started torrent in disk storage with metadata downloads the pieces
+  it lacks in the background, after the pieces its readers need, until it
+  holds the whole torrent; it then keeps uploading. Paused and failed
+  torrents, and torrents still retrieving metadata, download nothing in the
+  background. Torrents in memory storage never do, since the piece cache
+  would evict what they fetch.
+- All such torrents download at once, sharing peers and bandwidth, each in
+  the order of its files. There is no queue across torrents, so a torrent
+  without peers holds no other back.
+- Active playback pauses every background download: from the moment any
+  reader of any torrent exists, active or idle, in memory or disk storage,
+  torrents request only the pieces readers need; requests already sent
+  finish. When the last reader is released, background downloads resume at
+  once.
+- A transition to disk storage starts a torrent's background download, and
+  one to memory storage ends it.
+
 ## Cache behavior
 
 - Verified pieces of a torrent count toward cache usage until they are
@@ -364,5 +386,4 @@ gives each one's bounds and default.
 
 Later milestones extend these rules before the behavior ships:
 
-- Background downloads pause during active playback.
 - Preloads add pinned ranges with their own lifecycle.

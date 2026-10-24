@@ -224,6 +224,12 @@ impl Playback {
         self.replan_all();
     }
 
+    /// The number of active and idle readers across torrents, whose presence
+    /// is active playback.
+    pub(crate) fn readers(&self) -> u64 {
+        self.readers.load(Ordering::Acquire)
+    }
+
     /// The number of active and idle readers of torrents in memory storage,
     /// which share the readahead budget.
     pub(crate) fn cache_readers(&self) -> u64 {
