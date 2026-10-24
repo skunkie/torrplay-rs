@@ -41,9 +41,11 @@ document that schedules it.
 | Persist torrents across restarts | BBolt database | Verified | LIF-11, LIF-13 to LIF-18, `restart` ([ADR 8](adr/0008-database.md)) |
 | Memory and disk storage, with transitions | `storage` member | Verified | DSK-01 to DSK-09 ([ADR 9](adr/0009-disk-storage.md)) |
 | List torrents with pagination | `GET /api/v1/torrents` | Verified | API scenarios, `torrent_pages` |
-| Filter torrents by category, info hash, or name | Query parameters | Planned | Library organization |
+| Filter torrents by category, genre, kind, and info hash | Query parameters | Verified | LIB-06 |
+| Look up torrents by name | `names` parameter | Planned | Search; the plan rules out an ad hoc name filter |
 | Search torrents, typo tolerant, with category facets | `search` parameter, `facets` | Planned | Search, with the shared matcher AGENTS.md requires |
-| Title, category, and poster of a torrent | `title`, `category`, `poster` | Planned | Library organization |
+| Title, categories, genres, kind, year, and description | `title`, `category` | Verified | LIB-01 to LIB-05, LIB-09, LIB-10 |
+| Posters uploaded and served by the server | `poster` URL or data URI | Verified | LIB-07 to LIB-10 |
 | Resolve a torrent from a URL without storing it | `POST /api/v1/torrent-resolutions` | Deferred | Fetching client-supplied URLs needs an outbound request policy first |
 | Back up and restore torrents and posters | `/api/v1/torrents/backup`, `/restore` | Deferred | After library organization |
 | Posters and metadata from TheTVDB | `internal/metadata` | Deferred | Needs credentials and a provider decision |
@@ -133,5 +135,9 @@ These differ from Go TorrPlay by decision; the linked documents record why.
 - Settings that Go TorrPlay keeps as one document are separate members with
   bounds and defaults, and only explicitly set values are stored
   ([lifecycle](lifecycle.md)).
+- A torrent has any number of categories and genres, normalized on write
+  and matched exactly, and a kind, inferred from file names unless set; Go
+  TorrPlay keeps one category string. The server stores uploaded posters
+  and never fetches a poster URL ([lifecycle](lifecycle.md#library)).
 - The prototype listens on loopback only, so it has no authentication until
   authentication is designed.

@@ -221,3 +221,35 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 : The read-only state the engine reports for a torrent, including metadata
   retrieval and download status. It may lag or differ from the desired
   state.
+
+## Library
+
+**Library**
+: The torrents as a user organizes and browses them: by title, kind,
+  category, and genre, with posters. Library members are part of a
+  torrent's configuration and need no engine.
+
+**Title**
+: The name clients show for a torrent instead of its metadata's name, which
+  stays unchanged.
+
+**Kind**
+: What a torrent holds: a `movie`, a `series` of episodes, or `other`
+  content. The configured kind wins; without one the kind is inferred from
+  episode patterns in the names of its video files.
+
+**Episode pattern**
+: A part of a file name that numbers an episode, such as `S01E02`, `1x02`,
+  or `episode 2`.
+
+**Category**
+: A user-chosen group of torrents, such as a menu entry. A torrent belongs
+  to any number of categories, and a category exists while a torrent has it.
+
+**Genre**
+: A user- or provider-assigned description of a torrent's content, such as
+  `Comedy`. Genres filter and describe; categories organize.
+
+**Poster**
+: An image a client uploads to show a torrent in the library. The server
+  stores and serves it but never fetches images itself.

@@ -24,6 +24,7 @@ use std::time::SystemTime;
 use crate::id::{
     InfoHashV1, RandomnessError, TORRENT_ID_RANDOM_BYTES, TorrentId, random_torrent_id_bytes,
 };
+use crate::library::{Library, PosterInfo};
 use crate::lifecycle::{Configuration, DesiredState, EntityTag, StorageMode};
 use crate::metadata::Metadata;
 
@@ -52,6 +53,8 @@ pub struct TorrentRecord {
     /// The metadata, once an upload supplied it or the server recorded it
     /// after retrieval.
     pub metadata: Option<Arc<Metadata>>,
+    /// The poster, if one was uploaded.
+    pub poster: Option<PosterInfo>,
 }
 
 /// The input that registers a torrent.
@@ -66,6 +69,8 @@ pub struct NewTorrent {
     pub desired_state: DesiredState,
     /// The storage mode the torrent uses.
     pub storage_mode: StorageMode,
+    /// The library members, normalized.
+    pub library: Library,
     /// The creation time.
     pub created_at: SystemTime,
 }
@@ -217,9 +222,11 @@ impl Registry {
             info_hash: new.info_hash,
             created_at: new.created_at,
             configuration: Configuration::new(new.desired_state)
-                .with_storage_mode(new.storage_mode),
+                .with_storage_mode(new.storage_mode)
+                .with_library(new.library),
             storage_mode: new.storage_mode,
             metadata: new.metadata,
+            poster: None,
         }))
     }
 
@@ -260,9 +267,11 @@ impl Registry {
             info_hash: new.info_hash,
             created_at: new.created_at,
             configuration: Configuration::new(new.desired_state)
-                .with_storage_mode(new.storage_mode),
+                .with_storage_mode(new.storage_mode)
+                .with_library(new.library),
             storage_mode: new.storage_mode,
             metadata: new.metadata,
+            poster: None,
         };
         state.insert(record.clone());
         Ok(Registration::Created(record))
@@ -336,6 +345,15 @@ impl Registry {
         Ok(())
     }
 
+    /// Replaces torrent `id`'s poster with one its caller stored, or removes
+    /// it.
+    pub fn set_poster(&self, id: &str, poster: Option<PosterInfo>) -> Result<(), UnknownTorrent> {
+        let mut state = self.lock();
+        let entry = state.torrents.get_mut(id).ok_or(UnknownTorrent)?;
+        entry.record.poster = poster;
+        Ok(())
+    }
+
     /// Records the storage mode in effect for torrent `id`.
     pub fn set_storage_mode(
         &self,
@@ -401,6 +419,7 @@ mod tests {
             metadata,
             desired_state: DesiredState::Started,
             storage_mode: StorageMode::Memory,
+            library: Default::default(),
             created_at: SystemTime::UNIX_EPOCH + Duration::from_secs(u64::from(n)),
         }
     }
@@ -622,6 +641,7 @@ mod tests {
                 configuration: paused.clone(),
                 storage_mode: StorageMode::Memory,
                 metadata: None,
+                poster: None,
             })
             .collect();
         for record in &records {

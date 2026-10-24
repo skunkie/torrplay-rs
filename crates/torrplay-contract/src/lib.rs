@@ -594,7 +594,7 @@ impl Contract {
                 .as_ref()
                 .and_then(|(_, parameters)| parameter(parameters, "boundary"))
                 .unwrap_or_default();
-            self.form_value(media, body, &boundary)
+            self.form_value(media, &schema, body, &boundary)
         } else {
             return;
         };
@@ -608,8 +608,34 @@ impl Contract {
     }
 
     /// Reads a form into an object of its parts, checking each part's
-    /// media type against the media type's `encoding`.
-    fn form_value(&self, media: &Value, body: &[u8], boundary: &str) -> Result<Value, String> {
+    /// media type against the media type's `encoding`. As OpenAPI maps
+    /// forms, the parts of an array property are its items, in order, and
+    /// a part of an integer property is its decimal text.
+    fn form_value(
+        &self,
+        media: &Value,
+        schema: &str,
+        body: &[u8],
+        boundary: &str,
+    ) -> Result<Value, String> {
+        let property_types = |name: &str| -> Vec<String> {
+            let Ok((object, _)) = self.resolve(schema) else {
+                return Vec::new();
+            };
+            let property = format!("{object}/properties/{}", escape(name));
+            match self.resolve(&property) {
+                Ok((_, node)) => match node.get("type") {
+                    Some(Value::String(kind)) => vec![kind.clone()],
+                    Some(Value::Array(kinds)) => kinds
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect(),
+                    _ => Vec::new(),
+                },
+                Err(_) => Vec::new(),
+            }
+        };
         let mut object = serde_json::Map::new();
         for part in multipart::parse(body, boundary)? {
             let expected = media
@@ -620,12 +646,25 @@ impl Contract {
             {
                 return Err(format!("part {} is {actual}, not {expected}", part.name));
             }
+            let types = property_types(&part.name);
             let value = match std::str::from_utf8(&part.data) {
+                Ok(text) if types.iter().any(|kind| kind == "integer") => text
+                    .parse::<i64>()
+                    .map_or_else(|_| Value::String(text.to_owned()), Value::from),
                 Ok(text) => Value::String(text.to_owned()),
                 // Binary parts are strings with a content media type.
                 Err(_) => Value::String(format!("<{} bytes>", part.data.len())),
             };
-            object.insert(part.name, value);
+            if types.iter().any(|kind| kind == "array") {
+                if let Value::Array(items) = object
+                    .entry(part.name)
+                    .or_insert_with(|| Value::Array(Vec::new()))
+                {
+                    items.push(value);
+                }
+            } else {
+                object.insert(part.name, value);
+            }
         }
         Ok(Value::Object(object))
     }

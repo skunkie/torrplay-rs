@@ -14,14 +14,17 @@ use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use rusqlite::{Connection, ErrorCode, OptionalExtension, TransactionBehavior};
+use std::collections::HashMap;
+
 use torrplay_core::id::{InfoHashV1, TorrentId};
+use torrplay_core::library::{Kind, Library, PosterInfo, PosterType};
 use torrplay_core::lifecycle::{Configuration, DesiredState, StorageMode};
 use torrplay_core::settings::{self, Explicit, Stored};
 
 use crate::{StoreError, StoredTorrent};
 
 /// The schema version this build creates and migrates to.
-pub(crate) const VERSION: u32 = 6;
+pub(crate) const VERSION: u32 = 7;
 
 /// The schema at each version, applied in order to reach the next one.
 const MIGRATIONS: [&str; VERSION as usize] = [
@@ -73,6 +76,37 @@ const MIGRATIONS: [&str; VERSION as usize] = [
     // Version 6: the background downloads switch, NULL while unset.
     "ALTER TABLE settings
         ADD COLUMN background_downloads INTEGER CHECK (background_downloads IN (0, 1));",
+    // Version 7: the library members, NULL or no rows while unset, and
+    // posters. A list keeps its order by position.
+    "ALTER TABLE torrents ADD COLUMN title TEXT;
+    ALTER TABLE torrents
+        ADD COLUMN kind TEXT CHECK (kind IN ('movie', 'series', 'other'));
+    ALTER TABLE torrents
+        ADD COLUMN year INTEGER CHECK (year BETWEEN 1800 AND 2200);
+    ALTER TABLE torrents ADD COLUMN description TEXT;
+    CREATE TABLE torrent_categories (
+        torrent_id TEXT NOT NULL REFERENCES torrents (id) ON DELETE CASCADE,
+        position INTEGER NOT NULL CHECK (position >= 0),
+        name TEXT NOT NULL,
+        PRIMARY KEY (torrent_id, position),
+        CONSTRAINT torrent_categories_torrent_id_name_key UNIQUE (torrent_id, name)
+    ) STRICT;
+    CREATE TABLE torrent_genres (
+        torrent_id TEXT NOT NULL REFERENCES torrents (id) ON DELETE CASCADE,
+        position INTEGER NOT NULL CHECK (position >= 0),
+        name TEXT NOT NULL,
+        PRIMARY KEY (torrent_id, position),
+        CONSTRAINT torrent_genres_torrent_id_name_key UNIQUE (torrent_id, name)
+    ) STRICT;
+    -- Posters can be a megabyte; startup reads every column but the image.
+    CREATE TABLE torrent_posters (
+        torrent_id TEXT PRIMARY KEY REFERENCES torrents (id) ON DELETE CASCADE,
+        media_type TEXT NOT NULL CHECK (media_type IN
+            ('image/avif', 'image/gif', 'image/jpeg', 'image/png', 'image/webp')),
+        digest BLOB NOT NULL CHECK (length(digest) = 32),
+        updated_at_ns INTEGER NOT NULL CHECK (updated_at_ns >= 0),
+        bytes BLOB NOT NULL
+    ) STRICT;",
 ];
 
 /// Opens the database at `path`, takes its lock, and migrates it.
@@ -148,9 +182,13 @@ fn migrate(connection: &mut Connection, path: &Path) -> Result<(), StoreError> {
 /// Reads every stored torrent in creation order, in one transaction.
 pub(crate) fn torrents(connection: &mut Connection) -> Result<Vec<StoredTorrent>, StoreError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
+    let mut categories = labels(&transaction, "torrent_categories")?;
+    let mut genres = labels(&transaction, "torrent_genres")?;
+    let mut posters = posters(&transaction)?;
     let mut statement = transaction.prepare(
         "SELECT t.id, t.info_hash, t.created_at_ns, t.desired_state, t.configuration_version,
-                t.magnet_uri, f.bytes, t.desired_storage_mode, t.storage_mode
+                t.magnet_uri, f.bytes, t.desired_storage_mode, t.storage_mode,
+                t.title, t.kind, t.year, t.description
          FROM torrents t LEFT JOIN torrent_files f ON f.torrent_id = t.id
          ORDER BY t.created_at_ns, t.id",
     )?;
@@ -165,6 +203,12 @@ pub(crate) fn torrents(connection: &mut Connection) -> Result<Vec<StoredTorrent>
             row.get::<_, Option<Vec<u8>>>(6)?,
             row.get::<_, String>(7)?,
             row.get::<_, String>(8)?,
+            (
+                row.get::<_, Option<String>>(9)?,
+                row.get::<_, Option<String>>(10)?,
+                row.get::<_, Option<i64>>(11)?,
+                row.get::<_, Option<String>>(12)?,
+            ),
         ))
     })?;
     let mut torrents = Vec::new();
@@ -179,25 +223,36 @@ pub(crate) fn torrents(connection: &mut Connection) -> Result<Vec<StoredTorrent>
             torrent_file,
             desired_storage_mode,
             storage_mode,
+            (title, kind, year, description),
         ) = row?;
         let corrupt = |what: &str| StoreError::Corrupt(format!("torrent {id}: {what}"));
         let info_hash: [u8; 20] = info_hash
             .try_into()
             .map_err(|_| corrupt("the info hash is not 20 bytes"))?;
-        let created_at = u64::try_from(created_at_ns)
-            .ok()
-            .and_then(|nanos| SystemTime::UNIX_EPOCH.checked_add(Duration::from_nanos(nanos)))
-            .ok_or_else(|| corrupt("the creation time is out of range"))?;
+        let created_at =
+            from_ns(created_at_ns).ok_or_else(|| corrupt("the creation time is out of range"))?;
         let desired_state =
             DesiredState::parse(&desired_state).ok_or_else(|| corrupt("unknown desired state"))?;
         let parse_mode =
             |mode: &str| StorageMode::parse(mode).ok_or_else(|| corrupt("unknown storage mode"));
         let desired_storage_mode = parse_mode(&desired_storage_mode)?;
         let storage_mode = parse_mode(&storage_mode)?;
+        let library = Library {
+            title,
+            kind: kind
+                .map(|kind| Kind::parse(&kind).ok_or_else(|| corrupt("unknown kind")))
+                .transpose()?,
+            year: year
+                .map(|year| u16::try_from(year).map_err(|_| corrupt("the year is out of range")))
+                .transpose()?,
+            description,
+            categories: categories.remove(&id).unwrap_or_default(),
+            genres: genres.remove(&id).unwrap_or_default(),
+        };
         let configuration = u64::try_from(version)
             .ok()
             .and_then(|version| {
-                Configuration::from_stored(desired_state, desired_storage_mode, version)
+                Configuration::from_stored(desired_state, desired_storage_mode, library, version)
             })
             .ok_or_else(|| corrupt("the configuration version is out of range"))?;
         if magnet_uri.is_none() && torrent_file.is_none() {
@@ -209,6 +264,7 @@ pub(crate) fn torrents(connection: &mut Connection) -> Result<Vec<StoredTorrent>
             created_at,
             configuration,
             storage_mode,
+            poster: posters.remove(&id),
             magnet_uri,
             torrent_file,
         });
@@ -218,14 +274,96 @@ pub(crate) fn torrents(connection: &mut Connection) -> Result<Vec<StoredTorrent>
     Ok(torrents)
 }
 
-/// The creation time as SQLite's signed integer of nanoseconds since the
-/// Unix epoch, which reaches the year 2262.
-pub(crate) fn created_at_ns(created_at: SystemTime) -> Result<i64, StoreError> {
-    created_at
-        .duration_since(SystemTime::UNIX_EPOCH)
+/// Reads every torrent's categories or genres from `table`, in order.
+fn labels(
+    connection: &Connection,
+    table: &str,
+) -> Result<HashMap<String, Vec<String>>, StoreError> {
+    let mut statement = connection.prepare(&format!(
+        "SELECT torrent_id, name FROM {table} ORDER BY torrent_id, position"
+    ))?;
+    let mut labels: HashMap<String, Vec<String>> = HashMap::new();
+    for row in statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))? {
+        let (id, name): (String, String) = row?;
+        labels.entry(id).or_default().push(name);
+    }
+    Ok(labels)
+}
+
+/// A poster's row: its description's columns, then the image's length.
+type PosterRow = (String, Vec<u8>, i64, i64);
+
+fn poster_row(row: &rusqlite::Row<'_>, from: usize) -> rusqlite::Result<PosterRow> {
+    Ok((
+        row.get(from)?,
+        row.get(from + 1)?,
+        row.get(from + 2)?,
+        row.get(from + 3)?,
+    ))
+}
+
+fn poster_info(id: &str, row: PosterRow) -> Result<PosterInfo, StoreError> {
+    let (media_type, digest, updated_at_ns, size) = row;
+    let corrupt = |what: &str| StoreError::Corrupt(format!("poster of {id}: {what}"));
+    Ok(PosterInfo {
+        poster_type: PosterType::parse(&media_type).ok_or_else(|| corrupt("unknown media type"))?,
+        size_bytes: u64::try_from(size).map_err(|_| corrupt("negative size"))?,
+        digest: digest
+            .try_into()
+            .map_err(|_| corrupt("the digest is not 32 bytes"))?,
+        updated_at: from_ns(updated_at_ns).ok_or_else(|| corrupt("the time is out of range"))?,
+    })
+}
+
+/// Reads every poster's description, without its image.
+fn posters(connection: &Connection) -> Result<HashMap<String, PosterInfo>, StoreError> {
+    let mut statement = connection.prepare(
+        "SELECT torrent_id, media_type, digest, updated_at_ns, length(bytes)
+         FROM torrent_posters",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, poster_row(row, 1)?))
+    })?;
+    let mut posters = HashMap::new();
+    for row in rows {
+        let (id, row) = row?;
+        let poster = poster_info(&id, row)?;
+        posters.insert(id, poster);
+    }
+    Ok(posters)
+}
+
+/// Reads torrent `id`'s poster with its image.
+pub(crate) fn poster(
+    connection: &Connection,
+    id: &TorrentId,
+) -> Result<Option<(PosterInfo, Vec<u8>)>, StoreError> {
+    let row = connection
+        .query_row(
+            "SELECT media_type, digest, updated_at_ns, length(bytes), bytes
+             FROM torrent_posters WHERE torrent_id = ?1",
+            [id.as_str()],
+            |row| Ok((poster_row(row, 0)?, row.get::<_, Vec<u8>>(4)?)),
+        )
+        .optional()?;
+    row.map(|(row, bytes)| Ok((poster_info(id.as_str(), row)?, bytes)))
+        .transpose()
+}
+
+/// A time from SQLite's signed integer of nanoseconds since the Unix epoch.
+pub(crate) fn from_ns(nanos: i64) -> Option<SystemTime> {
+    u64::try_from(nanos)
+        .ok()
+        .and_then(|nanos| SystemTime::UNIX_EPOCH.checked_add(Duration::from_nanos(nanos)))
+}
+
+/// A time as SQLite's signed integer of nanoseconds since the Unix epoch,
+/// which reaches the year 2262.
+pub(crate) fn to_ns(time: SystemTime) -> Result<i64, StoreError> {
+    time.duration_since(SystemTime::UNIX_EPOCH)
         .ok()
         .and_then(|since| i64::try_from(since.as_nanos()).ok())
-        .ok_or_else(|| StoreError::Corrupt("the creation time is out of range".into()))
+        .ok_or_else(|| StoreError::Corrupt("a time is out of range".into()))
 }
 
 /// A configuration version as SQLite's signed integer.

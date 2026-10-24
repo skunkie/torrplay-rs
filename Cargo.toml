@@ -53,7 +53,7 @@ h2 = "0.4"
 http = "1"
 http-body-util = "0.1"
 # Unicode normalization, already in the tree through url, for comparing
-# disk paths as case-insensitive filesystems do.
+# disk paths as case-insensitive filesystems do and for library text.
 icu_normalizer = { version = "2.3", default-features = false, features = ["compiled_data"] }
 # Without default features it never fetches remote references.
 jsonschema = { version = "0.59", default-features = false }

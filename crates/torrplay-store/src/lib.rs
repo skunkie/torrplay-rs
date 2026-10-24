@@ -8,7 +8,9 @@
 //! The application reads its own in-memory records and writes through to
 //! the store: every mutation is one durable transaction, and the caller
 //! changes its records only after the store committed. The database is read
-//! once, at startup, by [`Store::open`], which returns the stored torrents.
+//! once, at startup, by [`Store::open`], which returns the stored torrents,
+//! except for poster images, which [`Store::poster`] reads when they are
+//! served.
 //!
 //! One worker thread owns the database connection. The async methods send it
 //! commands over a bounded channel and await its reply, so async tasks never
@@ -28,6 +30,7 @@ use std::time::SystemTime;
 
 use tokio::sync::{mpsc, oneshot};
 use torrplay_core::id::{InfoHashV1, TorrentId};
+use torrplay_core::library::PosterInfo;
 use torrplay_core::lifecycle::{Configuration, StorageMode};
 pub use torrplay_core::settings::Stored as StoredSettings;
 
@@ -60,6 +63,9 @@ pub struct StoredTorrent {
     /// from retrieved metadata and the magnet URI's trackers. At least one of
     /// this and `magnet_uri` is present.
     pub torrent_file: Option<Vec<u8>>,
+    /// The poster's description, without its image; a new torrent has
+    /// none, and [`Store::insert`] ignores it.
+    pub poster: Option<PosterInfo>,
 }
 
 /// What the store held when it was opened.
@@ -132,6 +138,9 @@ enum Command {
     RecordCleanShutdown(Reply<()>),
     SetSettings(StoredSettings, Reply<()>),
     SetTorrentFile(TorrentId, Vec<u8>, Reply<()>),
+    SetPoster(TorrentId, PosterInfo, Vec<u8>, Reply<()>),
+    DeletePoster(TorrentId, Reply<()>),
+    Poster(TorrentId, Reply<Option<(PosterInfo, Vec<u8>)>>),
     Delete(TorrentId, Reply<()>),
 }
 
@@ -248,8 +257,37 @@ impl Store {
             .await
     }
 
-    /// Deletes a stored torrent and its torrent file. Deleting a torrent
-    /// that is not stored does nothing.
+    /// Stores `bytes`, which `poster` describes, as a stored torrent's
+    /// poster, replacing any it had.
+    pub async fn set_poster(
+        &self,
+        id: &TorrentId,
+        poster: &PosterInfo,
+        bytes: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        let (id, poster) = (id.clone(), poster.clone());
+        self.send(|reply| Command::SetPoster(id, poster, bytes, reply))
+            .await
+    }
+
+    /// Deletes a stored torrent's poster, if it has one.
+    pub async fn delete_poster(&self, id: &TorrentId) -> Result<(), StoreError> {
+        let id = id.clone();
+        self.send(|reply| Command::DeletePoster(id, reply)).await
+    }
+
+    /// Reads a stored torrent's poster with its image, in a read-only
+    /// transaction, or `None` if it has none.
+    pub async fn poster(
+        &self,
+        id: &TorrentId,
+    ) -> Result<Option<(PosterInfo, Vec<u8>)>, StoreError> {
+        let id = id.clone();
+        self.send(|reply| Command::Poster(id, reply)).await
+    }
+
+    /// Deletes a stored torrent with its torrent file, library lists, and
+    /// poster. Deleting a torrent that is not stored does nothing.
     pub async fn delete(&self, id: &TorrentId) -> Result<(), StoreError> {
         let id = id.clone();
         self.send(|reply| Command::Delete(id, reply)).await

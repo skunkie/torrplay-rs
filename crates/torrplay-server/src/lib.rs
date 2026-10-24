@@ -26,6 +26,8 @@ mod body;
 mod content;
 mod files;
 mod headers;
+mod library;
+mod posters;
 mod preloads;
 mod problem;
 mod query;
@@ -66,6 +68,13 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
         .route(
             &format!("{torrent}/configuration"),
             get(torrents::get_configuration::<E>).patch(torrents::update_configuration::<E>),
+        )
+        .route(
+            &format!("{torrent}/poster"),
+            get(posters::get::<E>)
+                .head(posters::head::<E>)
+                .put(posters::put::<E>)
+                .delete(posters::delete::<E>),
         )
         .route(&format!("{torrent}/files"), get(files::list::<E>))
         .route(

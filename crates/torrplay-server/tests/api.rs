@@ -128,6 +128,59 @@ async fn files_of(server: &TestServer, path: &str) -> Vec<Value> {
     page.json()["items"].as_array().unwrap().clone()
 }
 
+/// A poster upload of `bytes` as `media_type`.
+fn put_poster(path: &str, media_type: &str, bytes: &[u8]) -> http::Request<Vec<u8>> {
+    request(Method::PUT, path)
+        .header(header::CONTENT_TYPE, media_type)
+        .body(bytes.to_vec())
+        .unwrap()
+}
+
+/// The start of a PNG image, which is all the server checks.
+const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x01\0\0\0\x01";
+
+/// The start of a JPEG image.
+const JPEG: &[u8] = &[0xff, 0xd8, 0xff, 0xe0, 0, 0x10, b'J', b'F', b'I', b'F', 0];
+
+/// The IDs of the torrents a listing at `path` returns, all pages followed.
+async fn listed_ids(server: &TestServer, path: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+    let mut next = Some(path.to_owned());
+    while let Some(path) = next {
+        let page = server.get(&path).await;
+        assert_eq!(page.status, StatusCode::OK, "{path}");
+        let page = page.json();
+        ids.extend(
+            page["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|torrent| torrent["id"].as_str().unwrap().to_owned()),
+        );
+        next = page["links"]["next"].as_str().map(str::to_owned);
+    }
+    ids
+}
+
+/// A fixture whose video files name episodes, for an inferred series.
+fn episodes() -> FixtureSpec {
+    FixtureSpec {
+        id: "episodes".into(),
+        torrent_name: "Show".into(),
+        seed: 40,
+        piece_length: 16 * 1024,
+        layout: torrplay_fixtures::Layout::MultiFile {
+            files: ["Show.S01E01.mkv", "Show.S01E02.mkv", "notes.txt"]
+                .into_iter()
+                .map(|name| torrplay_fixtures::FileSpec {
+                    path: vec![name.into()],
+                    size_bytes: 20_000,
+                })
+                .collect(),
+        },
+    }
+}
+
 mod scenario {
     use super::*;
 
@@ -1575,6 +1628,15 @@ mod scenario {
                 "application/json",
                 None,
             ),
+            (
+                Method::PUT,
+                format!(
+                    "{}/poster",
+                    created.json()["links"]["self"].as_str().unwrap()
+                ),
+                "image/png",
+                None,
+            ),
         ];
         for (method, path, media_type, if_match) in requests {
             let mut headers = vec![
@@ -1777,6 +1839,20 @@ mod scenario {
             .send(empty(Method::HEAD, &format!("{file}/content")))
             .await;
         assert_eq!(head.status, StatusCode::SERVICE_UNAVAILABLE);
+        let poster = format!("{path}/poster");
+        for exchange in [
+            server.get(&poster).await,
+            server.send(put_poster(&poster, "image/png", PNG)).await,
+            server.send(empty(Method::DELETE, &poster)).await,
+        ] {
+            assert_problem(
+                &exchange,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "engine-unavailable",
+            );
+        }
+        let head = server.send(empty(Method::HEAD, &poster)).await;
+        assert_eq!(head.status, StatusCode::SERVICE_UNAVAILABLE);
         server.finish_restore().await;
         assert_eq!(server.get("/readyz").await.status, StatusCode::OK);
         assert_eq!(server.get(&path).await.status, StatusCode::OK);
@@ -1826,6 +1902,18 @@ mod scenario {
                 .await,
             StatusCode::CONFLICT,
             "lifecycle-conflict",
+        );
+        let retitled = server
+            .send(merge_patch(
+                &configuration,
+                &etag,
+                &json!({ "title": "Kept" }),
+            ))
+            .await;
+        assert_eq!(
+            retitled.status,
+            StatusCode::OK,
+            "library members need no engine"
         );
         assert_eq!(
             server.send(empty(Method::DELETE, &path)).await.status,
@@ -2448,6 +2536,674 @@ mod scenario {
         server.stop().await;
     }
 
+    /// LIB-01 to LIB-05: library members are set at creation and by merge
+    /// patches, normalized, validated, cleared with null, and the kind is
+    /// inferred from file names unless configured.
+    pub async fn library() {
+        let server = TestServer::start().await;
+        let created = server
+            .send(json_request(
+                Method::POST,
+                "/api/v1/torrents",
+                &json!({
+                    "magnet_uri": unknown_magnet(30),
+                    "title": " Example   Film ",
+                    "kind": "movie",
+                    "year": 2026,
+                    "description": "One\r\nTwo",
+                    "categories": ["Movies", "Kids"],
+                    "genres": ["Comedy"],
+                }),
+            ))
+            .await;
+        assert_eq!(created.status, StatusCode::CREATED);
+        let torrent = created.json();
+        let path = torrent["links"]["self"].as_str().unwrap().to_owned();
+        assert_eq!(torrent["title"], "Example Film");
+        assert_eq!(torrent["kind"], "movie", "configured before metadata");
+        assert_eq!(torrent["year"], 2026);
+        assert_eq!(torrent["description"], "One\nTwo");
+        assert_eq!(torrent["categories"], json!(["Movies", "Kids"]));
+        assert_eq!(torrent["genres"], json!(["Comedy"]));
+        assert_eq!(torrent["poster"], Value::Null);
+        assert_eq!(torrent["links"]["poster"], format!("{path}/poster"));
+        let configuration = format!("{path}/configuration");
+        let read = server.get(&configuration).await;
+        assert_eq!(read.json()["title"], "Example Film");
+        assert_eq!(read.json()["categories"], json!(["Movies", "Kids"]));
+        let mut etag = read.header(header::ETAG).unwrap().to_owned();
+
+        // A form takes one part per category and genre.
+        let small = catalog::single_small();
+        let file = |name, value: &str| (name, None, value.as_bytes().to_vec());
+        let torrent_file = (
+            "torrent_file",
+            Some("application/x-bittorrent"),
+            small.metainfo().bytes,
+        );
+        let uploaded = server
+            .send(form(&[
+                torrent_file.clone(),
+                file("title", "Small"),
+                file("kind", "other"),
+                file("year", "1999"),
+                file("description", "Tiny."),
+                file("categories", "Docs"),
+                file("categories", "Kids"),
+                file("genres", "Drama"),
+            ]))
+            .await;
+        assert_eq!(uploaded.status, StatusCode::CREATED);
+        let small_torrent = uploaded.json();
+        assert_eq!(small_torrent["categories"], json!(["Docs", "Kids"]));
+        assert_eq!(small_torrent["genres"], json!(["Drama"]));
+        assert_eq!(small_torrent["year"], 1999);
+        let refused = server
+            .send_unchecked(form(&[
+                torrent_file,
+                file("year", "19x9"),
+                file("title", "a"),
+                file("title", "b"),
+            ]))
+            .await;
+        assert_problem(
+            &refused,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation-failed",
+        );
+        assert_eq!(errors(&refused, "pointer"), ["/title", "/year"]);
+        let refused = server
+            .send_unchecked(json_request(
+                Method::POST,
+                "/api/v1/torrents",
+                &json!({ "magnet_uri": unknown_magnet(31), "kind": "film" }),
+            ))
+            .await;
+        assert_eq!(errors(&refused, "pointer"), ["/kind"]);
+
+        // LIB-02: text is normalized, and the same values keep the ETag.
+        let normalized = json!({
+            "title": "Cafe\u{301}  Noir",
+            "categories": [" TV/Anime ", "Kids"],
+            "genres": ["Drama"],
+            "description": "Line\r\nTwo  ",
+        });
+        let changed = server
+            .send(merge_patch(&configuration, &etag, &normalized))
+            .await;
+        assert_eq!(changed.status, StatusCode::OK);
+        let body = changed.json();
+        assert_eq!(body["title"], "Café Noir");
+        assert_eq!(body["categories"], json!(["TV/Anime", "Kids"]));
+        assert_eq!(body["description"], "Line\nTwo");
+        let new_etag = changed.header(header::ETAG).unwrap().to_owned();
+        assert_ne!(new_etag, etag);
+        etag = new_etag;
+        let again = server
+            .send(merge_patch(
+                &configuration,
+                &etag,
+                &json!({ "title": "Café Noir", "categories": ["TV/Anime", "Kids"] }),
+            ))
+            .await;
+        assert_eq!(again.header(header::ETAG), Some(etag.as_str()));
+        assert_eq!(server.get(&path).await.json()["title"], "Café Noir");
+
+        // LIB-03: every invalid member is named and nothing changes.
+        let many: Vec<String> = (0..17).map(|n| format!("Genre {n}")).collect();
+        let invalid = server
+            .send_unchecked(merge_patch(
+                &configuration,
+                &etag,
+                &json!({
+                    "title": "   ",
+                    "categories": ["A", "A "],
+                    "genres": many,
+                    "year": 1799,
+                    "description": "a\u{0}b",
+                    "desired_state": "paused",
+                }),
+            ))
+            .await;
+        assert_problem(
+            &invalid,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation-failed",
+        );
+        assert_eq!(
+            errors(&invalid, "pointer"),
+            [
+                "/categories/1",
+                "/description",
+                "/genres",
+                "/title",
+                "/year"
+            ]
+        );
+        let long = server
+            .send_unchecked(merge_patch(
+                &configuration,
+                &etag,
+                &json!({ "categories": ["x".repeat(129)], "title": "t".repeat(1025) }),
+            ))
+            .await;
+        assert_eq!(errors(&long, "pointer"), ["/categories/0", "/title"]);
+        let unchanged = server.get(&configuration).await;
+        assert_eq!(unchanged.header(header::ETAG), Some(etag.as_str()));
+        assert_eq!(unchanged.json()["desired_state"], "started");
+
+        // LIB-04: null returns each member to its default.
+        let cleared = server
+            .send(merge_patch(
+                &configuration,
+                &etag,
+                &json!({
+                    "title": null,
+                    "kind": null,
+                    "year": null,
+                    "description": null,
+                    "categories": null,
+                    "genres": null,
+                }),
+            ))
+            .await;
+        assert_eq!(cleared.status, StatusCode::OK);
+        let body = cleared.json();
+        for member in ["title", "kind", "year", "description"] {
+            assert_eq!(body[member], Value::Null, "{member}");
+        }
+        assert_eq!(body["categories"], json!([]));
+        assert_eq!(body["genres"], json!([]));
+        assert_ne!(cleared.header(header::ETAG), Some(etag.as_str()));
+        assert_eq!(
+            server.get(&path).await.json()["kind"],
+            Value::Null,
+            "no kind is known before metadata"
+        );
+
+        // LIB-05: a kind follows the video files' names unless configured.
+        let media = catalog::media_names();
+        let movie = server.upload(&media.metainfo().bytes, None).await.json();
+        assert_eq!(movie["kind"], "movie");
+        let many_files = catalog::many_files();
+        let other = server
+            .upload(&many_files.metainfo().bytes, None)
+            .await
+            .json();
+        assert_eq!(other["kind"], "other");
+        let show = episodes();
+        server.engine.add_fixture(&show);
+        let series = server.upload(&show.metainfo().bytes, None).await.json();
+        assert_eq!(series["kind"], "series");
+        let series_path = series["links"]["self"].as_str().unwrap().to_owned();
+        let series_configuration = format!("{series_path}/configuration");
+        let tag = server
+            .get(&series_configuration)
+            .await
+            .header(header::ETAG)
+            .unwrap()
+            .to_owned();
+        let configured = server
+            .send(merge_patch(
+                &series_configuration,
+                &tag,
+                &json!({ "kind": "movie" }),
+            ))
+            .await;
+        assert_eq!(configured.json()["kind"], "movie");
+        assert_eq!(server.get(&series_path).await.json()["kind"], "movie");
+        let tag = configured.header(header::ETAG).unwrap().to_owned();
+        server
+            .send(merge_patch(
+                &series_configuration,
+                &tag,
+                &json!({ "kind": null }),
+            ))
+            .await;
+        assert_eq!(server.get(&series_path).await.json()["kind"], "series");
+
+        // Library members and posters need no engine.
+        server
+            .engine
+            .set_readiness(Readiness::Unavailable { retry_after: None });
+        let tag = server
+            .get(&series_configuration)
+            .await
+            .header(header::ETAG)
+            .unwrap()
+            .to_owned();
+        let retitled = server
+            .send(merge_patch(
+                &series_configuration,
+                &tag,
+                &json!({ "title": "Show" }),
+            ))
+            .await;
+        assert_eq!(retitled.status, StatusCode::OK);
+        let poster = format!("{series_path}/poster");
+        assert_eq!(
+            server
+                .send(put_poster(&poster, "image/png", PNG))
+                .await
+                .status,
+            StatusCode::CREATED
+        );
+        let tag = retitled.header(header::ETAG).unwrap().to_owned();
+        assert_problem(
+            &server
+                .send(merge_patch(
+                    &series_configuration,
+                    &tag,
+                    &json!({ "title": "Show", "desired_state": "paused" }),
+                ))
+                .await,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "engine-unavailable",
+        );
+        server.engine.set_readiness(Readiness::Ready);
+        server.stop().await;
+    }
+
+    /// LIB-06: the torrents collection filters by categories, genres, kind,
+    /// and info hash.
+    pub async fn library_filters() {
+        let server = TestServer::start().await;
+        let create = |body: Value| {
+            let server = &server;
+            async move {
+                let created = server
+                    .send(json_request(Method::POST, "/api/v1/torrents", &body))
+                    .await;
+                assert_eq!(created.status, StatusCode::CREATED);
+                created.json()["id"].as_str().unwrap().to_owned()
+            }
+        };
+        let plain = create(json!({ "magnet_uri": unknown_magnet(32) })).await;
+        let small = catalog::single_small();
+        let docs = server
+            .send(form(&[
+                (
+                    "torrent_file",
+                    Some("application/x-bittorrent"),
+                    small.metainfo().bytes,
+                ),
+                ("categories", None, b"Docs".to_vec()),
+                ("categories", None, b"Kids".to_vec()),
+                ("genres", None, b"Drama".to_vec()),
+            ]))
+            .await
+            .json()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let media = catalog::media_names();
+        let show = episodes();
+        server.engine.add_fixture(&show);
+        for spec in [&media, &show] {
+            server.engine.set_metadata_retrievable(
+                torrplay_core::id::InfoHashV1::from_bytes(spec.metainfo().info_hash),
+                true,
+            );
+        }
+        let movie = create(json!({
+            "magnet_uri": magnet(&media),
+            "categories": ["Movies"],
+            "genres": ["Comedy", "Drama"],
+        }))
+        .await;
+        let series = create(json!({
+            "magnet_uri": magnet(&show),
+            "categories": ["Kids"],
+        }))
+        .await;
+        let movie_path = format!("/api/v1/torrents/{movie}");
+        torrent_until(&server, &movie_path, "its kind", |torrent| {
+            torrent["kind"] == "movie"
+        })
+        .await;
+        let series_path = format!("/api/v1/torrents/{series}");
+        torrent_until(&server, &series_path, "its kind", |torrent| {
+            torrent["kind"] == "series"
+        })
+        .await;
+
+        let movie_hash = hex(&media.metainfo().info_hash).to_uppercase();
+        let cases: [(String, Vec<&String>); 13] = [
+            ("category=Kids".into(), vec![&series, &docs]),
+            ("category=%20Kids%20".into(), vec![&series, &docs]),
+            (
+                "category=Kids&category=Movies".into(),
+                vec![&series, &movie, &docs],
+            ),
+            ("category=kids".into(), vec![]),
+            ("uncategorized=true".into(), vec![&plain]),
+            (
+                "uncategorized=true&category=Movies".into(),
+                vec![&movie, &plain],
+            ),
+            ("genre=Drama".into(), vec![&movie, &docs]),
+            ("genre=Drama&category=Kids".into(), vec![&docs]),
+            ("kind=series".into(), vec![&series]),
+            ("kind=movie&kind=series".into(), vec![&series, &movie]),
+            ("kind=other".into(), vec![&docs]),
+            (format!("info_hash={movie_hash}"), vec![&movie]),
+            ("category=Kids&page_size=1".into(), vec![&series, &docs]),
+        ];
+        for (query, expected) in cases {
+            assert_eq!(
+                listed_ids(&server, &format!("/api/v1/torrents?{query}")).await,
+                expected.into_iter().cloned().collect::<Vec<_>>(),
+                "{query}"
+            );
+        }
+        let first = server
+            .get("/api/v1/torrents?category=Kids&page_size=1")
+            .await
+            .json();
+        let next = first["links"]["next"].as_str().unwrap();
+        assert!(next.contains("category=Kids"), "{next}");
+        let cursor = next.split("cursor=").nth(1).unwrap();
+        let mismatched = server
+            .get(&format!(
+                "/api/v1/torrents?genre=Drama&page_size=1&cursor={cursor}"
+            ))
+            .await;
+        assert_problem(&mismatched, StatusCode::BAD_REQUEST, "malformed-request");
+        assert_eq!(errors(&mismatched, "parameter"), ["cursor"]);
+        for (query, parameter) in [
+            ("category=%20", "category"),
+            ("genre=", "genre"),
+            ("uncategorized=false", "uncategorized"),
+            ("uncategorized=true&uncategorized=true", "uncategorized"),
+            ("kind=film", "kind"),
+            ("info_hash=xyz", "info_hash"),
+        ] {
+            let refused = server
+                .send_unchecked(empty(Method::GET, &format!("/api/v1/torrents?{query}")))
+                .await;
+            assert_problem(&refused, StatusCode::BAD_REQUEST, "malformed-request");
+            assert_eq!(errors(&refused, "parameter"), [parameter], "{query}");
+        }
+        let long = "x".repeat(129);
+        let refused = server
+            .send_unchecked(empty(
+                Method::GET,
+                &format!("/api/v1/torrents?category={long}"),
+            ))
+            .await;
+        assert_eq!(errors(&refused, "parameter"), ["category"]);
+        server.stop().await;
+    }
+
+    /// LIB-07 and LIB-08: a poster is uploaded, served with validators,
+    /// replaced, and deleted, and invalid uploads are refused.
+    pub async fn posters() {
+        let server = TestServer::start().await;
+        let small = catalog::single_small();
+        let torrent = server.upload(&small.metainfo().bytes, None).await.json();
+        let path = torrent["links"]["self"].as_str().unwrap().to_owned();
+        let poster = torrent["links"]["poster"].as_str().unwrap().to_owned();
+        let configuration_tag = server
+            .get(&format!("{path}/configuration"))
+            .await
+            .header(header::ETAG)
+            .unwrap()
+            .to_owned();
+        let state_tag = || async {
+            server
+                .get(&path)
+                .await
+                .header(header::ETAG)
+                .unwrap()
+                .to_owned()
+        };
+        let before = state_tag().await;
+        for method in [Method::GET, Method::HEAD, Method::DELETE] {
+            let missing = server.send(empty(method.clone(), &poster)).await;
+            assert_eq!(missing.status, StatusCode::NOT_FOUND, "{method}");
+        }
+
+        let created = server.send(put_poster(&poster, "image/png", PNG)).await;
+        assert_eq!(created.status, StatusCode::CREATED);
+        assert_eq!(created.header(header::LOCATION), Some(poster.as_str()));
+        let png_tag = created.header(header::ETAG).unwrap().to_owned();
+        let torrent = server.get(&path).await.json();
+        assert_eq!(torrent["poster"]["media_type"], "image/png");
+        assert_eq!(torrent["poster"]["size_bytes"], PNG.len());
+        assert_ne!(
+            state_tag().await,
+            before,
+            "the torrent's state ETag follows"
+        );
+        assert_eq!(
+            server
+                .get(&format!("{path}/configuration"))
+                .await
+                .header(header::ETAG),
+            Some(configuration_tag.as_str()),
+            "the configuration's does not"
+        );
+
+        let served = server.get(&poster).await;
+        assert_eq!(served.status, StatusCode::OK);
+        assert_eq!(served.body, PNG);
+        assert_eq!(served.header(header::CONTENT_TYPE), Some("image/png"));
+        assert_eq!(served.header(header::ETAG), Some(png_tag.as_str()));
+        assert_eq!(served.header(header::CACHE_CONTROL), Some("no-cache"));
+        assert_eq!(
+            served.header(header::X_CONTENT_TYPE_OPTIONS),
+            Some("nosniff")
+        );
+        assert_eq!(
+            served.header(header::CONTENT_SECURITY_POLICY),
+            Some("sandbox")
+        );
+        let ranged = server
+            .send(with_header(
+                Method::GET,
+                &poster,
+                header::RANGE,
+                "bytes=0-3",
+            ))
+            .await;
+        assert_eq!(ranged.status, StatusCode::OK, "a range is ignored");
+        assert_eq!(ranged.body, PNG);
+        for method in [Method::GET, Method::HEAD] {
+            let cached = server
+                .send(with_header(
+                    method.clone(),
+                    &poster,
+                    header::IF_NONE_MATCH,
+                    &png_tag,
+                ))
+                .await;
+            assert_eq!(cached.status, StatusCode::NOT_MODIFIED, "{method}");
+        }
+        let head = server.send(empty(Method::HEAD, &poster)).await;
+        assert_eq!(head.status, StatusCode::OK);
+        assert!(head.body.is_empty());
+        assert_eq!(
+            head.header(header::CONTENT_LENGTH),
+            Some(PNG.len().to_string().as_str())
+        );
+
+        let replaced = server.send(put_poster(&poster, "image/jpeg", JPEG)).await;
+        assert_eq!(replaced.status, StatusCode::NO_CONTENT);
+        let jpeg_tag = replaced.header(header::ETAG).unwrap().to_owned();
+        assert_ne!(jpeg_tag, png_tag);
+        let served = server.get(&poster).await;
+        assert_eq!(served.body, JPEG);
+        assert_eq!(served.header(header::CONTENT_TYPE), Some("image/jpeg"));
+        assert_eq!(served.header(header::ETAG), Some(jpeg_tag.as_str()));
+
+        // LIB-08.
+        let unsupported = server
+            .send_unchecked(put_poster(&poster, "text/plain", PNG))
+            .await;
+        assert_problem(
+            &unsupported,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported-media-type",
+        );
+        assert!(
+            unsupported
+                .header(header::ACCEPT)
+                .unwrap()
+                .contains("image/png")
+        );
+        let mismatched = server.send(put_poster(&poster, "image/png", JPEG)).await;
+        assert_problem(
+            &mismatched,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation-failed",
+        );
+        assert_eq!(errors(&mismatched, "pointer"), [""]);
+        // Refused from its declared length, before any of the body.
+        let declared = ((1 << 20) + 1).to_string();
+        let large = server
+            .send_before_body_ends(
+                Method::PUT,
+                &poster,
+                &[
+                    ("Content-Type", "image/png"),
+                    ("Content-Length", declared.as_str()),
+                ],
+                Vec::new(),
+            )
+            .await;
+        assert_problem(&large, StatusCode::PAYLOAD_TOO_LARGE, "content-too-large");
+        assert_problem(
+            &server
+                .send(put_poster(
+                    "/api/v1/torrents/trr_aaaaaaaaaaaaaaaaaaaaaaaaaa/poster",
+                    "image/png",
+                    PNG,
+                ))
+                .await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        assert_eq!(
+            server.get(&poster).await.body,
+            JPEG,
+            "refused uploads change nothing"
+        );
+
+        let deleted = server.send(empty(Method::DELETE, &poster)).await;
+        assert_eq!(deleted.status, StatusCode::NO_CONTENT);
+        assert_problem(
+            &server.get(&poster).await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        assert_eq!(server.get(&path).await.json()["poster"], Value::Null);
+        server.stop().await;
+    }
+
+    /// LIB-09: library members and posters survive a restart, and a poster
+    /// goes with its torrent.
+    pub async fn library_restart() {
+        let server = TestServer::start().await;
+        let small = catalog::single_small();
+        let torrent = server.upload(&small.metainfo().bytes, None).await.json();
+        let path = torrent["links"]["self"].as_str().unwrap().to_owned();
+        let configuration = format!("{path}/configuration");
+        let poster = format!("{path}/poster");
+        let tag = server
+            .get(&configuration)
+            .await
+            .header(header::ETAG)
+            .unwrap()
+            .to_owned();
+        let library = json!({
+            "title": "Small",
+            "kind": "other",
+            "year": 2000,
+            "description": "Tiny.",
+            "categories": ["Z", "A"],
+            "genres": ["Drama"],
+        });
+        let changed = server
+            .send(merge_patch(&configuration, &tag, &library))
+            .await;
+        let tag = changed.header(header::ETAG).unwrap().to_owned();
+        let uploaded = server.send(put_poster(&poster, "image/png", PNG)).await;
+        let poster_tag = uploaded.header(header::ETAG).unwrap().to_owned();
+        let before = server.get(&path).await;
+
+        let server = server.restart().await;
+        let after = server.get(&path).await;
+        assert_eq!(after.json(), before.json());
+        assert_eq!(after.header(header::ETAG), before.header(header::ETAG));
+        assert_eq!(
+            server.get(&configuration).await.header(header::ETAG),
+            Some(tag.as_str())
+        );
+        let served = server.get(&poster).await;
+        assert_eq!(served.body, PNG);
+        assert_eq!(served.header(header::ETAG), Some(poster_tag.as_str()));
+
+        assert_eq!(
+            server.send(empty(Method::DELETE, &path)).await.status,
+            StatusCode::NO_CONTENT
+        );
+        let again = server.upload(&small.metainfo().bytes, None).await.json();
+        assert_eq!(again["poster"], Value::Null);
+        assert_eq!(again["categories"], json!([]));
+        let again_poster = again["links"]["poster"].as_str().unwrap();
+        assert_problem(
+            &server.get(again_poster).await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        server.stop().await;
+    }
+
+    /// LIB-10: failed writes change neither library members nor posters.
+    pub async fn library_store_failures() {
+        let server = TestServer::start().await;
+        let small = catalog::single_small();
+        let torrent = server.upload(&small.metainfo().bytes, None).await.json();
+        let path = torrent["links"]["self"].as_str().unwrap().to_owned();
+        let configuration = format!("{path}/configuration");
+        let poster = format!("{path}/poster");
+        let tag = server
+            .get(&configuration)
+            .await
+            .header(header::ETAG)
+            .unwrap()
+            .to_owned();
+        server.send(put_poster(&poster, "image/png", PNG)).await;
+        let before = server.get(&path).await.json();
+
+        server.app.store().fail_writes(true);
+        for exchange in [
+            server
+                .send(merge_patch(
+                    &configuration,
+                    &tag,
+                    &json!({ "title": "New" }),
+                ))
+                .await,
+            server.send(put_poster(&poster, "image/jpeg", JPEG)).await,
+            server.send(empty(Method::DELETE, &poster)).await,
+        ] {
+            assert_problem(
+                &exchange,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal-error",
+            );
+        }
+        server.app.store().fail_writes(false);
+        assert_eq!(server.get(&path).await.json(), before);
+        assert_eq!(
+            server.get(&configuration).await.header(header::ETAG),
+            Some(tag.as_str())
+        );
+        assert_eq!(server.get(&poster).await.body, PNG);
+        server.stop().await;
+    }
+
     async fn listed_len(server: &TestServer) -> usize {
         server.get("/api/v1/torrents").await.json()["items"]
             .as_array()
@@ -2466,6 +3222,10 @@ const EXEMPT: &[(&str, u16)] = &[
     ("getSettings", 500),
     // A process that answers is live.
     ("getLiveness", 503),
+    // A failed read of the store, which tests cannot inject, and a HEAD,
+    // which answers from the registry without the store.
+    ("getTorrentPoster", 500),
+    ("headTorrentPoster", 500),
 ];
 
 macro_rules! scenarios {
@@ -2519,4 +3279,9 @@ scenarios!(
     storage_transitions,
     cache_capacity_settings,
     preloads,
+    library,
+    library_filters,
+    posters,
+    library_restart,
+    library_store_failures,
 );

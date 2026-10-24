@@ -12,8 +12,9 @@ use sha2::{Digest, Sha256};
 use torrplay_api as api;
 use torrplay_core::engine;
 use torrplay_core::id::TorrentId;
+use torrplay_core::library::{self, Kind, Library, PosterInfo, PosterType};
 use torrplay_core::lifecycle::{self, Configuration, EntityTag, ObservedState};
-use torrplay_core::metadata::MetadataFile;
+use torrplay_core::metadata::{Metadata, MetadataFile};
 
 use crate::app::TorrentView;
 use crate::content;
@@ -71,6 +72,39 @@ fn storage_mode(value: lifecycle::StorageMode) -> api::StorageMode {
     }
 }
 
+fn kind(value: Kind) -> api::TorrentKind {
+    match value {
+        Kind::Movie => api::TorrentKind::Movie,
+        Kind::Series => api::TorrentKind::Series,
+        Kind::Other => api::TorrentKind::Other,
+    }
+}
+
+pub(crate) fn poster_type(value: PosterType) -> api::PosterMediaType {
+    match value {
+        PosterType::Avif => api::PosterMediaType::ImageAvif,
+        PosterType::Gif => api::PosterMediaType::ImageGif,
+        PosterType::Jpeg => api::PosterMediaType::ImageJpeg,
+        PosterType::Png => api::PosterMediaType::ImagePng,
+        PosterType::Webp => api::PosterMediaType::ImageWebp,
+    }
+}
+
+/// The kind a torrent reports: the configured one, or the one its video
+/// files' names suggest once metadata is available.
+pub(crate) fn reported_kind(library: &Library, metadata: Option<&Metadata>) -> Option<Kind> {
+    library.kind.or_else(|| {
+        let metadata = metadata?;
+        let names: Vec<String> = metadata
+            .files()
+            .iter()
+            .map(file_name)
+            .filter(|name| content::media_type(name).0.starts_with("video/"))
+            .collect();
+        Some(library::infer_kind(names.iter().map(String::as_str)))
+    })
+}
+
 fn observed_state(value: ObservedState) -> api::ObservedState {
     match value {
         ObservedState::RetrievingMetadata => api::ObservedState::RetrievingMetadata,
@@ -83,8 +117,20 @@ fn observed_state(value: ObservedState) -> api::ObservedState {
 pub(crate) fn torrent(view: &TorrentView) -> api::Torrent {
     let record = &view.record;
     let metadata = record.metadata.as_deref();
+    let library = record.configuration.library();
     let path = torrent_path(&record.id);
     api::Torrent {
+        title: library.title.clone(),
+        kind: reported_kind(library, metadata).map(kind),
+        year: library.year.map(i32::from),
+        description: library.description.clone(),
+        categories: library.categories.clone(),
+        genres: library.genres.clone(),
+        poster: record.poster.as_ref().map(|poster| api::TorrentPoster {
+            media_type: poster_type(poster.poster_type),
+            size_bytes: count(poster.size_bytes),
+            updated_at: poster.updated_at.into(),
+        }),
         created_at: record.created_at.into(),
         failure: view.failure.as_ref().map(|failure| api::TorrentFailure {
             detail: failure.detail.clone(),
@@ -99,6 +145,7 @@ pub(crate) fn torrent(view: &TorrentView) -> api::Torrent {
             configuration: format!("{path}/configuration"),
             files: format!("{path}/files"),
             statistics: format!("{path}/statistics"),
+            poster: format!("{path}/poster"),
             self_field: path,
         },
         name: metadata.map(|metadata| metadata.display_name()),
@@ -134,11 +181,27 @@ pub(crate) fn configuration_etag(configuration: &Configuration) -> EntityTag {
     EntityTag::new(format!("cfg-{}", configuration.etag().opaque()))
 }
 
+/// The poster's ETag, from its digest.
+pub(crate) fn poster_etag(poster: &PosterInfo) -> EntityTag {
+    let hex: String = poster.digest[..12]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    EntityTag::new(format!("pst-{hex}"))
+}
+
 pub(crate) fn configuration(id: &TorrentId, value: &Configuration) -> api::TorrentConfiguration {
     let torrent = torrent_path(id);
+    let library = value.library();
     api::TorrentConfiguration {
         desired_state: desired_state(value.desired_state()),
         storage_mode: storage_mode(value.storage_mode()),
+        title: library.title.clone(),
+        kind: library.kind.map(kind),
+        year: library.year.map(i32::from),
+        description: library.description.clone(),
+        categories: library.categories.clone(),
+        genres: library.genres.clone(),
         links: api::TorrentConfigurationLinks {
             self_field: format!("{torrent}/configuration"),
             torrent,
