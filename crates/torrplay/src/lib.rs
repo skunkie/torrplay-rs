@@ -561,6 +561,8 @@ pub async fn serve(
         );
     }
     let listen = listener.local_addr()?;
+    // Deletes unwatched temporary torrents until shutdown.
+    let mut retention = app.spawn_retention();
     let (stop_media_server, media_server_stopped) = oneshot::channel::<()>();
     let notifying = Arc::clone(&app);
     let media_server = tokio::spawn(media_server::supervise(
@@ -655,6 +657,14 @@ pub async fn serve(
             .context("recording the clean shutdown")?;
         if let Some(logging) = &logging {
             logging.abort();
+        }
+        retention.abort();
+        match (&mut retention).await {
+            Ok(()) => {}
+            Err(error) if error.is_cancelled() => {}
+            Err(error) => {
+                return Err(anyhow::Error::new(error).context("the retention task panicked"));
+            }
         }
         app.close_store().await.context("closing the store")
     };

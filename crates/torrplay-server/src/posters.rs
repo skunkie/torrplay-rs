@@ -17,11 +17,13 @@ use torrplay_core::image::ImageInfo;
 use torrplay_core::registry::TorrentRecord;
 use torrplay_store::StoreError;
 
+use torrplay_core::lifecycle::Retention;
+
 use crate::app::{App, store_failed};
 use crate::images;
 use crate::problem::Problem;
 use crate::representation::torrent_path;
-use crate::torrents;
+use crate::torrents::{self, temporary_conflict};
 
 fn no_poster() -> Problem {
     Problem::not_found("The torrent has no poster.")
@@ -80,6 +82,9 @@ pub(crate) async fn put<E: Engine>(
 ) -> Result<Response, Problem> {
     let record = record(&app, &id)?;
     app.require_running()?;
+    if record.configuration.retention() == Retention::Temporary {
+        return Err(temporary_conflict("upload its poster"));
+    }
     let (image_type, bytes) = images::read_upload(&app, &request, body).await?;
     let poster = ImageInfo::of(image_type, &bytes, SystemTime::now());
     let replaced = {

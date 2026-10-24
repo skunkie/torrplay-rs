@@ -36,6 +36,9 @@ use torrplay_store::{
 
 use crate::problem::Problem;
 
+/// How often unwatched temporary torrents are looked for.
+const RETENTION_INTERVAL: Duration = Duration::from_secs(10);
+
 /// How long a request body may take to arrive by default, as the contract
 /// documents.
 const DEFAULT_BODY_TIMEOUT: Duration = Duration::from_secs(30);
@@ -74,6 +77,8 @@ pub struct App<E> {
     log_level: watch::Sender<LogLevel>,
     /// The settings the command line overrides in this run.
     overrides: Overrides,
+    /// The temporary torrents and their activity.
+    temporaries: crate::retention::Temporaries,
 }
 
 /// The settings the DLNA media server's announcer follows.
@@ -163,6 +168,7 @@ impl<E: Engine> App<E> {
             }),
             log_level: watch::Sender::new(LogLevel::default()),
             overrides: Overrides::default(),
+            temporaries: crate::retention::Temporaries::default(),
         }
     }
 
@@ -251,6 +257,83 @@ impl<E: Engine> App<E> {
     }
 
     /// The current time for credentials' expiry.
+    pub(crate) fn temporaries(&self) -> &crate::retention::Temporaries {
+        &self.temporaries
+    }
+
+    /// Marks torrent `id` active until the guard drops, if it is temporary.
+    pub(crate) fn activity(&self, id: &TorrentId) -> Option<crate::retention::Activity> {
+        self.temporaries.activity(id, &self.clock)
+    }
+
+    /// Deletes the temporary torrents that have gone the
+    /// `temporary_idle_seconds` setting without a reader. The task
+    /// [`spawn_retention`](Self::spawn_retention) starts calls it every 10
+    /// seconds.
+    pub async fn expire_temporaries(&self) {
+        let limit = self.effective_settings().temporary_idle;
+        for id in self.temporaries.expired(self.now(), limit) {
+            match self.remove_torrent(&id).await {
+                Ok(()) => tracing::info!(%id, "an unwatched temporary torrent was deleted"),
+                Err(problem) => {
+                    tracing::warn!(%id, problem = problem.detail(), "an unwatched temporary torrent could not be deleted");
+                }
+            }
+        }
+    }
+
+    /// Starts the task that deletes unwatched temporary torrents. The
+    /// caller keeps its handle and aborts it at shutdown.
+    pub fn spawn_retention(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        let app = Arc::downgrade(self);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(RETENTION_INTERVAL);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                let Some(app) = app.upgrade() else {
+                    return;
+                };
+                if app.engine.readiness().is_ready() {
+                    app.expire_temporaries().await;
+                }
+            }
+        })
+    }
+
+    /// Deletes torrent `id` as `DELETE` does: the deletion is stored, for a
+    /// persisted torrent, and the torrent unregistered first, so a write that
+    /// fails leaves it whole, in the engine too.
+    pub(crate) async fn remove_torrent(&self, id: &TorrentId) -> Result<(), Problem> {
+        {
+            let _lane = self.write_lane().await;
+            let registry = self.registry()?;
+            if registry.get(id.as_str()).is_none() {
+                return Err(Problem::not_found("The torrent does not exist."));
+            }
+            if !self.temporaries.contains(id) {
+                self.store.delete(id).await.map_err(store_failed)?;
+            }
+            registry.remove(id.as_str());
+            self.temporaries.remove(id);
+            self.viewing()?.forget_torrent(id);
+        }
+        self.forget(id);
+        match self.engine.remove(id).await {
+            // The engine may not hold a torrent whose creation is still adding
+            // it; unregistering makes that creation's torrent unreachable.
+            Ok(()) | Err(EngineError::UnknownTorrent) => {}
+            // The torrent is deleted and unreachable; the engine releases what
+            // it still holds of it when it stops.
+            Err(error) => tracing::error!(
+                error = %torrplay_core::redact::redact(&error.to_string()),
+                %id,
+                "the engine did not remove a deleted torrent"
+            ),
+        }
+        Ok(())
+    }
+
     pub(crate) fn now(&self) -> SystemTime {
         (self.clock)()
     }
@@ -646,7 +729,13 @@ impl<E: Engine> App<E> {
         {
             return Ok(false);
         }
-        if let Err(error) = self.store.set_torrent_file(id, torrent_file).await {
+        // A temporary torrent keeps it in memory, to be stored if it is
+        // persisted.
+        if !self
+            .temporaries
+            .record_torrent_file(id, torrent_file.clone())
+            && let Err(error) = self.store.set_torrent_file(id, torrent_file).await
+        {
             tracing::error!(%error, %id, "retrieved metadata could not be stored");
             return Ok(false);
         }

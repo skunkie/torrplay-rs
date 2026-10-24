@@ -78,8 +78,22 @@ pub const CACHE_CAPACITY_BYTES: Bounds = Bounds {
     default: 256 << 20,
 };
 
-/// The name of the background downloads switch, the one setting that is not
-/// a number.
+/// How long a temporary torrent may go without a reader, in seconds.
+pub const TEMPORARY_IDLE_SECONDS: Bounds = Bounds {
+    name: "temporary_idle_seconds",
+    minimum: 60,
+    maximum: 86_400,
+    default: 600,
+};
+/// The most temporary torrents the application holds.
+pub const TEMPORARY_TORRENTS_MAX: Bounds = Bounds {
+    name: "temporary_torrents_max",
+    minimum: 1,
+    maximum: 64,
+    default: 16,
+};
+
+/// The name of the background downloads switch.
 pub const BACKGROUND_DOWNLOADS: &str = "background_downloads";
 /// Whether background downloads run while unset.
 pub const BACKGROUND_DOWNLOADS_DEFAULT: bool = true;
@@ -150,7 +164,7 @@ impl LogLevel {
 
 /// Every numeric setting, in the order representations list them; the
 /// other settings follow them.
-pub const ALL: [Bounds; 7] = [
+pub const ALL: [Bounds; 9] = [
     PIECE_WAIT_SECONDS,
     IDLE_TIMEOUT_SECONDS,
     IDLE_READERS_PER_TORRENT,
@@ -158,6 +172,8 @@ pub const ALL: [Bounds; 7] = [
     DRAIN_PERIOD_SECONDS,
     PEER_LIMIT,
     CACHE_CAPACITY_BYTES,
+    TEMPORARY_IDLE_SECONDS,
+    TEMPORARY_TORRENTS_MAX,
 ];
 
 /// The effective settings.
@@ -178,6 +194,10 @@ pub struct Settings {
     pub peer_limit: usize,
     /// The global piece cache's capacity.
     pub cache_capacity_bytes: u64,
+    /// How long a temporary torrent may go without a reader.
+    pub temporary_idle: Duration,
+    /// The most temporary torrents the application holds.
+    pub temporary_torrents_max: usize,
     /// Whether started torrents in disk storage download the pieces they
     /// lack while no reader exists.
     pub background_downloads: bool,
@@ -200,6 +220,8 @@ impl Settings {
         drain_period: Duration::from_secs(DRAIN_PERIOD_SECONDS.default),
         peer_limit: PEER_LIMIT.default as usize,
         cache_capacity_bytes: CACHE_CAPACITY_BYTES.default,
+        temporary_idle: Duration::from_secs(TEMPORARY_IDLE_SECONDS.default),
+        temporary_torrents_max: TEMPORARY_TORRENTS_MAX.default as usize,
         background_downloads: BACKGROUND_DOWNLOADS_DEFAULT,
         dlna_enabled: DLNA_ENABLED_DEFAULT,
         dht_enabled: DHT_ENABLED_DEFAULT,
@@ -255,6 +277,10 @@ pub struct Explicit {
     pub peer_limit: Option<u64>,
     /// [`CACHE_CAPACITY_BYTES`].
     pub cache_capacity_bytes: Option<u64>,
+    /// [`TEMPORARY_IDLE_SECONDS`].
+    pub temporary_idle_seconds: Option<u64>,
+    /// [`TEMPORARY_TORRENTS_MAX`].
+    pub temporary_torrents_max: Option<u64>,
     /// [`BACKGROUND_DOWNLOADS`].
     pub background_downloads: Option<bool>,
     /// [`DLNA_ENABLED`].
@@ -287,13 +313,15 @@ impl Explicit {
             "drain_period_seconds" => &mut self.drain_period_seconds,
             "peer_limit" => &mut self.peer_limit,
             "cache_capacity_bytes" => &mut self.cache_capacity_bytes,
+            "temporary_idle_seconds" => &mut self.temporary_idle_seconds,
+            "temporary_torrents_max" => &mut self.temporary_torrents_max,
             _ => return None,
         })
     }
 
     /// Each numeric setting's value, explicit or default, in [`ALL`]'s
     /// order.
-    pub fn values(&self) -> [u64; 7] {
+    pub fn values(&self) -> [u64; 9] {
         let value = |explicit: Option<u64>, bounds: Bounds| explicit.unwrap_or(bounds.default);
         [
             value(self.piece_wait_seconds, PIECE_WAIT_SECONDS),
@@ -303,6 +331,8 @@ impl Explicit {
             value(self.drain_period_seconds, DRAIN_PERIOD_SECONDS),
             value(self.peer_limit, PEER_LIMIT),
             value(self.cache_capacity_bytes, CACHE_CAPACITY_BYTES),
+            value(self.temporary_idle_seconds, TEMPORARY_IDLE_SECONDS),
+            value(self.temporary_torrents_max, TEMPORARY_TORRENTS_MAX),
         ]
     }
 
@@ -322,7 +352,7 @@ impl Explicit {
                 ),
             })
             .collect();
-        let [_, _, per_torrent, total, _, _, _] = values;
+        let [_, _, per_torrent, total, _, _, _, _, _] = values;
         if let Some(name) = &self.dlna_name
             && let Err(detail) = check_dlna_name(name)
         {
@@ -354,6 +384,8 @@ impl Explicit {
             drain,
             peers,
             capacity,
+            temporary_idle,
+            temporary_max,
         ] = self.values();
         // The counts' bounds are far below any usize.
         Settings {
@@ -364,6 +396,8 @@ impl Explicit {
             drain_period: Duration::from_secs(drain),
             peer_limit: peers as usize,
             cache_capacity_bytes: capacity,
+            temporary_idle: Duration::from_secs(temporary_idle),
+            temporary_torrents_max: temporary_max as usize,
             background_downloads: self
                 .background_downloads
                 .unwrap_or(BACKGROUND_DOWNLOADS_DEFAULT),
@@ -596,7 +630,10 @@ mod tests {
         for (n, bounds) in ALL.iter().enumerate() {
             *explicit.slot(bounds.name).unwrap() = Some(n as u64 + 100);
         }
-        assert_eq!(explicit.values(), [100, 101, 102, 103, 104, 105, 106]);
+        assert_eq!(
+            explicit.values(),
+            [100, 101, 102, 103, 104, 105, 106, 107, 108]
+        );
         assert!(explicit.slot("readahead_bytes").is_none());
     }
 }

@@ -10,8 +10,8 @@ This document defines how a torrent and its readers change state in the
 prototype, and what the API returns at each point. Terms follow the
 [glossary](glossary.md), status codes and problem types follow the
 [API conventions](api-conventions.md), and `api/openapi.yaml` is the contract
-these rules constrain. Every torrent is a persisted torrent, in memory or
-disk storage.
+these rules constrain. A torrent is persisted, in memory or disk storage,
+or [temporary](#retention), in memory storage only.
 
 ## State dimensions
 
@@ -24,6 +24,7 @@ A torrent's state has independent dimensions, each exposed separately:
 | Observed state | `retrieving_metadata`, `downloading`, `paused`, `failed` | `observed_state` in the torrent resource | the engine |
 | Failure | none, or a failure detail | `failure` in the torrent resource | the engine |
 | Storage mode | `memory`, `disk` | `storage_mode` in the configuration resource; the storage mode in effect in the torrent resource | the client, through a [storage mode transition](#storage-mode-transitions) |
+| Retention | `persisted`, `temporary` | `retention` in the configuration and torrent resources | the client, once, from temporary to persisted |
 
 Observed state is derived from the others and may lag a change of desired
 state while the engine applies it:
@@ -329,6 +330,43 @@ only until the application restarts.
   transition to memory storage.
 - Creating a torrent with the same info hash afterward creates a new torrent
   with a new ID.
+
+## Retention
+
+A temporary torrent is one to play without keeping. It streams like any
+other, through the same content URLs, but the application forgets it once
+it goes unwatched. A torrent is created temporary with `retention:
+temporary`; every other torrent is persisted.
+
+- A temporary torrent lives in memory storage only and is never stored in
+  the database. A restart forgets it, and its URLs answer `not-found`.
+- It is left out of the torrents listing unless `retention` asks for
+  temporary or any torrents, and the facets and listing version count the
+  torrents the filter holds. The DLNA media server never shows it. Reading
+  it by its ID, its files, and its statistics work as for any torrent.
+- It takes no library members, poster, or progress, and no change to disk
+  storage: creating one with library members or disk storage is
+  `422 validation-failed` naming each member, and a later configuration
+  change of them, a poster upload, or a progress update is
+  `409 lifecycle-conflict`. Background downloads, which apply to disk
+  storage, never fetch its pieces.
+- It is deleted once it has gone `temporary_idle_seconds` unwatched: with
+  no response streaming its content, here or through the DLNA media
+  server. The time counts from when its last stream ended, from its last
+  preload's creation, or from its own creation, whichever is latest. The
+  application looks for unwatched torrents every 10 seconds. Deletion
+  follows [Deletion](#deletion), so a later request is `not-found`.
+- At most `temporary_torrents_max` temporary torrents exist. Adding one
+  more deletes the one unwatched longest; if every one is streaming, the
+  creation is `409 too-many-temporary-torrents` and nothing changes.
+- A configuration change to `retention: persisted` keeps the torrent: it is
+  stored with its source, ID, and configuration before the response, as
+  [Persistence](#persistence) describes, and from then on it is an ordinary
+  persisted torrent. A failed write leaves it temporary. A persisted
+  torrent cannot become temporary; `retention: temporary` for one is
+  `422 validation-failed`.
+- A creation with the info hash of an existing torrent, temporary or
+  persisted, is `409 duplicate-torrent`, as for any torrent.
 
 ## Engine availability
 
@@ -639,7 +677,7 @@ application. That holds whether or not authentication is on.
 The application keeps a database in its data directory, which must be on a
 local filesystem, as [ADR 8](adr/0008-database.md) requires.
 
-- For each torrent it stores the ID, the v1 info hash, the creation time to
+- For each persisted torrent it stores the ID, the v1 info hash, the creation time to
   the nanosecond, the configuration with the version its ETag derives from,
   the storage mode in effect, and the source: an uploaded torrent file's
   original bytes, or a magnet URI and, once metadata is recorded, the

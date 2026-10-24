@@ -26,6 +26,7 @@ use crate::headers::{EntityTags, negotiate};
 use crate::problem::{Problem, ProblemType};
 use crate::query::{Paging, Query, page_error, reject};
 use crate::representation::{self, JSON, torrent_path};
+use crate::retention::ActiveBody;
 use crate::torrents::{self, not_modified};
 
 /// The chunk size of content streams.
@@ -187,6 +188,12 @@ pub(crate) async fn content<E: Engine>(
     };
     let range = range.ok_or_else(Problem::internal)?;
 
+    // A temporary torrent stays while its content streams.
+    let activity = if stream {
+        app.activity(&view.record.id)
+    } else {
+        None
+    };
     let body = if stream {
         let reader = app
             .engine()
@@ -199,6 +206,10 @@ pub(crate) async fn content<E: Engine>(
         )
     } else {
         Body::empty()
+    };
+    let body = match activity {
+        Some(activity) => Body::new(ActiveBody::new(body, activity)),
+        None => body,
     };
     let mut response = (status, body).into_response();
     let values = response.headers_mut();

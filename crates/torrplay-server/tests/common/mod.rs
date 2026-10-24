@@ -296,6 +296,25 @@ impl TestServer {
     /// without ending the body, and returns the response, checked against
     /// the contract. A server that waits for the whole body never answers,
     /// and the read times out.
+    /// Starts a GET of `path` and returns the connection once the status
+    /// line arrived, leaving the body unread so the stream stays in
+    /// progress until the connection is dropped.
+    pub async fn open_stream(&self, path: &str) -> TcpStream {
+        let mut stream = TcpStream::connect(self.addr).await.expect("a connection");
+        let head = format!("GET {path} HTTP/1.1\r\nHost: {}\r\n\r\n", self.addr);
+        stream
+            .write_all(head.as_bytes())
+            .await
+            .expect("the request is sent");
+        let mut status = [0; 12];
+        tokio::time::timeout(Duration::from_secs(10), stream.read_exact(&mut status))
+            .await
+            .expect("a status line in time")
+            .expect("a status line");
+        assert_eq!(&status, b"HTTP/1.1 200", "the stream started");
+        stream
+    }
+
     pub async fn send_before_body_ends(
         &self,
         method: Method,

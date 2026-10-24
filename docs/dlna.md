@@ -157,7 +157,8 @@ parse, or names nothing, is `701`.
   `genres`, in that order, each with its child count.
 - A torrent is listed once its metadata is available, while it is not
   paused or failed, and only if it has a playable file: one served with an
-  `audio/`, `video/`, or `image/` media type.
+  `audio/`, `video/`, or `image/` media type. Temporary torrents are never
+  listed, and their media URLs are `404 Not Found`.
 - A torrent container's title is its library title, or else its name, with
   its poster as `upnp:albumArtURI`. Its files are in metadata order, or, in
   a series, in episode order as up next orders them.

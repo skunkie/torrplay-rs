@@ -43,6 +43,7 @@ pub(crate) enum ProblemType {
     DuplicateProfile,
     TooManyProfiles,
     TooManyAccessTokens,
+    TooManyTemporaryTorrents,
     PreconditionFailed,
     ContentTooLarge,
     UnsupportedMediaType,
@@ -75,6 +76,7 @@ impl ProblemType {
             Self::DuplicateProfile => "duplicate-profile",
             Self::TooManyProfiles => "too-many-profiles",
             Self::TooManyAccessTokens => "too-many-access-tokens",
+            Self::TooManyTemporaryTorrents => "too-many-temporary-torrents",
             Self::PreconditionFailed => "precondition-failed",
             Self::ContentTooLarge => "content-too-large",
             Self::UnsupportedMediaType => "unsupported-media-type",
@@ -107,6 +109,7 @@ impl ProblemType {
             Self::DuplicateProfile => "Duplicate profile",
             Self::TooManyProfiles => "Too many profiles",
             Self::TooManyAccessTokens => "Too many access tokens",
+            Self::TooManyTemporaryTorrents => "Too many temporary torrents",
             Self::PreconditionFailed => "Precondition failed",
             Self::ContentTooLarge => "Content too large",
             Self::UnsupportedMediaType => "Unsupported media type",
@@ -138,7 +141,8 @@ impl ProblemType {
             | Self::TooManyPreloads
             | Self::DuplicateProfile
             | Self::TooManyProfiles
-            | Self::TooManyAccessTokens => StatusCode::CONFLICT,
+            | Self::TooManyAccessTokens
+            | Self::TooManyTemporaryTorrents => StatusCode::CONFLICT,
             Self::PreconditionFailed => StatusCode::PRECONDITION_FAILED,
             Self::ContentTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
@@ -292,9 +296,13 @@ impl Problem {
         self
     }
 
-    #[cfg(test)]
     pub(crate) fn problem_type(&self) -> ProblemType {
         self.0.problem_type
+    }
+
+    /// The problem's detail, for logs.
+    pub(crate) fn detail(&self) -> &str {
+        &self.0.detail
     }
 
     /// Returns the pointers of the body members the problem names.
@@ -324,12 +332,12 @@ impl Problem {
         let title = problem_type.title().to_owned();
         let detail = Some(detail.clone());
         if let Some(torrent) = torrent {
-            return to_json(&api::DuplicateTorrentProblem {
+            return to_json(&api::CreationConflictProblem {
                 detail,
                 instance: None,
                 status,
                 title,
-                torrent: torrent.clone(),
+                torrent: Some(torrent.clone()),
                 r#type: problem_type.uri(),
             });
         }
@@ -468,7 +476,7 @@ impl From<EngineError> for Problem {
 mod tests {
     use super::*;
 
-    const ALL: [ProblemType; 27] = [
+    const ALL: [ProblemType; 28] = [
         ProblemType::MalformedRequest,
         ProblemType::AuthenticationRequired,
         ProblemType::InsufficientScope,
@@ -484,6 +492,7 @@ mod tests {
         ProblemType::DuplicateProfile,
         ProblemType::TooManyProfiles,
         ProblemType::TooManyAccessTokens,
+        ProblemType::TooManyTemporaryTorrents,
         ProblemType::PreconditionFailed,
         ProblemType::ContentTooLarge,
         ProblemType::UnsupportedMediaType,

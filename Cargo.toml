@@ -59,6 +59,9 @@ h2 = "0.4"
 # Signing playback tokens, over the same digest release as sha2.
 hmac = "0.13"
 http = "1"
+# Response bodies that hold a temporary torrent active while they stream;
+# axum already depends on it.
+http-body = "1"
 http-body-util = "0.1"
 # Full case folding for search, from the same ICU4X release as the
 # normalizer, since the standard library only lowercases.

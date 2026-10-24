@@ -25,7 +25,7 @@ use crate::images::{self, Images};
 use crate::{StoreError, StoredTorrent};
 
 /// The schema version this build creates and migrates to.
-pub(crate) const VERSION: u32 = 11;
+pub(crate) const VERSION: u32 = 12;
 
 /// The schema at each version, applied in order to reach the next one.
 const MIGRATIONS: [&str; VERSION as usize] = [
@@ -180,6 +180,12 @@ const MIGRATIONS: [&str; VERSION as usize] = [
     ALTER TABLE settings
         ADD COLUMN log_level TEXT
         CHECK (log_level IN ('error', 'warn', 'info', 'debug', 'trace'));",
+    // Version 12: the temporary torrents' idle limit and count limit, each
+    // NULL while unset.
+    "ALTER TABLE settings
+        ADD COLUMN temporary_idle_seconds INTEGER CHECK (temporary_idle_seconds >= 0);
+    ALTER TABLE settings
+        ADD COLUMN temporary_torrents_max INTEGER CHECK (temporary_torrents_max >= 0);",
 ];
 
 /// Opens the database at `path`, takes its lock, and migrates it.
@@ -432,6 +438,7 @@ pub(crate) fn settings(connection: &Connection) -> Result<Stored, StoreError> {
         .query_row(
             "SELECT version, piece_wait_seconds, idle_timeout_seconds, idle_readers_per_torrent,
                     idle_readers_total, drain_period_seconds, peer_limit, cache_capacity_bytes,
+                    temporary_idle_seconds, temporary_torrents_max,
                     background_downloads, dlna_enabled, dlna_name, dht_enabled, log_level
              FROM settings WHERE id = 1",
             [],
@@ -501,6 +508,8 @@ pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(
         explicit.drain_period_seconds,
         explicit.peer_limit,
         explicit.cache_capacity_bytes,
+        explicit.temporary_idle_seconds,
+        explicit.temporary_torrents_max,
     ]) {
         *value = explicit
             .map(i64::try_from)
@@ -515,14 +524,17 @@ pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(
         drain,
         peers,
         capacity,
+        temporary_idle,
+        temporary_max,
     ] = values;
     connection.execute(
         "INSERT INTO settings (id, version, piece_wait_seconds, idle_timeout_seconds,
                                idle_readers_per_torrent, idle_readers_total,
                                drain_period_seconds, peer_limit, cache_capacity_bytes,
+                               temporary_idle_seconds, temporary_torrents_max,
                                background_downloads, dlna_enabled, dlna_name,
                                dht_enabled, log_level)
-         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
          ON CONFLICT (id) DO UPDATE SET
              version = excluded.version,
              piece_wait_seconds = excluded.piece_wait_seconds,
@@ -532,6 +544,8 @@ pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(
              drain_period_seconds = excluded.drain_period_seconds,
              peer_limit = excluded.peer_limit,
              cache_capacity_bytes = excluded.cache_capacity_bytes,
+             temporary_idle_seconds = excluded.temporary_idle_seconds,
+             temporary_torrents_max = excluded.temporary_torrents_max,
              background_downloads = excluded.background_downloads,
              dlna_enabled = excluded.dlna_enabled,
              dlna_name = excluded.dlna_name,
@@ -546,6 +560,8 @@ pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(
             drain,
             peers,
             capacity,
+            temporary_idle,
+            temporary_max,
             explicit.background_downloads,
             explicit.dlna_enabled,
             explicit.dlna_name,

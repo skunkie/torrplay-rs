@@ -78,6 +78,8 @@ fn representation(stored: &Stored, overrides: &Overrides) -> api::Settings {
         drain,
         peers,
         capacity,
+        temporary_idle,
+        temporary_max,
     ] = stored.explicit.values();
     // Every value lies within its bounds: the counts and durations far below
     // i32::MAX, the capacity below i64::MAX.
@@ -90,6 +92,8 @@ fn representation(stored: &Stored, overrides: &Overrides) -> api::Settings {
         drain_period_seconds: int(drain),
         peer_limit: int(peers),
         cache_capacity_bytes: i64::try_from(capacity).unwrap_or(i64::MAX),
+        temporary_idle_seconds: int(temporary_idle),
+        temporary_torrents_max: int(temporary_max),
         background_downloads: stored.explicit.effective().background_downloads,
         dlna_enabled: stored.explicit.effective().dlna_enabled,
         dlna_name: stored.explicit.dlna_name().to_owned(),
