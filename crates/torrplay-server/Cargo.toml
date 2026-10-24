@@ -18,6 +18,7 @@ workspace = true
 [dependencies]
 axum.workspace = true
 bytes.workspace = true
+flate2.workspace = true
 chrono.workspace = true
 form_urlencoded.workspace = true
 futures-util.workspace = true

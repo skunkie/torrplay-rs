@@ -31,7 +31,7 @@ security:
   - accessToken: []
 tags:
   - name: Service
-    description: The entry point and the OpenAPI document.
+    description: The entry point, the OpenAPI document, and the API reference.
   - name: Torrents
     description: Torrents the application tracks, with their configuration.
   - name: Posters
@@ -59,8 +59,8 @@ paths:
       operationId: getEntryPoint
       summary: Read the entry point
       description: >-
-        Returns links to the top-level resources and to the OpenAPI document.
-        A request for /api/v1/ is redirected here with 308 Permanent Redirect.
+        Returns links to the top-level resources, the OpenAPI document, and
+        the API reference page. A request for /api/v1/ is redirected here with 308 Permanent Redirect.
       tags: [Service]
       security:
         - {}
@@ -85,6 +85,7 @@ paths:
                       access_tokens: /api/v1/access-tokens
                       playback_tokens: /api/v1/playback-tokens
                       service-desc: /api/v1/openapi.yaml
+                      service-doc: /api/v1/reference
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -107,6 +108,82 @@ paths:
                 document:
                   summary: The start of the document
                   value: "openapi: 3.2.1\n"
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/reference:
+    get:
+      operationId: getApiReference
+      summary: Read the API reference
+      description: >-
+        Returns an HTML page that renders this OpenAPI document with Scalar's
+        API reference, from a bundle the server holds, so the page loads no
+        resources from other origins. Its Content-Security-Policy confines
+        scripts, styles, and requests to the page's own origin. Test requests
+        made from the page go to that origin and are ordinary API requests,
+        which need a credential while authentication is on.
+      tags: [Service]
+      security:
+        - {}
+      responses:
+        '200':
+          description: The API reference page.
+          headers:
+            Content-Security-Policy:
+              $ref: '#/components/headers/ReferencePolicy'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptions'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            text/html:
+              schema:
+                type: string
+              examples:
+                page:
+                  summary: The start of the page
+                  value: "<!doctype html>\n"
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/reference/scalar.js:
+    get:
+      operationId: getApiReferenceScript
+      summary: Read the API reference script
+      description: >-
+        Returns the Scalar bundle the API reference page loads. The server
+        holds it gzip-compressed and sends it with Content-Encoding gzip
+        unless Accept-Encoding excludes gzip, in which case it sends the
+        bundle uncompressed.
+      tags: [Service]
+      security:
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The script.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ReferenceScriptETag'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            Vary:
+              $ref: '#/components/headers/VaryAcceptEncoding'
+            Content-Encoding:
+              $ref: '#/components/headers/GzipEncoding'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptions'
+          content:
+            text/javascript:
+              schema:
+                type: string
+              examples:
+                script:
+                  summary: An abbreviated script
+                  value: "(function(){})();\n"
+        '304':
+          $ref: '#/components/responses/NotModified'
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -2898,6 +2975,42 @@ components:
         type: string
         const: nosniff
       example: nosniff
+    ReferencePolicy:
+      description: >-
+        Confines the API reference page's scripts, styles, fonts, images, and
+        requests to its own origin, allowing inline styles, data and blob
+        URIs for images and fonts, and forbids framing it.
+      required: true
+      schema:
+        type: string
+      example: >-
+        default-src 'none'; script-src 'self'; style-src 'self'
+        'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:;
+        connect-src 'self'; base-uri 'none'; form-action 'none';
+        frame-ancestors 'none'
+    ReferenceScriptETag:
+      description: >-
+        A strong validator of the bundle in the content coding sent: the
+        gzip-compressed bundle's ends in -gzip.
+      required: true
+      schema:
+        type: string
+      example: '"scalar-26b06691fc0e2e35-gzip"'
+    VaryAcceptEncoding:
+      description: The response depends on Accept-Encoding.
+      required: true
+      schema:
+        type: string
+        const: Accept-Encoding
+      example: Accept-Encoding
+    GzipEncoding:
+      description: >-
+        gzip when Accept-Encoding is absent or accepts gzip; absent when the
+        bundle is sent uncompressed.
+      schema:
+        type: string
+        const: gzip
+      example: gzip
     ContentSecurityPolicy:
       description: Sandboxes the content if a browser opens it as a document.
       required: true
@@ -3448,8 +3561,8 @@ components:
       properties:
         links:
           type: object
-          description: Links to the top-level resources and the OpenAPI document.
-          required: [self, torrents, profiles, cache_statistics, settings, password, access_tokens, playback_tokens, service-desc]
+          description: Links to the top-level resources, the OpenAPI document, and the API reference.
+          required: [self, torrents, profiles, cache_statistics, settings, password, access_tokens, playback_tokens, service-desc, service-doc]
           properties:
             self:
               type: string
@@ -3496,6 +3609,11 @@ components:
               format: uri-reference
               description: The OpenAPI document, under its RFC 8631 relation name.
               examples: [/api/v1/openapi.yaml]
+            service-doc:
+              type: string
+              format: uri-reference
+              description: The API reference page, under its RFC 8631 relation name.
+              examples: [/api/v1/reference]
 
     DesiredState:
       type: string

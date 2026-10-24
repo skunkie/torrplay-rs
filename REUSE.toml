@@ -28,3 +28,15 @@ SPDX-License-Identifier = "MIT"
 path = "fixtures/*.json"
 SPDX-FileCopyrightText = "2026 TorrPlay"
 SPDX-License-Identifier = "MIT"
+
+# Scalar's standalone API reference bundle, vendored gzipped by
+# scripts/update-scalar.sh. Scalar is MIT; the bundle also compiles in its
+# dependencies, whose licenses this lists. A minified, compressed file
+# cannot carry a header, and the digest file is the script's output.
+[[annotations]]
+path = "crates/torrplay-server/assets/scalar/**"
+SPDX-FileCopyrightText = [
+  "2023-present Scalar",
+  "The authors of the libraries Scalar bundles",
+]
+SPDX-License-Identifier = "MIT AND Apache-2.0 AND ISC AND BSD-3-Clause AND BSD-2-Clause AND 0BSD"

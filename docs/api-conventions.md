@@ -280,6 +280,13 @@ status is not.
   ([RFC 8631](https://www.rfc-editor.org/rfc/rfc8631.html)) to the OpenAPI
   document, served at `/api/v1/openapi.yaml` as `application/yaml`
   ([RFC 9512](https://www.rfc-editor.org/rfc/rfc9512.html)).
+- A `service-doc` link names `/api/v1/reference`, an HTML page that renders
+  the document with [Scalar](https://scalar.com)'s API reference. The server
+  holds Scalar's bundle, which `/api/v1/reference/scalar.js` serves, so the
+  page works without internet access, and its Content-Security-Policy keeps
+  it from loading anything from another origin. Like the document, the page
+  needs no credential; test requests made from it do while authentication
+  is on.
 - Liveness and readiness are outside the versioned API at `/livez` and
   `/readyz`. Both return `200 OK` when healthy and `503 Service Unavailable`
   with a Problem Details body when not. `/readyz` reports unavailable while

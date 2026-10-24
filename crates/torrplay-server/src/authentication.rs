@@ -56,7 +56,11 @@ fn requirement(route: Option<&str>, method: &Method) -> Requirement {
     }
     match route {
         "/livez" | "/readyz" => Requirement::Nothing,
-        "/api/v1" | "/api/v1/" | "/api/v1/openapi.yaml" => Requirement::Host,
+        "/api/v1"
+        | "/api/v1/"
+        | "/api/v1/openapi.yaml"
+        | "/api/v1/reference"
+        | "/api/v1/reference/scalar.js" => Requirement::Host,
         "/api/v1/access-tokens" if method == Method::POST => Requirement::Host,
         "/api/v1/torrents/{torrent_id}/files/{file_id}/content"
         | "/api/v1/torrents/{torrent_id}/poster"
@@ -222,6 +226,12 @@ mod tests {
             (Some("/readyz"), Method::GET, Requirement::Nothing),
             (Some("/api/v1"), Method::GET, Requirement::Host),
             (Some("/api/v1/openapi.yaml"), Method::GET, Requirement::Host),
+            (Some("/api/v1/reference"), Method::GET, Requirement::Host),
+            (
+                Some("/api/v1/reference/scalar.js"),
+                Method::GET,
+                Requirement::Host,
+            ),
             (
                 Some("/api/v1/access-tokens"),
                 Method::POST,
