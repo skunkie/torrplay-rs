@@ -795,6 +795,12 @@ impl AsyncRead for Reader {
                     cx.waker().wake_by_ref();
                 }
             }
+            // Removal cancels the streams, then deletes the torrent, failing
+            // its stream's reads; a read that began before the cancellation
+            // reports the cancellation rather than librqbit's error.
+            Poll::Ready(Err(_)) if this.is_canceled() => {
+                return Poll::Ready(Err(Self::canceled_error()));
+            }
             // A swap that began after the check above deletes the old
             // torrent, failing its stream's reads; the reader reopens the
             // stream instead.
