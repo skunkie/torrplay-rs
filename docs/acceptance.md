@@ -167,6 +167,16 @@ engine can pass them, and memory storage (M4) must pass them.
 | CAC-10 | Stream `multi-boundary` files under sustained eviction | The first and last pieces of each file being read stay pinned and resident while its readers exist |
 | CAC-11 | One local peer sends corrupt blocks for a piece, another sends valid ones | The piece fails its hash check and is downloaded again from the valid peer; corrupt bytes are never served |
 
+### Background downloads
+
+These scenarios accept the lifecycle's background downloads (M6).
+
+| ID | Scenario | Expected |
+|---|---|---|
+| BGD-01 | Create `large` in disk storage, started, and read nothing | It downloads every piece and keeps uploading; a torrent in memory storage downloads nothing without readers |
+| BGD-02 | Open a reader of a memory torrent, then create a disk torrent | The disk torrent downloads nothing while the reader exists, idle included; once the reader is released, it downloads the whole torrent |
+| BGD-03 | Pause a disk torrent mid-download, then start it | Nothing is downloaded while it is paused; starting it resumes its background download |
+
 ### Disk storage
 
 These scenarios accept [ADR 9](adr/0009-disk-storage.md)'s disk storage
