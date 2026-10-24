@@ -186,6 +186,14 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
             post(dlna::connection_manager::<E>),
         )
         .route(
+            "/dlna/content-directory/events",
+            any(dlna::content_directory_events::<E>),
+        )
+        .route(
+            "/dlna/connection-manager/events",
+            any(dlna::connection_manager_events::<E>),
+        )
+        .route(
             "/dlna/media/{torrent_id}/{file_id}/{file_name}",
             get(dlna::get_media::<E>).head(dlna::head_media::<E>),
         )

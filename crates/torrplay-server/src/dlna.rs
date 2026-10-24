@@ -24,6 +24,7 @@ use torrplay_core::library::{self, Kind};
 use torrplay_core::lifecycle::ObservedState;
 use torrplay_dlna::description::{self, Device};
 use torrplay_dlna::dlna;
+use torrplay_dlna::gena::{self, Refusal, Subscribe, Subscriptions};
 use torrplay_dlna::services::{self, Directory};
 use torrplay_dlna::soap::{self, Action, Fault};
 use torrplay_dlna::tree::{self, Base, Catalog};
@@ -45,6 +46,7 @@ pub(crate) struct MediaServer {
     pub(crate) device: Device,
     /// The digest of the last catalog served, and the update ID it had.
     update: Mutex<Option<([u8; 32], u32)>>,
+    pub(crate) subscriptions: Subscriptions,
 }
 
 impl MediaServer {
@@ -52,6 +54,7 @@ impl MediaServer {
         Self {
             device,
             update: Mutex::new(None),
+            subscriptions: Subscriptions::default(),
         }
     }
 
@@ -67,6 +70,149 @@ impl MediaServer {
         };
         *update = Some((digest, id));
         id
+    }
+}
+
+/// Sends the events due to the media server's subscribers: initial events,
+/// and `SystemUpdateID` when the content tree changed. Deliveries run at
+/// once, each bounded by [`gena::DELIVERY_TIMEOUT`].
+pub(crate) async fn notify<E: Engine>(app: &App<E>) {
+    let Some(server) = app.media_server() else {
+        return;
+    };
+    if !app.settings().explicit.effective().dlna_enabled
+        || !server.subscriptions.any(std::time::Instant::now())
+    {
+        return;
+    }
+    let catalog = match catalog(app).await {
+        Ok(Some(catalog)) => catalog,
+        Ok(None) => return,
+        Err(_) => {
+            tracing::debug!("the content tree could not be read for events");
+            return;
+        }
+    };
+    let update_id = server.update_id(&catalog);
+    let due = server.subscriptions.due(
+        update_id,
+        &services::source_protocol_info(),
+        std::time::Instant::now(),
+    );
+    let mut deliveries = tokio::task::JoinSet::new();
+    for notification in due {
+        deliveries.spawn(async move { notification.deliver().await });
+    }
+    while deliveries.join_next().await.is_some() {}
+}
+
+pub(crate) async fn content_directory_events<E: Engine>(
+    state: State<Arc<App<E>>>,
+    client: Option<Extension<ConnectInfo<SocketAddr>>>,
+    method: axum::http::Method,
+    headers: HeaderMap,
+) -> Result<Response, Problem> {
+    events(
+        state,
+        client,
+        method,
+        headers,
+        gena::Service::ContentDirectory,
+    )
+    .await
+}
+
+pub(crate) async fn connection_manager_events<E: Engine>(
+    state: State<Arc<App<E>>>,
+    client: Option<Extension<ConnectInfo<SocketAddr>>>,
+    method: axum::http::Method,
+    headers: HeaderMap,
+) -> Result<Response, Problem> {
+    events(
+        state,
+        client,
+        method,
+        headers,
+        gena::Service::ConnectionManager,
+    )
+    .await
+}
+
+/// Answers `SUBSCRIBE` and `UNSUBSCRIBE`; other methods are `405`.
+async fn events<E: Engine>(
+    State(app): State<Arc<App<E>>>,
+    client: Option<Extension<ConnectInfo<SocketAddr>>>,
+    method: axum::http::Method,
+    headers: HeaderMap,
+    service: gena::Service,
+) -> Result<Response, Problem> {
+    let subscriber = client
+        .as_ref()
+        .map(|Extension(ConnectInfo(address))| address.ip());
+    let server = gate(&app, client)?;
+    let subscriber = subscriber.ok_or_else(Problem::internal)?;
+    let text = |name: &str| headers.get(name).and_then(|value| value.to_str().ok());
+    let refused = |refusal: Refusal| {
+        let status = match refusal {
+            Refusal::BadRequest => StatusCode::BAD_REQUEST,
+            Refusal::PreconditionFailed => StatusCode::PRECONDITION_FAILED,
+            Refusal::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+        };
+        status.into_response()
+    };
+    match method.as_str() {
+        "SUBSCRIBE" => {
+            let request = Subscribe {
+                sid: text("sid"),
+                callback: text("callback"),
+                nt: text("nt"),
+                timeout: text("timeout"),
+            };
+            let granted = server.subscriptions.subscribe(
+                service,
+                request,
+                subscriber,
+                std::time::Instant::now(),
+                || {
+                    torrplay_core::id::random_uuid()
+                        .ok()
+                        .map(|uuid| format!("uuid:{uuid}"))
+                },
+            );
+            Ok(match granted {
+                Ok(granted) => {
+                    let mut response = StatusCode::OK.into_response();
+                    let values = response.headers_mut();
+                    values.insert(
+                        HeaderName::from_static("sid"),
+                        HeaderValue::try_from(granted.sid.as_str())
+                            .map_err(|_| Problem::internal())?,
+                    );
+                    values.insert(
+                        HeaderName::from_static("timeout"),
+                        HeaderValue::try_from(granted.timeout_header())
+                            .map_err(|_| Problem::internal())?,
+                    );
+                    values.insert(header::CONTENT_LENGTH, HeaderValue::from(0));
+                    response
+                }
+                Err(refusal) => refused(refusal),
+            })
+        }
+        "UNSUBSCRIBE" => Ok(
+            match server.subscriptions.unsubscribe(service, text("sid")) {
+                Ok(()) => StatusCode::OK.into_response(),
+                Err(refusal) => refused(refusal),
+            },
+        ),
+        _ => Ok((
+            StatusCode::METHOD_NOT_ALLOWED,
+            [(
+                header::ALLOW,
+                HeaderValue::from_static("SUBSCRIBE, UNSUBSCRIBE"),
+            )],
+        )
+            .into_response()),
     }
 }
 
@@ -295,6 +441,7 @@ async fn catalog<E: Engine>(app: &App<E>) -> Result<Option<Catalog>, Problem> {
             categories: library.categories.clone(),
             genres: library.genres.clone(),
             has_poster: record.poster.is_some(),
+            created_at: record.created_at,
             files: files.into_iter().map(|(_, _, file)| file).collect(),
         });
     }

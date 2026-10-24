@@ -73,10 +73,10 @@ ContentDirectory and ConnectionManager services.
 | `/dlna/description.xml` | GET | The device description |
 | `/dlna/content-directory.xml` | GET | ContentDirectory's service description |
 | `/dlna/content-directory/control` | POST | ContentDirectory's SOAP actions |
-| `/dlna/content-directory/events` | SUBSCRIBE, UNSUBSCRIBE | ContentDirectory's events, planned |
+| `/dlna/content-directory/events` | SUBSCRIBE, UNSUBSCRIBE | ContentDirectory's events |
 | `/dlna/connection-manager.xml` | GET | ConnectionManager's service description |
 | `/dlna/connection-manager/control` | POST | ConnectionManager's SOAP actions |
-| `/dlna/connection-manager/events` | SUBSCRIBE, UNSUBSCRIBE | ConnectionManager's events, planned |
+| `/dlna/connection-manager/events` | SUBSCRIBE, UNSUBSCRIBE | ConnectionManager's events |
 | `/dlna/media/{torrent_id}/{file_id}/{file_name}` | GET, HEAD | A file's content |
 | `/dlna/posters/{torrent_id}` | GET, HEAD | A torrent's poster |
 
@@ -88,20 +88,20 @@ declares `dlna:X_DLNADOC` `DMS-1.50`.
 SOAP requests carry `SOAPACTION` with the service type and action name, and
 a body of at most 64 KiB. Failures are SOAP faults with HTTP `500` and a
 UPnP error: `401` for an unknown action, `402` for missing or invalid
-arguments, `701` for an unknown object, and `720` while the stored torrents
-are being restored.
+arguments, `701` for an unknown object, `708` for search criteria it cannot
+read, `709` for sort criteria it cannot read, and `720` while the stored
+torrents are being restored.
 
-- ContentDirectory: `Browse`, `GetSearchCapabilities` and
-  `GetSortCapabilities`, both empty until search and sorting are
-  implemented, `GetSystemUpdateID`, and Samsung's `X_GetFeatureList`,
-  which lists the root for audio, video, and images.
+- ContentDirectory: `Browse`, `Search`, `GetSearchCapabilities`,
+  `GetSortCapabilities`, `GetSystemUpdateID`, and Samsung's
+  `X_GetFeatureList`, which lists the root for audio, video, and images.
 - ConnectionManager: `GetProtocolInfo`, whose sources are the served media
   types, `GetCurrentConnectionIDs`, always `0`, and
   `GetCurrentConnectionInfo` for connection `0`.
 - `Browse` takes `BrowseMetadata` or `BrowseDirectChildren`, a starting
-  index, and a requested count, where `0` asks for every child. It ignores
-  `Filter`, returning every property, and `SortCriteria`, which the empty
-  sort capabilities tell control points not to send.
+  index, and a requested count, where `0` asks for every child, and sorts
+  children by `SortCriteria` when it is given. It ignores `Filter`,
+  returning every property.
 - `SystemUpdateID` grows by one whenever the content tree changes, and
   each `Browse` response gives it as `UpdateID`. It restarts from 1 with
   the application.
@@ -148,6 +148,8 @@ parse, or names nothing, is `701`.
   with, and the protocol info
   `http-get:*:<media type>:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000`:
   byte seeks, no conversion, and streaming transfer.
+- Torrent containers and their files have `dc:date`, the torrent's
+  creation date in UTC.
 - Resource and album art URLs are absolute, on the host the request named.
 
 ## Media
@@ -166,10 +168,56 @@ file by its extension; it must be the file's name, or the request is
   `406 Not Acceptable`.
 - Problems are the native API's Problem Details.
 
-## Planned
+## Search and sorting
 
-- `Search`, with `dc:title` `contains` and `doesNotContain` through the
-  shared search matcher and case-insensitive substrings for other
-  properties, and sorting by title and date.
-- GENA eventing: `SUBSCRIBE` and `UNSUBSCRIBE` on the event paths, and
-  `NOTIFY` of `SystemUpdateID` to the subscriber's own address.
+`Search` finds the torrent containers and files below a container, and
+below the root it finds each once, however many containers list it. Every
+container that holds torrents or files says `searchable="1"`.
+
+- `GetSearchCapabilities` is
+  `dc:title,dc:date,upnp:class,upnp:genre,@id,@parentID`, and
+  `SearchCriteria` follows the ContentDirectory grammar over them: `*`,
+  or comparisons joined by `and` and `or`, `and` binding tighter, with
+  parentheses. Comparisons are `=`, `!=`, `<`, `<=`, `>`, `>=`, `contains`,
+  `doesNotContain`, `derivedfrom`, `startsWith`, and `exists`; values are
+  quoted, with `\"` and `\\` escapes. Anything else, including another
+  property, is `708`.
+- `dc:title contains` and `doesNotContain` use the shared search matcher
+  without typo tolerance, so they match as the native API's `search` does.
+  Other string comparisons ignore case. `derivedfrom` matches a class and
+  its subclasses. `upnp:genre` is a torrent's genres; a file has its
+  torrent's. `dc:date` compares as `YYYY-MM-DD` text.
+- Results are ordered by `SortCriteria` when it is given. Otherwise, when
+  the criteria match titles, better title matches come first, as the
+  shared matcher ranks them, then newer torrents, then the tree's order;
+  without a title match, the tree's order alone.
+- `GetSortCapabilities` is `dc:title,dc:date`. `SortCriteria` is a
+  comma-separated list of those properties, each with `+` for ascending or
+  `-` for descending; titles compare ignoring case, and ties keep the
+  tree's order. Another property is `709`.
+
+## Eventing
+
+GENA delivers ContentDirectory's `SystemUpdateID` and ConnectionManager's
+evented variables to control points that subscribe.
+
+- `SUBSCRIBE` with `CALLBACK` and `NT: upnp:event` creates a subscription
+  for `TIMEOUT` seconds, between 60 and 1800, 1800 when absent or
+  `infinite`, and answers `200` with `SID` and the granted `TIMEOUT`.
+  `SUBSCRIBE` with only `SID` renews one. `UNSUBSCRIBE` with `SID` ends
+  one.
+- A callback must be an `http` URL on the subscriber's own address, so a
+  subscription cannot direct requests elsewhere; otherwise, or for a
+  missing `NT` or an unknown `SID`, the request is `412 Precondition
+  Failed`. A request with both `SID` and `CALLBACK` or `NT` is
+  `400 Bad Request`. The application keeps at most 64 subscriptions, and
+  a 65th is `503 Service Unavailable`.
+- The application checks the content tree every 2 seconds while there are
+  subscriptions, which also bounds `SystemUpdateID` events to that rate.
+  A new subscription receives its initial event at the next check, and
+  each change of `SystemUpdateID` is sent to every ContentDirectory
+  subscriber, with `SEQ` counting from 0 per subscription.
+- `NOTIFY` goes to the subscription's first callback that answers with a
+  success, each try bounded by 5 seconds. A subscription whose callbacks
+  all fail stays until it expires, and its next event still counts on.
+- Turning the media server off ends every subscription.

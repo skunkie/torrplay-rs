@@ -7,9 +7,11 @@
 //! section describes.
 
 use std::collections::BTreeMap;
+use std::time::SystemTime;
 
-use crate::didl::{self, Object};
+use crate::didl::{self, CONTAINER_CLASS, Object};
 use crate::id::{ObjectId, ROOT_PARENT, encode};
+use crate::search::{Criteria, SortCriteria};
 
 /// How many torrents `recent` holds.
 pub const RECENT_COUNT: usize = 20;
@@ -37,6 +39,8 @@ pub struct Torrent {
     pub genres: Vec<String>,
     /// Whether it has a poster.
     pub has_poster: bool,
+    /// When it was created.
+    pub created_at: SystemTime,
     /// Its playable files, at least one, in metadata or episode order.
     pub files: Vec<File>,
 }
@@ -178,32 +182,90 @@ impl Catalog {
     }
 
     /// Browses object `id`, returning at most `count` objects from
-    /// `start`, or every one when `count` is zero.
+    /// `start`, or every one when `count` is zero, children sorted by
+    /// `sort`.
     pub fn browse(
         &self,
         id: &ObjectId,
         flag: BrowseFlag,
-        start: usize,
-        count: usize,
+        page: Page,
+        sort: &SortCriteria,
         base: Base<'_>,
     ) -> Result<Browsed, NoSuchObject> {
-        let objects = match flag {
+        let mut objects = match flag {
             BrowseFlag::Metadata => vec![self.metadata(id, base)?],
             BrowseFlag::DirectChildren => self.children(id, base)?,
         };
-        let total = objects.len();
-        let page: Vec<Object> = objects
-            .into_iter()
-            .skip(start)
-            .take(if count == 0 { usize::MAX } else { count })
-            .collect();
-        Ok(Browsed {
-            returned: page.len(),
-            didl: didl::render(&page),
-            total,
-        })
+        sort.apply(&mut objects);
+        Ok(paged(objects, page))
     }
 
+    /// Searches the torrent containers and files below container `id`, each
+    /// once, for those `criteria` match: sorted by `sort` if it is given,
+    /// else better title matches first, then in the tree's order.
+    pub fn search(
+        &self,
+        id: &ObjectId,
+        criteria: &Criteria,
+        page: Page,
+        sort: &SortCriteria,
+        base: Base<'_>,
+    ) -> Result<Browsed, NoSuchObject> {
+        let (torrents, parent): (Vec<&Torrent>, String) = match id {
+            ObjectId::Root => (self.torrents.iter().collect(), ObjectId::All.to_string()),
+            ObjectId::Categories | ObjectId::Genres => {
+                let of = if *id == ObjectId::Categories {
+                    categories
+                } else {
+                    genres
+                };
+                (
+                    self.torrents
+                        .iter()
+                        .filter(|torrent| !of(torrent).is_empty())
+                        .collect(),
+                    ObjectId::All.to_string(),
+                )
+            }
+            ObjectId::Torrent(_) => (Vec::new(), String::new()),
+            ObjectId::File(..) => {
+                self.metadata(id, base)?;
+                return Ok(paged(Vec::new(), page));
+            }
+            _ => (self.torrents_of(id).ok_or(NoSuchObject)?, id.to_string()),
+        };
+        let mut candidates = Vec::new();
+        if let ObjectId::Torrent(torrent) = id {
+            let torrent = self.torrent(torrent).ok_or(NoSuchObject)?;
+            candidates.extend(
+                torrent
+                    .files
+                    .iter()
+                    .map(|file| Object::item(torrent, file, base)),
+            );
+        }
+        for torrent in torrents {
+            candidates.push(Object::torrent(torrent, &parent, base));
+            candidates.extend(
+                torrent
+                    .files
+                    .iter()
+                    .map(|file| Object::item(torrent, file, base)),
+            );
+        }
+        let mut ranked: Vec<(Option<torrplay_core::search::Rank>, Object)> = candidates
+            .into_iter()
+            .filter_map(|object| criteria.rank(&object).map(|rank| (rank, object)))
+            .collect();
+        if sort.is_empty() {
+            // Stable, so equal matches keep the tree's order: newer
+            // torrents first.
+            ranked.sort_by_key(|(rank, _)| (rank.is_none(), *rank));
+        }
+        let mut objects: Vec<Object> = ranked.into_iter().map(|(_, object)| object).collect();
+        sort.apply(&mut objects);
+        Ok(paged(objects, page))
+    }
     fn container(
         &self,
         id: &ObjectId,
@@ -231,12 +293,17 @@ impl Catalog {
             }
             ObjectId::File(..) => return Err(NoSuchObject),
         };
-        Ok(Object::Container {
+        Ok(Object {
             id: id.to_string(),
             parent: parent.to_owned(),
             title,
-            child_count: children,
+            class: CONTAINER_CLASS,
+            date: None,
+            genres: Vec::new(),
             album_art: None,
+            kind: didl::Kind::Container {
+                child_count: children,
+            },
         })
     }
 
@@ -318,27 +385,64 @@ fn genres(torrent: &Torrent) -> &[String] {
     &torrent.genres
 }
 
+/// Where a page starts and how many objects it may hold, `0` for every
+/// one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Page {
+    /// The index of the first object.
+    pub start: usize,
+    /// The most objects, or `0` for every one.
+    pub count: usize,
+}
+
+fn paged(objects: Vec<Object>, page: Page) -> Browsed {
+    let total = objects.len();
+    let objects: Vec<Object> = objects
+        .into_iter()
+        .skip(page.start)
+        .take(if page.count == 0 {
+            usize::MAX
+        } else {
+            page.count
+        })
+        .collect();
+    Browsed {
+        returned: objects.len(),
+        didl: didl::render(&objects),
+        total,
+    }
+}
+
 impl Object {
     fn torrent(torrent: &Torrent, parent: &str, base: Base<'_>) -> Self {
-        Self::Container {
+        Self {
             id: ObjectId::Torrent(torrent.id.clone()).to_string(),
             parent: parent.to_owned(),
             title: torrent.title.clone(),
-            child_count: torrent.files.len(),
+            class: CONTAINER_CLASS,
+            date: Some(didl::date(torrent.created_at)),
+            genres: torrent.genres.clone(),
             album_art: torrent.has_poster.then(|| base.poster(&torrent.id)),
+            kind: didl::Kind::Container {
+                child_count: torrent.files.len(),
+            },
         }
     }
 
     fn item(torrent: &Torrent, file: &File, base: Base<'_>) -> Self {
-        Self::Item {
+        Self {
             id: ObjectId::File(torrent.id.clone(), file.id.clone()).to_string(),
             parent: ObjectId::Torrent(torrent.id.clone()).to_string(),
             title: file.name.clone(),
             class: file.class(),
-            media_type: file.media_type,
-            size_bytes: file.size_bytes,
-            url: base.media(&torrent.id, file),
+            date: Some(didl::date(torrent.created_at)),
+            genres: torrent.genres.clone(),
             album_art: torrent.has_poster.then(|| base.poster(&torrent.id)),
+            kind: didl::Kind::Item {
+                media_type: file.media_type,
+                size_bytes: file.size_bytes,
+                url: base.media(&torrent.id, file),
+            },
         }
     }
 }
@@ -366,6 +470,7 @@ mod tests {
             categories: categories.iter().map(|&name| name.to_owned()).collect(),
             genres: vec!["Drama".into()],
             has_poster: id == "trr_a",
+            created_at: SystemTime::UNIX_EPOCH,
             files: vec![
                 file("fil_1", "Film & Sons.mkv", "video/x-matroska"),
                 file("fil_2", "theme.mp3", "audio/mpeg"),
@@ -381,7 +486,13 @@ mod tests {
     }
 
     fn browse(id: &str, flag: BrowseFlag) -> Result<Browsed, NoSuchObject> {
-        catalog().browse(&ObjectId::parse(id).ok_or(NoSuchObject)?, flag, 0, 0, BASE)
+        catalog().browse(
+            &ObjectId::parse(id).ok_or(NoSuchObject)?,
+            flag,
+            Page::default(),
+            &SortCriteria::default(),
+            BASE,
+        )
     }
 
     #[test]
@@ -476,14 +587,101 @@ mod tests {
     fn pages_skip_and_take() {
         let catalog = catalog();
         let page = catalog
-            .browse(&ObjectId::Root, BrowseFlag::DirectChildren, 2, 3, BASE)
+            .browse(
+                &ObjectId::Root,
+                BrowseFlag::DirectChildren,
+                Page { start: 2, count: 3 },
+                &SortCriteria::default(),
+                BASE,
+            )
             .unwrap();
         assert_eq!((page.returned, page.total), (3, 6));
         assert!(page.didl.starts_with("<DIDL-Lite"));
         assert!(page.didl.contains(r#"id="movies""#) && !page.didl.contains(r#"id="all""#));
         let past = catalog
-            .browse(&ObjectId::Root, BrowseFlag::DirectChildren, 10, 0, BASE)
+            .browse(
+                &ObjectId::Root,
+                BrowseFlag::DirectChildren,
+                Page {
+                    start: 10,
+                    count: 0,
+                },
+                &SortCriteria::default(),
+                BASE,
+            )
             .unwrap();
         assert_eq!((past.returned, past.total), (0, 6));
+    }
+
+    fn search(id: &str, criteria: &str, sort: &str) -> Result<Browsed, NoSuchObject> {
+        catalog().search(
+            &ObjectId::parse(id).ok_or(NoSuchObject)?,
+            &Criteria::parse(criteria).unwrap(),
+            Page::default(),
+            &SortCriteria::parse(sort).unwrap(),
+            BASE,
+        )
+    }
+
+    #[test]
+    fn search_finds_each_match_once_below_a_container() {
+        let videos = search("0", r#"upnp:class derivedfrom "object.item.videoItem""#, "").unwrap();
+        assert_eq!(
+            videos.total, 3,
+            "one video per torrent, once each: {}",
+            videos.didl
+        );
+        let titled = search("0", r#"dc:title contains "title trr_b""#, "").unwrap();
+        assert_eq!(titled.total, 1);
+        assert!(
+            titled
+                .didl
+                .contains(r#"<container id="t:trr_b" parentID="all""#),
+            "{}",
+            titled.didl
+        );
+        let movies = search("movies", "*", "").unwrap();
+        assert_eq!(movies.total, 3, "the movie and its two files");
+        assert!(movies.didl.contains(r#"id="t:trr_a" parentID="movies""#));
+        let files = search(
+            "t:trr_c",
+            r#"upnp:class derivedfrom "object.item.audioItem""#,
+            "",
+        )
+        .unwrap();
+        assert_eq!(files.total, 1);
+        assert_eq!(search("t:trr_z", "*", ""), Err(NoSuchObject));
+        assert_eq!(search("f:trr_a:fil_1", "*", "").unwrap().total, 0);
+    }
+
+    #[test]
+    fn better_title_matches_come_first_unless_sorted() {
+        let mut catalog = catalog();
+        catalog.torrents[0].title = "Sintelfan".into();
+        catalog.torrents[2].title = "Sintel".into();
+        let criteria = Criteria::parse(r#"dc:title contains "sintel""#).unwrap();
+        let ranked = catalog
+            .search(
+                &ObjectId::Root,
+                &criteria,
+                Page::default(),
+                &SortCriteria::default(),
+                BASE,
+            )
+            .unwrap();
+        let whole = ranked.didl.find("t:trr_c").unwrap();
+        let partial = ranked.didl.find("t:trr_a").unwrap();
+        assert!(whole < partial, "the whole word first: {}", ranked.didl);
+        let sorted = catalog
+            .search(
+                &ObjectId::Root,
+                &criteria,
+                Page::default(),
+                &SortCriteria::parse("-dc:title").unwrap(),
+                BASE,
+            )
+            .unwrap();
+        assert!(sorted.didl.find("t:trr_a").unwrap() < sorted.didl.find("t:trr_c").unwrap());
+        assert!(sorted.didl.contains("<dc:date>1970-01-01</dc:date>"));
     }
 }

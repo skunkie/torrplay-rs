@@ -102,6 +102,21 @@ pub fn content_directory() -> String {
             ],
         ),
         action(
+            "Search",
+            &[
+                ("ContainerID", "in", "A_ARG_TYPE_ObjectID"),
+                ("SearchCriteria", "in", "A_ARG_TYPE_SearchCriteria"),
+                ("Filter", "in", "A_ARG_TYPE_Filter"),
+                ("StartingIndex", "in", "A_ARG_TYPE_Index"),
+                ("RequestedCount", "in", "A_ARG_TYPE_Count"),
+                ("SortCriteria", "in", "A_ARG_TYPE_SortCriteria"),
+                ("Result", "out", "A_ARG_TYPE_Result"),
+                ("NumberReturned", "out", "A_ARG_TYPE_Count"),
+                ("TotalMatches", "out", "A_ARG_TYPE_Count"),
+                ("UpdateID", "out", "A_ARG_TYPE_UpdateID"),
+            ],
+        ),
+        action(
             "GetSearchCapabilities",
             &[("SearchCaps", "out", "SearchCapabilities")],
         ),
@@ -128,6 +143,7 @@ pub fn content_directory() -> String {
         variable("A_ARG_TYPE_Index", "ui4", false, &[]),
         variable("A_ARG_TYPE_Count", "ui4", false, &[]),
         variable("A_ARG_TYPE_SortCriteria", "string", false, &[]),
+        variable("A_ARG_TYPE_SearchCriteria", "string", false, &[]),
         variable("A_ARG_TYPE_Result", "string", false, &[]),
         variable("A_ARG_TYPE_UpdateID", "ui4", false, &[]),
         variable("A_ARG_TYPE_Featurelist", "string", false, &[]),
@@ -230,16 +246,12 @@ mod tests {
     #[test]
     fn the_service_descriptions_list_the_implemented_actions() {
         let directory = content_directory();
-        for action in ["Browse", "GetSystemUpdateID", "X_GetFeatureList"] {
+        for action in ["Browse", "Search", "GetSystemUpdateID", "X_GetFeatureList"] {
             assert!(
                 directory.contains(&format!("<name>{action}</name>")),
                 "{action}"
             );
         }
-        assert!(
-            !directory.contains("<name>Search</name>"),
-            "search is not implemented yet"
-        );
         assert!(connection_manager().contains("<name>GetProtocolInfo</name>"));
     }
 }

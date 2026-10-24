@@ -6,8 +6,9 @@
 
 use crate::dlna;
 use crate::id::ObjectId;
+use crate::search::{Criteria, SEARCH_CAPABILITIES, SORT_CAPABILITIES, SortCriteria};
 use crate::soap::{self, Action, Fault};
-use crate::tree::{Base, BrowseFlag, Catalog};
+use crate::tree::{Base, BrowseFlag, Browsed, Catalog, Page};
 
 /// ContentDirectory's service type.
 pub const CONTENT_DIRECTORY: &str = "urn:schemas-upnp-org:service:ContentDirectory:1";
@@ -41,6 +42,16 @@ pub const SOURCE_TYPES: &[&str] = &[
     "image/bmp",
 ];
 
+/// ConnectionManager's `SourceProtocolInfo`: the protocol info of every
+/// source media type.
+pub fn source_protocol_info() -> String {
+    SOURCE_TYPES
+        .iter()
+        .map(|media_type| dlna::protocol_info(media_type))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 /// Samsung's feature list, which points its televisions at the root for
 /// every kind of media.
 const FEATURE_LIST: &str = r#"<?xml version="1.0" encoding="utf-8"?><Features xmlns="urn:schemas-upnp-org:av:avs" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="urn:schemas-upnp-org:av:avs http://www.upnp.org/schemas/av/avs.xsd"><Feature name="samsung.com_BASICVIEW" version="1"><container id="0" type="object.item.audioItem"/><container id="0" type="object.item.videoItem"/><container id="0" type="object.item.imageItem"/></Feature></Features>"#;
@@ -62,6 +73,33 @@ pub fn content_directory(action: &Action, directory: &Directory<'_>) -> Result<S
         return Err(Fault::InvalidAction);
     }
     let update_id = directory.update_id.to_string();
+    let page = || -> Result<Page, Fault> {
+        Ok(Page {
+            start: action.number("StartingIndex")? as usize,
+            count: action.number("RequestedCount")? as usize,
+        })
+    };
+    // A missing sort is no sort, as some control points omit it.
+    let sort = || {
+        SortCriteria::parse(
+            action
+                .arguments
+                .get("SortCriteria")
+                .map_or("", String::as_str),
+        )
+        .map_err(|_| Fault::InvalidSort)
+    };
+    let answer = |browsed: Browsed| {
+        soap::response(
+            action,
+            &[
+                ("Result", &browsed.didl),
+                ("NumberReturned", &browsed.returned.to_string()),
+                ("TotalMatches", &browsed.total.to_string()),
+                ("UpdateID", &update_id),
+            ],
+        )
+    };
     match action.name.as_str() {
         "Browse" => {
             let id = action.argument("ObjectID")?;
@@ -70,25 +108,31 @@ pub fn content_directory(action: &Action, directory: &Directory<'_>) -> Result<S
                 "BrowseDirectChildren" => BrowseFlag::DirectChildren,
                 _ => return Err(Fault::InvalidArgs),
             };
-            let start = action.number("StartingIndex")? as usize;
-            let count = action.number("RequestedCount")? as usize;
+            let (page, sort) = (page()?, sort()?);
             let catalog = directory.catalog.ok_or(Fault::CannotProcess)?;
             let id = ObjectId::parse(id).ok_or(Fault::NoSuchObject)?;
             let browsed = catalog
-                .browse(&id, flag, start, count, directory.base)
+                .browse(&id, flag, page, &sort, directory.base)
                 .map_err(|_| Fault::NoSuchObject)?;
-            Ok(soap::response(
-                action,
-                &[
-                    ("Result", &browsed.didl),
-                    ("NumberReturned", &browsed.returned.to_string()),
-                    ("TotalMatches", &browsed.total.to_string()),
-                    ("UpdateID", &update_id),
-                ],
-            ))
+            Ok(answer(browsed))
         }
-        "GetSearchCapabilities" => Ok(soap::response(action, &[("SearchCaps", "")])),
-        "GetSortCapabilities" => Ok(soap::response(action, &[("SortCaps", "")])),
+        "Search" => {
+            let id = action.argument("ContainerID")?;
+            let criteria = Criteria::parse(action.argument("SearchCriteria")?)
+                .map_err(|_| Fault::InvalidSearch)?;
+            let (page, sort) = (page()?, sort()?);
+            let catalog = directory.catalog.ok_or(Fault::CannotProcess)?;
+            let id = ObjectId::parse(id).ok_or(Fault::NoSuchObject)?;
+            let found = catalog
+                .search(&id, &criteria, page, &sort, directory.base)
+                .map_err(|_| Fault::NoSuchObject)?;
+            Ok(answer(found))
+        }
+        "GetSearchCapabilities" => Ok(soap::response(
+            action,
+            &[("SearchCaps", SEARCH_CAPABILITIES)],
+        )),
+        "GetSortCapabilities" => Ok(soap::response(action, &[("SortCaps", SORT_CAPABILITIES)])),
         "GetSystemUpdateID" => Ok(soap::response(action, &[("Id", &update_id)])),
         "X_GetFeatureList" => Ok(soap::response(action, &[("FeatureList", FEATURE_LIST)])),
         _ => Err(Fault::InvalidAction),
@@ -101,16 +145,10 @@ pub fn connection_manager(action: &Action) -> Result<String, Fault> {
         return Err(Fault::InvalidAction);
     }
     match action.name.as_str() {
-        "GetProtocolInfo" => {
-            let sources: Vec<String> = SOURCE_TYPES
-                .iter()
-                .map(|media_type| dlna::protocol_info(media_type))
-                .collect();
-            Ok(soap::response(
-                action,
-                &[("Source", &sources.join(",")), ("Sink", "")],
-            ))
-        }
+        "GetProtocolInfo" => Ok(soap::response(
+            action,
+            &[("Source", &source_protocol_info()), ("Sink", "")],
+        )),
         "GetCurrentConnectionIDs" => Ok(soap::response(action, &[("ConnectionIDs", "0")])),
         "GetCurrentConnectionInfo" => {
             if action.number("ConnectionID")? != 0 {
@@ -237,7 +275,15 @@ mod tests {
             &directory,
         )
         .unwrap();
-        assert!(search.contains("<SearchCaps></SearchCaps>"));
+        assert!(search.contains(
+            "<SearchCaps>dc:title,dc:date,upnp:class,upnp:genre,@id,@parentID</SearchCaps>"
+        ));
+        let sort = content_directory(
+            &action(CONTENT_DIRECTORY, "GetSortCapabilities", &[]),
+            &directory,
+        )
+        .unwrap();
+        assert!(sort.contains("<SortCaps>dc:title,dc:date</SortCaps>"));
         let features = content_directory(
             &action(CONTENT_DIRECTORY, "X_GetFeatureList", &[]),
             &directory,

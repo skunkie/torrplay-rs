@@ -20,6 +20,7 @@ quick-xml.workspace = true
 socket2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+torrplay-core.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
