@@ -15,7 +15,9 @@
 //! invalidation, which calls [`TorrentStorage::on_piece_invalidated`] under
 //! the torrent's state lock; the piece leaves the cache there, so a reader
 //! that finds it gone also finds it marked missing. A write to a piece
-//! nobody reserved evicts from the write path.
+//! nobody reserved evicts from the write path, and is dropped if that
+//! finds no room: failing it would stop the torrent, while a piece missing
+//! its chunk fails its hash check and is fetched again.
 //!
 //! A failed write fails the torrent in librqbit. The storage records the
 //! failure and reports the torrent's key to the factory's failure channel,
@@ -414,9 +416,25 @@ impl TorrentPieces {
                 result => return Ok(result?),
             }
         }
-        Ok(self
+        match self
             .cache
-            .write(self.key, piece, piece_length, offset, data)?)
+            .write(self.key, piece, piece_length, offset, data)
+        {
+            Err(CacheError::CapacityExceeded {
+                usage_bytes,
+                capacity_bytes,
+                ..
+            }) => {
+                tracing::warn!(
+                    piece,
+                    usage_bytes,
+                    capacity_bytes,
+                    "a write to a piece without a reservation found the cache full and was dropped"
+                );
+                Ok(())
+            }
+            result => Ok(result?),
+        }
     }
 }
 
@@ -528,5 +546,41 @@ impl TorrentStorage for MemoryStorage {
             // A poisoned cache reports itself on its next operation.
             let _ = pieces.cache.release_unverified(pieces.key, piece.get());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// librqbit stops a torrent whose storage fails a write. A write to a
+    /// piece nobody reserved, while pinned and partial pieces fill the
+    /// cache, stopped streams on a television.
+    #[test]
+    fn a_write_that_finds_the_cache_full_is_dropped() {
+        let cache = Arc::new(PieceCache::new(100));
+        let key = cache.register_torrent(0).unwrap();
+        let pieces = TorrentPieces {
+            cache: Arc::clone(&cache),
+            key,
+            lengths: Lengths::new(200, 100).unwrap(),
+            file_offsets: vec![0],
+            health: Arc::default(),
+            failures: None,
+        };
+        assert_eq!(cache.reserve(key, 0, 100).unwrap(), Reservation::Reserved);
+        pieces.write(0, 100, 0, &[1]).unwrap();
+
+        pieces
+            .write(1, 100, 0, &[1])
+            .expect("a write without room is dropped, not failed");
+        assert!(!pieces.health.failed.load(Ordering::Acquire));
+        let mut buf = [0];
+        assert!(
+            cache.read(key, 1, 0, &mut buf).is_err(),
+            "nothing was stored"
+        );
+        cache.read(key, 0, 0, &mut buf).unwrap();
+        assert_eq!(buf, [1]);
     }
 }

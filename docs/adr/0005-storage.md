@@ -246,7 +246,12 @@ Settings section describes.
 The cache never answers a write it cannot hold with a failure, because a
 failed write fails the whole torrent. Instead, capacity is reserved before
 the engine requests the piece, so the engine never receives blocks it cannot
-store. A torrent whose piece length exceeds cache capacity cannot stream any
+store. A write to a piece without a reservation evicts what it can, and if
+that frees too little, the write is dropped and logged rather than failed:
+the piece then fails its hash check and is fetched again with a
+reservation. Patch P12 keeps the engine from requesting a piece while its
+hash is checked, the race that once left a peer writing to an unreserved
+piece and, with the cache full, stopped a stream. A torrent whose piece length exceeds cache capacity cannot stream any
 piece, so it is refused, as [pieces longer than the
 cache](#pieces-longer-than-the-cache) describes.
 
