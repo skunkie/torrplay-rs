@@ -553,6 +553,29 @@ reports it in seconds, with the file's duration and a viewed mark.
   representation nor the listing version.
 - Deleting the torrent or the profile deletes its progress.
 
+The application infers the progress of files that DLNA media renderers
+stream, which report none, and saves it in the device profile:
+
+- A *viewing* of a file is its media server streams with gaps shorter than
+  2 minutes. The file's seek index, read once through the engine when the
+  file is first streamed, as [ADR 10](adr/0010-media-seek-index.md)
+  decides, maps byte offsets to playback times; a file without one, of
+  another container or without an index, infers nothing.
+- The viewing's latest stream that starts inside the file's media data and
+  has delivered at least 2 MiB stands for playback; shorter streams, and
+  those of headers and indexes, are the renderer probing the file. The
+  position is that stream's start time plus the lesser of the time since it
+  started and the media time it delivered, since playback runs no faster
+  than real time and no further than what arrived.
+- Every 5 seconds, a position that changed is saved, at most every 15
+  seconds, under the rules above, so 1% puts the file in progress and 90%
+  marks it viewed, after which the viewing saves nothing more. When the
+  viewing ends, its last position is saved 10 seconds earlier, unless it
+  reached 90%, so resuming never skips what was not seen.
+- Clearing the file's progress in the device profile ends its viewing
+  without saving, until the renderer streams the file again. `HEAD`, the
+  native content operation, and temporary torrents infer nothing.
+
 Up next lists what a profile can resume or watch next, by video files,
 those served with a `video/` media type:
 

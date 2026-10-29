@@ -237,6 +237,10 @@ fn digest(catalog: &Catalog) -> [u8; 32] {
             field(file.media_type);
         }
     }
+    for (torrent, file) in &catalog.viewed {
+        field(torrent);
+        field(file);
+    }
     hasher.finalize().into()
 }
 
@@ -450,7 +454,37 @@ async fn catalog<E: Engine>(app: &App<E>) -> Result<Option<Catalog>, Problem> {
             files: files.into_iter().map(|(_, _, file)| file).collect(),
         });
     }
-    Ok(Some(Catalog { torrents }))
+    Ok(Some(Catalog {
+        viewed: viewed(app),
+        torrents,
+    }))
+}
+
+/// The device profile's files in progress and viewed, most recently saved
+/// first, then by ID.
+fn viewed<E: Engine>(app: &App<E>) -> Vec<(String, String)> {
+    let Some(device) = app.viewing().ok().and_then(|viewing| {
+        let device = viewing.device()?;
+        Some(viewing.profile_progress(&device.id))
+    }) else {
+        return Vec::new();
+    };
+    let mut files: Vec<_> = device
+        .into_iter()
+        .flat_map(|(torrent, files)| {
+            files
+                .into_iter()
+                .filter(|(_, progress)| progress.in_progress() || progress.viewed())
+                .map(move |(file, progress)| {
+                    (progress.updated_at, torrent.to_string(), file.to_string())
+                })
+        })
+        .collect();
+    files.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| (&a.1, &a.2).cmp(&(&b.1, &b.2))));
+    files
+        .into_iter()
+        .map(|(_, torrent, file)| (torrent, file))
+        .collect()
 }
 
 pub(crate) async fn get_media<E: Engine>(
@@ -500,7 +534,7 @@ async fn media<E: Engine>(
             "The path's file name is not the file's name.",
         ));
     }
-    let mut response = files::content(&app, &torrent, &file, &headers, stream).await?;
+    let mut response = files::content(&app, &torrent, &file, &headers, stream, true).await?;
     let values = response.headers_mut();
     if negotiated.content_features {
         values.insert(

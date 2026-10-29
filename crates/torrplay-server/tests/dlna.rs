@@ -338,9 +338,9 @@ async fn temporary_torrents_stay_off_the_media_server() {
     server.stop().await;
 }
 
-/// DLNA-03 to DLNA-05: browsing the root, a container, a torrent, and a
-/// file; categories round-trip; series are in episode order and paused
-/// torrents are hidden.
+/// DLNA-03 to DLNA-05 and DLNA-18: browsing the root, a container, a
+/// torrent, and a file; categories round-trip; series are in episode order
+/// and paused torrents are hidden.
 #[tokio::test]
 async fn the_content_tree_browses() {
     let server = TestServer::start().await;
@@ -366,7 +366,7 @@ async fn the_content_tree_browses() {
 
     let (root, body) = browse(&server, "0", "BrowseDirectChildren").await;
     assert!(
-        body.contains("<NumberReturned>6</NumberReturned><TotalMatches>6</TotalMatches>"),
+        body.contains("<NumberReturned>7</NumberReturned><TotalMatches>7</TotalMatches>"),
         "{body}"
     );
     assert!(
@@ -926,4 +926,165 @@ fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
         at += 2 + length;
     }
     None
+}
+
+/// A film of 40 MiB in a multi-file torrent, beside its notes.
+fn film() -> FixtureSpec {
+    FixtureSpec {
+        id: "film".into(),
+        torrent_name: "Film".into(),
+        seed: 60,
+        piece_length: 256 * 1024,
+        layout: Layout::MultiFile {
+            files: [("Film.mkv", 40 << 20), ("notes.txt", 1000)]
+                .into_iter()
+                .map(|(name, size_bytes)| FileSpec {
+                    path: vec![name.into()],
+                    size_bytes,
+                })
+                .collect(),
+        },
+    }
+}
+
+/// A seek index of the film: 100 seconds over its whole 40 MiB, with a
+/// seek point every 10 seconds.
+fn film_index() -> torrplay_media::SeekIndex {
+    let size: u64 = 40 << 20;
+    let points = (0..10)
+        .map(|n| torrplay_media::SeekPoint {
+            time: std::time::Duration::from_secs(10 * n),
+            offset: size * n / 10,
+        })
+        .collect();
+    torrplay_media::SeekIndex::new(std::time::Duration::from_secs(100), 0..size, points).unwrap()
+}
+
+/// The device profile's progress of a file, or None.
+async fn device_progress(server: &TestServer, torrent: &str, file: &str) -> Option<Value> {
+    let profiles = server.get("/api/v1/profiles").await.json();
+    let device = profiles["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["kind"] == "device")
+        .unwrap()["links"]["self"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let read = server
+        .get(&format!("{device}/torrents/{torrent}/progress/{file}"))
+        .await;
+    (read.status == StatusCode::OK).then(|| read.json())
+}
+
+/// DLNA-16, DLNA-17, and PRG-07: streams of a file through the media
+/// server save the device profile's progress, inferred through the file's
+/// seek index, which recently-viewed lists; the native content route and
+/// HEAD infer nothing, clearing the progress ends the viewing, and playing
+/// past 90% marks the file viewed.
+#[tokio::test]
+async fn dlna_playback_infers_progress() {
+    let indexes: torrplay_server::SeekIndexes = std::sync::Arc::new(|_, _| Some(film_index()));
+    let server = TestServer::start_with_seek_indexes(indexes).await;
+    let spec = film();
+    server.engine.add_fixture(&spec);
+    let (torrent, files) = upload(&server, &spec).await;
+    let film = file_id(&files, "Film.mkv");
+    enable(&server, true).await;
+    let dlna = format!("/dlna/media/{torrent}/{film}/Film.mkv");
+    let native = format!("/api/v1/torrents/{torrent}/files/{film}/content");
+    let seconds = |progress: &Value| progress["position_seconds"].as_f64().unwrap();
+
+    // The native route and HEAD infer nothing.
+    let native_stream = server.open_range(&native, 0, 4 << 20).await;
+    let head = server
+        .send_raw(request(Method::HEAD, &dlna).body(Vec::new()).unwrap())
+        .await;
+    assert_eq!(head.status, StatusCode::OK);
+    server.advance_clock(std::time::Duration::from_secs(10));
+    server.app.infer_progress().await;
+    assert_eq!(device_progress(&server, &torrent, &film).await, None);
+    drop(native_stream);
+
+    // A DLNA stream plays in real time up to what it delivered: 4 MiB is
+    // 10 seconds of the film, of which 5 have passed.
+    let stream = server.open_range(&dlna, 0, 4 << 20).await;
+    server.advance_clock(std::time::Duration::from_secs(5));
+    server.app.infer_progress().await;
+    let saved = device_progress(&server, &torrent, &film)
+        .await
+        .expect("progress is inferred");
+    assert!((5.0..6.0).contains(&seconds(&saved)), "{saved}");
+    assert_eq!(saved["duration_seconds"], 100.0);
+    let (_, viewed) = browse(&server, "recently-viewed", "BrowseDirectChildren").await;
+    assert!(
+        viewed.contains(&format!("f:{torrent}:{film}")),
+        "the file is recently viewed: {viewed}"
+    );
+
+    // Clearing the progress ends the viewing.
+    let profiles = server.get("/api/v1/profiles").await.json();
+    let device = profiles["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["kind"] == "device")
+        .unwrap()["links"]["self"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let cleared = server
+        .send(
+            request(
+                Method::DELETE,
+                &format!("{device}/torrents/{torrent}/progress/{film}"),
+            )
+            .body(Vec::new())
+            .unwrap(),
+        )
+        .await;
+    assert_eq!(cleared.status, StatusCode::NO_CONTENT);
+    server.advance_clock(std::time::Duration::from_secs(20));
+    server.app.infer_progress().await;
+    assert_eq!(device_progress(&server, &torrent, &film).await, None);
+    drop(stream);
+
+    // A stream from 92% that delivers the rest reaches the viewed mark.
+    let from = (40u64 << 20) * 92 / 100;
+    let rest = (40usize << 20) - from as usize;
+    let credits = server.open_range(&dlna, from, rest).await;
+    server.advance_clock(std::time::Duration::from_secs(10));
+    server.app.infer_progress().await;
+    let viewed = device_progress(&server, &torrent, &film)
+        .await
+        .expect("progress is inferred again");
+    assert!(viewed["viewed_at"].is_string(), "{viewed}");
+    assert_eq!(seconds(&viewed), 0.0);
+    drop(credits);
+    server.stop().await;
+}
+
+/// DLNA-16: without a seek index, as for the fixtures' generated bytes,
+/// nothing is inferred.
+#[tokio::test]
+async fn files_without_a_seek_index_infer_nothing() {
+    let server = TestServer::start().await;
+    let spec = film();
+    server.engine.add_fixture(&spec);
+    let (torrent, files) = upload(&server, &spec).await;
+    let film = file_id(&files, "Film.mkv");
+    enable(&server, true).await;
+    let stream = server
+        .open_range(
+            &format!("/dlna/media/{torrent}/{film}/Film.mkv"),
+            0,
+            4 << 20,
+        )
+        .await;
+    server.advance_clock(std::time::Duration::from_secs(10));
+    server.app.infer_progress().await;
+    assert_eq!(device_progress(&server, &torrent, &film).await, None);
+    drop(stream);
+    server.stop().await;
 }

@@ -3671,6 +3671,7 @@ dependencies = [
  "torrplay-core",
  "torrplay-dlna",
  "torrplay-fixtures",
+ "torrplay-media",
  "torrplay-store",
  "tracing",
  "tracing-subscriber",

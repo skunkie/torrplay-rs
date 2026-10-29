@@ -11,6 +11,8 @@
 // covers only test functions.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+// Each test binary uses only part of the shared harness.
+#[allow(dead_code)]
 mod common;
 
 use std::collections::HashSet;

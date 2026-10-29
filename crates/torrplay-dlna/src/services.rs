@@ -210,7 +210,7 @@ mod tests {
             ],
         );
         let response = content_directory(&browse, &directory(Some(&catalog))).unwrap();
-        assert!(response.contains("<NumberReturned>6</NumberReturned><TotalMatches>6</TotalMatches><UpdateID>7</UpdateID>"), "{response}");
+        assert!(response.contains("<NumberReturned>7</NumberReturned><TotalMatches>7</TotalMatches><UpdateID>7</UpdateID>"), "{response}");
         assert_eq!(
             content_directory(&browse, &directory(None)),
             Err(Fault::CannotProcess),

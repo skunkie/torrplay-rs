@@ -298,6 +298,7 @@ These scenarios accept the lifecycle's
 | UPN-04 | Dismiss an entry, then save progress for its file | The entry leaves up next, and `DELETE` again is `404`; the new progress brings it back with the same ID |
 | UPN-05 | GET up next with `If-None-Match` of its ETag before and after saving progress | `304`, then `200` with a new ETag |
 | PRG-06 | A database write fails while saving progress, creating a profile, and dismissing an entry | `500 internal-error`; nothing changes |
+| PRG-07 | Stream a file with a seek index through the media server for some seconds, clear its progress, and stream its last 8% | The device profile's progress follows the stream in real time up to what it delivered; clearing ends the viewing; the last stream marks the file viewed with the position reset to 0 |
 
 ### Authentication
 
@@ -339,6 +340,9 @@ These scenarios accept [the DLNA contract](dlna.md) (M7).
 | DLNA-13 | Subscribe to ContentDirectory, change a torrent's title, renew, and unsubscribe | `200` with `SID` and `TIMEOUT`; an initial event with `SEQ: 0`, then one with the new update ID and `SEQ: 1`; `200`; `200`, and no more events |
 | DLNA-14 | Subscribe with a callback on another address, without `NT`, with both `SID` and `CALLBACK`, and renew an unknown `SID` | `412`, `412`, `400`, `412` |
 | DLNA-15 | Read the device description, each icon it lists, and an unlisted icon, with the media server on and off | Four icons, PNG then JPEG at 48 and 120 pixels, each served with its media type and the size listed; an unlisted icon, and every icon while off, is `404` |
+| DLNA-16 | Stream a file without a seek index through the media server, and one with an index through the native content operation and with `HEAD` | Nothing is inferred |
+| DLNA-17 | Browse `recently-viewed` after inferred progress | The device profile's files in progress and viewed, most recently saved first, at most 20, listed only while the tree lists their torrents |
+| DLNA-18 | Browse the root | `recently-viewed` follows `recent`, with its child count |
 
 ### Peers
 
