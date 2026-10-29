@@ -25,7 +25,7 @@ use crate::images::{self, Images};
 use crate::{StoreError, StoredTorrent};
 
 /// The schema version this build creates and migrates to.
-pub(crate) const VERSION: u32 = 14;
+pub(crate) const VERSION: u32 = 15;
 
 /// The schema at each version, applied in order to reach the next one.
 const MIGRATIONS: [&str; VERSION as usize] = [
@@ -204,6 +204,20 @@ const MIGRATIONS: [&str; VERSION as usize] = [
         file_id TEXT,
         CHECK ((torrent_id IS NULL) = (file_id IS NULL)),
         PRIMARY KEY (profile_id, title_key)
+    ) STRICT;",
+    // Version 15: temporary torrents' progress, by info hash because the
+    // torrents are not stored, and how long it is kept.
+    "ALTER TABLE settings
+        ADD COLUMN temporary_progress_seconds INTEGER CHECK (temporary_progress_seconds >= 0);
+    CREATE TABLE temporary_progress (
+        profile_id TEXT NOT NULL REFERENCES profiles (id) ON DELETE CASCADE,
+        info_hash TEXT NOT NULL,
+        file_id TEXT NOT NULL,
+        position_ms INTEGER NOT NULL CHECK (position_ms >= 0),
+        duration_ms INTEGER NOT NULL CHECK (duration_ms > 0 AND position_ms <= duration_ms),
+        viewed_at_ns INTEGER CHECK (viewed_at_ns >= 0),
+        updated_at_ns INTEGER NOT NULL CHECK (updated_at_ns >= 0),
+        PRIMARY KEY (profile_id, info_hash, file_id)
     ) STRICT;",
 ];
 
@@ -457,7 +471,7 @@ pub(crate) fn settings(connection: &Connection) -> Result<Stored, StoreError> {
         .query_row(
             "SELECT version, piece_wait_seconds, idle_timeout_seconds, idle_readers_per_torrent,
                     idle_readers_total, drain_period_seconds, peer_limit, cache_capacity_bytes,
-                    temporary_idle_seconds, temporary_torrents_max,
+                    temporary_idle_seconds, temporary_torrents_max, temporary_progress_seconds,
                     background_downloads, dlna_enabled, dlna_name, dht_enabled, log_level
              FROM settings WHERE id = 1",
             [],
@@ -529,6 +543,7 @@ pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(
         explicit.cache_capacity_bytes,
         explicit.temporary_idle_seconds,
         explicit.temporary_torrents_max,
+        explicit.temporary_progress_seconds,
     ]) {
         *value = explicit
             .map(i64::try_from)
@@ -545,15 +560,17 @@ pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(
         capacity,
         temporary_idle,
         temporary_max,
+        temporary_progress,
     ] = values;
     connection.execute(
         "INSERT INTO settings (id, version, piece_wait_seconds, idle_timeout_seconds,
                                idle_readers_per_torrent, idle_readers_total,
                                drain_period_seconds, peer_limit, cache_capacity_bytes,
                                temporary_idle_seconds, temporary_torrents_max,
+                               temporary_progress_seconds,
                                background_downloads, dlna_enabled, dlna_name,
                                dht_enabled, log_level)
-         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
          ON CONFLICT (id) DO UPDATE SET
              version = excluded.version,
              piece_wait_seconds = excluded.piece_wait_seconds,
@@ -565,6 +582,7 @@ pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(
              cache_capacity_bytes = excluded.cache_capacity_bytes,
              temporary_idle_seconds = excluded.temporary_idle_seconds,
              temporary_torrents_max = excluded.temporary_torrents_max,
+             temporary_progress_seconds = excluded.temporary_progress_seconds,
              background_downloads = excluded.background_downloads,
              dlna_enabled = excluded.dlna_enabled,
              dlna_name = excluded.dlna_name,
@@ -581,6 +599,7 @@ pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(
             capacity,
             temporary_idle,
             temporary_max,
+            temporary_progress,
             explicit.background_downloads,
             explicit.dlna_enabled,
             explicit.dlna_name,

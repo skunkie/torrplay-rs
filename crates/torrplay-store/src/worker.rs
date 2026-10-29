@@ -37,6 +37,12 @@ impl Worker {
                 Command::Insert(torrent, reply) => {
                     let _ = reply.send(self.write(|connection| insert(connection, &torrent)));
                 }
+                Command::Promote(torrent, info_hash, reply) => {
+                    let _ = reply.send(self.write(|connection| {
+                        insert(connection, &torrent)?;
+                        profiles::adopt_temporary_progress(connection, &info_hash, &torrent.id)
+                    }));
+                }
                 Command::SetConfiguration(id, configuration, reply) => {
                     let _ =
                         reply.send(self.write(|connection| {
@@ -143,6 +149,21 @@ impl Worker {
                             )?;
                         }
                         profiles::set_title_progress(connection, &progress)
+                    }));
+                }
+                Command::SetTemporaryProgress(progress, reply) => {
+                    let _ = reply.send(self.write(|connection| {
+                        profiles::set_temporary_progress(connection, &progress)
+                    }));
+                }
+                Command::DeleteTemporaryProgress(profile, info_hash, file, reply) => {
+                    let _ = reply.send(self.write(|connection| {
+                        profiles::delete_temporary_progress(connection, &profile, &info_hash, &file)
+                    }));
+                }
+                Command::ExpireTemporaryProgress(cutoff, reply) => {
+                    let _ = reply.send(self.write(|connection| {
+                        profiles::expire_temporary_progress(connection, cutoff)
                     }));
                 }
                 Command::DeleteTitleProgress(profile, key, reply) => {

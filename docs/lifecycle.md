@@ -344,11 +344,18 @@ temporary`; every other torrent is persisted.
   temporary or any torrents, and the facets and listing version count the
   torrents the filter holds. The DLNA media server never shows it. Reading
   it by its ID, its files, and its statistics work as for any torrent.
-- It takes no library members, poster, or progress, and no change to disk
-  storage: creating one with library members or disk storage is
+- It takes no library members or poster, and no change to disk storage:
+  creating one with library members or disk storage is
   `422 validation-failed` naming each member, and a later configuration
-  change of them, a poster upload, or a progress update is
-  `409 lifecycle-conflict`. Background downloads, which apply to disk
+  change of them or a poster upload is `409 lifecycle-conflict`.
+- Its files take progress like any torrent's, kept by the torrent's info
+  hash and the file's ID rather than its torrent ID, so the progress
+  outlives it: adding the same torrent again, temporary, finds the
+  progress again. Each file's progress is deleted
+  `temporary_progress_seconds` after it was last saved, and the
+  application looks for such progress every 10 seconds. Up next and the
+  DLNA media server leave temporary torrents out, and the device profile
+  infers nothing for them. Background downloads, which apply to disk
   storage, never fetch its pieces.
 - It is deleted once it has gone `temporary_idle_seconds` unwatched: with
   no response streaming its content, here or through the DLNA media
@@ -362,7 +369,8 @@ temporary`; every other torrent is persisted.
 - A configuration change to `retention: persisted` keeps the torrent: it is
   stored with its source, ID, and configuration before the response, as
   [Persistence](#persistence) describes, and from then on it is an ordinary
-  persisted torrent. A failed write leaves it temporary. A persisted
+  persisted torrent. Its files' progress becomes ordinary progress in the
+  same write. A failed write leaves it temporary. A persisted
   torrent cannot become temporary; `retention: temporary` for one is
   `422 validation-failed`.
 - A creation with the info hash of an existing torrent, temporary or

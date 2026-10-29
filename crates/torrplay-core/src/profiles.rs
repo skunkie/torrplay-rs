@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::SystemTime;
 
-use crate::id::{FileId, ProfileId, TorrentId, UpNextEntryId};
+use crate::id::{FileId, InfoHashV1, ProfileId, TorrentId, UpNextEntryId};
 use crate::image::ImageInfo;
 use crate::library::{self, TextError};
 
@@ -364,6 +364,9 @@ struct State {
     profiles: HashMap<ProfileId, Profile>,
     progress: HashMap<ProfileId, HashMap<TorrentId, BTreeMap<FileId, Progress>>>,
     titles: HashMap<ProfileId, HashMap<TitleKey, TitleProgress>>,
+    /// Temporary torrents' progress, by info hash, since their IDs do not
+    /// outlive them.
+    temporary: HashMap<ProfileId, HashMap<InfoHashV1, BTreeMap<FileId, Progress>>>,
     dismissals: HashMap<ProfileId, HashMap<UpNextEntryId, SystemTime>>,
 }
 
@@ -418,7 +421,104 @@ impl Viewing {
         state.profiles.remove(id);
         state.progress.remove(id);
         state.titles.remove(id);
+        state.temporary.remove(id);
         state.dismissals.remove(id);
+    }
+
+    /// Returns a profile's progress of the files of a temporary torrent with
+    /// the info hash.
+    pub fn temporary_progress(
+        &self,
+        profile: &ProfileId,
+        info_hash: &InfoHashV1,
+    ) -> BTreeMap<FileId, Progress> {
+        self.lock()
+            .temporary
+            .get(profile)
+            .and_then(|torrents| torrents.get(info_hash))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Records the progress of a temporary torrent's file.
+    pub fn set_temporary_progress(
+        &self,
+        profile: &ProfileId,
+        info_hash: InfoHashV1,
+        file: &FileId,
+        progress: Progress,
+    ) {
+        self.lock()
+            .temporary
+            .entry(profile.clone())
+            .or_default()
+            .entry(info_hash)
+            .or_default()
+            .insert(file.clone(), progress);
+    }
+
+    /// Forgets the progress of a temporary torrent's file and returns
+    /// whether there was any.
+    pub fn remove_temporary_progress(
+        &self,
+        profile: &ProfileId,
+        info_hash: &InfoHashV1,
+        file: &FileId,
+    ) -> bool {
+        let mut state = self.lock();
+        let Some(torrents) = state.temporary.get_mut(profile) else {
+            return false;
+        };
+        let removed = torrents
+            .get_mut(info_hash)
+            .is_some_and(|files| files.remove(file).is_some());
+        if torrents.get(info_hash).is_some_and(BTreeMap::is_empty) {
+            torrents.remove(info_hash);
+        }
+        removed
+    }
+
+    /// Turns every profile's progress of the temporary torrent with the info
+    /// hash into progress of the persisted torrent `torrent`.
+    pub fn adopt_temporary_progress(&self, info_hash: &InfoHashV1, torrent: &TorrentId) {
+        let mut state = self.lock();
+        let State {
+            progress,
+            temporary,
+            ..
+        } = &mut *state;
+        for (profile, torrents) in temporary.iter_mut() {
+            if let Some(files) = torrents.remove(info_hash) {
+                progress
+                    .entry(profile.clone())
+                    .or_default()
+                    .entry(torrent.clone())
+                    .or_default()
+                    .extend(files);
+            }
+        }
+    }
+
+    /// Returns whether a temporary torrent's file has progress last saved
+    /// before `cutoff`.
+    pub fn has_temporary_progress_before(&self, cutoff: SystemTime) -> bool {
+        self.lock().temporary.values().any(|torrents| {
+            torrents
+                .values()
+                .flat_map(BTreeMap::values)
+                .any(|progress| progress.updated_at < cutoff)
+        })
+    }
+
+    /// Forgets the progress of temporary torrents' files last saved before
+    /// `cutoff`.
+    pub fn expire_temporary_progress(&self, cutoff: SystemTime) {
+        for torrents in self.lock().temporary.values_mut() {
+            torrents.retain(|_, files| {
+                files.retain(|_, progress| progress.updated_at >= cutoff);
+                !files.is_empty()
+            });
+        }
     }
 
     /// Returns a profile's progress of every title.

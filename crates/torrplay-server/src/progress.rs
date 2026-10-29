@@ -3,10 +3,12 @@
 // SPDX-License-Identifier: MIT
 
 //! A profile's progress of a torrent's files. Progress lives in the store
-//! and needs no engine, only the torrent's metadata for its file IDs.
+//! and needs no engine, only the torrent's metadata for its file IDs. A
+//! temporary torrent's progress is kept by its info hash, so it outlives
+//! the torrent.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::SystemTime;
 
 use axum::body::Body;
 use axum::extract::{Path, State};
@@ -15,13 +17,15 @@ use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value};
 use torrplay_api as api;
 use torrplay_core::engine::Engine;
-use torrplay_core::id::{FileId, TorrentId};
+use torrplay_core::id::{FileId, InfoHashV1, TorrentId};
 use torrplay_core::metadata::Metadata;
 use torrplay_core::pagination::{
     CURSOR_PARAMETER, FileSortKey, FilterFingerprint, PAGE_SIZE_PARAMETER, PageRequest, paginate,
 };
-use torrplay_core::profiles::{self, DURATION_MAX_MS, Profile, ProfileKind, ProgressUpdate};
-use torrplay_store::{StoreError, StoredProgress};
+use torrplay_core::profiles::{
+    self, DURATION_MAX_MS, Profile, ProfileKind, Progress, ProgressUpdate,
+};
+use torrplay_store::{StoreError, StoredProgress, StoredTemporaryProgress};
 
 use crate::app::{App, store_failed};
 use crate::body::{JSON_LIMIT_BYTES, read_limited};
@@ -47,15 +51,44 @@ fn no_progress() -> Problem {
     Problem::not_found("The profile has no progress of this file.")
 }
 
+/// A torrent whose progress an operation reads or changes.
+struct Resolved {
+    profile: Profile,
+    torrent: TorrentId,
+    metadata: Arc<Metadata>,
+    /// The info hash its progress is kept by, while it is temporary.
+    temporary: Option<InfoHashV1>,
+}
+
+impl Resolved {
+    /// The profile's saved progress of the torrent's files.
+    fn saved<E: Engine>(&self, app: &App<E>) -> Result<BTreeMap<FileId, Progress>, Problem> {
+        let viewing = app.viewing()?;
+        Ok(match &self.temporary {
+            Some(info_hash) => viewing.temporary_progress(&self.profile.id, info_hash),
+            None => viewing.torrent_progress(&self.profile.id, &self.torrent),
+        })
+    }
+}
+
 /// The profile, the torrent, and its metadata, which must be available.
 async fn resolve<E: Engine>(
     app: &App<E>,
     profile: &str,
     torrent: &str,
-) -> Result<(Profile, TorrentId, Arc<Metadata>), Problem> {
+) -> Result<Resolved, Problem> {
     let profile = profile_routes::find(app, profile)?;
     let (view, metadata) = with_metadata(app, torrent).await?;
-    Ok((profile, view.record.id, metadata))
+    let temporary = app
+        .temporaries()
+        .contains(&view.record.id)
+        .then_some(view.record.info_hash);
+    Ok(Resolved {
+        profile,
+        torrent: view.record.id,
+        metadata,
+        temporary,
+    })
 }
 
 /// The file with the ID, which must be in the metadata.
@@ -81,8 +114,14 @@ pub(crate) async fn list<E: Engine>(
     let request =
         PageRequest::<FileSortKey>::new(paging.page_size, paging.cursor, FilterFingerprint::none())
             .map_err(|error| Problem::malformed(vec![page_error(error)]))?;
-    let (profile, torrent, metadata) = resolve(&app, &profile, &torrent).await?;
-    let saved = app.viewing()?.torrent_progress(&profile.id, &torrent);
+    let resolved = resolve(&app, &profile, &torrent).await?;
+    let saved = resolved.saved(&app)?;
+    let Resolved {
+        profile,
+        torrent,
+        metadata,
+        ..
+    } = resolved;
     let page = paginate(
         metadata
             .files()
@@ -126,17 +165,16 @@ pub(crate) async fn get<E: Engine>(
     headers: HeaderMap,
 ) -> Result<Response, Problem> {
     negotiate(&headers, JSON)?;
-    let (profile, torrent, metadata) = resolve(&app, &profile, &torrent).await?;
-    let file = file(&metadata, &file_id)?;
-    let progress = app
-        .viewing()?
-        .torrent_progress(&profile.id, &torrent)
+    let resolved = resolve(&app, &profile, &torrent).await?;
+    let file = file(&resolved.metadata, &file_id)?;
+    let progress = resolved
+        .saved(&app)?
         .get(&file)
         .copied()
         .ok_or_else(no_progress)?;
     let mut response = json(
         StatusCode::OK,
-        &representation::progress(&profile.id, &torrent, &file, &progress),
+        &representation::progress(&resolved.profile.id, &resolved.torrent, &file, &progress),
     )?;
     response
         .headers_mut()
@@ -230,11 +268,9 @@ pub(crate) async fn put<E: Engine>(
     body: Body,
 ) -> Result<Response, Problem> {
     negotiate(&headers, JSON)?;
-    let (profile, torrent, metadata) = resolve(&app, &profile, &torrent).await?;
-    let file = file(&metadata, &file_id)?;
-    if app.temporaries().contains(&torrent) {
-        return Err(crate::torrents::temporary_conflict("record its progress"));
-    }
+    let resolved = resolve(&app, &profile, &torrent).await?;
+    let file = file(&resolved.metadata, &file_id)?;
+    let (profile, torrent) = (&resolved.profile, &resolved.torrent);
     if profile.kind == ProfileKind::Device {
         return Err(profile_routes::device_conflict());
     }
@@ -258,24 +294,37 @@ pub(crate) async fn put<E: Engine>(
     let (progress, created) = {
         let _lane = app.write_lane().await;
         let viewing = app.viewing()?;
-        let previous = viewing
-            .torrent_progress(&profile.id, &torrent)
-            .get(&file)
-            .copied();
-        let progress = profiles::apply_update(previous.as_ref(), update, SystemTime::now());
-        app.store()
-            .set_progress(&StoredProgress {
-                profile: profile.id.clone(),
-                torrent: torrent.clone(),
-                file: file.clone(),
-                progress,
-            })
-            .await
-            .map_err(stored)?;
-        viewing.set_progress(&profile.id, &torrent, &file, progress);
+        let previous = resolved.saved(&app)?.get(&file).copied();
+        let progress = profiles::apply_update(previous.as_ref(), update, app.now());
+        match resolved.temporary {
+            Some(info_hash) => {
+                app.store()
+                    .set_temporary_progress(&StoredTemporaryProgress {
+                        profile: profile.id.clone(),
+                        info_hash,
+                        file: file.clone(),
+                        progress,
+                    })
+                    .await
+                    .map_err(stored)?;
+                viewing.set_temporary_progress(&profile.id, info_hash, &file, progress);
+            }
+            None => {
+                app.store()
+                    .set_progress(&StoredProgress {
+                        profile: profile.id.clone(),
+                        torrent: torrent.clone(),
+                        file: file.clone(),
+                        progress,
+                    })
+                    .await
+                    .map_err(stored)?;
+                viewing.set_progress(&profile.id, torrent, &file, progress);
+            }
+        }
         (progress, previous.is_none())
     };
-    let body = representation::progress(&profile.id, &torrent, &file, &progress);
+    let body = representation::progress(&profile.id, torrent, &file, &progress);
     if !created {
         return json(StatusCode::OK, &body);
     }
@@ -290,22 +339,31 @@ pub(crate) async fn delete<E: Engine>(
     State(app): State<Arc<App<E>>>,
     Path((profile, torrent, file_id)): Path<(String, String, String)>,
 ) -> Result<Response, Problem> {
-    let (profile, torrent, metadata) = resolve(&app, &profile, &torrent).await?;
-    let file = file(&metadata, &file_id)?;
+    let resolved = resolve(&app, &profile, &torrent).await?;
+    let file = file(&resolved.metadata, &file_id)?;
+    let (profile, torrent) = (resolved.profile.clone(), resolved.torrent.clone());
     app.require_running()?;
     let _lane = app.write_lane().await;
     let viewing = app.viewing()?;
-    if !viewing
-        .torrent_progress(&profile.id, &torrent)
-        .contains_key(&file)
-    {
+    if !resolved.saved(&app)?.contains_key(&file) {
         return Err(no_progress());
     }
-    app.store()
-        .delete_progress(&profile.id, &torrent, &file)
-        .await
-        .map_err(stored)?;
-    viewing.remove_progress(&profile.id, &torrent, &file);
+    match &resolved.temporary {
+        Some(info_hash) => {
+            app.store()
+                .delete_temporary_progress(&profile.id, info_hash, &file)
+                .await
+                .map_err(stored)?;
+            viewing.remove_temporary_progress(&profile.id, info_hash, &file);
+        }
+        None => {
+            app.store()
+                .delete_progress(&profile.id, &torrent, &file)
+                .await
+                .map_err(stored)?;
+            viewing.remove_progress(&profile.id, &torrent, &file);
+        }
+    }
     // A viewing of the file stops inferring until the renderer plays it
     // again.
     if profile.kind == ProfileKind::Device {

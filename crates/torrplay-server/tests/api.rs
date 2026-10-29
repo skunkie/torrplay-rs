@@ -2408,20 +2408,6 @@ mod scenario {
             StatusCode::CONFLICT,
             "lifecycle-conflict",
         );
-        let profile = default_profile(&server).await;
-        let id = created.json()["id"].as_str().unwrap().to_owned();
-        assert_problem(
-            &server
-                .send(put_progress(
-                    &format!("{profile}/torrents/{id}/progress/{file_id}"),
-                    10.0,
-                    100.0,
-                    false,
-                ))
-                .await,
-            StatusCode::CONFLICT,
-            "lifecycle-conflict",
-        );
         let persisted_configuration = format!("{persisted_path}/configuration");
         let persisted_tag = etag(&server.get(&persisted_configuration).await);
         let demoted = server
@@ -2682,6 +2668,7 @@ mod scenario {
                 "cache_capacity_bytes": 268_435_456,
                 "temporary_idle_seconds": 600,
                 "temporary_torrents_max": 16,
+                "temporary_progress_seconds": 2592000,
                 "background_downloads": true,
                 "dlna_enabled": false,
                 "dlna_name": "TorrPlay",
@@ -5602,6 +5589,150 @@ mod scenario {
         server.stop().await;
     }
 
+    /// Adds `spec` as a temporary torrent, its metadata retrievable, and
+    /// returns its path, its ID, and the path of the profile's progress of
+    /// its video.
+    async fn add_temporary(
+        server: &TestServer,
+        spec: &FixtureSpec,
+        profile: &str,
+    ) -> (String, String, String) {
+        server.engine.set_metadata_retrievable(
+            torrplay_core::id::InfoHashV1::from_bytes(spec.metainfo().info_hash),
+            true,
+        );
+        let created = create_temporary(server, spec).await;
+        assert_eq!(created.status, StatusCode::CREATED);
+        let created = created.json();
+        let path = created["links"]["self"].as_str().unwrap().to_owned();
+        let id = created["id"].as_str().unwrap().to_owned();
+        let video = file_ids(server, &path).await["video.mkv"].clone();
+        let item = format!("{profile}/torrents/{id}/progress/{video}");
+        (path, id, item)
+    }
+
+    /// TMP-09 to TMP-12: a temporary torrent's progress is kept by its info
+    /// hash, so it outlives the torrent until `temporary_progress_seconds`
+    /// pass, and promotion makes it ordinary progress.
+    pub async fn temporary_progress() {
+        let server = TestServer::start().await;
+        let profile = default_profile(&server).await;
+        let spec = catalog::media_names();
+
+        // TMP-09: saving, reading, listing, and clearing.
+        let (path, id, item) = add_temporary(&server, &spec, &profile).await;
+        let saved = server.send(put_progress(&item, 30.0, 100.0, false)).await;
+        assert_eq!(saved.status, StatusCode::CREATED);
+        assert_eq!(server.get(&item).await.json()["position_seconds"], 30.0);
+        let listed = server
+            .get(&format!("{profile}/torrents/{id}/progress"))
+            .await
+            .json();
+        assert_eq!(listed["items"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            server.send(empty(Method::DELETE, &item)).await.status,
+            StatusCode::NO_CONTENT
+        );
+        assert_problem(&server.get(&item).await, StatusCode::NOT_FOUND, "not-found");
+        let device = device_profile(&server).await;
+        let video = item.rsplit('/').next().unwrap();
+        assert_problem(
+            &server
+                .send(put_progress(
+                    &format!("{device}/torrents/{id}/progress/{video}"),
+                    30.0,
+                    100.0,
+                    false,
+                ))
+                .await,
+            StatusCode::CONFLICT,
+            "lifecycle-conflict",
+        );
+        let up_next = format!("{profile}/up-next");
+        server.send(put_progress(&item, 40.0, 100.0, false)).await;
+        assert!(
+            server.get(&up_next).await.json()["items"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
+            "up next leaves temporary torrents out"
+        );
+
+        // TMP-10: the progress outlives the torrent.
+        assert_eq!(
+            server.send(empty(Method::DELETE, &path)).await.status,
+            StatusCode::NO_CONTENT
+        );
+        let (path, id, item) = add_temporary(&server, &spec, &profile).await;
+        assert_eq!(
+            server.get(&item).await.json()["position_seconds"],
+            40.0,
+            "found again by info hash"
+        );
+
+        // TMP-11: promotion makes it ordinary progress, which a restart keeps.
+        let configuration = format!("{path}/configuration");
+        let tag = server
+            .get(&configuration)
+            .await
+            .header(header::ETAG)
+            .unwrap()
+            .to_owned();
+        let promoted = server
+            .send(merge_patch(
+                &configuration,
+                &tag,
+                &json!({ "retention": "persisted" }),
+            ))
+            .await;
+        assert_eq!(promoted.status, StatusCode::OK);
+        assert_eq!(server.get(&item).await.json()["position_seconds"], 40.0);
+        let server = server.restart().await;
+        assert_eq!(server.get(&item).await.json()["position_seconds"], 40.0);
+        let entries = server.get(&up_next).await.json();
+        assert_eq!(
+            entries["items"][0]["torrent"]["id"],
+            id.as_str(),
+            "{entries}"
+        );
+
+        // TMP-12: after the retention, the progress is gone.
+        assert_eq!(
+            server.send(empty(Method::DELETE, &path)).await.status,
+            StatusCode::NO_CONTENT
+        );
+        let (path, _, item) = add_temporary(&server, &spec, &profile).await;
+        server.send(put_progress(&item, 50.0, 100.0, false)).await;
+        assert_eq!(
+            server.send(empty(Method::DELETE, &path)).await.status,
+            StatusCode::NO_CONTENT
+        );
+        server.advance_clock(Duration::from_secs(2_592_000 - 60));
+        server.app.expire_temporaries().await;
+        let (path, _, item) = add_temporary(&server, &spec, &profile).await;
+        assert_eq!(
+            server.get(&item).await.json()["position_seconds"],
+            50.0,
+            "kept until the retention passes"
+        );
+        assert_eq!(
+            server.send(empty(Method::DELETE, &path)).await.status,
+            StatusCode::NO_CONTENT
+        );
+        server.advance_clock(Duration::from_secs(61));
+        server.app.expire_temporaries().await;
+        let (path, _, item) = add_temporary(&server, &spec, &profile).await;
+        assert_problem(&server.get(&item).await, StatusCode::NOT_FOUND, "not-found");
+        assert_eq!(
+            server.send(empty(Method::DELETE, &path)).await.status,
+            StatusCode::NO_CONTENT
+        );
+        let server = server.restart().await;
+        let (_, _, item) = add_temporary(&server, &spec, &profile).await;
+        assert_problem(&server.get(&item).await, StatusCode::NOT_FOUND, "not-found");
+        server.stop().await;
+    }
+
     /// PRG-06: failed writes change no profile, progress, or dismissal.
     pub async fn profiles_store_failures() {
         let server = TestServer::start().await;
@@ -6610,6 +6741,7 @@ scenarios!(
     preloads,
     viewings,
     title_progress,
+    temporary_progress,
     library,
     library_filters,
     posters,

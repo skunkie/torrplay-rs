@@ -1160,11 +1160,16 @@ async fn store_configuration<E: Engine>(
                     configuration: configuration.clone(),
                     ..current.clone()
                 };
+                // Its progress, kept by info hash, becomes the persisted
+                // torrent's in the same write.
                 app.store()
-                    .insert(stored(&record, &source))
+                    .promote(stored(&record, &source), current.info_hash)
                     .await
                     .map_err(|error| Stored::Failed(store_failed(error)))?;
                 app.temporaries().remove(&current.id);
+                if let Ok(viewing) = app.viewing() {
+                    viewing.adopt_temporary_progress(&current.info_hash, &current.id);
+                }
             }
             // A temporary torrent is not stored.
             (Some(_), false) => {}

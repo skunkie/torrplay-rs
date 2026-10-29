@@ -92,6 +92,14 @@ pub const TEMPORARY_TORRENTS_MAX: Bounds = Bounds {
     maximum: 64,
     default: 16,
 };
+/// How long a temporary torrent's file keeps its progress after it was last
+/// saved, in seconds: a day to a year, 30 days by default.
+pub const TEMPORARY_PROGRESS_SECONDS: Bounds = Bounds {
+    name: "temporary_progress_seconds",
+    minimum: 86_400,
+    maximum: 31_536_000,
+    default: 2_592_000,
+};
 
 /// The name of the background downloads switch.
 pub const BACKGROUND_DOWNLOADS: &str = "background_downloads";
@@ -164,7 +172,7 @@ impl LogLevel {
 
 /// Every numeric setting, in the order representations list them; the
 /// other settings follow them.
-pub const ALL: [Bounds; 9] = [
+pub const ALL: [Bounds; 10] = [
     PIECE_WAIT_SECONDS,
     IDLE_TIMEOUT_SECONDS,
     IDLE_READERS_PER_TORRENT,
@@ -174,6 +182,7 @@ pub const ALL: [Bounds; 9] = [
     CACHE_CAPACITY_BYTES,
     TEMPORARY_IDLE_SECONDS,
     TEMPORARY_TORRENTS_MAX,
+    TEMPORARY_PROGRESS_SECONDS,
 ];
 
 /// The effective settings.
@@ -198,6 +207,9 @@ pub struct Settings {
     pub temporary_idle: Duration,
     /// The most temporary torrents the application holds.
     pub temporary_torrents_max: usize,
+    /// How long a temporary torrent's file keeps its progress after it was
+    /// last saved.
+    pub temporary_progress: Duration,
     /// Whether started torrents in disk storage download the pieces they
     /// lack while no reader exists.
     pub background_downloads: bool,
@@ -222,6 +234,7 @@ impl Settings {
         cache_capacity_bytes: CACHE_CAPACITY_BYTES.default,
         temporary_idle: Duration::from_secs(TEMPORARY_IDLE_SECONDS.default),
         temporary_torrents_max: TEMPORARY_TORRENTS_MAX.default as usize,
+        temporary_progress: Duration::from_secs(TEMPORARY_PROGRESS_SECONDS.default),
         background_downloads: BACKGROUND_DOWNLOADS_DEFAULT,
         dlna_enabled: DLNA_ENABLED_DEFAULT,
         dht_enabled: DHT_ENABLED_DEFAULT,
@@ -281,6 +294,8 @@ pub struct Explicit {
     pub temporary_idle_seconds: Option<u64>,
     /// [`TEMPORARY_TORRENTS_MAX`].
     pub temporary_torrents_max: Option<u64>,
+    /// [`TEMPORARY_PROGRESS_SECONDS`].
+    pub temporary_progress_seconds: Option<u64>,
     /// [`BACKGROUND_DOWNLOADS`].
     pub background_downloads: Option<bool>,
     /// [`DLNA_ENABLED`].
@@ -315,13 +330,14 @@ impl Explicit {
             "cache_capacity_bytes" => &mut self.cache_capacity_bytes,
             "temporary_idle_seconds" => &mut self.temporary_idle_seconds,
             "temporary_torrents_max" => &mut self.temporary_torrents_max,
+            "temporary_progress_seconds" => &mut self.temporary_progress_seconds,
             _ => return None,
         })
     }
 
     /// Each numeric setting's value, explicit or default, in [`ALL`]'s
     /// order.
-    pub fn values(&self) -> [u64; 9] {
+    pub fn values(&self) -> [u64; 10] {
         let value = |explicit: Option<u64>, bounds: Bounds| explicit.unwrap_or(bounds.default);
         [
             value(self.piece_wait_seconds, PIECE_WAIT_SECONDS),
@@ -333,6 +349,7 @@ impl Explicit {
             value(self.cache_capacity_bytes, CACHE_CAPACITY_BYTES),
             value(self.temporary_idle_seconds, TEMPORARY_IDLE_SECONDS),
             value(self.temporary_torrents_max, TEMPORARY_TORRENTS_MAX),
+            value(self.temporary_progress_seconds, TEMPORARY_PROGRESS_SECONDS),
         ]
     }
 
@@ -352,7 +369,7 @@ impl Explicit {
                 ),
             })
             .collect();
-        let [_, _, per_torrent, total, _, _, _, _, _] = values;
+        let [_, _, per_torrent, total, _, _, _, _, _, _] = values;
         if let Some(name) = &self.dlna_name
             && let Err(detail) = check_dlna_name(name)
         {
@@ -386,6 +403,7 @@ impl Explicit {
             capacity,
             temporary_idle,
             temporary_max,
+            temporary_progress,
         ] = self.values();
         // The counts' bounds are far below any usize.
         Settings {
@@ -398,6 +416,7 @@ impl Explicit {
             cache_capacity_bytes: capacity,
             temporary_idle: Duration::from_secs(temporary_idle),
             temporary_torrents_max: temporary_max as usize,
+            temporary_progress: Duration::from_secs(temporary_progress),
             background_downloads: self
                 .background_downloads
                 .unwrap_or(BACKGROUND_DOWNLOADS_DEFAULT),
@@ -632,7 +651,7 @@ mod tests {
         }
         assert_eq!(
             explicit.values(),
-            [100, 101, 102, 103, 104, 105, 106, 107, 108]
+            [100, 101, 102, 103, 104, 105, 106, 107, 108, 109]
         );
         assert!(explicit.slot("readahead_bytes").is_none());
     }

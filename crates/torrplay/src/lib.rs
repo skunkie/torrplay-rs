@@ -508,6 +508,7 @@ pub async fn serve(
         profiles,
         progress,
         titles,
+        temporary_progress,
         dismissals,
         credentials,
         media_server_udn,
@@ -543,7 +544,7 @@ pub async fn serve(
         App::new(engine.clone(), store)
             .with_overrides(options.overrides)
             .with_settings(settings)
-            .with_viewing(profiles, progress, titles, dismissals)
+            .with_viewing(profiles, progress, titles, temporary_progress, dismissals)
             .with_credentials(credentials)
             .with_allowed_hosts(options.allowed_hosts)
             .with_media_server(Device {

@@ -6,12 +6,14 @@
 //! and writing each change.
 
 use rusqlite::{Connection, params};
-use torrplay_core::id::{FileId, ProfileId, TorrentId, UpNextEntryId};
+use torrplay_core::id::{FileId, InfoHashV1, ProfileId, TorrentId, UpNextEntryId};
 use torrplay_core::profiles::{Profile, ProfileKind, Progress, TitleKey, TitleProgress};
 
 use crate::images::{self, Images};
 use crate::schema::{from_ns, to_ns};
-use crate::{StoreError, StoredDismissal, StoredProgress, StoredTitleProgress};
+use crate::{
+    StoreError, StoredDismissal, StoredProgress, StoredTemporaryProgress, StoredTitleProgress,
+};
 
 fn corrupt(what: String) -> StoreError {
     StoreError::Corrupt(what)
@@ -126,6 +128,51 @@ pub(crate) fn titles(connection: &Connection) -> Result<Vec<StoredTitleProgress>
                     updated_at: time(updated_at)?,
                 },
                 played,
+            },
+        });
+    }
+    Ok(all)
+}
+
+/// Reads every profile's progress of temporary torrents' files.
+pub(crate) fn temporary_progress(
+    connection: &Connection,
+) -> Result<Vec<StoredTemporaryProgress>, StoreError> {
+    let mut statement = connection.prepare(
+        "SELECT profile_id, info_hash, file_id, position_ms, duration_ms, viewed_at_ns,
+                updated_at_ns
+         FROM temporary_progress",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, i64>(3)?,
+            row.get::<_, i64>(4)?,
+            row.get::<_, Option<i64>>(5)?,
+            row.get::<_, i64>(6)?,
+        ))
+    })?;
+    let mut all = Vec::new();
+    for row in rows {
+        let (profile, info_hash, file, position, duration, viewed_at, updated_at) = row?;
+        let bad = |what: &str| {
+            corrupt(format!(
+                "progress of {profile}, {info_hash}, {file}: {what}"
+            ))
+        };
+        let time = |nanos| from_ns(nanos).ok_or_else(|| bad("a time is out of range"));
+        all.push(StoredTemporaryProgress {
+            profile: ProfileId::from_stored(&profile).ok_or_else(|| bad("malformed profile ID"))?,
+            info_hash: InfoHashV1::from_hex(&info_hash)
+                .ok_or_else(|| bad("malformed info hash"))?,
+            file: FileId::from_stored(&file).ok_or_else(|| bad("malformed file ID"))?,
+            progress: Progress {
+                position_ms: u64::try_from(position).map_err(|_| bad("negative position"))?,
+                duration_ms: u64::try_from(duration).map_err(|_| bad("negative duration"))?,
+                viewed_at: viewed_at.map(time).transpose()?,
+                updated_at: time(updated_at)?,
             },
         });
     }
@@ -254,6 +301,93 @@ pub(crate) fn delete_progress(
     connection.execute(
         "DELETE FROM progress WHERE profile_id = ?1 AND torrent_id = ?2 AND file_id = ?3",
         [profile.as_str(), torrent.as_str(), file.as_str()],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn set_temporary_progress(
+    connection: &Connection,
+    stored: &StoredTemporaryProgress,
+) -> Result<(), StoreError> {
+    let profile_stored: bool = connection.query_row(
+        "SELECT EXISTS (SELECT 1 FROM profiles WHERE id = ?1)",
+        [stored.profile.as_str()],
+        |row| row.get(0),
+    )?;
+    if !profile_stored {
+        return Err(StoreError::UnknownProfile);
+    }
+    let progress = &stored.progress;
+    let count = |value: u64| {
+        i64::try_from(value).map_err(|_| corrupt("a progress value is out of range".into()))
+    };
+    connection.execute(
+        "INSERT INTO temporary_progress
+             (profile_id, info_hash, file_id, position_ms, duration_ms, viewed_at_ns,
+              updated_at_ns)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT (profile_id, info_hash, file_id) DO UPDATE SET
+             position_ms = excluded.position_ms,
+             duration_ms = excluded.duration_ms,
+             viewed_at_ns = excluded.viewed_at_ns,
+             updated_at_ns = excluded.updated_at_ns",
+        params![
+            stored.profile.as_str(),
+            stored.info_hash.to_string(),
+            stored.file.as_str(),
+            count(progress.position_ms)?,
+            count(progress.duration_ms)?,
+            progress.viewed_at.map(to_ns).transpose()?,
+            to_ns(progress.updated_at)?,
+        ],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn delete_temporary_progress(
+    connection: &Connection,
+    profile: &ProfileId,
+    info_hash: &InfoHashV1,
+    file: &FileId,
+) -> Result<(), StoreError> {
+    connection.execute(
+        "DELETE FROM temporary_progress
+         WHERE profile_id = ?1 AND info_hash = ?2 AND file_id = ?3",
+        params![profile.as_str(), info_hash.to_string(), file.as_str()],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn expire_temporary_progress(
+    connection: &Connection,
+    cutoff: std::time::SystemTime,
+) -> Result<(), StoreError> {
+    connection.execute(
+        "DELETE FROM temporary_progress WHERE updated_at_ns < ?1",
+        [to_ns(cutoff)?],
+    )?;
+    Ok(())
+}
+
+/// Turns the progress of the temporary torrent with the info hash into the
+/// stored torrent `torrent`'s progress.
+pub(crate) fn adopt_temporary_progress(
+    connection: &Connection,
+    info_hash: &InfoHashV1,
+    torrent: &TorrentId,
+) -> Result<(), StoreError> {
+    let info_hash = info_hash.to_string();
+    connection.execute(
+        "INSERT INTO progress
+             (profile_id, torrent_id, file_id, position_ms, duration_ms, viewed_at_ns,
+              updated_at_ns)
+         SELECT profile_id, ?2, file_id, position_ms, duration_ms, viewed_at_ns, updated_at_ns
+         FROM temporary_progress WHERE info_hash = ?1",
+        params![info_hash, torrent.as_str()],
+    )?;
+    connection.execute(
+        "DELETE FROM temporary_progress WHERE info_hash = ?1",
+        [info_hash],
     )?;
     Ok(())
 }
