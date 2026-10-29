@@ -67,6 +67,11 @@ ContentDirectory and ConnectionManager services.
   listener closes.
 - `LOCATION` is `http://<address>:<port>/dlna/description.xml`, with the
   advertised address and the API's listen port.
+- The listener shares port 1900 with other UPnP programs on the host, such
+  as media players discovering servers. It sets `SO_REUSEADDR`, and on
+  macOS and the BSDs, which share a port only between sockets that all set
+  it, `SO_REUSEPORT` too. Linux needs only the first, and there the second
+  would spread unicast searches across the sharing sockets.
 
 ## Resources
 

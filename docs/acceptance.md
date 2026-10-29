@@ -343,6 +343,7 @@ These scenarios accept [the DLNA contract](dlna.md) (M7).
 | DLNA-16 | Stream a file without a seek index through the media server, and one with an index through the native content operation and with `HEAD` | Nothing is inferred |
 | DLNA-17 | Browse `recently-viewed` after inferred progress | The device profile's files in progress and viewed, most recently saved first, at most 20, listed only while the tree lists their torrents |
 | DLNA-18 | Browse the root | `recently-viewed` follows `recent`, with its child count |
+| DLNA-19 | Bind the SSDP port as a UPnP media player does, after the media server starts and before it starts | Both bind, on macOS and the BSDs as on Linux and Windows |
 
 ### Peers
 
