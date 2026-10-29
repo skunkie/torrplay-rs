@@ -22,6 +22,7 @@ use torrplay_core::fake::FakeEngine;
 use torrplay_core::id::{TORRENT_ID_RANDOM_BYTES, TorrentId};
 use torrplay_core::registry::Registry;
 use torrplay_core::settings::Overrides;
+use torrplay_fixtures::{FileSpec, FixtureSpec, Layout};
 use torrplay_server::{App, SeekIndexes, router};
 use torrplay_store::{Store, StoredTorrent};
 
@@ -701,4 +702,42 @@ impl Drop for LogCapture {
     fn drop(&mut self) {
         CAPTURE.with(|capture| *capture.borrow_mut() = None);
     }
+}
+
+/// A film of 40 MiB in a multi-file torrent, beside its notes.
+pub fn film() -> FixtureSpec {
+    FixtureSpec {
+        id: "film".into(),
+        torrent_name: "Film".into(),
+        seed: 60,
+        piece_length: 256 * 1024,
+        layout: Layout::MultiFile {
+            files: [("Film.mkv", 40 << 20), ("notes.txt", 1000)]
+                .into_iter()
+                .map(|(name, size_bytes)| FileSpec {
+                    path: vec![name.into()],
+                    size_bytes,
+                })
+                .collect(),
+        },
+    }
+}
+
+/// A seek index of the film: 100 seconds over its whole 40 MiB, with a
+/// seek point every 10 seconds.
+pub fn film_index() -> torrplay_media::SeekIndex {
+    let size: u64 = 40 << 20;
+    let points = (0..10)
+        .map(|n| torrplay_media::SeekPoint {
+            time: Duration::from_secs(10 * n),
+            offset: size * n / 10,
+        })
+        .collect();
+    torrplay_media::SeekIndex::new(Duration::from_secs(100), 0..size, points)
+        .expect("a valid seek index")
+}
+
+/// Seek indexes that give the film's every file, as only its MKV streams.
+pub fn film_indexes() -> SeekIndexes {
+    Arc::new(|_, _| Some(film_index()))
 }

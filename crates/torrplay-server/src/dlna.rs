@@ -36,7 +36,7 @@ use torrplay_dlna::tree::{self, Base, Catalog};
 use crate::app::App;
 use crate::body::read_limited;
 use crate::content;
-use crate::files;
+use crate::files::{self, Watcher};
 use crate::posters;
 use crate::problem::{Problem, ProblemType};
 use crate::representation::{self, file_name};
@@ -551,7 +551,8 @@ async fn media<E: Engine>(
             "The path's file name is not the file's name.",
         ));
     }
-    let mut response = files::content(&app, &torrent, &file, &headers, stream, true).await?;
+    let mut response =
+        files::content(&app, &torrent, &file, &headers, stream, Watcher::Device).await?;
     let values = response.headers_mut();
     if negotiated.content_features {
         values.insert(

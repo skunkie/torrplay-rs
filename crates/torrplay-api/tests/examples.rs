@@ -83,6 +83,7 @@ fn through(schema: &str, example: &Value) -> Option<Result<Value, String>> {
         "UpNextEntry" => round_trip::<api::UpNextEntry>(example),
         "UpNextPage" => round_trip::<api::UpNextPage>(example),
         "ValidationProblem" => round_trip::<api::ValidationProblem>(example),
+        "Viewing" => round_trip::<api::Viewing>(example),
         "Year" => round_trip::<Option<api::Year>>(example),
         _ => return None,
     })

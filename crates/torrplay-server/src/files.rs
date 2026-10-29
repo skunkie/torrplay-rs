@@ -23,7 +23,7 @@ use torrplay_core::pagination::{
 use crate::app::{App, TorrentView};
 use crate::content::{RangeRequest, disposition, media_type, range_request};
 use crate::headers::{EntityTags, negotiate};
-use crate::inference::WatchedBody;
+use crate::inference::{Owner, WatchedBody};
 use crate::problem::{Problem, ProblemType};
 use crate::query::{Paging, Query, page_error, reject};
 use crate::representation::{self, JSON, torrent_path};
@@ -42,6 +42,22 @@ fn metadata_unavailable() -> Problem {
 
 fn unknown_file() -> Problem {
     Problem::not_found("The torrent has no file with this ID.")
+}
+
+pub(crate) fn unknown_viewing() -> Problem {
+    Problem::not_found("The file has no viewing with this ID.")
+}
+
+/// Whose viewing a stream of a file's content feeds.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Watcher<'a> {
+    /// No viewing's.
+    Nobody,
+    /// The device profile's, as for DLNA media renderers, which report no
+    /// progress.
+    Device,
+    /// The application viewing with this ID, which must be one of the file.
+    App(&'a str),
 }
 
 /// Returns the torrent `id` and its metadata, which must be available.
@@ -114,9 +130,16 @@ pub(crate) async fn get<E: Engine>(
 pub(crate) async fn get_content<E: Engine>(
     State(app): State<Arc<App<E>>>,
     Path((id, file_id)): Path<(String, String)>,
+    uri: Uri,
     headers: HeaderMap,
 ) -> Result<Response, Problem> {
-    content(&app, &id, &file_id, &headers, true, false).await
+    // Other parameters, such as a playback token, are not the operation's
+    // to judge.
+    let query = Query::parse(uri.query());
+    let watcher = query
+        .first("viewing_id")
+        .map_or(Watcher::Nobody, Watcher::App);
+    content(&app, &id, &file_id, &headers, true, watcher).await
 }
 
 /// HEAD answers as GET would, from the application's records, without
@@ -126,21 +149,33 @@ pub(crate) async fn head_content<E: Engine>(
     Path((id, file_id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Response, Problem> {
-    content(&app, &id, &file_id, &headers, false, false).await
+    content(&app, &id, &file_id, &headers, false, Watcher::Nobody).await
 }
 
-/// A file's content, streamed when `stream`, its progress inferred when
-/// `infer`, as for DLNA media renderers, which report none.
+/// A file's content, streamed when `stream`, feeding `watcher`'s viewing.
+/// HEAD feeds none.
 pub(crate) async fn content<E: Engine>(
     app: &App<E>,
     id: &str,
     file_id: &str,
     headers: &HeaderMap,
     stream: bool,
-    infer: bool,
+    watcher: Watcher<'_>,
 ) -> Result<Response, Problem> {
     let (view, metadata) = with_metadata(app, id).await?;
     let (position, file) = metadata.file(file_id).ok_or_else(unknown_file)?;
+    let key = (view.record.id.clone(), file.id().clone());
+    let watcher = if stream { watcher } else { Watcher::Nobody };
+    let owner = match watcher {
+        Watcher::Nobody => None,
+        // Temporary torrents take no device progress.
+        Watcher::Device => (!app.temporaries().contains(&view.record.id)).then_some(Owner::Device),
+        Watcher::App(viewing) => Some(Owner::App(
+            app.inference()
+                .app_viewing(viewing, &key, app.now())
+                .ok_or_else(unknown_viewing)?,
+        )),
+    };
     if matches!(
         view.observed_state(),
         ObservedState::Paused | ObservedState::Failed
@@ -215,20 +250,22 @@ pub(crate) async fn content<E: Engine>(
         Some(activity) => Body::new(ActiveBody::new(body, activity)),
         None => body,
     };
-    // Temporary torrents take no progress, and only media plays.
+    // Only media plays.
     let played = media_type.starts_with("video/") || media_type.starts_with("audio/");
-    let body = if stream && infer && played && !app.temporaries().contains(&view.record.id) {
-        let watched = app.inference().begin(
-            (view.record.id.clone(), file.id().clone()),
+    let watched = owner.filter(|_| played).and_then(|owner| {
+        app.inference().begin(
+            owner,
+            key,
             file.index(),
             name.clone(),
             length,
             range.start(),
             app.clock(),
-        );
-        Body::new(WatchedBody::new(body, watched))
-    } else {
-        body
+        )
+    });
+    let body = match watched {
+        Some(watched) => Body::new(WatchedBody::new(body, watched)),
+        None => body,
     };
     let mut response = (status, body).into_response();
     let values = response.headers_mut();

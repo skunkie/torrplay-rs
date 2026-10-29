@@ -574,7 +574,8 @@ stream, which report none, and saves it in the device profile:
   reached 90%, so resuming never skips what was not seen.
 - Clearing the file's progress in the device profile ends its viewing
   without saving, until the renderer streams the file again. `HEAD`, the
-  native content operation, and temporary torrents infer nothing.
+  native content operation, and temporary torrents infer nothing for the
+  device profile.
 
 Up next lists what a profile can resume or watch next, by video files,
 those served with a `video/` media type:
@@ -599,6 +600,49 @@ those served with a `video/` media type:
   otherwise.
 - Each entry embeds its torrent's and file's current representations and
   the file's progress, and the page's ETag digests the page.
+
+## Viewings
+
+An application that launches a player which reports no progress, such as
+an external video player, creates an application viewing of the file and
+gives the player the viewing's content link, the content URL with
+`viewing_id`. The player needs no knowledge of viewings:
+
+1. `POST .../files/{file_id}/viewings` answers `201` with the viewing, its
+   ID in `Location` and `id`, and its `content` link.
+2. The application launches the player with that link and keeps the ID, in
+   its own storage when the system may stop it while the player runs.
+3. When the player exits, the application reads the viewing and saves the
+   progress it chooses, such as a person profile's progress of the file,
+   then may delete the viewing. A lost ID cannot be found again; viewings
+   are not listed.
+
+A viewing estimates as the device profile's viewings do:
+
+- Each `GET` of the content link with its `viewing_id` is one of the
+  viewing's streams, if the file is served with an `audio/` or `video/`
+  media type. `HEAD` and other content requests are not. A `viewing_id`
+  that names no viewing of the file, or an expired one, is `404`.
+- The position is the latest playing stream's start time plus the lesser
+  of the time since it started, until it ended, and the media time it
+  delivered, through the file's seek index. It is never backed off, and
+  saves nothing. It and the duration are `null` until the index is read,
+  and stay `null` for a file without one or before anything plays.
+- Viewings of temporary torrents estimate too.
+
+Viewings are kept in memory:
+
+- A viewing expires 24 hours after its last activity, a stream that was
+  open, or after its creation before any. At most 256 are kept; creating
+  one past that drops the one inactive longest, preferring those without
+  an open stream.
+- Deleting the viewing, deleting its torrent, or a restart removes it.
+  Streams of its content link that are open continue.
+- A viewing whose stream ended, and which nobody has read since, keeps its
+  temporary torrent from expiry for up to an hour after the stream ended,
+  so an application the system stopped while the player ran can still
+  read where it stopped. The first `GET` while no stream is open releases
+  it.
 
 ## Authentication
 

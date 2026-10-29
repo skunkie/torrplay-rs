@@ -320,6 +320,40 @@ impl Borrow<str> for PreloadId {
     }
 }
 
+/// The opaque, server-assigned identifier of a viewing: `vwg_` followed by
+/// 128 random bits in lowercase base32, drawn like a torrent ID's. Viewings
+/// are not stored, so an ID names its viewing only while the process runs.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ViewingId(String);
+
+impl ViewingId {
+    /// The prefix of every viewing ID the server issues.
+    pub const PREFIX: &str = "vwg_";
+
+    /// Builds the ID that encodes `random`. Production IDs take these bytes
+    /// from [`random_torrent_id_bytes`].
+    pub fn from_random_bytes(random: [u8; TORRENT_ID_RANDOM_BYTES]) -> Self {
+        Self(format!("{}{}", Self::PREFIX, base32::encode(&random)))
+    }
+
+    /// Returns the ID's text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ViewingId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl Borrow<str> for ViewingId {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
 /// The identifier of a file within its torrent, derived from the file's raw
 /// path components: `fil_` followed by the first 128 bits of a SHA-256
 /// digest in lowercase base32.
@@ -457,6 +491,18 @@ mod tests {
         assert_eq!(
             PreloadId::from_random_bytes([0xff; 16]).to_string(),
             "prl_77777777777777777777777774"
+        );
+    }
+
+    #[test]
+    fn viewing_ids_encode_their_random_bytes_with_their_own_prefix() {
+        assert_eq!(
+            ViewingId::from_random_bytes([0; 16]).as_str(),
+            "vwg_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+        assert_eq!(
+            ViewingId::from_random_bytes([0xff; 16]).to_string(),
+            "vwg_77777777777777777777777774"
         );
     }
 

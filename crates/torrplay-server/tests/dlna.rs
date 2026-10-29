@@ -14,7 +14,7 @@
 #[allow(dead_code)]
 mod common;
 
-use common::{Exchange, TestServer, form_request, json_request, request};
+use common::{Exchange, TestServer, film, film_index, form_request, json_request, request};
 use http::{Method, StatusCode, header};
 use serde_json::{Value, json};
 use torrplay_fixtures::{FileSpec, FixtureSpec, Layout, catalog, hex};
@@ -926,38 +926,6 @@ fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
         at += 2 + length;
     }
     None
-}
-
-/// A film of 40 MiB in a multi-file torrent, beside its notes.
-fn film() -> FixtureSpec {
-    FixtureSpec {
-        id: "film".into(),
-        torrent_name: "Film".into(),
-        seed: 60,
-        piece_length: 256 * 1024,
-        layout: Layout::MultiFile {
-            files: [("Film.mkv", 40 << 20), ("notes.txt", 1000)]
-                .into_iter()
-                .map(|(name, size_bytes)| FileSpec {
-                    path: vec![name.into()],
-                    size_bytes,
-                })
-                .collect(),
-        },
-    }
-}
-
-/// A seek index of the film: 100 seconds over its whole 40 MiB, with a
-/// seek point every 10 seconds.
-fn film_index() -> torrplay_media::SeekIndex {
-    let size: u64 = 40 << 20;
-    let points = (0..10)
-        .map(|n| torrplay_media::SeekPoint {
-            time: std::time::Duration::from_secs(10 * n),
-            offset: size * n / 10,
-        })
-        .collect();
-    torrplay_media::SeekIndex::new(std::time::Duration::from_secs(100), 0..size, points).unwrap()
 }
 
 /// The device profile's progress of a file, or None.

@@ -19,7 +19,8 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use common::{
-    BOUNDARY, Exchange, LogCapture, TestServer, form, form_request, json_request, request,
+    BOUNDARY, Exchange, LogCapture, TestServer, film, film_indexes, form, form_request,
+    json_request, request,
 };
 use http::{Method, StatusCode, header};
 use serde_json::{Value, json};
@@ -3275,6 +3276,287 @@ mod scenario {
         server.stop().await;
     }
 
+    /// The device profile's progress of a file, or None.
+    async fn device_progress(server: &TestServer, torrent: &str, file: &str) -> Option<Value> {
+        let profiles = server.get("/api/v1/profiles").await.json();
+        let device = profiles["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["kind"] == "device")
+            .unwrap()["links"]["self"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let torrent = torrent.rsplit('/').next().unwrap();
+        let read = server
+            .get(&format!("{device}/torrents/{torrent}/progress/{file}"))
+            .await;
+        (read.status == StatusCode::OK).then(|| read.json())
+    }
+
+    /// Waits until the viewing at `path` reports no open stream, as the
+    /// server notices a closed connection, and returns it.
+    async fn ended_viewing(server: &TestServer, path: &str) -> Value {
+        for _ in 0..200 {
+            let viewing = server.get(path).await.json();
+            if viewing["streaming"] == false {
+                return viewing;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("the viewing's stream did not end");
+    }
+
+    /// The film's files: the film and its notes.
+    async fn film_files(server: &TestServer, path: &str) -> (Value, Value) {
+        let files = files_of(server, path).await;
+        let named = |name: &str| {
+            files
+                .iter()
+                .find(|file| file["path"].as_array().unwrap().last().unwrap() == name)
+                .unwrap()
+                .clone()
+        };
+        (named("Film.mkv"), named("notes.txt"))
+    }
+
+    /// VWG-01 to VWG-08 and the viewing operations' responses: creating
+    /// viewings, the estimate their content links' streams feed, reading,
+    /// expiry, deletion, and an unread viewing's hold on a temporary
+    /// torrent.
+    pub async fn viewings() {
+        let server = TestServer::start_with_seek_indexes(film_indexes()).await;
+        let spec = film();
+        server.engine.add_fixture(&spec);
+        let created = server.upload(&spec.metainfo().bytes, None).await;
+        let torrent = created.json()["links"]["self"].as_str().unwrap().to_owned();
+        let (film, notes) = film_files(&server, &torrent).await;
+        let film_path = film["links"]["self"].as_str().unwrap().to_owned();
+        let viewings = film["links"]["viewings"].as_str().unwrap().to_owned();
+        assert_eq!(viewings, format!("{film_path}/viewings"));
+
+        // VWG-01: a new viewing has no estimate yet.
+        let made = server.send(empty(Method::POST, &viewings)).await;
+        assert_eq!(made.status, StatusCode::CREATED);
+        let viewing = made.json();
+        let path = viewing["links"]["self"].as_str().unwrap().to_owned();
+        assert_eq!(made.header(header::LOCATION), Some(path.as_str()));
+        let id = viewing["id"].as_str().unwrap();
+        assert!(id.starts_with("vwg_"), "{id}");
+        assert_eq!(viewing["position_seconds"], Value::Null);
+        assert_eq!(viewing["last_active_at"], Value::Null);
+        assert_eq!(viewing["streaming"], false);
+        let content = viewing["links"]["content"].as_str().unwrap().to_owned();
+        assert_eq!(content, format!("{film_path}/content?viewing_id={id}"));
+        assert_problem(
+            &server
+                .send(empty(
+                    Method::POST,
+                    &format!("{torrent}/files/fil_aaaaaaaaaaaaaaaaaaaaaaaaaa/viewings"),
+                ))
+                .await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        let retrieving = server.create_magnet(&unknown_magnet(9)).await.json()["links"]["self"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let without_metadata =
+            format!("{retrieving}/files/fil_aaaaaaaaaaaaaaaaaaaaaaaaaa/viewings");
+        for exchange in [
+            server.send(empty(Method::POST, &without_metadata)).await,
+            server.get(&format!("{without_metadata}/{id}")).await,
+            server
+                .send(empty(Method::DELETE, &format!("{without_metadata}/{id}")))
+                .await,
+        ] {
+            assert_problem(&exchange, StatusCode::CONFLICT, "lifecycle-conflict");
+        }
+
+        // VWG-02: the stream's estimate, which saves nothing.
+        let stream = server.open_range(&content, 0, 4 << 20).await;
+        server.advance_clock(Duration::from_secs(10));
+        server.app.infer_progress().await;
+        let playing = server.get(&path).await;
+        assert_eq!(playing.status, StatusCode::OK);
+        let playing = playing.json();
+        assert_eq!(playing["streaming"], true);
+        let seconds = |viewing: &Value| viewing["position_seconds"].as_f64().unwrap();
+        assert!((10.0..11.0).contains(&seconds(&playing)), "{playing}");
+        assert_eq!(playing["duration_seconds"], 100.0);
+        assert!(playing["last_active_at"].is_string());
+        drop(stream);
+        let ended = ended_viewing(&server, &path).await;
+        assert!((10.0..11.0).contains(&seconds(&ended)), "{ended}");
+        let film_id = film["id"].as_str().unwrap();
+        assert_eq!(device_progress(&server, &torrent, film_id).await, None);
+
+        // VWG-03: a file that does not play has no estimate.
+        let notes_viewings = notes["links"]["viewings"].as_str().unwrap();
+        let notes_viewing = server
+            .send(empty(Method::POST, notes_viewings))
+            .await
+            .json();
+        let notes_path = notes_viewing["links"]["self"].as_str().unwrap().to_owned();
+        let notes_content = notes_viewing["links"]["content"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(server.get(&notes_content).await.status, StatusCode::OK);
+        server.app.infer_progress().await;
+        let read = server.get(&notes_path).await.json();
+        assert_eq!(read["position_seconds"], Value::Null);
+        assert_eq!(read["duration_seconds"], Value::Null);
+        assert_eq!(
+            read["last_active_at"],
+            Value::Null,
+            "nothing streamed into it"
+        );
+
+        // VWG-04: a viewing_id must name a viewing of the file; HEAD ignores
+        // it.
+        let notes_id = notes_viewing["id"].as_str().unwrap();
+        for unknown in [
+            format!("{film_path}/content?viewing_id=vwg_aaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            format!("{film_path}/content?viewing_id={notes_id}"),
+        ] {
+            assert_problem(
+                &server.get(&unknown).await,
+                StatusCode::NOT_FOUND,
+                "not-found",
+            );
+        }
+        let head = server
+            .send(empty(
+                Method::HEAD,
+                &format!("{film_path}/content?viewing_id=vwg_aaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            ))
+            .await;
+        assert_eq!(head.status, StatusCode::OK);
+        assert_problem(
+            &server.get(&format!("{viewings}/{notes_id}")).await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        assert_eq!(
+            server.send_raw(empty(Method::GET, &viewings)).await.status,
+            StatusCode::METHOD_NOT_ALLOWED,
+            "viewings are not listed"
+        );
+
+        // VWG-06: deletion.
+        let deleted = server.send(empty(Method::DELETE, &notes_path)).await;
+        assert_eq!(deleted.status, StatusCode::NO_CONTENT);
+        for exchange in [
+            server.get(&notes_path).await,
+            server.get(&notes_content).await,
+            server.send(empty(Method::DELETE, &notes_path)).await,
+        ] {
+            assert_problem(&exchange, StatusCode::NOT_FOUND, "not-found");
+        }
+
+        // Engine faults and unavailability.
+        server.engine.inject_fault(Some("the engine failed"));
+        for exchange in [
+            server.send(empty(Method::POST, &viewings)).await,
+            server.get(&path).await,
+            server.send(empty(Method::DELETE, &path)).await,
+        ] {
+            assert_problem(
+                &exchange,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal-error",
+            );
+        }
+        server.engine.inject_fault(None);
+        server
+            .engine
+            .set_readiness(Readiness::Unavailable { retry_after: None });
+        for exchange in [
+            server.send(empty(Method::POST, &viewings)).await,
+            server.get(&path).await,
+            server.send(empty(Method::DELETE, &path)).await,
+        ] {
+            assert_problem(
+                &exchange,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "engine-unavailable",
+            );
+        }
+        server.engine.set_readiness(Readiness::Ready);
+
+        // VWG-05: a day without activity expires a viewing.
+        server.advance_clock(Duration::from_secs(24 * 3600));
+        for exchange in [server.get(&path).await, server.get(&content).await] {
+            assert_problem(&exchange, StatusCode::NOT_FOUND, "not-found");
+        }
+
+        // VWG-08: deleting the torrent removes its viewings.
+        let kept = server.send(empty(Method::POST, &viewings)).await.json();
+        let kept = kept["links"]["self"].as_str().unwrap().to_owned();
+        assert_eq!(
+            server.send(empty(Method::DELETE, &torrent)).await.status,
+            StatusCode::NO_CONTENT
+        );
+        assert_problem(&server.get(&kept).await, StatusCode::NOT_FOUND, "not-found");
+
+        // VWG-07: an unread viewing keeps its temporary torrent past the idle
+        // time until it is read.
+        let temporary = create_temporary(&server, &spec).await;
+        assert_eq!(temporary.status, StatusCode::CREATED);
+        let temporary = temporary.json()["links"]["self"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        server.engine.set_metadata_retrievable(
+            torrplay_core::id::InfoHashV1::from_bytes(spec.metainfo().info_hash),
+            true,
+        );
+        let (temporary_film, _) = film_files(&server, &temporary).await;
+        let held = server
+            .send(empty(
+                Method::POST,
+                temporary_film["links"]["viewings"].as_str().unwrap(),
+            ))
+            .await
+            .json();
+        let held_path = held["links"]["self"].as_str().unwrap().to_owned();
+        let played = server
+            .send(
+                request(Method::GET, held["links"]["content"].as_str().unwrap())
+                    .header(header::RANGE, "bytes=0-1048575")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(played.status, StatusCode::PARTIAL_CONTENT);
+        // The server drops the finished body just after the client has it.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        server.advance_clock(Duration::from_secs(700));
+        server.app.expire_temporaries().await;
+        assert_eq!(
+            server.get(&temporary).await.status,
+            StatusCode::OK,
+            "an unread viewing holds it past the idle time"
+        );
+        for _ in 0..200 {
+            let read = server.get(&held_path).await;
+            if read.status == StatusCode::OK && read.json()["streaming"] == false {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        server.app.expire_temporaries().await;
+        assert_problem(
+            &server.get(&temporary).await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        server.stop().await;
+    }
+
     /// LIB-01 to LIB-05: library members are set at creation and by merge
     /// patches, normalized, validated, cleared with null, and the kind is
     /// inferred from file names unless configured.
@@ -6064,6 +6346,7 @@ scenarios!(
     storage_transitions,
     cache_capacity_settings,
     preloads,
+    viewings,
     library,
     library_filters,
     posters,

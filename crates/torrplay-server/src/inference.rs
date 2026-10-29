@@ -14,6 +14,12 @@
 //! file's headers and index. Playback runs no faster than real time and no
 //! further than what was delivered, so the position is the stream's start
 //! time plus the lesser of its elapsed time and the media time it delivered.
+//!
+//! The device profile's viewings, which DLNA streams feed, save their
+//! positions and end after the gap. An application's viewing, which it
+//! creates for a player that reports nothing, only estimates; it lasts
+//! [`APP_VIEWING_TTL`] after its last activity, and the application reads
+//! it and saves what it chooses.
 
 use std::collections::{HashMap, VecDeque};
 use std::io;
@@ -27,7 +33,7 @@ use axum::body::{Body, Bytes, HttpBody};
 use http_body::{Frame, SizeHint};
 use tokio::io::AsyncReadExt;
 use torrplay_core::engine::{ByteRange, Engine};
-use torrplay_core::id::{FileId, TorrentId};
+use torrplay_core::id::{FileId, TorrentId, ViewingId};
 use torrplay_core::metadata::FileIndex;
 use torrplay_media::{SeekIndex, Source};
 
@@ -58,6 +64,17 @@ pub(crate) const INDEXES_MAX: usize = 64;
 /// The most streams a viewing remembers, the latest.
 const STREAMS_KEPT: usize = 8;
 
+/// How long an application's viewing lasts after its last activity.
+pub(crate) const APP_VIEWING_TTL: Duration = Duration::from_secs(24 * 3600);
+
+/// The most application viewings kept; a new one past it drops the one
+/// inactive longest.
+pub(crate) const APP_VIEWINGS_MAX: usize = 256;
+
+/// How long an unread application viewing keeps its temporary torrent after
+/// its last stream ended.
+pub(crate) const UNREAD_HOLD: Duration = Duration::from_secs(3600);
+
 /// A file of a torrent.
 pub(crate) type FileKey = (TorrentId, FileId);
 
@@ -68,8 +85,60 @@ pub(crate) struct Inference(Arc<Mutex<State>>);
 #[derive(Default)]
 struct State {
     viewings: HashMap<FileKey, Viewing>,
+    apps: HashMap<ViewingId, AppViewing>,
     indexes: Indexes,
     next_stream: u64,
+}
+
+/// Whose viewing a stream feeds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Owner {
+    /// The device profile's viewing of the file.
+    Device,
+    /// An application's viewing.
+    App(ViewingId),
+}
+
+/// An application's viewing of a file.
+struct AppViewing {
+    file: FileKey,
+    streams: VecDeque<Stream>,
+    created_at: SystemTime,
+    /// When its last stream ended, or `None` before any did.
+    last_ended: Option<SystemTime>,
+    /// Whether a stream ended since it was last read.
+    unread: bool,
+}
+
+impl AppViewing {
+    fn streaming(&self) -> bool {
+        self.streams.iter().any(|stream| stream.ended_at.is_none())
+    }
+
+    /// When a stream was last open: `now` while one is.
+    fn last_active(&self, now: SystemTime) -> Option<SystemTime> {
+        if self.streaming() {
+            Some(now)
+        } else {
+            self.last_ended
+        }
+    }
+
+    fn expires_at(&self, now: SystemTime) -> SystemTime {
+        self.last_active(now).unwrap_or(self.created_at) + APP_VIEWING_TTL
+    }
+}
+
+/// What an application's viewing reports.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct AppStatus {
+    /// The estimated position and the file's duration, once its seek index
+    /// is read and something played.
+    pub(crate) position: Option<(Duration, Duration)>,
+    pub(crate) streaming: bool,
+    pub(crate) created_at: SystemTime,
+    pub(crate) last_active_at: Option<SystemTime>,
+    pub(crate) expires_at: SystemTime,
 }
 
 /// A file's seek index: being read, read, or absent.
@@ -154,68 +223,184 @@ impl Inference {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Records a stream of the file from byte `start`, its index to be read
-    /// unless known, until the returned guard drops.
+    /// Records a stream of the file from byte `start` in `owner`'s viewing,
+    /// its index to be read unless known, until the returned guard drops.
+    /// `None` when the owner is an application viewing that is not one of
+    /// this file.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn begin(
         &self,
+        owner: Owner,
         key: FileKey,
         file: FileIndex,
         name: String,
         size: u64,
         start: u64,
         clock: &Clock,
-    ) -> Watched {
+    ) -> Option<Watched> {
         let now = clock();
         let delivered = Arc::new(AtomicU64::new(0));
-        let mut state = self.lock();
+        let mut guard = self.lock();
+        let state = &mut *guard;
+        let streams = match &owner {
+            Owner::Device => {
+                let viewing = state.viewings.entry(key.clone()).or_insert(Viewing {
+                    streams: VecDeque::new(),
+                    idle_since: now,
+                    last_saved: None,
+                    last_position: None,
+                    finished: false,
+                    ended: false,
+                });
+                // A stream before its last save continues the viewing.
+                viewing.ended = false;
+                &mut viewing.streams
+            }
+            Owner::App(id) => {
+                let viewing = state
+                    .apps
+                    .get_mut(id)
+                    .filter(|viewing| viewing.file == key)?;
+                &mut viewing.streams
+            }
+        };
         state.next_stream += 1;
         let number = state.next_stream;
-        if !state.indexes.entries.contains_key(&key) {
-            state
-                .indexes
-                .insert(key.clone(), IndexState::Pending { file, name, size });
-        }
-        let viewing = state.viewings.entry(key.clone()).or_insert(Viewing {
-            streams: VecDeque::new(),
-            idle_since: now,
-            last_saved: None,
-            last_position: None,
-            finished: false,
-            ended: false,
-        });
-        // A stream before its last save continues the viewing.
-        viewing.ended = false;
-        viewing.streams.push_back(Stream {
+        streams.push_back(Stream {
             number,
             start,
             started_at: now,
             ended_at: None,
             delivered: Arc::clone(&delivered),
         });
-        if viewing.streams.len() > STREAMS_KEPT {
-            viewing.streams.pop_front();
+        if streams.len() > STREAMS_KEPT {
+            streams.pop_front();
         }
-        Watched {
+        if !state.indexes.entries.contains_key(&key) {
+            state
+                .indexes
+                .insert(key.clone(), IndexState::Pending { file, name, size });
+        }
+        Some(Watched {
             inference: self.clone(),
+            owner,
             key,
             number,
             delivered,
             clock: Arc::clone(clock),
+        })
+    }
+
+    fn end(&self, owner: &Owner, key: &FileKey, number: u64, now: SystemTime) {
+        let mut state = self.lock();
+        let streams = match owner {
+            Owner::Device => state.viewings.get_mut(key).map(|viewing| {
+                viewing.idle_since = viewing.idle_since.max(now);
+                &mut viewing.streams
+            }),
+            Owner::App(id) => state.apps.get_mut(id).map(|viewing| {
+                viewing.last_ended = Some(viewing.last_ended.map_or(now, |last| last.max(now)));
+                viewing.unread = true;
+                &mut viewing.streams
+            }),
+        };
+        if let Some(stream) = streams
+            .into_iter()
+            .flatten()
+            .find(|stream| stream.number == number)
+        {
+            stream.ended_at = Some(now);
         }
     }
 
-    fn end(&self, key: &FileKey, number: u64, now: SystemTime) {
+    /// Creates an application viewing of the file, dropping the one inactive
+    /// longest past [`APP_VIEWINGS_MAX`].
+    pub(crate) fn create(&self, id: ViewingId, key: FileKey, now: SystemTime) -> AppStatus {
         let mut state = self.lock();
-        if let Some(viewing) = state.viewings.get_mut(key) {
-            if let Some(stream) = viewing
-                .streams
-                .iter_mut()
-                .find(|stream| stream.number == number)
-            {
-                stream.ended_at = Some(now);
-            }
-            viewing.idle_since = viewing.idle_since.max(now);
+        let viewing = AppViewing {
+            file: key,
+            streams: VecDeque::new(),
+            created_at: now,
+            last_ended: None,
+            unread: false,
+        };
+        let status = app_status(&viewing, None, now);
+        state.apps.insert(id, viewing);
+        while state.apps.len() > APP_VIEWINGS_MAX {
+            let oldest = state
+                .apps
+                .iter()
+                .min_by_key(|(_, viewing)| (viewing.streaming(), viewing.expires_at(now)))
+                .map(|(id, _)| id.clone());
+            match oldest {
+                Some(oldest) => state.apps.remove(&oldest),
+                None => break,
+            };
         }
+        status
+    }
+
+    /// Reports the file's application viewing `id`, `None` unless it is one
+    /// of the file. Reading it when no stream is open marks it read.
+    pub(crate) fn read(&self, id: &str, key: &FileKey, now: SystemTime) -> Option<AppStatus> {
+        let mut guard = self.lock();
+        let state = &mut *guard;
+        let viewing = state
+            .apps
+            .get_mut(id)
+            .filter(|viewing| viewing.file == *key && viewing.expires_at(now) > now)?;
+        let index = match state.indexes.entries.get(key) {
+            Some(IndexState::Ready(index)) => Some(Arc::clone(index)),
+            _ => None,
+        };
+        if !viewing.streaming() {
+            viewing.unread = false;
+        }
+        Some(app_status(viewing, index.as_deref(), now))
+    }
+
+    /// The file's application viewing `id`, unless it expired.
+    pub(crate) fn app_viewing(
+        &self,
+        id: &str,
+        key: &FileKey,
+        now: SystemTime,
+    ) -> Option<ViewingId> {
+        self.lock()
+            .apps
+            .get_key_value(id)
+            .filter(|(_, viewing)| viewing.file == *key && viewing.expires_at(now) > now)
+            .map(|(id, _)| id.clone())
+    }
+
+    /// Removes the file's application viewing `id`. Returns whether there
+    /// was one.
+    pub(crate) fn remove(&self, id: &str, key: &FileKey) -> bool {
+        let mut state = self.lock();
+        if state
+            .apps
+            .get(id)
+            .is_some_and(|viewing| viewing.file == *key)
+        {
+            state.apps.remove(id);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Whether an application viewing of the torrent ended unread within
+    /// [`UNREAD_HOLD`], which keeps a temporary torrent.
+    pub(crate) fn holds(&self, torrent: &TorrentId, now: SystemTime) -> bool {
+        self.lock().apps.values().any(|viewing| {
+            viewing.file.0 == *torrent
+                && viewing.unread
+                && !viewing.streaming()
+                && viewing.last_ended.is_some_and(|ended| {
+                    now.duration_since(ended)
+                        .is_ok_and(|since| since < UNREAD_HOLD)
+                })
+        })
     }
 
     /// Ends a viewing without saving, as clearing its progress does.
@@ -237,10 +422,12 @@ impl Inference {
         }
     }
 
-    /// Ends a deleted torrent's viewings and forgets its indexes.
+    /// Ends a deleted torrent's viewings, its applications' too, and forgets
+    /// its indexes.
     pub(crate) fn forget_torrent(&self, torrent: &TorrentId) {
         let mut state = self.lock();
         state.viewings.retain(|(id, _), _| id != torrent);
+        state.apps.retain(|_, viewing| viewing.file.0 != *torrent);
         state.indexes.forget_torrent(torrent);
     }
 
@@ -284,8 +471,12 @@ impl Inference {
     pub(crate) fn due(&self, now: SystemTime) -> Vec<Due> {
         let mut state = self.lock();
         let State {
-            viewings, indexes, ..
+            viewings,
+            apps,
+            indexes,
+            ..
         } = &mut *state;
+        apps.retain(|_, viewing| viewing.expires_at(now) > now);
         let mut due = Vec::new();
         viewings.retain(|key, viewing| {
             if viewing.ended {
@@ -335,6 +526,18 @@ impl Inference {
     }
 }
 
+fn app_status(viewing: &AppViewing, index: Option<&SeekIndex>, now: SystemTime) -> AppStatus {
+    AppStatus {
+        position: index.and_then(|index| {
+            estimate(index, &viewing.streams, now).map(|position| (position, index.duration()))
+        }),
+        streaming: viewing.streaming(),
+        created_at: viewing.created_at,
+        last_active_at: viewing.last_active(now),
+        expires_at: viewing.expires_at(now),
+    }
+}
+
 /// The playback position of the viewing's streams at `now`, from its latest
 /// stream that starts inside the media data and has delivered at least
 /// [`PROBE_BYTES`].
@@ -367,6 +570,7 @@ fn estimate(index: &SeekIndex, streams: &VecDeque<Stream>, now: SystemTime) -> O
 /// Keeps a stream in its viewing, counting what it delivers, until it ends.
 pub(crate) struct Watched {
     inference: Inference,
+    owner: Owner,
     key: FileKey,
     number: u64,
     delivered: Arc<AtomicU64>,
@@ -375,7 +579,8 @@ pub(crate) struct Watched {
 
 impl Drop for Watched {
     fn drop(&mut self) {
-        self.inference.end(&self.key, self.number, (self.clock)());
+        self.inference
+            .end(&self.owner, &self.key, self.number, (self.clock)());
     }
 }
 
@@ -559,14 +764,17 @@ mod tests {
         }
 
         fn stream(&self, start: u64) -> Watched {
-            self.inference.begin(
-                key(),
-                FileIndex(0),
-                "Film.mkv".into(),
-                100_001_000,
-                start,
-                &self.clock,
-            )
+            self.inference
+                .begin(
+                    Owner::Device,
+                    key(),
+                    FileIndex(0),
+                    "Film.mkv".into(),
+                    100_001_000,
+                    start,
+                    &self.clock,
+                )
+                .unwrap()
         }
 
         fn positions(&self) -> Vec<u64> {
@@ -580,6 +788,172 @@ mod tests {
 
     fn deliver(watched: &Watched, bytes: u64) {
         watched.delivered.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    fn viewing(n: u8) -> ViewingId {
+        ViewingId::from_random_bytes([n; torrplay_core::id::TORRENT_ID_RANDOM_BYTES])
+    }
+
+    impl Harness {
+        fn app_stream(&self, id: &ViewingId, key: FileKey, start: u64) -> Option<Watched> {
+            self.inference.begin(
+                Owner::App(id.clone()),
+                key,
+                FileIndex(0),
+                "Film.mkv".into(),
+                100_001_000,
+                start,
+                &self.clock,
+            )
+        }
+    }
+
+    #[test]
+    fn an_application_viewing_estimates_without_saving() {
+        let harness = Harness::new();
+        let id = viewing(1);
+        let created = harness.inference.create(id.clone(), key(), harness.now());
+        assert_eq!(created.position, None);
+        assert_eq!(created.last_active_at, None);
+        assert_eq!(created.expires_at, harness.now() + APP_VIEWING_TTL);
+
+        let stream = harness.app_stream(&id, key(), 1000).unwrap();
+        deliver(&stream, 30_000_000);
+        harness.advance(20);
+        assert!(harness.positions().is_empty(), "nothing is saved");
+        let read = harness
+            .inference
+            .read(id.as_str(), &key(), harness.now())
+            .unwrap();
+        assert_eq!(
+            read.position,
+            Some((Duration::from_secs(20), Duration::from_secs(100)))
+        );
+        assert!(read.streaming);
+        assert_eq!(read.last_active_at, Some(harness.now()));
+        drop(stream);
+        harness.advance(600);
+        let ended = harness
+            .inference
+            .read(id.as_str(), &key(), harness.now())
+            .unwrap();
+        assert_eq!(
+            ended.position,
+            Some((Duration::from_secs(20), Duration::from_secs(100))),
+            "where the stream ended, not backed off"
+        );
+        assert!(!ended.streaming);
+        assert_eq!(
+            ended.expires_at,
+            harness.now() - Duration::from_secs(600) + APP_VIEWING_TTL
+        );
+        assert!(
+            !harness.inference.is_viewing(&key()),
+            "the device profile has no viewing"
+        );
+    }
+
+    #[test]
+    fn streams_join_only_their_files_application_viewings() {
+        let harness = Harness::new();
+        let id = viewing(1);
+        harness.inference.create(id.clone(), key(), harness.now());
+        let other = (key().0, FileId::derive(&["Other.mkv"]));
+        assert!(harness.app_stream(&id, other.clone(), 0).is_none());
+        assert!(harness.app_stream(&viewing(2), key(), 0).is_none());
+        assert!(
+            harness
+                .inference
+                .read(id.as_str(), &other, harness.now())
+                .is_none()
+        );
+        assert!(!harness.inference.remove(id.as_str(), &other));
+        assert!(harness.inference.remove(id.as_str(), &key()));
+        assert!(
+            harness
+                .inference
+                .read(id.as_str(), &key(), harness.now())
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn an_unread_ended_viewing_holds_its_torrent_until_read_or_an_hour() {
+        let harness = Harness::new();
+        let id = viewing(1);
+        harness.inference.create(id.clone(), key(), harness.now());
+        assert!(
+            !harness.inference.holds(&key().0, harness.now()),
+            "never streamed"
+        );
+        let stream = harness.app_stream(&id, key(), 1000).unwrap();
+        assert!(
+            !harness.inference.holds(&key().0, harness.now()),
+            "a stream is a reader of its own"
+        );
+        drop(stream);
+        assert!(harness.inference.holds(&key().0, harness.now()));
+        harness.inference.read(id.as_str(), &key(), harness.now());
+        assert!(!harness.inference.holds(&key().0, harness.now()), "read");
+
+        drop(harness.app_stream(&id, key(), 1000));
+        harness.advance(UNREAD_HOLD.as_secs() - 1);
+        assert!(harness.inference.holds(&key().0, harness.now()));
+        harness.advance(1);
+        assert!(
+            !harness.inference.holds(&key().0, harness.now()),
+            "an hour passed"
+        );
+    }
+
+    #[test]
+    fn application_viewings_expire_and_are_bounded() {
+        let harness = Harness::new();
+        let first = viewing(1);
+        harness
+            .inference
+            .create(first.clone(), key(), harness.now());
+        harness.advance(1);
+        drop(harness.app_stream(&first, key(), 1000));
+        for n in 0..APP_VIEWINGS_MAX {
+            let mut bytes = [2; torrplay_core::id::TORRENT_ID_RANDOM_BYTES];
+            bytes[..8].copy_from_slice(&(n as u64).to_be_bytes());
+            harness
+                .inference
+                .create(ViewingId::from_random_bytes(bytes), key(), at(1000));
+        }
+        assert!(
+            harness
+                .inference
+                .app_viewing(first.as_str(), &key(), harness.now())
+                .is_some(),
+            "the limit drops the one inactive longest first"
+        );
+        assert_eq!(harness.inference.lock().apps.len(), APP_VIEWINGS_MAX);
+
+        harness.advance(APP_VIEWING_TTL.as_secs());
+        assert!(
+            !harness
+                .inference
+                .app_viewing(first.as_str(), &key(), harness.now())
+                .is_some()
+        );
+        harness.inference.due(harness.now());
+        assert!(
+            harness.inference.lock().apps.is_empty(),
+            "the sweep drops expired ones"
+        );
+
+        harness
+            .inference
+            .create(first.clone(), key(), harness.now());
+        harness.inference.forget_torrent(&key().0);
+        assert!(
+            !harness
+                .inference
+                .app_viewing(first.as_str(), &key(), harness.now())
+                .is_some()
+        );
     }
 
     #[test]
@@ -673,14 +1047,18 @@ mod tests {
     fn a_file_without_an_index_waits_for_it_or_saves_nothing() {
         let harness = Harness::new();
         let other = (key().0, FileId::derive(&["Other.mkv"]));
-        let watched = harness.inference.begin(
-            other.clone(),
-            FileIndex(1),
-            "Other.mkv".into(),
-            10,
-            0,
-            &harness.clock,
-        );
+        let watched = harness
+            .inference
+            .begin(
+                Owner::Device,
+                other.clone(),
+                FileIndex(1),
+                "Other.mkv".into(),
+                10,
+                0,
+                &harness.clock,
+            )
+            .unwrap();
         deliver(&watched, 10_000_000);
         let pending = harness.inference.pending_indexes();
         assert_eq!(pending.len(), 1);

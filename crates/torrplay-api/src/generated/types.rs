@@ -21,6 +21,41 @@ mod tri_state_serde {
         T::deserialize(de).map(Some)
     }
 }
+///A viewing of a file: the streams of its content link, and the playback position they suggest, as docs/lifecycle.md describes. Every member is observed state.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Viewing {
+    ///When the viewing was created, in UTC.
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    ///The file's playback duration from its seek index, or null while position_seconds is.
+    ///Constraint: exclusiveMinimum=0
+    pub duration_seconds: Option<f64>,
+    ///When the viewing expires, in UTC: 24 hours after its last activity, or after its creation before any; later while a stream is open.
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+    ///The viewing's ID, valid until it is removed or expires, its torrent is deleted, or the application restarts.
+    pub id: String,
+    ///When a stream of the content link was last open, in UTC, or null before the first.
+    pub last_active_at: Option<chrono::DateTime<chrono::Utc>>,
+    ///Links from a viewing.
+    pub links: ViewingLinks,
+    ///The estimated playback position, at most duration_seconds: where the latest stream that plays started, plus the lesser of the time since it started, until it ended, and the media time it delivered. It is null until the file's seek index is read, and stays null for a file without one or before anything plays.
+    ///Constraint: minimum=0
+    pub position_seconds: Option<f64>,
+    ///Whether a stream of the content link is open.
+    pub streaming: bool,
+}
+///Links from a viewing.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ViewingLinks {
+    ///The file's content with this viewing's viewing_id, the URL to give the player.
+    pub content: String,
+    ///The viewed file.
+    pub file: String,
+    ///This viewing.
+    #[serde(rename = "self")]
+    pub self_field: String,
+    ///The torrent of the viewed file.
+    pub torrent: String,
+}
 ///A problem that lists the invalid parameters or body members.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ValidationProblem {
@@ -262,6 +297,8 @@ pub struct TorrentFileLinks {
     pub self_field: String,
     ///The torrent the file belongs to.
     pub torrent: String,
+    ///Where viewings of the file are created.
+    pub viewings: String,
 }
 ///A summary of the torrents that match the request's observed_state, kind, and info_hash filters, before its search and its category, uncategorized, and genre filters, so a client's menus list every choice while one is selected.
 #[derive(Debug, Clone, Deserialize, Serialize)]
