@@ -244,7 +244,7 @@ The initial problem types, by name, each appended to the base above:
 | `authentication-required` | 401 | Authentication is on and the request carries no valid credential. |
 | `insufficient-scope` | 403 | The credential's scope or torrent does not allow the operation. |
 | `invalid-credentials` | 403 | The password a request gives does not match. |
-| `forbidden` | 403 | The resource is not served to the client's address, as the DLNA media server is not to public addresses. |
+| `forbidden` | 403 | The resource is not served to the client's address: the DLNA media server is not to public addresses, nor, while authentication is off, are operations that need a credential once a password is set. |
 | `not-found` | 404 | The target resource does not exist. |
 | `method-not-allowed` | 405 | The resource does not support the method. |
 | `not-acceptable` | 406 | No supported media type matches `Accept`. |
@@ -301,8 +301,9 @@ status is not.
   the credentials as the `accessToken` bearer scheme and the
   `playbackToken` query scheme.
 - Any operation that needs a credential may answer `401
-  authentication-required`, with `WWW-Authenticate`, and `403
-  insufficient-scope`; any operation may answer `421 misdirected-request`
+  authentication-required`, with `WWW-Authenticate`, `403
+  insufficient-scope`, and, while authentication is off, `403 forbidden`
+  to a client beyond the local networks; any operation may answer `421 misdirected-request`
   for a `Host` that is not allowed. Like `405` and `406`, the contract
   leaves these to the conventions rather than repeating them on each
   operation.

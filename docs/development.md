@@ -133,9 +133,10 @@ licenses `REUSE.toml` lists; review them when upgrading.
 cargo run -p torrplay -- --help
 ```
 
-`torrplay` serves the API on `127.0.0.1:8080` by default; `--listen` may
-name any address, and the application warns when one beyond loopback is
-served while authentication is off. `/api/v1/reference` shows the API in a
+`torrplay` serves the API on `[::]:8080` by default, every interface,
+dual-stack; `--listen`, or `TORRPLAY_LISTEN` without it, names another
+address, such as `127.0.0.1:8080`. Until a password is set, only clients on
+local networks may use it. `/api/v1/reference` shows the API in a
 browser. `--allowed-host` adds a host name
 requests may give, such as a reverse proxy's. Its other options set the
 BitTorrent peer port (4240), and override settings for one run, as

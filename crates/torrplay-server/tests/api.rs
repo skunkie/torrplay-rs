@@ -6765,3 +6765,99 @@ scenarios!(
     authentication_bodies,
     allowed_hosts,
 );
+
+/// Serves the application's router as if every client had `address`, and
+/// returns the base URL and the serving task.
+async fn serve_as(
+    server: &TestServer,
+    address: &str,
+) -> (String, tokio::task::JoinHandle<std::io::Result<()>>) {
+    use axum::extract::connect_info::MockConnectInfo;
+    let client: std::net::SocketAddr = address.parse().unwrap();
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let app = torrplay_server::router(std::sync::Arc::clone(&server.app))
+        .layer(MockConnectInfo(client))
+        .into_make_service();
+    (
+        base,
+        tokio::spawn(std::future::IntoFuture::into_future(axum::serve(
+            listener, app,
+        ))),
+    )
+}
+
+/// AUT-10: without a password, only local networks may use the operations
+/// that need a credential once one is set; the entry point and health
+/// checks answer everyone, and a password lets any client sign in.
+#[tokio::test]
+async fn without_a_password_only_local_networks_use_the_application() {
+    let server = TestServer::start().await;
+    let client = reqwest::Client::new();
+    let status = |base: &str, method: reqwest::Method, path: &str| {
+        let request = client.request(method, format!("{base}{path}"));
+        async move {
+            let response = request.send().await.unwrap();
+            let status = response.status().as_u16();
+            let bytes = response.bytes().await.unwrap();
+            let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+            (status, body["type"].as_str().map(str::to_owned))
+        }
+    };
+    let forbidden = Some("tag:skunkie.github.io,2026:torrplay/problems/forbidden".to_owned());
+
+    let (public, public_task) = serve_as(&server, "203.0.113.7:50000").await;
+    for (method, path) in [
+        (reqwest::Method::GET, "/api/v1/torrents"),
+        (reqwest::Method::GET, "/api/v1/password"),
+        (reqwest::Method::PUT, "/api/v1/password"),
+        (reqwest::Method::GET, "/api/v1/settings"),
+    ] {
+        assert_eq!(
+            status(&public, method.clone(), path).await,
+            (403, forbidden.clone()),
+            "{method} {path}"
+        );
+    }
+    for path in ["/api/v1", "/api/v1/openapi.yaml", "/livez"] {
+        assert_eq!(
+            status(&public, reqwest::Method::GET, path).await.0,
+            200,
+            "{path} answers everyone"
+        );
+    }
+
+    let (overlay, overlay_task) = serve_as(&server, "[::ffff:100.101.102.103]:50000").await;
+    assert_eq!(
+        status(&overlay, reqwest::Method::GET, "/api/v1/torrents")
+            .await
+            .0,
+        200,
+        "a Tailscale client is local"
+    );
+
+    // With a password, any client may sign in and needs its credential.
+    set_first_password(&server).await;
+    assert_eq!(
+        status(&public, reqwest::Method::GET, "/api/v1/torrents")
+            .await
+            .0,
+        401
+    );
+    let signed_in = client
+        .post(format!("{public}/api/v1/access-tokens"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(json!({ "password": PASSWORD, "name": "Phone" }).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(signed_in.status().as_u16(), 201);
+
+    for task in [public_task, overlay_task] {
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+    }
+    server.stop().await;
+}

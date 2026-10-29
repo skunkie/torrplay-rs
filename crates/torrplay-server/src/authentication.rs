@@ -4,15 +4,18 @@
 
 //! The checks every request passes before its handler: its `Host` names an
 //! allowed host, and, while a password is set, it carries a credential
-//! whose scope allows the operation, as `docs/lifecycle.md` describes.
+//! whose scope allows the operation, or, while none is, it comes from a
+//! local network, as `docs/lifecycle.md` describes.
 //!
 //! Credentials are read from `Authorization: Bearer` or, for the playback
 //! operations, the `token` query parameter. Neither is ever logged, and no
 //! problem repeats one.
 
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
-use axum::extract::{MatchedPath, Request, State};
+use axum::extract::connect_info::MockConnectInfo;
+use axum::extract::{ConnectInfo, MatchedPath, Request, State};
 use axum::http::{HeaderValue, Method, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -29,6 +32,21 @@ const TOKEN_PARAMETER: &str = "token";
 /// behalf. Absent while authentication is off.
 #[derive(Clone, Debug)]
 pub(crate) struct Caller(pub(crate) Grant);
+
+/// Whether `address` is on a local network: a private one, as the DLNA media
+/// server judges it, or the shared address space `100.64.0.0/10`, which
+/// carrier-grade NAT and overlay networks such as Tailscale use. An
+/// IPv4-mapped address counts as its IPv4 address.
+pub(crate) fn is_local_network(address: IpAddr) -> bool {
+    let shared = match address.to_canonical() {
+        IpAddr::V4(v4) => {
+            let [first, second, ..] = v4.octets();
+            first == 100 && second & 0xc0 == 64
+        }
+        IpAddr::V6(_) => false,
+    };
+    shared || torrplay_dlna::network::is_private(address)
+}
 
 /// What an operation needs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,7 +123,30 @@ pub(crate) async fn guard<E: Engine>(
         .into_response();
     }
     let credentials = app.credentials();
-    if requirement == Requirement::Host || !credentials.is_enabled() {
+    if requirement == Requirement::Host {
+        return next.run(request).await;
+    }
+    if !credentials.is_enabled() {
+        // As the ConnectInfo extractor does, a test's MockConnectInfo stands
+        // in for the connection's address.
+        let extensions = request.extensions();
+        let client = extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|ConnectInfo(client)| *client)
+            .or_else(|| {
+                extensions
+                    .get::<MockConnectInfo<SocketAddr>>()
+                    .map(|MockConnectInfo(client)| *client)
+            });
+        let local = client.is_some_and(|client| is_local_network(client.ip()));
+        if !local {
+            return Problem::new(
+                ProblemType::Forbidden,
+                "Until a password is set, only clients on a local network may use the \
+                 application; set one from a local network to allow others.",
+            )
+            .into_response();
+        }
         return next.run(request).await;
     }
     let (credential, in_query) = match credential(&request, requirement) {
@@ -218,6 +259,35 @@ fn unauthenticated(error: Option<&str>, detail: &str) -> Problem {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_networks_include_the_shared_address_space() {
+        for local in [
+            "127.0.0.1",
+            "192.168.1.20",
+            "10.0.0.5",
+            "169.254.1.1",
+            "100.64.0.1",
+            "100.101.102.103",
+            "100.127.255.254",
+            "::1",
+            "fd7a:115c:a1e0::1",
+            "fe80::1",
+            "::ffff:192.168.1.20",
+            "::ffff:100.100.1.1",
+        ] {
+            assert!(is_local_network(local.parse().unwrap()), "{local}");
+        }
+        for public in [
+            "8.8.8.8",
+            "100.63.255.255",
+            "100.128.0.1",
+            "2001:4860::8888",
+            "::ffff:8.8.8.8",
+        ] {
+            assert!(!is_local_network(public.parse().unwrap()), "{public}");
+        }
+    }
 
     #[test]
     fn operations_need_what_the_contract_says() {

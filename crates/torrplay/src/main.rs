@@ -11,7 +11,6 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use anyhow::Context;
-use tokio::net::TcpListener;
 use torrplay::{Command, Config, PasswordChange, PasswordChanged, ShutdownTimings, USAGE};
 use torrplay_core::credentials::AllowedHosts;
 use torrplay_engine::LibrqbitEngine;
@@ -21,7 +20,9 @@ use torrplay_store::Store;
 const RUNTIME_SHUTDOWN: Duration = Duration::from_secs(1);
 
 fn main() -> ExitCode {
-    let config = match torrplay::parse_args(std::env::args().skip(1)) {
+    let listen_variable = std::env::var_os(torrplay::LISTEN_VARIABLE)
+        .map(|value| value.to_string_lossy().into_owned());
+    let config = match torrplay::parse_args(std::env::args().skip(1), listen_variable) {
         Ok(Command::Run(config)) => config,
         Ok(Command::Password(change, config)) => return password(change, &config),
         Ok(Command::Help) => {
@@ -88,9 +89,12 @@ async fn run(config: &Config, log: torrplay::LogControl) -> anyhow::Result<()> {
     // Memory storage writes nothing to the session folder, so it lives only
     // as long as the process; torrents persist in the store.
     let folder = tempfile::tempdir().context("creating the session folder")?;
-    let listener = TcpListener::bind(config.listen)
-        .await
-        .with_context(|| format!("binding the API listener on {}", config.listen))?;
+    let listener = torrplay::bind_api(config.listen).with_context(|| {
+        format!(
+            "binding the API listener on {}",
+            config.listen.unwrap_or(torrplay::DEFAULT_LISTEN)
+        )
+    })?;
     tracing::info!(address = %listener.local_addr()?, "the API is listening");
     torrplay::serve(
         listener,
