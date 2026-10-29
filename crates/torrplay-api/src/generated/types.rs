@@ -912,6 +912,66 @@ impl AsRef<str> for ObservedState {
 }
 ///A plain-text synopsis, or null. Normalized on write to 1 to 4096 characters, keeping line feeds and tabs and no other control characters. It defaults to null.
 pub type Description = String;
+///A page of a profile's title progress.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TitleProgressPage {
+    ///The title progress on this page, most recently saved first.
+    pub items: Vec<TitleProgress>,
+    ///Links from a page of title progress.
+    pub links: TitleProgressPageLinks,
+}
+///Links from a page of title progress.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TitleProgressPageLinks {
+    ///The next page of title progress, omitted on the last page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+    ///This page of title progress.
+    #[serde(rename = "self")]
+    pub self_field: String,
+}
+///Where a profile is in a title or episode of an external catalog, under the rules of a file's progress. It is kept when torrents are deleted.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TitleProgress {
+    ///The position as a fraction of the title's duration, from 0.0 to 1.0.
+    ///Constraint: minimum=0, maximum=1
+    pub completion_ratio: f64,
+    ///The title's playback duration, to the millisecond.
+    ///Constraint: maximum=1000000, exclusiveMinimum=0
+    pub duration_seconds: f64,
+    ///The file last played, as saved, or null when none was.
+    pub file_id: Option<String>,
+    ///Links from a title's progress. file and content are present while the file last played exists.
+    pub links: TitleProgressLinks,
+    ///The playback position in the title, to the millisecond.
+    ///Constraint: minimum=0
+    pub position_seconds: f64,
+    ///The title key, as the path names it.
+    pub title_key: String,
+    ///The torrent of the file last played, as saved, or null when none was. It stays when that torrent is deleted.
+    pub torrent_id: Option<String>,
+    ///When the title's progress was last saved, in UTC.
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    ///Whether the title was viewed to 90% or marked viewed.
+    pub viewed: bool,
+    ///When the title was last marked viewed, or null if it is not.
+    pub viewed_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+///Links from a title's progress. file and content are present while the file last played exists.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TitleProgressLinks {
+    ///The last played file's content, to resume streaming.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    ///The file last played.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    ///The profile the title's progress belongs to.
+    pub profile: String,
+    ///This title's progress.
+    #[serde(rename = "self")]
+    pub self_field: String,
+}
 ///A JSON merge patch of the settings. Omitted members keep their values; a member set to null returns to its default.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct SettingsPatch {
@@ -2020,4 +2080,72 @@ pub struct ProgressUpdate {
     pub position_seconds: f64,
     ///Whether the file is viewed. Marking a file viewed that was not resets its position to 0, as reaching 90% does; a viewed file keeps the positions saved for it, so it can be watched again. False clears the mark.
     pub viewed: bool,
+}
+///A title's progress as a player saves it, replacing the saved progress. The position must not exceed the duration. torrent_id and file_id come together and must name an existing file.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TitleProgressUpdate {
+    ///The title's playback duration, rounded to the millisecond.
+    ///Constraint: maximum=1000000, exclusiveMinimum=0
+    pub duration_seconds: f64,
+    ///The file that played, omitted for none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_id: Option<String>,
+    ///The playback position in the title, rounded to the millisecond.
+    ///Constraint: minimum=0, maximum=1000000
+    pub position_seconds: f64,
+    ///The torrent of the file that played, omitted for none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub torrent_id: Option<String>,
+    ///Whether the title is viewed, with the effect viewed has on a file's progress.
+    pub viewed: bool,
+}
+impl TitleProgressUpdate {
+    /// Construct this request with every required wire field.
+    pub fn new(duration_seconds: f64, position_seconds: f64, viewed: bool) -> Self {
+        Self {
+            duration_seconds,
+            position_seconds,
+            viewed,
+            file_id: None,
+            torrent_id: None,
+        }
+    }
+    /// Start a dependency-free builder with every required wire field.
+    pub fn builder(
+        duration_seconds: f64,
+        position_seconds: f64,
+        viewed: bool,
+    ) -> TitleProgressUpdateBuilder {
+        TitleProgressUpdateBuilder::new(duration_seconds, position_seconds, viewed)
+    }
+}
+/// Dependency-free builder for [`#struct_name`].
+#[derive(Debug, Clone)]
+#[must_use]
+pub struct TitleProgressUpdateBuilder {
+    value: TitleProgressUpdate,
+}
+impl TitleProgressUpdateBuilder {
+    /// Start a builder with every required wire field.
+    pub fn new(duration_seconds: f64, position_seconds: f64, viewed: bool) -> Self {
+        Self {
+            value: TitleProgressUpdate::new(duration_seconds, position_seconds, viewed),
+        }
+    }
+    #[doc = concat!("Set the optional `", "file_id", "` request field.")]
+    #[must_use]
+    pub fn file_id(mut self, file_id: String) -> Self {
+        self.value.file_id = Some(file_id);
+        self
+    }
+    #[doc = concat!("Set the optional `", "torrent_id", "` request field.")]
+    #[must_use]
+    pub fn torrent_id(mut self, torrent_id: String) -> Self {
+        self.value.torrent_id = Some(torrent_id);
+        self
+    }
+    /// Finish building the request model.
+    pub fn build(self) -> TitleProgressUpdate {
+        self.value
+    }
 }

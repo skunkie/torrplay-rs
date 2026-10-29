@@ -7,11 +7,11 @@
 
 use rusqlite::{Connection, params};
 use torrplay_core::id::{FileId, ProfileId, TorrentId, UpNextEntryId};
-use torrplay_core::profiles::{Profile, ProfileKind, Progress};
+use torrplay_core::profiles::{Profile, ProfileKind, Progress, TitleKey, TitleProgress};
 
 use crate::images::{self, Images};
 use crate::schema::{from_ns, to_ns};
-use crate::{StoreError, StoredDismissal, StoredProgress};
+use crate::{StoreError, StoredDismissal, StoredProgress, StoredTitleProgress};
 
 fn corrupt(what: String) -> StoreError {
     StoreError::Corrupt(what)
@@ -78,6 +78,54 @@ pub(crate) fn progress(connection: &Connection) -> Result<Vec<StoredProgress>, S
                 duration_ms: u64::try_from(duration).map_err(|_| bad("negative duration"))?,
                 viewed_at: viewed_at.map(time).transpose()?,
                 updated_at: time(updated_at)?,
+            },
+        });
+    }
+    Ok(all)
+}
+
+/// Reads every profile's title progress.
+pub(crate) fn titles(connection: &Connection) -> Result<Vec<StoredTitleProgress>, StoreError> {
+    let mut statement = connection.prepare(
+        "SELECT profile_id, title_key, position_ms, duration_ms, viewed_at_ns, updated_at_ns,
+                torrent_id, file_id
+         FROM title_progress",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, i64>(3)?,
+            row.get::<_, Option<i64>>(4)?,
+            row.get::<_, i64>(5)?,
+            row.get::<_, Option<String>>(6)?,
+            row.get::<_, Option<String>>(7)?,
+        ))
+    })?;
+    let mut all = Vec::new();
+    for row in rows {
+        let (profile, key, position, duration, viewed_at, updated_at, torrent, file) = row?;
+        let bad = |what: &str| corrupt(format!("progress of {profile}, {key}: {what}"));
+        let time = |nanos| from_ns(nanos).ok_or_else(|| bad("a time is out of range"));
+        let played = match (torrent, file) {
+            (Some(torrent), Some(file)) => Some((
+                TorrentId::from_stored(&torrent).ok_or_else(|| bad("malformed torrent ID"))?,
+                FileId::from_stored(&file).ok_or_else(|| bad("malformed file ID"))?,
+            )),
+            _ => None,
+        };
+        all.push(StoredTitleProgress {
+            profile: ProfileId::from_stored(&profile).ok_or_else(|| bad("malformed profile ID"))?,
+            key: TitleKey::parse(&key).ok_or_else(|| bad("malformed title key"))?,
+            progress: TitleProgress {
+                progress: Progress {
+                    position_ms: u64::try_from(position).map_err(|_| bad("negative position"))?,
+                    duration_ms: u64::try_from(duration).map_err(|_| bad("negative duration"))?,
+                    viewed_at: viewed_at.map(time).transpose()?,
+                    updated_at: time(updated_at)?,
+                },
+                played,
             },
         });
     }
@@ -206,6 +254,66 @@ pub(crate) fn delete_progress(
     connection.execute(
         "DELETE FROM progress WHERE profile_id = ?1 AND torrent_id = ?2 AND file_id = ?3",
         [profile.as_str(), torrent.as_str(), file.as_str()],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn set_title_progress(
+    connection: &Connection,
+    stored: &StoredTitleProgress,
+) -> Result<(), StoreError> {
+    let profile_stored: bool = connection.query_row(
+        "SELECT EXISTS (SELECT 1 FROM profiles WHERE id = ?1)",
+        [stored.profile.as_str()],
+        |row| row.get(0),
+    )?;
+    if !profile_stored {
+        return Err(StoreError::UnknownProfile);
+    }
+    let progress = &stored.progress.progress;
+    let count = |value: u64| {
+        i64::try_from(value).map_err(|_| corrupt("a progress value is out of range".into()))
+    };
+    let (torrent, file) = stored
+        .progress
+        .played
+        .as_ref()
+        .map(|(torrent, file)| (torrent.as_str(), file.as_str()))
+        .unzip();
+    connection.execute(
+        "INSERT INTO title_progress
+             (profile_id, title_key, position_ms, duration_ms, viewed_at_ns, updated_at_ns,
+              torrent_id, file_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT (profile_id, title_key) DO UPDATE SET
+             position_ms = excluded.position_ms,
+             duration_ms = excluded.duration_ms,
+             viewed_at_ns = excluded.viewed_at_ns,
+             updated_at_ns = excluded.updated_at_ns,
+             torrent_id = excluded.torrent_id,
+             file_id = excluded.file_id",
+        params![
+            stored.profile.as_str(),
+            stored.key.as_str(),
+            count(progress.position_ms)?,
+            count(progress.duration_ms)?,
+            progress.viewed_at.map(to_ns).transpose()?,
+            to_ns(progress.updated_at)?,
+            torrent,
+            file,
+        ],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn delete_title_progress(
+    connection: &Connection,
+    profile: &ProfileId,
+    key: &TitleKey,
+) -> Result<(), StoreError> {
+    connection.execute(
+        "DELETE FROM title_progress WHERE profile_id = ?1 AND title_key = ?2",
+        [profile.as_str(), key.as_str()],
     )?;
     Ok(())
 }
