@@ -10,8 +10,10 @@
 //! is off they are not-found, and they serve only clients with private
 //! addresses.
 
+use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use axum::Extension;
 use axum::body::Body;
@@ -20,8 +22,10 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use sha2::{Digest, Sha256};
 use torrplay_core::engine::Engine;
+use torrplay_core::id::{FileId, TorrentId};
 use torrplay_core::library::{self, Kind};
 use torrplay_core::lifecycle::{ObservedState, Retention};
+use torrplay_core::profiles::Progress;
 use torrplay_dlna::description::{self, Device};
 use torrplay_dlna::dlna;
 use torrplay_dlna::gena::{self, Refusal, Subscribe, Subscriptions};
@@ -235,6 +239,7 @@ fn digest(catalog: &Catalog) -> [u8; 32] {
             field(&file.name);
             field(&file.size_bytes.to_string());
             field(file.media_type);
+            field(&format!("{:?}", file.resume_position));
         }
     }
     for (torrent, file) in &catalog.viewed {
@@ -385,6 +390,7 @@ async fn catalog<E: Engine>(app: &App<E>) -> Result<Option<Catalog>, Problem> {
     let Ok(registry) = app.registry() else {
         return Ok(None);
     };
+    let progress = device_progress(app);
     let mut torrents = Vec::new();
     for record in registry.list().into_iter().rev() {
         // Temporary torrents are never shown to televisions.
@@ -414,6 +420,11 @@ async fn catalog<E: Engine>(app: &App<E>) -> Result<Option<Catalog>, Problem> {
                 let playable = ["audio/", "video/", "image/"]
                     .iter()
                     .any(|prefix| media_type.starts_with(prefix));
+                let resume_position = progress
+                    .get(&record.id)
+                    .and_then(|files| files.get(file.id()))
+                    .filter(|progress| progress.in_progress() && !progress.viewed())
+                    .map(|progress| Duration::from_millis(progress.position_ms));
                 playable.then(|| {
                     (
                         library::episode_number(&name),
@@ -423,6 +434,7 @@ async fn catalog<E: Engine>(app: &App<E>) -> Result<Option<Catalog>, Problem> {
                             name,
                             size_bytes: file.size_bytes(),
                             media_type,
+                            resume_position,
                         },
                     )
                 })
@@ -455,20 +467,25 @@ async fn catalog<E: Engine>(app: &App<E>) -> Result<Option<Catalog>, Problem> {
         });
     }
     Ok(Some(Catalog {
-        viewed: viewed(app),
+        viewed: viewed(progress),
         torrents,
     }))
 }
 
+/// The device profile's progress, or none without the profile.
+fn device_progress<E: Engine>(app: &App<E>) -> HashMap<TorrentId, BTreeMap<FileId, Progress>> {
+    app.viewing()
+        .ok()
+        .and_then(|viewing| {
+            let device = viewing.device()?;
+            Some(viewing.profile_progress(&device.id))
+        })
+        .unwrap_or_default()
+}
+
 /// The device profile's files in progress and viewed, most recently saved
 /// first, then by ID.
-fn viewed<E: Engine>(app: &App<E>) -> Vec<(String, String)> {
-    let Some(device) = app.viewing().ok().and_then(|viewing| {
-        let device = viewing.device()?;
-        Some(viewing.profile_progress(&device.id))
-    }) else {
-        return Vec::new();
-    };
+fn viewed(device: HashMap<TorrentId, BTreeMap<FileId, Progress>>) -> Vec<(String, String)> {
     let mut files: Vec<_> = device
         .into_iter()
         .flat_map(|(torrent, files)| {
