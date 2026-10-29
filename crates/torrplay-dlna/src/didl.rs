@@ -4,6 +4,8 @@
 
 //! DIDL-Lite, the XML documents `Browse` returns, and XML escaping.
 
+use std::time::Duration;
+
 use crate::dlna;
 
 /// The class of every container.
@@ -34,6 +36,8 @@ pub(crate) enum Kind {
         media_type: &'static str,
         size_bytes: u64,
         url: String,
+        /// Where a renderer may resume playing it.
+        resume_position: Option<Duration>,
     },
 }
 
@@ -56,7 +60,7 @@ pub fn escape(text: &str) -> String {
 /// Renders `objects` as one DIDL-Lite document.
 pub(crate) fn render(objects: &[Object]) -> String {
     let mut out = String::from(
-        r#"<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/">"#,
+        r#"<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/" xmlns:sec="http://www.sec.co.kr/">"#,
     );
     for object in objects {
         let ids = format!(
@@ -93,15 +97,36 @@ pub(crate) fn render(objects: &[Object]) -> String {
                 media_type,
                 size_bytes,
                 url,
-            } => out.push_str(&format!(
-                r#"<res protocolInfo="{}" size="{size_bytes}">{}</res></item>"#,
-                escape(&dlna::protocol_info(media_type)),
-                escape(url),
-            )),
+                resume_position,
+            } => {
+                if let Some(position) = resume_position {
+                    let seconds = position.as_secs();
+                    out.push_str(&format!(
+                        "<upnp:lastPlaybackPosition>{}</upnp:lastPlaybackPosition><sec:dcmInfo>BM={seconds}</sec:dcmInfo>",
+                        playback_duration(*position)
+                    ));
+                }
+                out.push_str(&format!(
+                    r#"<res protocolInfo="{}" size="{size_bytes}">{}</res></item>"#,
+                    escape(&dlna::protocol_info(media_type)),
+                    escape(url),
+                ));
+            }
         }
     }
     out.push_str("</DIDL-Lite>");
     out
+}
+
+/// A duration as `H:MM:SS`, hours unpadded, in whole seconds.
+fn playback_duration(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    format!(
+        "{}:{:02}:{:02}",
+        seconds / 3600,
+        seconds / 60 % 60,
+        seconds % 60
+    )
 }
 
 /// A time's UTC date as `YYYY-MM-DD`, from the days since the Unix epoch
@@ -142,6 +167,17 @@ mod tests {
         assert_eq!(
             at(1_793_000_000 + 86_399 - 1_793_000_000 % 86_400),
             "2026-10-26"
+        );
+    }
+
+    #[test]
+    fn playback_durations_have_unpadded_hours_and_whole_seconds() {
+        assert_eq!(playback_duration(Duration::ZERO), "0:00:00");
+        assert_eq!(playback_duration(Duration::from_millis(83_999)), "0:01:23");
+        assert_eq!(playback_duration(Duration::from_secs(3_600)), "1:00:00");
+        assert_eq!(
+            playback_duration(Duration::from_secs(125 * 3_600 + 61)),
+            "125:01:01"
         );
     }
 

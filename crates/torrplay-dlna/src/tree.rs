@@ -7,7 +7,7 @@
 //! section describes.
 
 use std::collections::BTreeMap;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use crate::didl::{self, CONTAINER_CLASS, Object};
 use crate::id::{ObjectId, ROOT_PARENT, encode};
@@ -75,6 +75,9 @@ pub struct File {
     pub size_bytes: u64,
     /// The media type the native API serves it with.
     pub media_type: &'static str,
+    /// The device profile's saved position, while the file is in progress
+    /// and not viewed.
+    pub resume_position: Option<Duration>,
 }
 
 impl File {
@@ -492,6 +495,7 @@ impl Object {
                 media_type: file.media_type,
                 size_bytes: file.size_bytes,
                 url: base.media(&torrent.id, file),
+                resume_position: file.resume_position,
             },
         }
     }
@@ -509,6 +513,7 @@ mod tests {
             name: name.into(),
             size_bytes: 1000,
             media_type,
+            resume_position: None,
         }
     }
 
@@ -602,6 +607,39 @@ mod tests {
         .unwrap();
         assert_eq!(found.returned, 1, "{}", found.didl);
         assert!(found.didl.contains(r#"id="f:trr_a:fil_2""#));
+    }
+
+    #[test]
+    fn only_files_with_a_resume_position_carry_one() {
+        let mut catalog = catalog();
+        catalog.torrents[0].files[0].resume_position = Some(Duration::from_millis(3_723_900));
+        let browsed = catalog
+            .browse(
+                &ObjectId::Torrent("trr_a".into()),
+                BrowseFlag::DirectChildren,
+                Page::default(),
+                &SortCriteria::default(),
+                BASE,
+            )
+            .unwrap();
+        let (film, theme) = browsed
+            .didl
+            .split_once(r#"<item id="f:trr_a:fil_2""#)
+            .expect("both files");
+        assert!(
+            film.contains(
+                "<upnp:lastPlaybackPosition>1:02:03</upnp:lastPlaybackPosition><sec:dcmInfo>BM=3723</sec:dcmInfo><res "
+            ),
+            "{film}"
+        );
+        assert!(!theme.contains("lastPlaybackPosition") && !theme.contains("dcmInfo"));
+        assert!(
+            browsed.didl.starts_with("<DIDL-Lite ")
+                && browsed
+                    .didl
+                    .contains(r#" xmlns:sec="http://www.sec.co.kr/""#),
+            "the Samsung namespace is declared"
+        );
     }
 
     #[test]

@@ -1017,11 +1017,22 @@ async fn dlna_playback_infers_progress() {
         .expect("progress is inferred");
     assert!((5.0..6.0).contains(&seconds(&saved)), "{saved}");
     assert_eq!(saved["duration_seconds"], 100.0);
-    let (_, viewed) = browse(&server, "recently-viewed", "BrowseDirectChildren").await;
+    let (viewed, _) = browse(&server, "recently-viewed", "BrowseDirectChildren").await;
     assert!(
         viewed.contains(&format!("f:{torrent}:{film}")),
         "the file is recently viewed: {viewed}"
     );
+    // DLNA-20: wherever the tree lists it, the file offers its position.
+    let whole_seconds = seconds(&saved) as u64;
+    let (listed, _) = browse(&server, &format!("t:{torrent}"), "BrowseDirectChildren").await;
+    for didl in [&viewed, &listed] {
+        assert!(
+            didl.contains(&format!(
+                "<upnp:lastPlaybackPosition>0:00:{whole_seconds:02}</upnp:lastPlaybackPosition><sec:dcmInfo>BM={whole_seconds}</sec:dcmInfo>"
+            )),
+            "{didl}"
+        );
+    }
 
     // Clearing the progress ends the viewing.
     let profiles = server.get("/api/v1/profiles").await.json();
@@ -1061,6 +1072,11 @@ async fn dlna_playback_infers_progress() {
         .expect("progress is inferred again");
     assert!(viewed["viewed_at"].is_string(), "{viewed}");
     assert_eq!(seconds(&viewed), 0.0);
+    let (listed, _) = browse(&server, &format!("t:{torrent}"), "BrowseDirectChildren").await;
+    assert!(
+        !listed.contains("lastPlaybackPosition") && !listed.contains("dcmInfo"),
+        "a viewed file offers no position: {listed}"
+    );
     drop(credits);
     server.stop().await;
 }

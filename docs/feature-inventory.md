@@ -68,6 +68,7 @@ document that schedules it.
 | Profiles with avatars | Not present | Verified | PRF-01 to PRF-04 |
 | Progress inferred from DLNA playback, in the device profile | Not present | Verified | PRF-04, PRG-07, DLNA-16 to DLNA-18; MP4 and Matroska files, through their seek indexes |
 | DLNA "Recently viewed" | Recently viewed container `3` | Verified | `recently-viewed`, filled by inferred progress; DLNA-17 |
+| DLNA resume positions | Not present | Verified | `upnp:lastPlaybackPosition` and Samsung's `sec:dcmInfo` bookmark on files in progress; DLNA-20; which televisions read them is untested |
 | Up next: resume and next episode | Not present | Verified | UPN-01 to UPN-05 |
 | Playlists for external players | `GET /api/v1/playlist` | Planned | Playlists and scoped playback access |
 

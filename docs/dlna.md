@@ -208,6 +208,20 @@ lifecycle's [Profiles and progress](lifecycle.md#profiles-and-progress)
 section describes. `HEAD`, the native content operation, and temporary
 torrents infer nothing.
 
+A file the device profile has in progress, and not viewed, carries its
+saved position wherever the tree lists it, so a renderer that reads one of
+these properties can offer to resume there:
+
+- `upnp:lastPlaybackPosition`, ContentDirectory's property, as a duration
+  `H:MM:SS`, hours unpadded.
+- `sec:dcmInfo`, in the `http://www.sec.co.kr/` namespace, as `BM=` and
+  the position in whole seconds: the bookmark Samsung televisions read.
+
+The saved position is already backed off from where streaming stopped.
+Other files carry neither property. Positions change the system update ID
+as other changes of the tree do, so while a renderer plays, the update ID
+changes at most once per progress save.
+
 ## Search and sorting
 
 `Search` finds the torrent containers and files below a container, and

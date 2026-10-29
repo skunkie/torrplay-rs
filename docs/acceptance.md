@@ -344,6 +344,7 @@ These scenarios accept [the DLNA contract](dlna.md) (M7).
 | DLNA-17 | Browse `recently-viewed` after inferred progress | The device profile's files in progress and viewed, most recently saved first, at most 20, listed only while the tree lists their torrents |
 | DLNA-18 | Browse the root | `recently-viewed` follows `recent`, with its child count |
 | DLNA-19 | Bind the SSDP port as a UPnP media player does, after the media server starts and before it starts | Both bind, on macOS and the BSDs as on Linux and Windows |
+| DLNA-20 | Browse a file in progress, in its torrent and in `recently-viewed`, and once it is viewed | `upnp:lastPlaybackPosition` and `sec:dcmInfo` `BM=` with its saved position in both; neither once viewed |
 
 ### Peers
 
