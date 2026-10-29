@@ -59,6 +59,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get, post};
 use torrplay_core::engine::Engine;
+use tracing::Level;
 
 pub use crate::app::{App, Clock, MediaServerSetting, SeekIndexes};
 use crate::problem::{Problem, ProblemType};
@@ -220,20 +221,44 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
 }
 
 /// Logs each response by method, route template, and status, when its
-/// headers are ready. The template names the route without the IDs, query,
-/// or anything else the client sent.
+/// headers are ready, at [`response_level`]. The template names the route
+/// without the IDs, query, or anything else the client sent.
 async fn log_response(route: Option<MatchedPath>, request: Request, next: Next) -> Response {
     let method = request.method().clone();
     let started = Instant::now();
     let response = next.run(request).await;
-    tracing::info!(
-        method = %method,
-        route = route.as_ref().map_or("unmatched", MatchedPath::as_str),
-        status = response.status().as_u16(),
-        elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-        "response",
-    );
+    let route = route.as_ref().map_or("unmatched", MatchedPath::as_str);
+    let status = response.status();
+    let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    macro_rules! log {
+        ($level:expr) => {
+            tracing::event!(
+                $level,
+                method = %method,
+                route,
+                status = status.as_u16(),
+                elapsed_ms,
+                "response",
+            )
+        };
+    }
+    if response_level(route, status) == Level::DEBUG {
+        log!(Level::DEBUG);
+    } else {
+        log!(Level::INFO);
+    }
     response
+}
+
+/// The level a response is logged at. Renderers and control points browse,
+/// renew subscriptions, and fetch media ranges continually, so DLNA's
+/// responses are debug messages unless the server failed them.
+fn response_level(route: &str, status: StatusCode) -> Level {
+    if route.starts_with("/dlna/") && !status.is_server_error() {
+        Level::DEBUG
+    } else {
+        Level::INFO
+    }
 }
 
 async fn unknown_resource() -> Problem {
@@ -258,4 +283,29 @@ async fn method_not_allowed(response: Response) -> Response {
         problem.headers_mut().insert(header::ALLOW, allow.clone());
     }
     problem
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dlna_responses_are_debug_messages_unless_the_server_failed() {
+        let cases = [
+            (
+                "/dlna/media/{torrent_id}/{file_id}/{file_name}",
+                206,
+                Level::DEBUG,
+            ),
+            ("/dlna/content-directory/events", 412, Level::DEBUG),
+            ("/dlna/content-directory/control", 500, Level::INFO),
+            ("/api/v1/torrents", 200, Level::INFO),
+            ("/api/v1/torrents", 404, Level::INFO),
+            ("unmatched", 404, Level::INFO),
+        ];
+        for (route, status, level) in cases {
+            let status = StatusCode::from_u16(status).unwrap();
+            assert_eq!(response_level(route, status), level, "{route} {status}");
+        }
+    }
 }
