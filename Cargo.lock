@@ -3637,6 +3637,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "torrplay-media"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "torrplay-server"
 version = "0.1.0"
 dependencies = [

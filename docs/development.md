@@ -340,6 +340,10 @@ The workspace has ten members:
   actions, object IDs, and the content tree over a catalog the server
   builds. It knows nothing of torrents or axum; its SSDP tests announce
   over loopback to a test socket instead of the multicast group.
+- `crates/torrplay-media` reads the seek indexes of MP4 and Matroska files,
+  as [ADR 10](adr/0010-media-seek-index.md) decides, mapping byte offsets to
+  playback times and back. It knows nothing of torrents or engines; its
+  tests build synthetic files in code.
 - `crates/torrplay-engine` holds `LibrqbitEngine`, which implements the
   `Engine` trait over librqbit, and beneath it the piece cache, its evictor
   task, the librqbit storage over it, and the scheduler that turns readers
