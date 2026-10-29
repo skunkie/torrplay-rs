@@ -357,8 +357,10 @@ The workspace has ten members:
   on a loopback port with `FakeEngine`, check every exchange against the
   contract with `torrplay-contract`, and require every documented response
   to be produced, apart from the few no engine state can cause. The server
-  logs each response with `tracing` by route template and status, and
-  logs engine errors with URLs and magnet URIs redacted.
+  logs each response with `tracing` by route template and status, at
+  `info`, except DLNA's responses, which are `debug` unless they are
+  server errors, and logs engine errors with URLs and magnet URIs
+  redacted.
 - `crates/torrplay-fixtures` generates the deterministic payloads and the
   v1, v2-only, and hybrid metainfo that `docs/acceptance.md` defines.
 - `crates/torrplay-store` is the SQLite store ADR 8 decides: the torrents,
