@@ -261,6 +261,7 @@ impl TestServer {
                 contents.profiles,
                 contents.progress,
                 contents.titles,
+                contents.temporary_progress,
                 contents.dismissals,
             )
             .with_credentials(contents.credentials)

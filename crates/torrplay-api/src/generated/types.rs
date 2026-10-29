@@ -850,7 +850,7 @@ impl AsRef<str> for StorageMode {
         self.as_str()
     }
 }
-///Whether the application keeps the torrent. A persisted torrent is stored and survives restarts. A temporary torrent lives in memory storage only: it is hidden from the listing by default and from the DLNA media server, takes no library members, poster, or progress, and is deleted once it has gone unwatched for the temporary_idle_seconds setting, or when the application restarts. Changing it to persisted keeps the torrent with its ID; a persisted torrent cannot become temporary. Clients must handle values added later.
+///Whether the application keeps the torrent. A persisted torrent is stored and survives restarts. A temporary torrent lives in memory storage only: it is hidden from the listing by default and from the DLNA media server, takes no library members or poster, and is deleted once it has gone unwatched for the temporary_idle_seconds setting, or when the application restarts. Its files' progress is kept by its info hash for the temporary_progress_seconds setting. Changing it to persisted keeps the torrent with its ID; a persisted torrent cannot become temporary. Clients must handle values added later.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum Retention {
     #[default]
@@ -1075,6 +1075,14 @@ pub struct SettingsPatch {
         deserialize_with = "tri_state_serde::deserialize"
     )]
     pub temporary_idle_seconds: Option<Option<i32>>,
+    ///The new retention of temporary torrents' progress, or null for the default, 2592000.
+    ///Constraint: minimum=86400, maximum=31536000
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub temporary_progress_seconds: Option<Option<i32>>,
     ///The new limit of temporary torrents, or null for the default, 16.
     ///Constraint: minimum=1, maximum=64
     #[serde(
@@ -1178,6 +1186,10 @@ pub struct Settings {
     ///Constraint: minimum=60, maximum=86400
     #[serde(default)]
     pub temporary_idle_seconds: i32,
+    ///How long the progress of a temporary torrent's file is kept after it was last saved, by the torrent's info hash, so adding the torrent again finds it. Applies at once.
+    ///Constraint: minimum=86400, maximum=31536000
+    #[serde(default)]
+    pub temporary_progress_seconds: i32,
     ///The most temporary torrents the application holds. Adding one more deletes the one unwatched longest, or fails with too-many-temporary-torrents while every one is streaming. Applies to torrents added afterward.
     ///Constraint: minimum=1, maximum=64
     #[serde(default)]

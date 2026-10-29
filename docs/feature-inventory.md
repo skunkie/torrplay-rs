@@ -40,7 +40,7 @@ document that schedules it.
 | Delete a torrent, with its disk data | `DELETE /api/v1/torrents/{hash}` | Verified | LIF-07, LIF-08, DSK-06, `deletion` |
 | Persist torrents across restarts | BBolt database | Verified | LIF-11, LIF-13 to LIF-18, `restart` ([ADR 8](adr/0008-database.md)) |
 | Memory and disk storage, with transitions | `storage` member | Verified | DSK-01 to DSK-09 ([ADR 9](adr/0009-disk-storage.md)) |
-| Play a torrent without keeping it | TorrServer `save_to_db`, excluded | Verified | TMP-01 to TMP-08; `retention: temporary`, deleted once unwatched; no one-URL play endpoint |
+| Play a torrent without keeping it | TorrServer `save_to_db`, excluded | Verified | TMP-01 to TMP-12; `retention: temporary`, deleted once unwatched, its progress kept by info hash; no one-URL play endpoint |
 | List torrents with pagination | `GET /api/v1/torrents` | Verified | API scenarios, `torrent_pages` |
 | Filter torrents by category, genre, kind, and info hash | Query parameters | Verified | LIB-06 |
 | Look up torrents by name | `names` parameter | Verified | SRC-02; by search, since the plan rules out an ad hoc name filter |

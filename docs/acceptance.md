@@ -233,12 +233,16 @@ mode (M6).
 |---|---|---|
 | TMP-01 | Create a torrent with `retention: temporary`, read it, its configuration, and its files, and stream a file | `201`; `retention` is `temporary` in both resources; it streams like a persisted torrent (M7) |
 | TMP-02 | List torrents with no `retention`, then with `temporary` and `any` | The default page and its facets leave the temporary torrent out; the others include it (M7) |
-| TMP-03 | Create a temporary torrent with library members or disk storage; then patch its library or storage mode, upload a poster, and record progress | `422 validation-failed` naming each member; then `409 lifecycle-conflict` for each change (M7) |
+| TMP-03 | Create a temporary torrent with library members or disk storage; then patch its library or storage mode, and upload a poster | `422 validation-failed` naming each member; then `409 lifecycle-conflict` for each change (M7) |
 | TMP-04 | Let a temporary torrent go past `temporary_idle_seconds` unwatched, counting from its last stream, and keep another streaming | The idle one is deleted and `404`; the streaming one stays (M7) |
 | TMP-05 | Add temporary torrents past `temporary_torrents_max`, first with one idle, then with every one streaming | The one idle longest is deleted; then `409 too-many-temporary-torrents` and nothing changes (M7) |
 | TMP-06 | Patch a temporary torrent to `retention: persisted`, restart; patch a persisted torrent to `temporary` | It survives the restart with its ID and URLs; the second patch is `422` (M7) |
 | TMP-07 | Restart with a temporary torrent | It is gone and `404` (M7) |
 | TMP-08 | Browse the DLNA tree and fetch a temporary torrent's DLNA media URL | The torrent is absent and its media URL is `404` (M7) |
+| TMP-09 | Save, read, list, and clear progress of a temporary torrent's file | `201`, `200`, the file listed, `204`; the device profile still cannot save it |
+| TMP-10 | Let a temporary torrent with progress expire, then add it again as temporary | The new torrent's file has the progress |
+| TMP-11 | Patch a temporary torrent with progress to `retention: persisted`, then restart | The progress is ordinary progress, listed in up next, and survives the restart |
+| TMP-12 | Let `temporary_progress_seconds` pass after the last save | The progress is gone |
 
 ### Settings
 

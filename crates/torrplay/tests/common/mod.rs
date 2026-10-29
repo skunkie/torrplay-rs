@@ -70,6 +70,7 @@ fn settings_of(config: &EngineConfig) -> torrplay_core::settings::Explicit {
         cache_capacity_bytes: Some(config.cache_capacity_bytes),
         temporary_idle_seconds: None,
         temporary_torrents_max: None,
+        temporary_progress_seconds: None,
         background_downloads: None,
         dlna_enabled: None,
         dlna_name: None,

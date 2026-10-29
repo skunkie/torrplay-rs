@@ -35,7 +35,7 @@ use torrplay_dlna::description::Device;
 use torrplay_media::SeekIndex;
 use torrplay_store::{
     Store, StoreError, StoredCredentials, StoredDismissal, StoredProgress, StoredSettings,
-    StoredTitleProgress, StoredTorrent,
+    StoredTemporaryProgress, StoredTitleProgress, StoredTorrent,
 };
 
 use crate::inference::{Due, EngineSource, INDEX_TIMEOUT, Inference, PendingIndex};
@@ -406,8 +406,11 @@ impl<E: Engine> App<E> {
     /// [`spawn_retention`](Self::spawn_retention) starts calls it every 10
     /// seconds.
     pub async fn expire_temporaries(&self) {
-        let limit = self.effective_settings().temporary_idle;
+        let settings = self.effective_settings();
+        let limit = settings.temporary_idle;
         let now = self.now();
+        self.expire_temporary_progress(now, settings.temporary_progress)
+            .await;
         for id in self.temporaries.expired(now, limit) {
             // The application that launched the player has yet to read
             // where it stopped.
@@ -419,6 +422,26 @@ impl<E: Engine> App<E> {
                 Err(problem) => {
                     tracing::warn!(%id, problem = problem.detail(), "an unwatched temporary torrent could not be deleted");
                 }
+            }
+        }
+    }
+
+    /// Deletes the progress of temporary torrents' files last saved more
+    /// than `retention` before `now`.
+    async fn expire_temporary_progress(&self, now: SystemTime, retention: Duration) {
+        let Some(cutoff) = now.checked_sub(retention) else {
+            return;
+        };
+        if !self.viewing.has_temporary_progress_before(cutoff) {
+            return;
+        }
+        let _lane = self.write_lane().await;
+        // The store goes first, so a failed write leaves both as they were,
+        // to try again on the next sweep.
+        match self.store.expire_temporary_progress(cutoff).await {
+            Ok(()) => self.viewing.expire_temporary_progress(cutoff),
+            Err(error) => {
+                tracing::warn!(%error, "expired temporary progress could not be deleted");
             }
         }
     }
@@ -497,13 +520,14 @@ impl<E: Engine> App<E> {
         self
     }
 
-    /// Runs with the profiles, progress, title progress, and dismissals the
-    /// store held at startup.
+    /// Runs with the profiles, progress, title progress, temporary torrents'
+    /// progress, and dismissals the store held at startup.
     pub fn with_viewing(
         self,
         profiles: Vec<Profile>,
         progress: Vec<StoredProgress>,
         titles: Vec<StoredTitleProgress>,
+        temporary_progress: Vec<StoredTemporaryProgress>,
         dismissals: Vec<StoredDismissal>,
     ) -> Self {
         for profile in profiles {
@@ -513,6 +537,14 @@ impl<E: Engine> App<E> {
             self.viewing.set_progress(
                 &stored.profile,
                 &stored.torrent,
+                &stored.file,
+                stored.progress,
+            );
+        }
+        for stored in temporary_progress {
+            self.viewing.set_temporary_progress(
+                &stored.profile,
+                stored.info_hash,
                 &stored.file,
                 stored.progress,
             );

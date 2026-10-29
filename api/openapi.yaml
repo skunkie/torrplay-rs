@@ -2012,7 +2012,9 @@ paths:
         at or past 90% of the duration marks the file viewed and resets the
         position to 0, which the response shows, as docs/lifecycle.md
         describes. Progress needs no engine and is stored before this returns.
-        It is lifecycle-conflict until metadata is available, and always in the
+        A temporary torrent's progress is kept by its info hash for the
+        temporary_progress_seconds setting after it was last saved. It is
+        lifecycle-conflict until metadata is available, and always in the
         device profile, whose progress only the application infers.
       tags: [Progress]
       requestBody:
@@ -2566,6 +2568,7 @@ paths:
                     cache_capacity_bytes: 268435456
                     temporary_idle_seconds: 600
                     temporary_torrents_max: 16
+                    temporary_progress_seconds: 2592000
                     background_downloads: true
                     dlna_enabled: false
                     dlna_name: TorrPlay
@@ -2586,6 +2589,7 @@ paths:
                     cache_capacity_bytes: 268435456
                     temporary_idle_seconds: 600
                     temporary_torrents_max: 16
+                    temporary_progress_seconds: 2592000
                     background_downloads: true
                     dlna_enabled: true
                     dlna_name: Living room
@@ -2654,6 +2658,7 @@ paths:
                     cache_capacity_bytes: 268435456
                     temporary_idle_seconds: 600
                     temporary_torrents_max: 16
+                    temporary_progress_seconds: 2592000
                     background_downloads: true
                     dlna_enabled: false
                     dlna_name: TorrPlay
@@ -4246,9 +4251,10 @@ components:
         Whether the application keeps the torrent. A persisted torrent is
         stored and survives restarts. A temporary torrent lives in memory
         storage only: it is hidden from the listing by default and from the
-        DLNA media server, takes no library members, poster, or progress,
-        and is deleted once it has gone unwatched for the
-        temporary_idle_seconds setting, or when the application restarts.
+        DLNA media server, takes no library members or poster, and is
+        deleted once it has gone unwatched for the temporary_idle_seconds
+        setting, or when the application restarts. Its files' progress is
+        kept by its info hash for the temporary_progress_seconds setting.
         Changing it to persisted keeps the torrent with its ID; a persisted
         torrent cannot become temporary. Clients must handle values added
         later.
@@ -4786,7 +4792,7 @@ components:
         The application's settings. Each value is the one set, or its default
         while it is unset. Command-line options may override some of them for
         one run, which overrides lists.
-      required: [piece_wait_seconds, idle_timeout_seconds, idle_readers_per_torrent, idle_readers_total, drain_period_seconds, peer_limit, cache_capacity_bytes, temporary_idle_seconds, temporary_torrents_max, background_downloads, dlna_enabled, dlna_name, dht_enabled, log_level, overrides, links]
+      required: [piece_wait_seconds, idle_timeout_seconds, idle_readers_per_torrent, idle_readers_total, drain_period_seconds, peer_limit, cache_capacity_bytes, temporary_idle_seconds, temporary_torrents_max, temporary_progress_seconds, background_downloads, dlna_enabled, dlna_name, dht_enabled, log_level, overrides, links]
       properties:
         piece_wait_seconds:
           type: integer
@@ -4895,6 +4901,17 @@ components:
             too-many-temporary-torrents while every one is streaming. Applies
             to torrents added afterward.
           examples: [16]
+        temporary_progress_seconds:
+          type: integer
+          format: int32
+          minimum: 86400
+          maximum: 31536000
+          default: 2592000
+          description: >-
+            How long the progress of a temporary torrent's file is kept after
+            it was last saved, by the torrent's info hash, so adding the
+            torrent again finds it. Applies at once.
+          examples: [2592000]
         background_downloads:
           type: boolean
           default: true
@@ -5051,6 +5068,15 @@ components:
           maximum: 64
           description: The new limit of temporary torrents, or null for the default, 16.
           examples: [16, null]
+        temporary_progress_seconds:
+          type: [integer, 'null']
+          format: int32
+          minimum: 86400
+          maximum: 31536000
+          description: >-
+            The new retention of temporary torrents' progress, or null for the
+            default, 2592000.
+          examples: [2592000, null]
         background_downloads:
           type: [boolean, 'null']
           description: The new value, or null for the default, true.

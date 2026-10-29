@@ -98,6 +98,20 @@ pub struct StoredTitleProgress {
     pub progress: TitleProgress,
 }
 
+/// A profile's stored progress of a temporary torrent's file, by the
+/// torrent's info hash.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredTemporaryProgress {
+    /// The profile.
+    pub profile: ProfileId,
+    /// The temporary torrent's info hash.
+    pub info_hash: InfoHashV1,
+    /// The file.
+    pub file: FileId,
+    /// The progress.
+    pub progress: Progress,
+}
+
 /// A profile's stored dismissal of an up next entry.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoredDismissal {
@@ -137,6 +151,8 @@ pub struct Contents {
     pub progress: Vec<StoredProgress>,
     /// Every profile's stored title progress.
     pub titles: Vec<StoredTitleProgress>,
+    /// Every profile's stored progress of temporary torrents' files.
+    pub temporary_progress: Vec<StoredTemporaryProgress>,
     /// Every profile's stored dismissals.
     pub dismissals: Vec<StoredDismissal>,
     /// The password, the signing key, and the access tokens.
@@ -220,6 +236,10 @@ enum Command {
     SetProgress(StoredProgress, Reply<()>),
     DeleteProgress(ProfileId, TorrentId, FileId, Reply<()>),
     SetTitleProgress(StoredTitleProgress, Option<TitleKey>, Reply<()>),
+    SetTemporaryProgress(StoredTemporaryProgress, Reply<()>),
+    DeleteTemporaryProgress(ProfileId, InfoHashV1, FileId, Reply<()>),
+    ExpireTemporaryProgress(SystemTime, Reply<()>),
+    Promote(StoredTorrent, InfoHashV1, Reply<()>),
     DeleteTitleProgress(ProfileId, TitleKey, Reply<()>),
     SetDismissal(StoredDismissal, Reply<()>),
     SetPassword(PasswordHash, SystemTime, bool, Reply<()>),
@@ -256,6 +276,7 @@ impl Store {
         let profiles = profiles::profiles(&connection)?;
         let progress = profiles::progress(&connection)?;
         let titles = profiles::titles(&connection)?;
+        let temporary_progress = profiles::temporary_progress(&connection)?;
         let dismissals = profiles::dismissals(&connection)?;
         let credentials = credentials::credentials(&mut connection, SystemTime::now())?;
         let media_server_udn = schema::media_server_udn(&mut connection)?;
@@ -290,6 +311,7 @@ impl Store {
                 profiles,
                 progress,
                 titles,
+                temporary_progress,
                 dismissals,
                 credentials,
                 media_server_udn,
@@ -443,6 +465,49 @@ impl Store {
     ) -> Result<(), StoreError> {
         let (profile, torrent, file) = (profile.clone(), torrent.clone(), file.clone());
         self.send(|reply| Command::DeleteProgress(profile, torrent, file, reply))
+            .await
+    }
+
+    /// Stores a profile's progress of a temporary torrent's file.
+    pub async fn set_temporary_progress(
+        &self,
+        progress: &StoredTemporaryProgress,
+    ) -> Result<(), StoreError> {
+        let progress = progress.clone();
+        self.send(|reply| Command::SetTemporaryProgress(progress, reply))
+            .await
+    }
+
+    /// Deletes a profile's progress of a temporary torrent's file, if it has
+    /// any.
+    pub async fn delete_temporary_progress(
+        &self,
+        profile: &ProfileId,
+        info_hash: &InfoHashV1,
+        file: &FileId,
+    ) -> Result<(), StoreError> {
+        let (profile, info_hash, file) = (profile.clone(), *info_hash, file.clone());
+        self.send(|reply| Command::DeleteTemporaryProgress(profile, info_hash, file, reply))
+            .await
+    }
+
+    /// Deletes the progress of temporary torrents' files last saved before
+    /// `cutoff`.
+    pub async fn expire_temporary_progress(&self, cutoff: SystemTime) -> Result<(), StoreError> {
+        self.send(|reply| Command::ExpireTemporaryProgress(cutoff, reply))
+            .await
+    }
+
+    /// Stores a temporary torrent that becomes persisted, as
+    /// [`insert`](Self::insert) does, and in the same transaction turns the
+    /// progress of the temporary torrent with the info hash into its
+    /// progress.
+    pub async fn promote(
+        &self,
+        torrent: StoredTorrent,
+        info_hash: InfoHashV1,
+    ) -> Result<(), StoreError> {
+        self.send(|reply| Command::Promote(torrent, info_hash, reply))
             .await
     }
 
