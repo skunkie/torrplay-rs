@@ -14,10 +14,25 @@ pub struct Manifest {
     pub version: String,
     pub name: &'static str,
     pub description: &'static str,
-    pub resources: [&'static str; 3],
+    pub resources: Vec<Resource>,
     pub types: [&'static str; 2],
-    pub id_prefixes: [&'static str; 1],
+    pub id_prefixes: [&'static str; 2],
     pub catalogs: Vec<Catalog>,
+}
+
+/// A resource the manifest lists, for every ID or only for some.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum Resource {
+    /// For every type and prefix the manifest lists.
+    All(&'static str),
+    /// For some ID prefixes only.
+    Some {
+        name: &'static str,
+        types: [&'static str; 2],
+        #[serde(rename = "idPrefixes")]
+        id_prefixes: Vec<&'static str>,
+    },
 }
 
 /// A catalog the manifest lists.

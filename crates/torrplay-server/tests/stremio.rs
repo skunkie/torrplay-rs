@@ -184,7 +184,7 @@ async fn the_addon_presents_movies_and_series() {
     // STM-01: the manifest.
     let manifest = document(&server, "/stremio/manifest.json").await;
     assert_eq!(manifest["id"], "org.torrplay.stremio");
-    assert_eq!(manifest["idPrefixes"], json!(["torrplay:"]));
+    assert_eq!(manifest["idPrefixes"], json!(["torrplay:", "tt"]));
     assert_eq!(manifest["types"], json!(["movie", "series"]));
     let catalogs = manifest["catalogs"].as_array().unwrap();
     assert_eq!(catalogs.len(), 2);
@@ -459,5 +459,119 @@ async fn without_a_password_the_addon_answers_only_local_networks() {
     );
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
+    server.stop().await;
+}
+
+/// STM-09 and STM-10: torrents linked to IMDb titles are listed by them and
+/// stream for Cinemeta's items and episodes.
+#[tokio::test]
+async fn imdb_titles_stream_their_linked_torrents() {
+    let Library {
+        server,
+        show,
+        show_files,
+        movie,
+        movie_files,
+    } = library().await;
+    configure(&server, &movie, json!({ "imdb_id": "tt1727587" })).await;
+    configure(&server, &show, json!({ "imdb_id": "tt0944947" })).await;
+
+    let manifest = document(&server, "/stremio/manifest.json").await;
+    assert_eq!(manifest["idPrefixes"], json!(["torrplay:", "tt"]));
+    assert_eq!(manifest["resources"][1]["idPrefixes"], json!(["torrplay:"]));
+    let movies = document(&server, "/stremio/catalog/movie/torrplay-movies.json").await;
+    assert_eq!(ids(&movies), ["tt1727587"]);
+    let shows = document(&server, "/stremio/catalog/series/torrplay-series.json").await;
+    assert_eq!(ids(&shows), ["tt0944947"]);
+
+    let film = document(&server, "/stremio/stream/movie/tt1727587.json").await;
+    let film_id = file_id(&movie_files, "Film.mkv");
+    assert_eq!(film["streams"].as_array().unwrap().len(), 1);
+    assert!(
+        film["streams"][0]["url"]
+            .as_str()
+            .unwrap()
+            .ends_with(&format!("/stremio/play/{movie}/{film_id}/Film.mkv"))
+    );
+    assert_eq!(film["streams"][0]["title"], "Sintel\nFilm.mkv");
+    let episode = document(&server, "/stremio/stream/series/tt0944947:1:2.json").await;
+    let second = file_id(&show_files, "Show.S01E02.mp4");
+    assert_eq!(episode["streams"].as_array().unwrap().len(), 1);
+    assert!(
+        episode["streams"][0]["url"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("/play/{show}/{second}/"))
+    );
+    for id in ["tt0944947:2:1", "tt0000001", "tt1727587:1:1"] {
+        let none = document(&server, &format!("/stremio/stream/series/{id}.json")).await;
+        assert_eq!(none["streams"], json!([]), "{id}");
+    }
+    server.stop().await;
+}
+
+/// STM-11: `imdb_id` is a library member: set at creation and by merge
+/// patch, cleared with null, and validated.
+#[tokio::test]
+async fn imdb_ids_are_library_members() {
+    let server = TestServer::start().await;
+    let created = server
+        .send(json_request(
+            Method::POST,
+            "/api/v1/torrents",
+            &json!({
+                "magnet_uri": format!("magnet:?xt=urn:btih:{}", hex(&[7; 20])),
+                "imdb_id": "tt0133093",
+            }),
+        ))
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{created:?}");
+    assert_eq!(created.json()["imdb_id"], "tt0133093");
+    let id = created.json()["id"].as_str().unwrap().to_owned();
+    let configuration = format!("/api/v1/torrents/{id}/configuration");
+    assert_eq!(
+        server.get(&configuration).await.json()["imdb_id"],
+        "tt0133093"
+    );
+    configure(&server, &id, json!({ "imdb_id": null })).await;
+    assert_eq!(
+        server.get(&configuration).await.json()["imdb_id"],
+        Value::Null
+    );
+    let server = server.restart().await;
+    assert_eq!(
+        server.get(&configuration).await.json()["imdb_id"],
+        Value::Null
+    );
+    configure(&server, &id, json!({ "imdb_id": "tt1254207" })).await;
+    let server = server.restart().await;
+    assert_eq!(
+        server.get(&format!("/api/v1/torrents/{id}")).await.json()["imdb_id"],
+        "tt1254207",
+        "a restart keeps it"
+    );
+    let etag = server
+        .get(&configuration)
+        .await
+        .header(header::ETAG)
+        .unwrap()
+        .to_owned();
+    for invalid in ["tt123", "nm0000001", "tt01330930000"] {
+        let refused = server
+            .send_unchecked(
+                request(Method::PATCH, &configuration)
+                    .header(header::CONTENT_TYPE, "application/merge-patch+json")
+                    .header(header::IF_MATCH, etag.clone())
+                    .body(json!({ "imdb_id": invalid }).to_string().into_bytes())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(
+            refused.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{invalid}"
+        );
+        assert_eq!(refused.json()["errors"][0]["pointer"], "/imdb_id");
+    }
     server.stop().await;
 }

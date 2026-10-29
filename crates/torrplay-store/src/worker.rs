@@ -271,7 +271,7 @@ fn set_configuration(
     let updated = connection.execute(
         "UPDATE torrents
          SET desired_state = ?2, desired_storage_mode = ?3, configuration_version = ?4,
-             title = ?5, kind = ?6, year = ?7, description = ?8
+             title = ?5, kind = ?6, year = ?7, description = ?8, imdb_id = ?9
          WHERE id = ?1",
         params![
             id.as_str(),
@@ -281,7 +281,8 @@ fn set_configuration(
             library.title,
             library.kind.map(|kind| kind.as_str()),
             library.year,
-            library.description
+            library.description,
+            library.imdb_id,
         ],
     )?;
     if updated == 0 {
@@ -320,8 +321,8 @@ fn insert(connection: &Connection, torrent: &StoredTorrent) -> Result<(), StoreE
         "INSERT INTO torrents
              (id, info_hash, created_at_ns, desired_state, desired_storage_mode,
               configuration_version, storage_mode, magnet_uri, title, kind, year,
-              description)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+              description, imdb_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             torrent.id.as_str(),
             torrent.info_hash.as_bytes().as_slice(),
@@ -335,6 +336,7 @@ fn insert(connection: &Connection, torrent: &StoredTorrent) -> Result<(), StoreE
             library.kind.map(|kind| kind.as_str()),
             library.year,
             library.description,
+            library.imdb_id,
         ],
     )?;
     set_labels(connection, &torrent.id, library)?;

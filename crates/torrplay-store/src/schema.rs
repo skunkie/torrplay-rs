@@ -17,7 +17,7 @@ use rusqlite::{Connection, ErrorCode, OptionalExtension, TransactionBehavior};
 use std::collections::HashMap;
 
 use torrplay_core::id::{InfoHashV1, TorrentId};
-use torrplay_core::library::{Kind, Library};
+use torrplay_core::library::{self, Kind, Library};
 use torrplay_core::lifecycle::{Configuration, DesiredState, StorageMode};
 use torrplay_core::settings::{self, Explicit, Stored};
 
@@ -25,7 +25,7 @@ use crate::images::{self, Images};
 use crate::{StoreError, StoredTorrent};
 
 /// The schema version this build creates and migrates to.
-pub(crate) const VERSION: u32 = 15;
+pub(crate) const VERSION: u32 = 16;
 
 /// The schema at each version, applied in order to reach the next one.
 const MIGRATIONS: [&str; VERSION as usize] = [
@@ -219,6 +219,8 @@ const MIGRATIONS: [&str; VERSION as usize] = [
         updated_at_ns INTEGER NOT NULL CHECK (updated_at_ns >= 0),
         PRIMARY KEY (profile_id, info_hash, file_id)
     ) STRICT;",
+    // Version 16: each torrent's IMDb title ID.
+    "ALTER TABLE torrents ADD COLUMN imdb_id TEXT CHECK (imdb_id GLOB 'tt[0-9]*');",
 ];
 
 /// Opens the database at `path`, takes its lock, and migrates it.
@@ -300,7 +302,7 @@ pub(crate) fn torrents(connection: &mut Connection) -> Result<Vec<StoredTorrent>
     let mut statement = transaction.prepare(
         "SELECT t.id, t.info_hash, t.created_at_ns, t.desired_state, t.configuration_version,
                 t.magnet_uri, f.bytes, t.desired_storage_mode, t.storage_mode,
-                t.title, t.kind, t.year, t.description
+                t.title, t.kind, t.year, t.description, t.imdb_id
          FROM torrents t LEFT JOIN torrent_files f ON f.torrent_id = t.id
          ORDER BY t.created_at_ns, t.id",
     )?;
@@ -320,6 +322,7 @@ pub(crate) fn torrents(connection: &mut Connection) -> Result<Vec<StoredTorrent>
                 row.get::<_, Option<String>>(10)?,
                 row.get::<_, Option<i64>>(11)?,
                 row.get::<_, Option<String>>(12)?,
+                row.get::<_, Option<String>>(13)?,
             ),
         ))
     })?;
@@ -335,7 +338,7 @@ pub(crate) fn torrents(connection: &mut Connection) -> Result<Vec<StoredTorrent>
             torrent_file,
             desired_storage_mode,
             storage_mode,
-            (title, kind, year, description),
+            (title, kind, year, description, imdb_id),
         ) = row?;
         let corrupt = |what: &str| StoreError::Corrupt(format!("torrent {id}: {what}"));
         let info_hash: [u8; 20] = info_hash
@@ -356,6 +359,13 @@ pub(crate) fn torrents(connection: &mut Connection) -> Result<Vec<StoredTorrent>
                 .transpose()?,
             year: year
                 .map(|year| u16::try_from(year).map_err(|_| corrupt("the year is out of range")))
+                .transpose()?,
+            imdb_id: imdb_id
+                .map(|imdb_id| {
+                    library::is_imdb_id(&imdb_id)
+                        .then_some(imdb_id)
+                        .ok_or_else(|| corrupt("the IMDb ID is malformed"))
+                })
                 .transpose()?,
             description,
             categories: categories.remove(&id).unwrap_or_default(),

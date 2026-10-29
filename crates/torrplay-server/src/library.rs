@@ -17,6 +17,7 @@ pub(crate) struct LibraryPatch {
     pub(crate) title: Option<Option<String>>,
     pub(crate) kind: Option<Option<Kind>>,
     pub(crate) year: Option<Option<u16>>,
+    pub(crate) imdb_id: Option<Option<String>>,
     pub(crate) description: Option<Option<String>>,
     pub(crate) categories: Option<Vec<String>>,
     pub(crate) genres: Option<Vec<String>>,
@@ -26,7 +27,7 @@ pub(crate) struct LibraryPatch {
 pub(crate) fn is_member(member: &str) -> bool {
     matches!(
         member,
-        "title" | "kind" | "year" | "description" | "categories" | "genres"
+        "title" | "kind" | "year" | "imdb_id" | "description" | "categories" | "genres"
     )
 }
 
@@ -90,6 +91,21 @@ impl LibraryPatch {
                     },
                 }
             }
+            "imdb_id" => {
+                self.imdb_id = match value {
+                    Value::Null => Some(None),
+                    value => match value.as_str().filter(|text| library::is_imdb_id(text)) {
+                        Some(id) => Some(Some(id.to_owned())),
+                        None => {
+                            errors.push(InvalidValue::pointer(
+                                &pointer,
+                                "Must be an IMDb title ID, tt and 7 to 10 digits, or null.",
+                            ));
+                            None
+                        }
+                    },
+                }
+            }
             "categories" => self.categories = labels(&pointer, value, errors),
             "genres" => self.genres = labels(&pointer, value, errors),
             _ => {}
@@ -102,6 +118,10 @@ impl LibraryPatch {
             title: self.title.clone().unwrap_or_else(|| library.title.clone()),
             kind: self.kind.unwrap_or(library.kind),
             year: self.year.unwrap_or(library.year),
+            imdb_id: self
+                .imdb_id
+                .clone()
+                .unwrap_or_else(|| library.imdb_id.clone()),
             description: self
                 .description
                 .clone()
@@ -189,6 +209,7 @@ mod tests {
             "title": "  Example   Film ",
             "kind": "series",
             "year": 2026,
+            "imdb_id": "tt0133093",
             "description": "One\r\nTwo",
             "categories": [" Movies", "Kids"],
             "genres": null,
@@ -204,13 +225,16 @@ mod tests {
                 title: Some("Example Film".into()),
                 kind: Some(Kind::Series),
                 year: Some(2026),
+                imdb_id: Some("tt0133093".into()),
                 description: Some("One\nTwo".into()),
                 categories: vec!["Movies".into(), "Kids".into()],
                 genres: Vec::new(),
             }
         );
-        let (cleared, _) = read(json!({ "title": null, "kind": null, "year": null }));
+        let (cleared, _) =
+            read(json!({ "title": null, "kind": null, "year": null, "imdb_id": null }));
         assert_eq!(cleared.apply(&library).title, None);
+        assert_eq!(cleared.apply(&library).imdb_id, None);
         assert_eq!(cleared.apply(&library).kind, None);
         assert_eq!(cleared.apply(&library).categories, library.categories);
     }
@@ -221,6 +245,7 @@ mod tests {
             "title": " ",
             "kind": "film",
             "year": 1799,
+            "imdb_id": "tt123",
             "description": 5,
             "categories": ["Movies", "Movies "],
             "genres": ["Comedy", 3],
@@ -231,6 +256,7 @@ mod tests {
                 "/categories/1",
                 "/description",
                 "/genres/1",
+                "/imdb_id",
                 "/kind",
                 "/title",
                 "/year"

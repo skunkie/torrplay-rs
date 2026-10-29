@@ -256,6 +256,7 @@ paths:
                         title: Example Film
                         kind: movie
                         year: 2026
+                        imdb_id: null
                         description: A short invented film for the examples.
                         categories: [Movies, Kids]
                         genres: [Animation, Comedy]
@@ -382,6 +383,7 @@ paths:
                     title: null
                     kind: null
                     year: null
+                    imdb_id: null
                     description: null
                     categories: []
                     genres: []
@@ -457,6 +459,7 @@ paths:
                     title: Example Film
                     kind: movie
                     year: 2026
+                    imdb_id: null
                     description: A short invented film for the examples.
                     categories: [Movies, Kids]
                     genres: [Animation, Comedy]
@@ -531,6 +534,7 @@ paths:
                     title: Example Film
                     kind: null
                     year: 2026
+                    imdb_id: null
                     description: A short invented film for the examples.
                     categories: [Movies, Kids]
                     genres: [Animation, Comedy]
@@ -591,6 +595,10 @@ paths:
                   title: Example Film
                   categories: [Movies, Kids]
                   year: null
+              link:
+                summary: Link the torrent to its IMDb title
+                value:
+                  imdb_id: tt0133093
       responses:
         '200':
           description: The updated configuration.
@@ -611,6 +619,7 @@ paths:
                     title: Example Film
                     kind: null
                     year: 2026
+                    imdb_id: null
                     description: A short invented film for the examples.
                     categories: [Movies, Kids]
                     genres: [Animation, Comedy]
@@ -2456,6 +2465,7 @@ paths:
                       title: null
                       kind: series
                       year: null
+                      imdb_id: null
                       description: null
                       categories: []
                       genres: []
@@ -4198,6 +4208,8 @@ components:
           $ref: '#/components/schemas/ConfiguredKind'
         year:
           $ref: '#/components/schemas/Year'
+        imdb_id:
+          $ref: '#/components/schemas/ImdbId'
         description:
           $ref: '#/components/schemas/Description'
         categories:
@@ -4231,6 +4243,8 @@ components:
           $ref: '#/components/schemas/ConfiguredKind'
         year:
           $ref: '#/components/schemas/Year'
+        imdb_id:
+          $ref: '#/components/schemas/ImdbId'
         description:
           $ref: '#/components/schemas/Description'
         categories:
@@ -4317,6 +4331,16 @@ components:
       maximum: 2200
       default: null
       examples: [2026]
+
+    ImdbId:
+      type: [string, 'null']
+      description: >-
+        The title's IMDb ID, tt and 7 to 10 digits, which links the torrent to
+        that title in catalogs keyed by it, such as Stremio's Cinemeta, or null
+        if unknown. It defaults to null.
+      pattern: '^tt[0-9]{7,10}$'
+      default: null
+      examples: [tt0133093]
 
     Description:
       type: [string, 'null']
@@ -4415,6 +4439,7 @@ components:
         - title
         - kind
         - year
+        - imdb_id
         - description
         - categories
         - genres
@@ -4522,6 +4547,8 @@ components:
           examples: [movie]
         year:
           $ref: '#/components/schemas/Year'
+        imdb_id:
+          $ref: '#/components/schemas/ImdbId'
         description:
           $ref: '#/components/schemas/Description'
         categories:
@@ -4706,7 +4733,7 @@ components:
         The writable configuration of a torrent. Its storage_mode is the one
         the client asked for; while a transition runs, the torrent resource's
         storage_mode is still the previous one.
-      required: [desired_state, storage_mode, retention, title, kind, year, description, categories, genres, links]
+      required: [desired_state, storage_mode, retention, title, kind, year, imdb_id, description, categories, genres, links]
       properties:
         desired_state:
           $ref: '#/components/schemas/DesiredState'
@@ -4720,6 +4747,8 @@ components:
           $ref: '#/components/schemas/ConfiguredKind'
         year:
           $ref: '#/components/schemas/Year'
+        imdb_id:
+          $ref: '#/components/schemas/ImdbId'
         description:
           $ref: '#/components/schemas/Description'
         categories:
@@ -4767,6 +4796,8 @@ components:
           $ref: '#/components/schemas/ConfiguredKind'
         year:
           $ref: '#/components/schemas/Year'
+        imdb_id:
+          $ref: '#/components/schemas/ImdbId'
         description:
           $ref: '#/components/schemas/Description'
         categories:

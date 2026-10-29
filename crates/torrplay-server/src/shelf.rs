@@ -27,6 +27,8 @@ pub(crate) struct Shelved {
     /// Its name from its metadata.
     pub(crate) name: String,
     pub(crate) kind: Option<Kind>,
+    /// Its library IMDb ID, if it has one.
+    pub(crate) imdb_id: Option<String>,
     pub(crate) categories: Vec<String>,
     pub(crate) genres: Vec<String>,
     pub(crate) has_poster: bool,
@@ -107,6 +109,7 @@ pub(crate) async fn shelved<E: Engine>(app: &App<E>) -> Result<Option<Vec<Shelve
             title: library.title.clone(),
             name: metadata.display_name(),
             kind,
+            imdb_id: library.imdb_id.clone(),
             categories: library.categories.clone(),
             genres: library.genres.clone(),
             has_poster: record.poster.is_some(),

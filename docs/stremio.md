@@ -58,9 +58,10 @@ Every resource under `/stremio` answers as the playback operations do:
 
 - `id` `org.torrplay.stremio`, `name` `TorrPlay`, and `version`, the
   application's version.
-- `resources` `catalog`, `meta`, and `stream`; `types` `movie` and
-  `series`; `idPrefixes` `torrplay:`, so Stremio asks it only about its
-  own items.
+- `resources` `catalog`, `meta` for `torrplay:` IDs, and `stream` for
+  `torrplay:` and `tt` IDs; `types` `movie` and `series`; `idPrefixes`
+  `torrplay:` and `tt`, so Stremio asks it about its own items and about
+  IMDb titles, whose metadata Cinemeta serves.
 - Two catalogs: `torrplay-movies` of type `movie`, `TorrPlay movies`, and
   `torrplay-series` of type `series`, `TorrPlay series`. Each takes the
   extra properties `search`, `skip`, and `genre`, whose options are the
@@ -73,6 +74,10 @@ Every resource under `/stremio` answers as the playback operations do:
 - A video is one of its files: `torrplay:<torrent ID>:<file ID>`.
 - IDs are the native API's, so they survive restarts; deleting a torrent
   and adding it again gives it a new ID.
+- A torrent whose library `imdb_id` is set is the IMDb title instead:
+  catalogs list it by that ID, such as `tt0133093`, so Stremio shows
+  Cinemeta's metadata for it and keeps its watch history by the title.
+  Its own `torrplay:` IDs still answer.
 
 ## Catalogs
 
@@ -114,6 +119,16 @@ torrent:
 
 `stream/<type>/<video ID>.json` answers `{ "streams": [...] }`: one stream
 for a video, or for an item ID, one for each of its video files.
+
+For an IMDb ID, the streams are those of every listed torrent with that
+`imdb_id`, newest torrent first:
+
+- `tt<digits>`, a movie: each of a movie torrent's video files.
+- `tt<digits>:<season>:<episode>`, an episode: each of a series torrent's
+  video files whose episode pattern names that season and episode, so a
+  season pack answers for each of its episodes.
+- A stream's `title` is then the torrent's library title, or else its
+  name, and the file's name on a second line.
 
 - `url` is `/stremio/[<token>/]play/<torrent ID>/<file ID>/<file name>`,
   absolute on the host the request named, whose last segment is the
