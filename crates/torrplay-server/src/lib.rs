@@ -33,6 +33,7 @@ mod dlna;
 mod files;
 mod headers;
 mod images;
+mod inference;
 mod library;
 mod posters;
 mod preloads;
@@ -59,7 +60,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get, post};
 use torrplay_core::engine::Engine;
 
-pub use crate::app::{App, Clock, MediaServerSetting};
+pub use crate::app::{App, Clock, MediaServerSetting, SeekIndexes};
 use crate::problem::{Problem, ProblemType};
 
 /// Returns the router of the API over `app`.

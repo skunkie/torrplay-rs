@@ -23,6 +23,7 @@ use torrplay_core::pagination::{
 use crate::app::{App, TorrentView};
 use crate::content::{RangeRequest, disposition, media_type, range_request};
 use crate::headers::{EntityTags, negotiate};
+use crate::inference::WatchedBody;
 use crate::problem::{Problem, ProblemType};
 use crate::query::{Paging, Query, page_error, reject};
 use crate::representation::{self, JSON, torrent_path};
@@ -115,7 +116,7 @@ pub(crate) async fn get_content<E: Engine>(
     Path((id, file_id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Response, Problem> {
-    content(&app, &id, &file_id, &headers, true).await
+    content(&app, &id, &file_id, &headers, true, false).await
 }
 
 /// HEAD answers as GET would, from the application's records, without
@@ -125,15 +126,18 @@ pub(crate) async fn head_content<E: Engine>(
     Path((id, file_id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Response, Problem> {
-    content(&app, &id, &file_id, &headers, false).await
+    content(&app, &id, &file_id, &headers, false, false).await
 }
 
+/// A file's content, streamed when `stream`, its progress inferred when
+/// `infer`, as for DLNA media renderers, which report none.
 pub(crate) async fn content<E: Engine>(
     app: &App<E>,
     id: &str,
     file_id: &str,
     headers: &HeaderMap,
     stream: bool,
+    infer: bool,
 ) -> Result<Response, Problem> {
     let (view, metadata) = with_metadata(app, id).await?;
     let (position, file) = metadata.file(file_id).ok_or_else(unknown_file)?;
@@ -210,6 +214,21 @@ pub(crate) async fn content<E: Engine>(
     let body = match activity {
         Some(activity) => Body::new(ActiveBody::new(body, activity)),
         None => body,
+    };
+    // Temporary torrents take no progress, and only media plays.
+    let played = media_type.starts_with("video/") || media_type.starts_with("audio/");
+    let body = if stream && infer && played && !app.temporaries().contains(&view.record.id) {
+        let watched = app.inference().begin(
+            (view.record.id.clone(), file.id().clone()),
+            file.index(),
+            name.clone(),
+            length,
+            range.start(),
+            app.clock(),
+        );
+        Body::new(WatchedBody::new(body, watched))
+    } else {
+        body
     };
     let mut response = (status, body).into_response();
     let values = response.headers_mut();

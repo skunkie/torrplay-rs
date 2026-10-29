@@ -135,6 +135,7 @@ parse, or names nothing, is `701`.
 | `0` | The root container, whose parent is `-1` |
 | `all` | Every torrent, newest first |
 | `recent` | The 20 newest torrents |
+| `recently-viewed` | The device profile's 20 files most recently saved in progress or viewed |
 | `movies` | Torrents whose reported kind is `movie`, newest first |
 | `series` | Torrents whose reported kind is `series`, newest first |
 | `categories` | One container per category, by name |
@@ -153,8 +154,14 @@ parse, or names nothing, is `701`.
 
 ## The content tree
 
-- The root holds `all`, `recent`, `movies`, `series`, `categories`, and
-  `genres`, in that order, each with its child count.
+- The root holds `all`, `recent`, `recently-viewed`, `movies`, `series`,
+  `categories`, and `genres`, in that order, each with its child count.
+- `recently-viewed` lists files: the device profile's files in progress
+  and viewed, most recently saved first, then by ID, at most 20, and only
+  files the tree lists. In it, a file's parent is `recently-viewed`, as a
+  torrent container's parent is the container it was browsed from; read by
+  itself, a file's parent stays its torrent. Its contents change the system
+  update ID as other changes of the tree do.
 - A torrent is listed once its metadata is available, while it is not
   paused or failed, and only if it has a playable file: one served with an
   `audio/`, `video/`, or `image/` media type. Temporary torrents are never
@@ -187,6 +194,14 @@ file by its extension; it must be the file's name, or the request is
   for content features without a mode. Any other mode is
   `406 Not Acceptable`.
 - Problems are the native API's Problem Details.
+
+## Progress
+
+Renderers report no playback progress, so the application infers it from
+the ranges they stream and saves it in the device profile, as the
+lifecycle's [Profiles and progress](lifecycle.md#profiles-and-progress)
+section describes. `HEAD`, the native content operation, and temporary
+torrents infer nothing.
 
 ## Search and sorting
 

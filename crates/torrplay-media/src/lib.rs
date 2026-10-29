@@ -113,11 +113,7 @@ impl SeekIndex {
     /// media range and the duration, ascending in both offset and time, at
     /// least [`POINT_SPACING`] apart, and at most [`POINTS_MAX`]. None
     /// without a duration, media data, or a point.
-    pub(crate) fn new(
-        duration: Duration,
-        media: Range<u64>,
-        mut points: Vec<SeekPoint>,
-    ) -> Option<Self> {
+    pub fn new(duration: Duration, media: Range<u64>, mut points: Vec<SeekPoint>) -> Option<Self> {
         if duration.is_zero() || media.is_empty() {
             return None;
         }

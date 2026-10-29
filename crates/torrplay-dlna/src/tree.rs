@@ -16,12 +16,20 @@ use crate::search::{Criteria, SortCriteria};
 /// How many torrents `recent` holds.
 pub const RECENT_COUNT: usize = 20;
 
+/// How many files `recently-viewed` holds.
+pub const RECENTLY_VIEWED_COUNT: usize = 20;
+
 /// The library a media server presents: the torrents it lists, newest
-/// first, each with its playable files in tree order.
+/// first, each with its playable files in tree order, and the files the
+/// device profile is watching or watched.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Catalog {
     /// The torrents, newest first.
     pub torrents: Vec<Torrent>,
+    /// The torrent and file IDs of the device profile's files in progress
+    /// and viewed, most recently saved first. Those the catalog does not
+    /// list are left out.
+    pub viewed: Vec<(String, String)>,
 }
 
 /// A torrent the media server lists.
@@ -132,6 +140,22 @@ impl Catalog {
         self.torrents.iter().find(|torrent| torrent.id == id)
     }
 
+    /// The viewed files `recently-viewed` holds, with their torrents.
+    fn recently_viewed(&self) -> Vec<(&Torrent, &File)> {
+        self.viewed
+            .iter()
+            .filter_map(|(torrent, file)| {
+                let torrent = self.torrent(torrent)?;
+                let file = torrent
+                    .files
+                    .iter()
+                    .find(|candidate| candidate.id == *file)?;
+                Some((torrent, file))
+            })
+            .take(RECENTLY_VIEWED_COUNT)
+            .collect()
+    }
+
     fn of_kind(&self, kind: Kind) -> impl Iterator<Item = &Torrent> {
         self.torrents
             .iter()
@@ -227,7 +251,7 @@ impl Catalog {
                     ObjectId::All.to_string(),
                 )
             }
-            ObjectId::Torrent(_) => (Vec::new(), String::new()),
+            ObjectId::Torrent(_) | ObjectId::RecentlyViewed => (Vec::new(), String::new()),
             ObjectId::File(..) => {
                 self.metadata(id, base)?;
                 return Ok(paged(Vec::new(), page));
@@ -235,6 +259,13 @@ impl Catalog {
             _ => (self.torrents_of(id).ok_or(NoSuchObject)?, id.to_string()),
         };
         let mut candidates = Vec::new();
+        if *id == ObjectId::RecentlyViewed {
+            candidates.extend(
+                self.recently_viewed()
+                    .into_iter()
+                    .map(|(torrent, file)| Object::item_in(torrent, file, &id.to_string(), base)),
+            );
+        }
         if let ObjectId::Torrent(torrent) = id {
             let torrent = self.torrent(torrent).ok_or(NoSuchObject)?;
             candidates.extend(
@@ -273,12 +304,15 @@ impl Catalog {
         base: Base<'_>,
     ) -> Result<Object, NoSuchObject> {
         let (title, children) = match id {
-            ObjectId::Root => ("TorrPlay".to_owned(), 6),
+            ObjectId::Root => ("TorrPlay".to_owned(), 7),
             ObjectId::All => ("All".to_owned(), self.torrents.len()),
             ObjectId::Recent => (
                 "Recently added".to_owned(),
                 self.torrents.len().min(RECENT_COUNT),
             ),
+            ObjectId::RecentlyViewed => {
+                ("Recently viewed".to_owned(), self.recently_viewed().len())
+            }
             ObjectId::Movies => ("Movies".to_owned(), self.of_kind(Kind::Movie).count()),
             ObjectId::Series => ("Series".to_owned(), self.of_kind(Kind::Series).count()),
             ObjectId::Categories => ("Categories".to_owned(), self.labels(categories).len()),
@@ -338,6 +372,7 @@ impl Catalog {
             ObjectId::Root => containers(vec![
                 ObjectId::All,
                 ObjectId::Recent,
+                ObjectId::RecentlyViewed,
                 ObjectId::Movies,
                 ObjectId::Series,
                 ObjectId::Categories,
@@ -363,6 +398,11 @@ impl Catalog {
                     .map(|file| Object::item(torrent, file, base))
                     .collect()
             }
+            ObjectId::RecentlyViewed => self
+                .recently_viewed()
+                .into_iter()
+                .map(|(torrent, file)| Object::item_in(torrent, file, &parent, base))
+                .collect(),
             ObjectId::File(..) => {
                 self.metadata(id, base)?;
                 Vec::new()
@@ -430,9 +470,19 @@ impl Object {
     }
 
     fn item(torrent: &Torrent, file: &File, base: Base<'_>) -> Self {
+        Self::item_in(
+            torrent,
+            file,
+            &ObjectId::Torrent(torrent.id.clone()).to_string(),
+            base,
+        )
+    }
+
+    /// A file listed in container `parent`.
+    fn item_in(torrent: &Torrent, file: &File, parent: &str, base: Base<'_>) -> Self {
         Self {
             id: ObjectId::File(torrent.id.clone(), file.id.clone()).to_string(),
-            parent: ObjectId::Torrent(torrent.id.clone()).to_string(),
+            parent: parent.to_owned(),
             title: file.name.clone(),
             class: file.class(),
             date: Some(didl::date(torrent.created_at)),
@@ -482,6 +532,12 @@ mod tests {
                 torrent("trr_b", Kind::Series, &["TV"]),
                 torrent("trr_c", Kind::Other, &[]),
             ],
+            viewed: vec![
+                ("trr_b".into(), "fil_1".into()),
+                ("trr_gone".into(), "fil_1".into()),
+                ("trr_a".into(), "fil_2".into()),
+                ("trr_a".into(), "fil_gone".into()),
+            ],
         }
     }
 
@@ -498,10 +554,11 @@ mod tests {
     #[test]
     fn the_root_holds_the_fixed_containers_with_counts() {
         let root = browse("0", BrowseFlag::DirectChildren).unwrap();
-        assert_eq!((root.returned, root.total), (6, 6));
+        assert_eq!((root.returned, root.total), (7, 7));
         for expected in [
             r#"<container id="all" parentID="0" restricted="1" childCount="3""#,
             r#"<container id="recent" parentID="0" restricted="1" childCount="3""#,
+            r#"<container id="recently-viewed" parentID="0" restricted="1" childCount="2""#,
             r#"<container id="movies" parentID="0" restricted="1" childCount="1""#,
             r#"<container id="series" parentID="0" restricted="1" childCount="1""#,
             r#"<container id="categories" parentID="0" restricted="1" childCount="2""#,
@@ -511,6 +568,40 @@ mod tests {
         }
         let metadata = browse("0", BrowseFlag::Metadata).unwrap();
         assert!(metadata.didl.contains(r#"id="0" parentID="-1""#));
+    }
+
+    #[test]
+    fn recently_viewed_lists_the_listed_files_in_its_order() {
+        let viewed = browse("recently-viewed", BrowseFlag::DirectChildren).unwrap();
+        assert_eq!((viewed.returned, viewed.total), (2, 2), "{}", viewed.didl);
+        let series = viewed
+            .didl
+            .find(r#"<item id="f:trr_b:fil_1" parentID="recently-viewed""#)
+            .expect("the series' file, saved last");
+        let movie = viewed
+            .didl
+            .find(r#"<item id="f:trr_a:fil_2" parentID="recently-viewed""#)
+            .expect("the movie's file");
+        assert!(series < movie, "most recently saved first");
+        let metadata = browse("recently-viewed", BrowseFlag::Metadata).unwrap();
+        assert!(
+            metadata
+                .didl
+                .contains(r#"id="recently-viewed" parentID="0""#)
+        );
+        assert!(
+            metadata
+                .didl
+                .contains("<dc:title>Recently viewed</dc:title>")
+        );
+        let found = search(
+            "recently-viewed",
+            r#"upnp:class derivedfrom "object.item.audioItem""#,
+            "",
+        )
+        .unwrap();
+        assert_eq!(found.returned, 1, "{}", found.didl);
+        assert!(found.didl.contains(r#"id="f:trr_a:fil_2""#));
     }
 
     #[test]
@@ -595,7 +686,7 @@ mod tests {
                 BASE,
             )
             .unwrap();
-        assert_eq!((page.returned, page.total), (3, 6));
+        assert_eq!((page.returned, page.total), (3, 7));
         assert!(page.didl.starts_with("<DIDL-Lite"));
         assert!(page.didl.contains(r#"id="movies""#) && !page.didl.contains(r#"id="all""#));
         let past = catalog
@@ -610,7 +701,7 @@ mod tests {
                 BASE,
             )
             .unwrap();
-        assert_eq!((past.returned, past.total), (0, 6));
+        assert_eq!((past.returned, past.total), (0, 7));
     }
 
     fn search(id: &str, criteria: &str, sort: &str) -> Result<Browsed, NoSuchObject> {

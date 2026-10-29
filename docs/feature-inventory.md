@@ -66,7 +66,8 @@ document that schedules it.
 | Mark files viewed, with the time | `viewed`, `viewed_at` | Verified | PRG-02 |
 | Playback positions, per profile | Client local storage | Verified | PRG-01 to PRG-06 |
 | Profiles with avatars | Not present | Verified | PRF-01 to PRF-04 |
-| The device profile, for progress inferred from DLNA playback | Not present | Planned | PRF-04 for the profile; inferring progress follows with the media seek index |
+| Progress inferred from DLNA playback, in the device profile | Not present | Verified | PRF-04, PRG-07, DLNA-16 to DLNA-18; MP4 and Matroska files, through their seek indexes |
+| DLNA "Recently viewed" | Recently viewed container `3` | Verified | `recently-viewed`, filled by inferred progress; DLNA-17 |
 | Up next: resume and next episode | Not present | Verified | UPN-01 to UPN-05 |
 | Playlists for external players | `GET /api/v1/playlist` | Planned | Playlists and scoped playback access |
 

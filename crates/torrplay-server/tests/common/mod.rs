@@ -22,7 +22,7 @@ use torrplay_core::fake::FakeEngine;
 use torrplay_core::id::{TORRENT_ID_RANDOM_BYTES, TorrentId};
 use torrplay_core::registry::Registry;
 use torrplay_core::settings::Overrides;
-use torrplay_server::{App, router};
+use torrplay_server::{App, SeekIndexes, router};
 use torrplay_store::{Store, StoredTorrent};
 
 /// A running server and its client.
@@ -110,6 +110,21 @@ impl TestServer {
             true,
             AllowedHosts::default(),
             Overrides::default(),
+            None,
+        )
+        .await
+    }
+
+    /// Starts a server that takes files' seek indexes from `indexes`.
+    pub async fn start_with_seek_indexes(indexes: SeekIndexes) -> Self {
+        Self::start_over(
+            Arc::new(TempDir::new().expect("a data directory")),
+            FakeEngine::with_catalog(),
+            None,
+            true,
+            AllowedHosts::default(),
+            Overrides::default(),
+            Some(indexes),
         )
         .await
     }
@@ -123,6 +138,7 @@ impl TestServer {
             true,
             AllowedHosts::default(),
             Overrides::default(),
+            None,
         )
         .await
     }
@@ -143,6 +159,7 @@ impl TestServer {
             true,
             hosts,
             Overrides::default(),
+            None,
         )
         .await
     }
@@ -167,7 +184,16 @@ impl TestServer {
         let data = Arc::clone(&self.data);
         let hosts = self.allowed_hosts.clone();
         self.stop().await;
-        Self::start_over(data, engine, None, restore, hosts, Overrides::default()).await
+        Self::start_over(
+            data,
+            engine,
+            None,
+            restore,
+            hosts,
+            Overrides::default(),
+            None,
+        )
+        .await
     }
 
     /// Restarts as a command line with `overrides` does.
@@ -182,6 +208,7 @@ impl TestServer {
             true,
             hosts,
             overrides,
+            None,
         )
         .await
     }
@@ -207,6 +234,7 @@ impl TestServer {
         restore: bool,
         allowed_hosts: AllowedHosts,
         overrides: Overrides,
+        seek_indexes: Option<SeekIndexes>,
     ) -> Self {
         let engine = Arc::new(engine);
         let (store, contents) = Store::open(data.path()).expect("the store opens");
@@ -242,6 +270,9 @@ impl TestServer {
         }));
         if let Some(timeout) = body_timeout {
             app = app.with_body_timeout(timeout);
+        }
+        if let Some(indexes) = seek_indexes {
+            app = app.with_seek_indexes(indexes);
         }
         let app = Arc::new(app);
         app.apply_dht()
@@ -325,6 +356,40 @@ impl TestServer {
             .expect("a status line in time")
             .expect("a status line");
         assert_eq!(&status, b"HTTP/1.1 200", "the stream started");
+        stream
+    }
+
+    /// Opens a stream of `path` from byte `from`, reads its headers and
+    /// `body_bytes` of its body, and keeps it open.
+    pub async fn open_range(&self, path: &str, from: u64, body_bytes: usize) -> TcpStream {
+        let mut stream = TcpStream::connect(self.addr).await.expect("a connection");
+        let head = format!(
+            "GET {path} HTTP/1.1\r\nHost: {}\r\nRange: bytes={from}-\r\n\r\n",
+            self.addr
+        );
+        stream
+            .write_all(head.as_bytes())
+            .await
+            .expect("the request is sent");
+        let mut headers = Vec::new();
+        while !headers.ends_with(b"\r\n\r\n") {
+            let mut byte = [0];
+            tokio::time::timeout(Duration::from_secs(10), stream.read_exact(&mut byte))
+                .await
+                .expect("headers in time")
+                .expect("headers");
+            headers.push(byte[0]);
+        }
+        assert!(
+            headers.starts_with(b"HTTP/1.1 206"),
+            "{}",
+            String::from_utf8_lossy(&headers)
+        );
+        let mut body = vec![0; body_bytes];
+        tokio::time::timeout(Duration::from_secs(10), stream.read_exact(&mut body))
+            .await
+            .expect("the body in time")
+            .expect("the body");
         stream
     }
 

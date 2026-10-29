@@ -22,24 +22,30 @@ use tokio::sync::MutexGuard as LaneGuard;
 use tokio::sync::watch;
 use torrplay_core::credentials::{AllowedHosts, AttemptLimiter, Credentials};
 use torrplay_core::engine::{CacheStatistics, Engine, EngineError, Source};
-use torrplay_core::id::{ProfileId, TorrentId, random_torrent_id_bytes};
+use torrplay_core::id::{FileId, ProfileId, TorrentId, random_torrent_id_bytes};
 use torrplay_core::lifecycle::{Failure, ObservedState, Readiness, StorageMode};
 use torrplay_core::metadata::Metadata;
 use torrplay_core::profiles::{
-    DEFAULT_PROFILE_NAME, DEVICE_PROFILE_NAME, Profile, ProfileKind, Viewing,
+    self, DEFAULT_PROFILE_NAME, DEVICE_PROFILE_NAME, DURATION_MAX_MS, Profile, ProfileKind,
+    ProgressUpdate, Viewing,
 };
 use torrplay_core::registry::{Registry, TorrentRecord};
 use torrplay_core::settings::{LogLevel, Overrides, Settings};
 use torrplay_dlna::description::Device;
+use torrplay_media::SeekIndex;
 use torrplay_store::{
     Store, StoreError, StoredCredentials, StoredDismissal, StoredProgress, StoredSettings,
     StoredTorrent,
 };
 
+use crate::inference::{Due, EngineSource, INDEX_TIMEOUT, Inference, PendingIndex};
 use crate::problem::Problem;
 
 /// How often unwatched temporary torrents are looked for.
 const RETENTION_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Where tests take files' seek indexes from instead of reading them.
+pub type SeekIndexes = Arc<dyn Fn(&TorrentId, &FileId) -> Option<SeekIndex> + Send + Sync>;
 
 /// How long a request body may take to arrive by default, as the contract
 /// documents.
@@ -81,6 +87,9 @@ pub struct App<E> {
     overrides: Overrides,
     /// The temporary torrents and their activity.
     temporaries: crate::retention::Temporaries,
+    /// The viewings whose progress is inferred, and the files' seek indexes.
+    inference: Inference,
+    seek_indexes: Option<SeekIndexes>,
 }
 
 /// The settings the DLNA media server's announcer follows.
@@ -171,6 +180,8 @@ impl<E: Engine> App<E> {
             log_level: watch::Sender::new(LogLevel::default()),
             overrides: Overrides::default(),
             temporaries: crate::retention::Temporaries::default(),
+            inference: Inference::default(),
+            seek_indexes: None,
         }
     }
 
@@ -235,6 +246,13 @@ impl<E: Engine> App<E> {
         self
     }
 
+    /// Takes files' seek indexes from `indexes` instead of reading them
+    /// through the engine.
+    pub fn with_seek_indexes(mut self, indexes: SeekIndexes) -> Self {
+        self.seek_indexes = Some(indexes);
+        self
+    }
+
     /// Whether a password is set, so requests need credentials.
     pub fn authentication_enabled(&self) -> bool {
         self.credentials.is_enabled()
@@ -261,6 +279,120 @@ impl<E: Engine> App<E> {
     /// The current time for credentials' expiry.
     pub(crate) fn temporaries(&self) -> &crate::retention::Temporaries {
         &self.temporaries
+    }
+
+    pub(crate) fn inference(&self) -> &Inference {
+        &self.inference
+    }
+
+    pub(crate) fn clock(&self) -> &Clock {
+        &self.clock
+    }
+
+    /// Reads the seek indexes viewings wait for, then saves the inferred
+    /// progress due in the device profile. The task
+    /// [`spawn_inference`](Self::spawn_inference) starts calls it every 5
+    /// seconds.
+    pub async fn infer_progress(&self) {
+        for pending in self.inference.pending_indexes() {
+            let index = self.read_seek_index(&pending).await;
+            self.inference.set_index(pending.key, index);
+        }
+        let Some(device) = self.viewing().ok().and_then(Viewing::device) else {
+            return;
+        };
+        for due in self.inference.due(self.now()) {
+            if let Err(error) = self.save_inferred(&device.id, &due).await {
+                tracing::warn!(?error, "inferred progress could not be saved");
+            }
+            if due.last {
+                self.inference.close(&due.key);
+            }
+        }
+    }
+
+    /// Starts inferring progress until the application is dropped or the
+    /// task is aborted.
+    pub fn spawn_inference(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        let app = Arc::downgrade(self);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(crate::inference::SWEEP_INTERVAL);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                let Some(app) = app.upgrade() else {
+                    return;
+                };
+                if app.engine.readiness().is_ready() {
+                    app.infer_progress().await;
+                }
+            }
+        })
+    }
+
+    async fn read_seek_index(&self, pending: &PendingIndex) -> Option<SeekIndex> {
+        let (torrent, file) = &pending.key;
+        if let Some(indexes) = &self.seek_indexes {
+            return indexes(torrent, file);
+        }
+        let mut source =
+            EngineSource::new(&*self.engine, torrent.clone(), pending.file, pending.size);
+        let read = torrplay_media::read_index(&mut source, &pending.name);
+        match tokio::time::timeout(INDEX_TIMEOUT, read).await {
+            Ok(Ok(index)) => index,
+            Ok(Err(error)) => {
+                tracing::debug!(%torrent, %file, %error, "the file's seek index could not be read");
+                None
+            }
+            Err(_) => {
+                tracing::debug!(%torrent, %file, "reading the file's seek index timed out");
+                None
+            }
+        }
+    }
+
+    /// Saves a viewing's position in the device profile under the progress
+    /// rules a `PUT` follows, unless the viewing ended meanwhile.
+    async fn save_inferred(&self, device: &ProfileId, due: &Due) -> Result<(), Problem> {
+        let (torrent, file) = &due.key;
+        let duration_ms = u64::try_from(due.duration.as_millis())
+            .unwrap_or(u64::MAX)
+            .clamp(1, DURATION_MAX_MS);
+        let position_ms = u64::try_from(due.position.as_millis())
+            .unwrap_or(u64::MAX)
+            .min(duration_ms);
+        let _lane = self.write_lane().await;
+        // A deletion of the torrent or its progress may have come first.
+        if !self.inference.is_viewing(&due.key) {
+            return Ok(());
+        }
+        if self.registry()?.get(torrent.as_str()).is_none() {
+            self.inference.forget_torrent(torrent);
+            return Ok(());
+        }
+        let viewing = self.viewing()?;
+        let previous = viewing.torrent_progress(device, torrent).get(file).copied();
+        let update = ProgressUpdate {
+            position_ms,
+            duration_ms,
+            viewed: previous.is_some_and(|previous| previous.viewed()),
+        };
+        let now = self.now();
+        let progress = profiles::apply_update(previous.as_ref(), update, now);
+        self.store
+            .set_progress(&StoredProgress {
+                profile: device.clone(),
+                torrent: torrent.clone(),
+                file: file.clone(),
+                progress,
+            })
+            .await
+            .map_err(store_failed)?;
+        viewing.set_progress(device, torrent, file, progress);
+        if progress.viewed_at == Some(now) {
+            self.inference.finish(&due.key);
+        }
+        Ok(())
     }
 
     /// Marks torrent `id` active until the guard drops, if it is temporary.
@@ -318,6 +450,7 @@ impl<E: Engine> App<E> {
             }
             registry.remove(id.as_str());
             self.temporaries.remove(id);
+            self.inference.forget_torrent(id);
             self.viewing()?.forget_torrent(id);
         }
         self.forget(id);

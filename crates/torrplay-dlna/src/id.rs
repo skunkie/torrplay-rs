@@ -17,6 +17,9 @@ pub enum ObjectId {
     All,
     /// `recent`, the newest torrents.
     Recent,
+    /// `recently-viewed`, the files the device profile is watching or
+    /// watched.
+    RecentlyViewed,
     /// `movies`.
     Movies,
     /// `series`.
@@ -45,6 +48,7 @@ impl ObjectId {
             "0" => Self::Root,
             "all" => Self::All,
             "recent" => Self::Recent,
+            "recently-viewed" => Self::RecentlyViewed,
             "movies" => Self::Movies,
             "series" => Self::Series,
             "categories" => Self::Categories,
@@ -75,6 +79,7 @@ impl fmt::Display for ObjectId {
             Self::Root => f.write_str("0"),
             Self::All => f.write_str("all"),
             Self::Recent => f.write_str("recent"),
+            Self::RecentlyViewed => f.write_str("recently-viewed"),
             Self::Movies => f.write_str("movies"),
             Self::Series => f.write_str("series"),
             Self::Categories => f.write_str("categories"),
@@ -155,6 +160,7 @@ mod tests {
             ObjectId::Root,
             ObjectId::All,
             ObjectId::Recent,
+            ObjectId::RecentlyViewed,
             ObjectId::Movies,
             ObjectId::Series,
             ObjectId::Categories,

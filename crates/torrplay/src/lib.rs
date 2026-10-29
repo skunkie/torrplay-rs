@@ -563,6 +563,8 @@ pub async fn serve(
     let listen = listener.local_addr()?;
     // Deletes unwatched temporary torrents until shutdown.
     let mut retention = app.spawn_retention();
+    // Saves the progress inferred from DLNA playback until shutdown.
+    let mut inference = app.spawn_inference();
     let (stop_media_server, media_server_stopped) = oneshot::channel::<()>();
     let notifying = Arc::clone(&app);
     let media_server = tokio::spawn(media_server::supervise(
@@ -664,6 +666,14 @@ pub async fn serve(
             Err(error) if error.is_cancelled() => {}
             Err(error) => {
                 return Err(anyhow::Error::new(error).context("the retention task panicked"));
+            }
+        }
+        inference.abort();
+        match (&mut inference).await {
+            Ok(()) => {}
+            Err(error) if error.is_cancelled() => {}
+            Err(error) => {
+                return Err(anyhow::Error::new(error).context("the inference task panicked"));
             }
         }
         app.close_store().await.context("closing the store")

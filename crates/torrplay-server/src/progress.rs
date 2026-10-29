@@ -294,6 +294,11 @@ pub(crate) async fn delete<E: Engine>(
         .await
         .map_err(stored)?;
     viewing.remove_progress(&profile.id, &torrent, &file);
+    // A viewing of the file stops inferring until the renderer plays it
+    // again.
+    if profile.kind == ProfileKind::Device {
+        app.inference().forget(&(torrent, file));
+    }
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
