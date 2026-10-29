@@ -46,6 +46,8 @@ mod representation;
 mod retention;
 mod service;
 mod settings;
+mod shelf;
+mod stremio;
 mod titles;
 mod torrents;
 mod up_next;
@@ -194,6 +196,39 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
             "/api/v1/playback-tokens",
             post(credentials::create_playback_token::<E>),
         )
+        .route("/stremio/manifest.json", get(stremio::manifest::<E>))
+        .route(
+            "/stremio/{token}/manifest.json",
+            get(stremio::manifest::<E>),
+        )
+        .route("/stremio/catalog/{type}/{id}", get(stremio::catalog::<E>))
+        .route(
+            "/stremio/catalog/{type}/{id}/{extra}",
+            get(stremio::catalog::<E>),
+        )
+        .route(
+            "/stremio/{token}/catalog/{type}/{id}",
+            get(stremio::catalog::<E>),
+        )
+        .route(
+            "/stremio/{token}/catalog/{type}/{id}/{extra}",
+            get(stremio::catalog::<E>),
+        )
+        .route("/stremio/meta/{type}/{id}", get(stremio::meta::<E>))
+        .route("/stremio/{token}/meta/{type}/{id}", get(stremio::meta::<E>))
+        .route("/stremio/stream/{type}/{id}", get(stremio::stream::<E>))
+        .route(
+            "/stremio/{token}/stream/{type}/{id}",
+            get(stremio::stream::<E>),
+        )
+        .route(
+            "/stremio/play/{torrent}/{file}/{name}",
+            get(stremio::get_play::<E>).head(stremio::head_play::<E>),
+        )
+        .route(
+            "/stremio/{token}/play/{torrent}/{file}/{name}",
+            get(stremio::get_play::<E>).head(stremio::head_play::<E>),
+        )
         .route("/dlna/description.xml", get(dlna::device::<E>))
         .route("/dlna/icons/{icon}", get(dlna::get_icon::<E>))
         .route(
@@ -236,6 +271,7 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
             authentication::guard::<E>,
         ))
         .layer(axum::middleware::map_response(method_not_allowed))
+        .layer(axum::middleware::from_fn(allow_stremio_origins))
         .layer(axum::middleware::from_fn(log_response))
         .with_state(app)
 }
@@ -287,6 +323,19 @@ async fn unknown_resource() -> Problem {
 
 /// Gives the router's own `405` responses, which carry `Allow` but no body,
 /// the Problem Details body every error has.
+/// Lets Stremio's web client read every `/stremio` response, its refusals
+/// included, as the addon protocol requires.
+async fn allow_stremio_origins(request: Request, next: Next) -> Response {
+    let stremio = request.uri().path().starts_with("/stremio/");
+    let mut response = next.run(request).await;
+    if stremio {
+        response
+            .headers_mut()
+            .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, stremio::ALLOW_ORIGIN);
+    }
+    response
+}
+
 async fn method_not_allowed(response: Response) -> Response {
     if response.status() != StatusCode::METHOD_NOT_ALLOWED
         || response.headers().contains_key(header::CONTENT_TYPE)

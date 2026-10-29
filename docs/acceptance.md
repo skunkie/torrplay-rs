@@ -344,6 +344,21 @@ These scenarios accept the lifecycle's
 | AUT-10 | A database write fails while setting the password and signing in | `500 internal-error`; nothing changes |
 | AUT-11 | Run `torrplay password set` and `torrplay password remove` on a stopped application's data directory | The next start requires the new password; then none |
 
+### Stremio
+
+These scenarios accept the [Stremio addon](stremio.md).
+
+| ID | Scenario | Expected |
+|---|---|---|
+| STM-01 | Read the manifest without a password, and with one, through a `playback` token in the path, in the query, and without one | Two catalogs with `search`, `skip`, and `genre`, the library's genres as options; `401` without a token |
+| STM-02 | List both catalogs with a movie, a series, a paused torrent, a temporary torrent, and one without video files | Each lists its kind's started, persisted torrents with video files, newest first, with names, genres, and posters |
+| STM-03 | List with `search` and a typo, with `genre`, and with `skip` past the first page of 100 | The matches, the better first; the genre's torrents; the rest after the first 100 |
+| STM-04 | Read a series' meta and a movie's meta, and an unknown item's | The series' videos in episode order with seasons and episodes; the movie's files with its default video; `404` for the unknown item |
+| STM-05 | Read the streams of a video and of an item | One stream, and one per video file, each with a play URL ending in the file's name, `filename`, `bingeGroup`, and `notWebReady` for a Matroska file |
+| STM-06 | Stream a play URL with ranges and `HEAD`, and with a wrong file name | The native content behavior; `404` |
+| STM-07 | Request with an `api` token in the path, a playback token for one torrent, and from a public address without a password | `401`, `403 insufficient-scope`, and `403 forbidden` |
+| STM-08 | Read any resource, and send `POST` to one | `Access-Control-Allow-Origin: *`; `405` |
+
 ### DLNA
 
 These scenarios accept [the DLNA contract](dlna.md) (M7).

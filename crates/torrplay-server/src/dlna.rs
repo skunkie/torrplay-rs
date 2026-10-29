@@ -23,8 +23,8 @@ use axum::response::{IntoResponse, Response};
 use sha2::{Digest, Sha256};
 use torrplay_core::engine::Engine;
 use torrplay_core::id::{FileId, TorrentId};
-use torrplay_core::library::{self, Kind};
-use torrplay_core::lifecycle::{ObservedState, Retention};
+use torrplay_core::library::Kind;
+use torrplay_core::lifecycle::Retention;
 use torrplay_core::profiles::Progress;
 use torrplay_dlna::description::{self, Device};
 use torrplay_dlna::dlna;
@@ -35,11 +35,11 @@ use torrplay_dlna::tree::{self, Base, Catalog};
 
 use crate::app::App;
 use crate::body::read_limited;
-use crate::content;
 use crate::files::{self, Watcher};
 use crate::posters;
 use crate::problem::{Problem, ProblemType};
-use crate::representation::{self, file_name};
+use crate::representation::file_name;
+use crate::shelf;
 
 /// The `SOAPACTION` request header.
 const SOAP_ACTION: &str = "soapaction";
@@ -379,93 +379,47 @@ pub(crate) async fn connection_manager<E: Engine>(
     ))
 }
 
-/// A playable file with what orders it: its episode number, if its name
-/// has one, and its position in the metadata.
-type OrderedFile = (Option<(u32, u32)>, usize, tree::File);
-
 /// The library as the media server presents it, or `None` while the stored
 /// torrents are being restored: the torrents with metadata and a playable
 /// file that are neither paused nor failed, newest first.
 async fn catalog<E: Engine>(app: &App<E>) -> Result<Option<Catalog>, Problem> {
-    let Ok(registry) = app.registry() else {
+    let Some(shelved) = shelf::shelved(app).await? else {
         return Ok(None);
     };
     let progress = device_progress(app);
-    let mut torrents = Vec::new();
-    for record in registry.list().into_iter().rev() {
-        // Temporary torrents are never shown to televisions.
-        if record.configuration.retention() == Retention::Temporary {
-            continue;
-        }
-        let view = app.observe(record).await?;
-        if matches!(
-            view.observed_state(),
-            ObservedState::Paused | ObservedState::Failed
-        ) {
-            continue;
-        }
-        let record = &view.record;
-        let Some(metadata) = record.metadata.as_deref() else {
-            continue;
-        };
-        let library = record.configuration.library();
-        let kind = representation::reported_kind(library, Some(metadata));
-        let mut files: Vec<OrderedFile> = metadata
-            .files()
-            .iter()
-            .enumerate()
-            .filter_map(|(index, file)| {
-                let name = file_name(file);
-                let (media_type, _) = content::media_type(&name);
-                let playable = ["audio/", "video/", "image/"]
-                    .iter()
-                    .any(|prefix| media_type.starts_with(prefix));
-                let resume_position = progress
-                    .get(&record.id)
-                    .and_then(|files| files.get(file.id()))
-                    .filter(|progress| progress.in_progress() && !progress.viewed())
-                    .map(|progress| Duration::from_millis(progress.position_ms));
-                playable.then(|| {
-                    (
-                        library::episode_number(&name),
-                        index,
-                        tree::File {
-                            id: file.id().to_string(),
-                            name,
-                            size_bytes: file.size_bytes(),
-                            media_type,
-                            resume_position,
-                        },
-                    )
-                })
-            })
-            .collect();
-        if files.is_empty() {
-            continue;
-        }
-        if kind == Some(Kind::Series) {
-            // As up next orders episodes: by season and episode, files
-            // without a pattern last, metadata order breaking ties.
-            files.sort_by_key(|(number, index, _)| (number.is_none(), *number, *index));
-        }
-        torrents.push(tree::Torrent {
-            id: record.id.to_string(),
-            title: library
-                .title
-                .clone()
-                .unwrap_or_else(|| metadata.display_name()),
-            kind: kind.map(|kind| match kind {
-                Kind::Movie => tree::Kind::Movie,
-                Kind::Series => tree::Kind::Series,
-                Kind::Other => tree::Kind::Other,
-            }),
-            categories: library.categories.clone(),
-            genres: library.genres.clone(),
-            has_poster: record.poster.is_some(),
-            created_at: record.created_at,
-            files: files.into_iter().map(|(_, _, file)| file).collect(),
-        });
-    }
+    let torrents = shelved
+        .into_iter()
+        .map(|torrent| {
+            let saved = progress.get(&torrent.id);
+            tree::Torrent {
+                id: torrent.id.to_string(),
+                title: torrent.title.unwrap_or(torrent.name),
+                kind: torrent.kind.map(|kind| match kind {
+                    Kind::Movie => tree::Kind::Movie,
+                    Kind::Series => tree::Kind::Series,
+                    Kind::Other => tree::Kind::Other,
+                }),
+                categories: torrent.categories,
+                genres: torrent.genres,
+                has_poster: torrent.has_poster,
+                created_at: torrent.created_at,
+                files: torrent
+                    .files
+                    .into_iter()
+                    .map(|file| tree::File {
+                        resume_position: saved
+                            .and_then(|files| files.get(&file.id))
+                            .filter(|progress| progress.in_progress() && !progress.viewed())
+                            .map(|progress| Duration::from_millis(progress.position_ms)),
+                        id: file.id.to_string(),
+                        name: file.name,
+                        size_bytes: file.size_bytes,
+                        media_type: file.media_type,
+                    })
+                    .collect(),
+            }
+        })
+        .collect();
     Ok(Some(Catalog {
         viewed: viewed(progress),
         torrents,

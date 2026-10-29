@@ -14,6 +14,7 @@ members = [
     "crates/torrplay-engine",
     "crates/torrplay-fixtures",
     "crates/torrplay-media",
+    "crates/torrplay-stremio",
     "crates/torrplay-server",
     "crates/torrplay-store",
 ]
@@ -110,6 +111,7 @@ torrplay-dlna = { path = "crates/torrplay-dlna" }
 torrplay-engine = { path = "crates/torrplay-engine" }
 torrplay-fixtures = { path = "crates/torrplay-fixtures" }
 torrplay-media = { path = "crates/torrplay-media" }
+torrplay-stremio = { path = "crates/torrplay-stremio" }
 torrplay-server = { path = "crates/torrplay-server" }
 torrplay-store = { path = "crates/torrplay-store" }
 tracing = "0.1"

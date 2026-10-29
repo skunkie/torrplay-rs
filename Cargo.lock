@@ -3674,6 +3674,7 @@ dependencies = [
  "torrplay-fixtures",
  "torrplay-media",
  "torrplay-store",
+ "torrplay-stremio",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -3689,6 +3690,17 @@ dependencies = [
  "tokio",
  "torrplay-core",
  "torrplay-store",
+]
+
+[[package]]
+name = "torrplay-stremio"
+version = "0.1.0"
+dependencies = [
+ "form_urlencoded",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "torrplay-core",
 ]
 
 [[package]]

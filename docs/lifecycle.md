@@ -705,7 +705,8 @@ a scope, and an optional lifetime.
   SHA-256 digest, and the token's ID, `atk_`, is not secret.
 - The `api` scope allows every operation. The `playback` scope allows only
   the playback operations: `GET` and `HEAD` of a file's content and of a
-  torrent's poster, for a television or a player that keeps one URL.
+  torrent's poster, for a television or a player that keeps one URL, and
+  the [Stremio addon](stremio.md)'s resources.
 - A token lasts from one hour to a year, or until it is revoked. An
   expired token is refused as an unknown one, is neither listed nor read,
   and is deleted at the next startup or token creation. The application
