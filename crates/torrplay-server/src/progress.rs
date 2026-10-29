@@ -12,7 +12,7 @@ use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use torrplay_api as api;
 use torrplay_core::engine::Engine;
 use torrplay_core::id::{FileId, TorrentId};
@@ -35,7 +35,7 @@ use crate::torrents::{self, object, parse_json, unknown_member};
 
 /// Maps a store failure, where an unknown profile or torrent was deleted
 /// meanwhile.
-fn stored(error: StoreError) -> Problem {
+pub(crate) fn stored(error: StoreError) -> Problem {
     match error {
         StoreError::UnknownProfile => profile_routes::not_found(),
         StoreError::UnknownTorrent => torrents::not_found(),
@@ -158,8 +158,21 @@ fn milliseconds(value: &Value) -> Option<u64> {
 fn update(value: Value) -> Result<ProgressUpdate, Problem> {
     let members = object(value)?;
     let mut errors = Vec::new();
+    match update_of(&members, &[], &mut errors) {
+        Some(update) if errors.is_empty() => Ok(update),
+        _ => Err(Problem::invalid_body(errors)),
+    }
+}
+
+/// Reads a progress update from `members`, adding what is invalid to
+/// `errors`; the members in `other` are the caller's to read.
+pub(crate) fn update_of(
+    members: &Map<String, Value>,
+    other: &[&str],
+    errors: &mut Vec<InvalidValue>,
+) -> Option<ProgressUpdate> {
     let (mut position, mut duration, mut viewed) = (None, None, None);
-    for (member, value) in &members {
+    for (member, value) in members {
         match member.as_str() {
             "position_seconds" => match milliseconds(value) {
                 Some(found) => position = Some(found),
@@ -179,7 +192,8 @@ fn update(value: Value) -> Result<ProgressUpdate, Problem> {
                 Some(found) => viewed = Some(found),
                 None => errors.push(InvalidValue::pointer("/viewed", "Must be true or false.")),
             },
-            other => errors.push(unknown_member(other)),
+            member if other.contains(&member) => {}
+            member => errors.push(unknown_member(member)),
         }
     }
     for (member, found) in [
@@ -200,14 +214,12 @@ fn update(value: Value) -> Result<ProgressUpdate, Problem> {
         ));
     }
     match (position, duration, viewed) {
-        (Some(position_ms), Some(duration_ms), Some(viewed)) if errors.is_empty() => {
-            Ok(ProgressUpdate {
-                position_ms,
-                duration_ms,
-                viewed,
-            })
-        }
-        _ => Err(Problem::invalid_body(errors)),
+        (Some(position_ms), Some(duration_ms), Some(viewed)) => Some(ProgressUpdate {
+            position_ms,
+            duration_ms,
+            viewed,
+        }),
+        _ => None,
     }
 }
 

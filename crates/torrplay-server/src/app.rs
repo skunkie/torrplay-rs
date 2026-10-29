@@ -35,7 +35,7 @@ use torrplay_dlna::description::Device;
 use torrplay_media::SeekIndex;
 use torrplay_store::{
     Store, StoreError, StoredCredentials, StoredDismissal, StoredProgress, StoredSettings,
-    StoredTorrent,
+    StoredTitleProgress, StoredTorrent,
 };
 
 use crate::inference::{Due, EngineSource, INDEX_TIMEOUT, Inference, PendingIndex};
@@ -497,12 +497,13 @@ impl<E: Engine> App<E> {
         self
     }
 
-    /// Runs with the profiles, progress, and dismissals the store held at
-    /// startup.
+    /// Runs with the profiles, progress, title progress, and dismissals the
+    /// store held at startup.
     pub fn with_viewing(
         self,
         profiles: Vec<Profile>,
         progress: Vec<StoredProgress>,
+        titles: Vec<StoredTitleProgress>,
         dismissals: Vec<StoredDismissal>,
     ) -> Self {
         for profile in profiles {
@@ -515,6 +516,10 @@ impl<E: Engine> App<E> {
                 &stored.file,
                 stored.progress,
             );
+        }
+        for stored in titles {
+            self.viewing
+                .set_title(&stored.profile, stored.key, stored.progress);
         }
         for stored in dismissals {
             self.viewing

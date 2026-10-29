@@ -35,6 +35,87 @@ pub const DEVICE_PROFILE_NAME: &str = "Devices";
 /// The longest duration a file's progress may have, in milliseconds.
 pub const DURATION_MAX_MS: u64 = 1_000_000_000;
 
+/// The most titles' progress a profile keeps; saving a new one past it
+/// removes the one saved longest ago.
+pub const TITLE_PROGRESS_MAX: usize = 10_000;
+
+/// A title or episode in an external catalog, as the contract's title key
+/// pattern names it: `tmdb-movie-{id}`, `tmdb-tv-{id}-s{season}e{episode}`,
+/// `imdb-{IMDb ID}`, or `imdb-{IMDb ID}-s{season}e{episode}`, with numbers
+/// in canonical decimal, so each title has one key.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TitleKey(String);
+
+impl TitleKey {
+    /// Reads a key, `None` unless it follows the pattern.
+    pub fn parse(text: &str) -> Option<Self> {
+        let valid = if let Some(id) = text.strip_prefix("tmdb-movie-") {
+            catalog_id(id)
+        } else if let Some(rest) = text.strip_prefix("tmdb-tv-") {
+            rest.split_once("-s")
+                .is_some_and(|(id, episode)| catalog_id(id) && season_episode(episode))
+        } else if let Some(rest) = text.strip_prefix("imdb-tt") {
+            let (id, episode) = match rest.split_once("-s") {
+                Some((id, episode)) => (id, Some(episode)),
+                None => (rest, None),
+            };
+            (7..=10).contains(&id.len())
+                && id.bytes().all(|byte| byte.is_ascii_digit())
+                && episode.is_none_or(season_episode)
+        } else {
+            false
+        };
+        valid.then(|| Self(text.to_owned()))
+    }
+
+    /// Returns the key's text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for TitleKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::borrow::Borrow<str> for TitleKey {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Whether `text` is a catalog's numeric ID: 1 to 10 digits, the first not
+/// zero.
+fn catalog_id(text: &str) -> bool {
+    (1..=10).contains(&text.len())
+        && text.bytes().all(|byte| byte.is_ascii_digit())
+        && !text.starts_with('0')
+}
+
+/// Whether `text` is `{season}e{episode}`, each from 0 to 9999 without
+/// leading zeros.
+fn season_episode(text: &str) -> bool {
+    let number = |part: &str| {
+        (1..=4).contains(&part.len())
+            && part.bytes().all(|byte| byte.is_ascii_digit())
+            && (part == "0" || !part.starts_with('0'))
+    };
+    text.split_once('e')
+        .is_some_and(|(season, episode)| number(season) && number(episode))
+}
+
+/// A profile's progress of a title, with the file that last played it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TitleProgress {
+    /// The progress, under a file's progress rules.
+    pub progress: Progress,
+    /// The torrent and file that last played it, as saved; they may no
+    /// longer exist.
+    pub played: Option<(TorrentId, FileId)>,
+}
+
 /// Normalizes a profile's name as a category's.
 pub fn normalize_profile_name(text: &str) -> Result<String, TextError> {
     library::normalize_line(text, PROFILE_NAME_MAX_CHARS)
@@ -282,6 +363,7 @@ pub struct Viewing {
 struct State {
     profiles: HashMap<ProfileId, Profile>,
     progress: HashMap<ProfileId, HashMap<TorrentId, BTreeMap<FileId, Progress>>>,
+    titles: HashMap<ProfileId, HashMap<TitleKey, TitleProgress>>,
     dismissals: HashMap<ProfileId, HashMap<UpNextEntryId, SystemTime>>,
 }
 
@@ -335,7 +417,54 @@ impl Viewing {
         let mut state = self.lock();
         state.profiles.remove(id);
         state.progress.remove(id);
+        state.titles.remove(id);
         state.dismissals.remove(id);
+    }
+
+    /// Returns a profile's progress of every title.
+    pub fn titles(&self, profile: &ProfileId) -> HashMap<TitleKey, TitleProgress> {
+        self.lock().titles.get(profile).cloned().unwrap_or_default()
+    }
+
+    /// Returns a profile's progress of a title.
+    pub fn title(&self, profile: &ProfileId, key: &str) -> Option<TitleProgress> {
+        self.lock()
+            .titles
+            .get(profile)
+            .and_then(|titles| titles.get(key))
+            .cloned()
+    }
+
+    /// Returns the title a new title's progress would remove: the one saved
+    /// longest ago, then the greatest key, once the profile keeps
+    /// [`TITLE_PROGRESS_MAX`] other titles.
+    pub fn title_to_make_room(&self, profile: &ProfileId, key: &str) -> Option<TitleKey> {
+        let state = self.lock();
+        let titles = state.titles.get(profile)?;
+        if titles.contains_key(key) || titles.len() < TITLE_PROGRESS_MAX {
+            return None;
+        }
+        titles
+            .iter()
+            .min_by(|a, b| (a.1.progress.updated_at, b.0).cmp(&(b.1.progress.updated_at, a.0)))
+            .map(|(key, _)| key.clone())
+    }
+
+    /// Records a title's progress.
+    pub fn set_title(&self, profile: &ProfileId, key: TitleKey, progress: TitleProgress) {
+        self.lock()
+            .titles
+            .entry(profile.clone())
+            .or_default()
+            .insert(key, progress);
+    }
+
+    /// Forgets a title's progress and returns whether there was any.
+    pub fn remove_title(&self, profile: &ProfileId, key: &str) -> bool {
+        self.lock()
+            .titles
+            .get_mut(profile)
+            .is_some_and(|titles| titles.remove(key).is_some())
     }
 
     /// Returns a profile's progress of a torrent's files.
@@ -581,6 +710,79 @@ mod tests {
             list(&earlier).len(),
             2,
             "progress after a dismissal returns"
+        );
+    }
+
+    #[test]
+    fn title_keys_follow_the_pattern_in_canonical_decimal() {
+        for valid in [
+            "tmdb-movie-603",
+            "tmdb-movie-9999999999",
+            "tmdb-tv-1399-s1e2",
+            "tmdb-tv-1399-s0e0",
+            "tmdb-tv-1-s9999e9999",
+            "imdb-tt0133093",
+            "imdb-tt0944947-s1e2",
+            "imdb-tt1234567890",
+        ] {
+            assert_eq!(
+                TitleKey::parse(valid).map(|key| key.to_string()).as_deref(),
+                Some(valid)
+            );
+        }
+        for invalid in [
+            "",
+            "tmdb-movie-",
+            "tmdb-movie-0603",
+            "tmdb-movie-0",
+            "tmdb-movie-12345678901",
+            "tmdb-movie-603-s1e1",
+            "tmdb-tv-1399",
+            "tmdb-tv-1399-s01e02",
+            "tmdb-tv-1399-s1e10000",
+            "tmdb-tv-1399-s1",
+            "tmdb-tv-1399-se2",
+            "imdb-603",
+            "imdb-tt123456",
+            "imdb-tt0944947-s1",
+            "imdb-tt0944947-s1e2-s1e3",
+            "TMDB-movie-603",
+            "tmdb-movie-60３",
+        ] {
+            assert_eq!(TitleKey::parse(invalid), None, "{invalid:?}");
+        }
+    }
+
+    #[test]
+    fn a_full_profile_makes_room_by_its_title_saved_longest_ago() {
+        let viewing = Viewing::default();
+        let profile = ProfileId::from_random_bytes([1; 16]);
+        let key = |n: usize| TitleKey::parse(&format!("tmdb-movie-{}", n + 1)).unwrap();
+        for n in 0..TITLE_PROGRESS_MAX {
+            // The second is the oldest.
+            let secs = if n == 1 { 1 } else { 10 + n as u64 };
+            viewing.set_title(
+                &profile,
+                key(n),
+                TitleProgress {
+                    progress: saved(1000, false, secs),
+                    played: None,
+                },
+            );
+        }
+        assert_eq!(
+            viewing.title_to_make_room(&profile, key(0).as_str()),
+            None,
+            "a replacement"
+        );
+        assert_eq!(
+            viewing.title_to_make_room(&profile, "tmdb-movie-999999"),
+            Some(key(1))
+        );
+        assert!(viewing.remove_title(&profile, key(1).as_str()));
+        assert_eq!(
+            viewing.title_to_make_room(&profile, "tmdb-movie-999999"),
+            None
         );
     }
 }

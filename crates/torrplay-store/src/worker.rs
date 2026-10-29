@@ -133,6 +133,23 @@ impl Worker {
                         profiles::delete_progress(connection, &profile, &torrent, &file)
                     }));
                 }
+                Command::SetTitleProgress(progress, replaced, reply) => {
+                    let _ = reply.send(self.write(|connection| {
+                        if let Some(replaced) = &replaced {
+                            profiles::delete_title_progress(
+                                connection,
+                                &progress.profile,
+                                replaced,
+                            )?;
+                        }
+                        profiles::set_title_progress(connection, &progress)
+                    }));
+                }
+                Command::DeleteTitleProgress(profile, key, reply) => {
+                    let _ = reply.send(self.write(|connection| {
+                        profiles::delete_title_progress(connection, &profile, &key)
+                    }));
+                }
                 Command::SetDismissal(dismissal, reply) => {
                     let _ = reply.send(
                         self.write(|connection| profiles::set_dismissal(connection, &dismissal)),

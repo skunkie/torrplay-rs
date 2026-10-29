@@ -577,6 +577,24 @@ stream, which report none, and saves it in the device profile:
   native content operation, and temporary torrents infer nothing for the
   device profile.
 
+Title progress is a profile's progress of a title or episode in an
+external catalog, named by its title key, for clients that show progress
+on catalog cards, such as a TMDB-keyed media catalog:
+
+- Saving and reading it follow a file's progress rules: the last write
+  wins, 1% puts a title in progress, and 90% or the viewed mark marks it
+  viewed and resets the position. The device profile's title progress
+  cannot be saved, only cleared.
+- It names no file. A save may record the file that played, which must
+  exist then; the progress keeps that reference when the torrent is
+  deleted, and links to the file and its content only while it exists.
+  Deleting a torrent changes no title progress.
+- Keys of different catalogs are different titles: a client uses one
+  catalog's keys. A series' episodes share a prefix, such as
+  `tmdb-tv-1399-`, which the listing filters by.
+- A profile keeps at most 10,000 titles' progress. Saving a new one past
+  that removes the one saved longest ago.
+
 Up next lists what a profile can resume or watch next, by video files,
 those served with a `video/` media type:
 

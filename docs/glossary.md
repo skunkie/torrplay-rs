@@ -300,6 +300,15 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 : Progress the application saves itself, from the ranges a client streams,
   in the device profile.
 
+**Title key**
+: A title or episode in an external catalog, such as TMDB or IMDb, as a
+  path segment: `tmdb-movie-603`, `tmdb-tv-1399-s1e2`, or
+  `imdb-tt0944947-s1e2`.
+
+**Title progress**
+: A profile's progress of a title key, kept apart from file progress, so
+  it outlives the torrents that played it.
+
 **Viewing**
 : The streams of one file that a playback position is estimated from. The
   device profile's viewings save inferred progress; an **application

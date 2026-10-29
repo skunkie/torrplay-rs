@@ -2123,6 +2123,245 @@ paths:
         '503':
           $ref: '#/components/responses/EngineUnavailable'
 
+  /api/v1/profiles/{profile_id}/title-progress:
+    parameters:
+      - $ref: '#/components/parameters/ProfileId'
+    get:
+      operationId: listTitleProgress
+      summary: List a profile's title progress
+      description: >-
+        Returns a page of the profile's progress of titles and episodes in
+        external catalogs, most recently saved first, with the title key as
+        the tie-breaker. title_key_prefix narrows it, such as to a series'
+        episodes on one catalog card.
+      tags: [Progress]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/TitleKeyPrefix'
+      responses:
+        '200':
+          description: The requested page of title progress.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TitleProgressPage'
+              examples:
+                episodes:
+                  summary: Two episodes of a series
+                  value:
+                    items:
+                      - title_key: tmdb-tv-1399-s1e2
+                        position_seconds: 812.0
+                        duration_seconds: 2760.0
+                        completion_ratio: 0.2942
+                        viewed: false
+                        viewed_at: null
+                        updated_at: '2026-10-19T21:05:00Z'
+                        torrent_id: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+                        file_id: fil_xfuperelxpqq4qhvgmtq62qwv4
+                        links:
+                          self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/title-progress/tmdb-tv-1399-s1e2
+                          profile: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula
+                          file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
+                          content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+                      - title_key: tmdb-tv-1399-s1e1
+                        position_seconds: 0.0
+                        duration_seconds: 2760.0
+                        completion_ratio: 0.0
+                        viewed: true
+                        viewed_at: '2026-10-18T20:40:00Z'
+                        updated_at: '2026-10-18T20:40:00Z'
+                        torrent_id: null
+                        file_id: null
+                        links:
+                          self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/title-progress/tmdb-tv-1399-s1e1
+                          profile: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula
+                    links:
+                      self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/title-progress?title_key_prefix=tmdb-tv-1399-
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/profiles/{profile_id}/title-progress/{title_key}:
+    parameters:
+      - $ref: '#/components/parameters/ProfileId'
+      - $ref: '#/components/parameters/TitleKey'
+    get:
+      operationId: getTitleProgress
+      summary: Read a title's progress
+      description: >-
+        Returns the profile's progress of the title or episode, which is
+        not-found while none was saved. A title key that does not follow the
+        documented pattern is malformed-request.
+      tags: [Progress]
+      responses:
+        '200':
+          description: The title's progress.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TitleProgress'
+              examples:
+                partway:
+                  summary: An episode partway through
+                  value:
+                    title_key: tmdb-tv-1399-s1e2
+                    position_seconds: 812.0
+                    duration_seconds: 2760.0
+                    completion_ratio: 0.2942
+                    viewed: false
+                    viewed_at: null
+                    updated_at: '2026-10-19T21:05:00Z'
+                    torrent_id: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+                    file_id: fil_xfuperelxpqq4qhvgmtq62qwv4
+                    links:
+                      self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/title-progress/tmdb-tv-1399-s1e2
+                      profile: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula
+                      file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
+                      content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      operationId: putTitleProgress
+      summary: Save a title's progress
+      description: >-
+        Replaces the profile's progress of the title or episode, under the
+        rules putFileProgress follows: the last write wins, and a position at
+        or past 90% of the duration marks it viewed and resets the position
+        to 0. It outlives any torrent, so a catalog card can show it after
+        the torrent played is gone and a later torrent of the title can
+        resume there. A profile keeps at most 10000 titles' progress; saving
+        a new one past that removes the one saved longest ago. It is
+        lifecycle-conflict in the device profile, whose progress only the
+        application infers.
+      tags: [Progress]
+      requestBody:
+        description: >-
+          The position, duration, viewed mark, and optionally the file last
+          played, in a JSON body of at most 16384 bytes. Larger bodies are
+          content-too-large, and a body that does not arrive within 30 seconds
+          is request-timeout.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TitleProgressUpdate'
+            examples:
+              playing:
+                summary: A position, with the file that played
+                value:
+                  position_seconds: 812.0
+                  duration_seconds: 2760.0
+                  viewed: false
+                  torrent_id: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+                  file_id: fil_xfuperelxpqq4qhvgmtq62qwv4
+              mark_viewed:
+                summary: Mark an episode viewed without playing it
+                value:
+                  position_seconds: 0.0
+                  duration_seconds: 2760.0
+                  viewed: true
+      responses:
+        '200':
+          description: The title's progress was replaced.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TitleProgress'
+              examples:
+                partway:
+                  summary: An episode partway through
+                  value:
+                    title_key: tmdb-tv-1399-s1e2
+                    position_seconds: 812.0
+                    duration_seconds: 2760.0
+                    completion_ratio: 0.2942
+                    viewed: false
+                    viewed_at: null
+                    updated_at: '2026-10-19T21:05:00Z'
+                    torrent_id: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+                    file_id: fil_xfuperelxpqq4qhvgmtq62qwv4
+                    links:
+                      self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/title-progress/tmdb-tv-1399-s1e2
+                      profile: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula
+                      file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
+                      content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+        '201':
+          description: The title had no progress, and this was stored.
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TitleProgress'
+              examples:
+                partway:
+                  summary: An episode partway through
+                  value:
+                    title_key: tmdb-tv-1399-s1e2
+                    position_seconds: 812.0
+                    duration_seconds: 2760.0
+                    completion_ratio: 0.2942
+                    viewed: false
+                    viewed_at: null
+                    updated_at: '2026-10-19T21:05:00Z'
+                    torrent_id: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+                    file_id: fil_xfuperelxpqq4qhvgmtq62qwv4
+                    links:
+                      self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/title-progress/tmdb-tv-1399-s1e2
+                      profile: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula
+                      file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
+                      content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
+        '409':
+          $ref: '#/components/responses/LifecycleConflict'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+    delete:
+      operationId: deleteTitleProgress
+      summary: Clear a title's progress
+      description: Removes the profile's progress of the title or episode, viewed mark included.
+      tags: [Progress]
+      responses:
+        '204':
+          description: The title's progress was removed.
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
   /api/v1/profiles/{profile_id}/up-next:
     parameters:
       - $ref: '#/components/parameters/ProfileId'
@@ -2879,6 +3118,31 @@ components:
       schema:
         type: string
       example: prf_3kq7xw2mzb6hnd4rjpt5yc4ula
+    TitleKey:
+      name: title_key
+      in: path
+      required: true
+      description: >-
+        A title or episode in an external catalog: tmdb-movie-{id},
+        tmdb-tv-{id}-s{season}e{episode}, imdb-{IMDb ID}, or
+        imdb-{IMDb ID}-s{season}e{episode}, with decimal numbers without
+        leading zeros and seasons and episodes up to 9999. Keys of
+        different catalogs are different titles.
+      schema:
+        type: string
+        pattern: '^(tmdb-movie-[1-9][0-9]{0,9}|tmdb-tv-[1-9][0-9]{0,9}-s(0|[1-9][0-9]{0,3})e(0|[1-9][0-9]{0,3})|imdb-tt[0-9]{7,10}(-s(0|[1-9][0-9]{0,3})e(0|[1-9][0-9]{0,3}))?)$'
+      example: tmdb-tv-1399-s1e2
+    TitleKeyPrefix:
+      name: title_key_prefix
+      in: query
+      description: >-
+        Lists only title keys that start with this text, such as
+        tmdb-tv-1399- for a series' episodes. Omitted, every title is listed.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+      example: tmdb-tv-1399-
     UpNextEntryId:
       name: entry_id
       in: path
@@ -5613,6 +5877,160 @@ components:
               format: uri-reference
               description: The next page of progress, omitted on the last page.
               examples: ['/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/progress?cursor=aebagbaf']
+
+    TitleProgress:
+      type: object
+      description: >-
+        Where a profile is in a title or episode of an external catalog,
+        under the rules of a file's progress. It is kept when torrents are
+        deleted.
+      required: [title_key, position_seconds, duration_seconds, completion_ratio, viewed, viewed_at, updated_at, torrent_id, file_id, links]
+      properties:
+        title_key:
+          type: string
+          readOnly: true
+          description: The title key, as the path names it.
+          examples: [tmdb-tv-1399-s1e2]
+        position_seconds:
+          type: number
+          format: double
+          minimum: 0
+          description: The playback position in the title, to the millisecond.
+          examples: [812.0]
+        duration_seconds:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+          maximum: 1000000
+          description: The title's playback duration, to the millisecond.
+          examples: [2760.0]
+        completion_ratio:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          readOnly: true
+          description: The position as a fraction of the title's duration, from 0.0 to 1.0.
+          examples: [0.2942]
+        viewed:
+          type: boolean
+          description: Whether the title was viewed to 90% or marked viewed.
+          examples: [false]
+        viewed_at:
+          type: [string, 'null']
+          format: date-time
+          readOnly: true
+          description: When the title was last marked viewed, or null if it is not.
+          examples: [null]
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+          description: When the title's progress was last saved, in UTC.
+          examples: ['2026-10-19T21:05:00Z']
+        torrent_id:
+          type: [string, 'null']
+          description: >-
+            The torrent of the file last played, as saved, or null when none
+            was. It stays when that torrent is deleted.
+          examples: [trr_7ndq4m2kzb6hxw3rjpt5yc4ula]
+        file_id:
+          type: [string, 'null']
+          description: The file last played, as saved, or null when none was.
+          examples: [fil_xfuperelxpqq4qhvgmtq62qwv4]
+        links:
+          type: object
+          readOnly: true
+          description: >-
+            Links from a title's progress. file and content are present while
+            the file last played exists.
+          required: [self, profile]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: This title's progress.
+              examples: [/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/title-progress/tmdb-tv-1399-s1e2]
+            profile:
+              type: string
+              format: uri-reference
+              description: The profile the title's progress belongs to.
+              examples: [/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula]
+            file:
+              type: string
+              format: uri-reference
+              description: The file last played.
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4]
+            content:
+              type: string
+              format: uri-reference
+              description: The last played file's content, to resume streaming.
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content]
+
+    TitleProgressUpdate:
+      type: object
+      description: >-
+        A title's progress as a player saves it, replacing the saved
+        progress. The position must not exceed the duration. torrent_id and
+        file_id come together and must name an existing file.
+      additionalProperties: false
+      required: [position_seconds, duration_seconds, viewed]
+      properties:
+        position_seconds:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1000000
+          description: The playback position in the title, rounded to the millisecond.
+          examples: [812.0]
+        duration_seconds:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+          maximum: 1000000
+          description: The title's playback duration, rounded to the millisecond.
+          examples: [2760.0]
+        viewed:
+          type: boolean
+          description: >-
+            Whether the title is viewed, with the effect viewed has on a
+            file's progress.
+          examples: [false]
+        torrent_id:
+          type: string
+          description: The torrent of the file that played, omitted for none.
+          examples: [trr_7ndq4m2kzb6hxw3rjpt5yc4ula]
+        file_id:
+          type: string
+          description: The file that played, omitted for none.
+          examples: [fil_xfuperelxpqq4qhvgmtq62qwv4]
+
+    TitleProgressPage:
+      type: object
+      description: A page of a profile's title progress.
+      required: [items, links]
+      properties:
+        items:
+          type: array
+          description: The title progress on this page, most recently saved first.
+          items:
+            $ref: '#/components/schemas/TitleProgress'
+          examples: [[]]
+        links:
+          type: object
+          description: Links from a page of title progress.
+          required: [self]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: This page of title progress.
+              examples: [/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/title-progress]
+            next:
+              type: string
+              format: uri-reference
+              description: The next page of title progress, omitted on the last page.
+              examples: ['/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/title-progress?cursor=aebagbaf']
 
     UpNextEntry:
       type: object

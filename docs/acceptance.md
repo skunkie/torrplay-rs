@@ -314,6 +314,10 @@ These scenarios accept the lifecycle's
 | UPN-05 | GET up next with `If-None-Match` of its ETag before and after saving progress | `304`, then `200` with a new ETag |
 | PRG-06 | A database write fails while saving progress, creating a profile, and dismissing an entry | `500 internal-error`; nothing changes |
 | PRG-07 | Stream a file with a seek index through the media server for some seconds, clear its progress, and stream its last 8% | The device profile's progress follows the stream in real time up to what it delivered; clearing ends the viewing; the last stream marks the file viewed with the position reset to 0 |
+| PRG-08 | Save title progress for two episodes and a movie, read one, and list with `title_key_prefix` and a page size of 1 | `201`, then `200`; the episodes only, most recently saved first, across pages |
+| PRG-09 | Save, read, and clear title progress with keys outside the pattern, such as `tmdb-tv-1399`, `tmdb-movie-0603`, and `imdb-603` | `400 malformed-request` |
+| PRG-10 | Save title progress in the device profile, then clear it | `409 lifecycle-conflict`; `404`, nothing saved |
+| PRG-11 | Save title progress with the file that played, delete the torrent, restart, and save with an unknown file | It keeps its IDs without file and content links, survives the restart, and the unknown file is `422` |
 
 ### Authentication
 

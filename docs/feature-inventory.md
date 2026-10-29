@@ -71,6 +71,7 @@ document that schedules it.
 | DLNA resume positions | Not present | Verified | `upnp:lastPlaybackPosition` and Samsung's `sec:dcmInfo` bookmark on files in progress; DLNA-20; which televisions read them is untested |
 | Up next: resume and next episode | Not present | Verified | UPN-01 to UPN-05 |
 | Progress estimates for players without progress reports | Not present | Verified | Application viewings; the launching application saves the progress; VWG-01 to VWG-08 |
+| Progress by TMDB or IMDb title, for catalog cards | Not present | Verified | Title progress, kept when torrents are deleted; PRG-08 to PRG-11 |
 | Playlists for external players | `GET /api/v1/playlist` | Planned | Playlists and scoped playback access |
 
 ## Settings and operations

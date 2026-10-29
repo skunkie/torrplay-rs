@@ -34,7 +34,7 @@ use torrplay_core::credentials::{AccessToken, PasswordHash, SigningKey};
 use torrplay_core::id::{AccessTokenId, FileId, InfoHashV1, ProfileId, TorrentId, UpNextEntryId};
 use torrplay_core::image::ImageInfo;
 use torrplay_core::lifecycle::{Configuration, StorageMode};
-use torrplay_core::profiles::{Profile, Progress};
+use torrplay_core::profiles::{Profile, Progress, TitleKey, TitleProgress};
 pub use torrplay_core::settings::Stored as StoredSettings;
 
 mod credentials;
@@ -87,6 +87,17 @@ pub struct StoredProgress {
     pub progress: Progress,
 }
 
+/// A profile's stored progress of one title.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredTitleProgress {
+    /// The profile.
+    pub profile: ProfileId,
+    /// The title.
+    pub key: TitleKey,
+    /// The progress, with the file that last played it.
+    pub progress: TitleProgress,
+}
+
 /// A profile's stored dismissal of an up next entry.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoredDismissal {
@@ -124,6 +135,8 @@ pub struct Contents {
     pub profiles: Vec<Profile>,
     /// Every profile's stored progress.
     pub progress: Vec<StoredProgress>,
+    /// Every profile's stored title progress.
+    pub titles: Vec<StoredTitleProgress>,
     /// Every profile's stored dismissals.
     pub dismissals: Vec<StoredDismissal>,
     /// The password, the signing key, and the access tokens.
@@ -206,6 +219,8 @@ enum Command {
     Avatar(ProfileId, Reply<Option<(ImageInfo, Vec<u8>)>>),
     SetProgress(StoredProgress, Reply<()>),
     DeleteProgress(ProfileId, TorrentId, FileId, Reply<()>),
+    SetTitleProgress(StoredTitleProgress, Option<TitleKey>, Reply<()>),
+    DeleteTitleProgress(ProfileId, TitleKey, Reply<()>),
     SetDismissal(StoredDismissal, Reply<()>),
     SetPassword(PasswordHash, SystemTime, bool, Reply<()>),
     RemovePassword(SigningKey, Reply<()>),
@@ -240,6 +255,7 @@ impl Store {
         let settings = schema::settings(&connection)?;
         let profiles = profiles::profiles(&connection)?;
         let progress = profiles::progress(&connection)?;
+        let titles = profiles::titles(&connection)?;
         let dismissals = profiles::dismissals(&connection)?;
         let credentials = credentials::credentials(&mut connection, SystemTime::now())?;
         let media_server_udn = schema::media_server_udn(&mut connection)?;
@@ -273,6 +289,7 @@ impl Store {
                 settings,
                 profiles,
                 progress,
+                titles,
                 dismissals,
                 credentials,
                 media_server_udn,
@@ -426,6 +443,30 @@ impl Store {
     ) -> Result<(), StoreError> {
         let (profile, torrent, file) = (profile.clone(), torrent.clone(), file.clone());
         self.send(|reply| Command::DeleteProgress(profile, torrent, file, reply))
+            .await
+    }
+
+    /// Stores a profile's progress of a title, deleting the progress of the
+    /// title `replaced`, which makes room for it, in the same transaction.
+    pub async fn set_title_progress(
+        &self,
+        progress: &StoredTitleProgress,
+        replaced: Option<&TitleKey>,
+    ) -> Result<(), StoreError> {
+        let progress = progress.clone();
+        let replaced = replaced.cloned();
+        self.send(|reply| Command::SetTitleProgress(progress, replaced, reply))
+            .await
+    }
+
+    /// Deletes a profile's progress of a title, if it has any.
+    pub async fn delete_title_progress(
+        &self,
+        profile: &ProfileId,
+        key: &TitleKey,
+    ) -> Result<(), StoreError> {
+        let (profile, key) = (profile.clone(), key.clone());
+        self.send(|reply| Command::DeleteTitleProgress(profile, key, reply))
             .await
     }
 

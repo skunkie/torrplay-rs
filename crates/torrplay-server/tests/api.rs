@@ -1971,6 +1971,12 @@ mod scenario {
             ),
             (Method::PUT, format!("{profile}/avatar"), "image/png", None),
             (Method::PUT, progress.clone(), "application/json", None),
+            (
+                Method::PUT,
+                format!("{profile}/title-progress/tmdb-movie-603"),
+                "application/json",
+                None,
+            ),
         ];
         for (method, path, media_type, if_match) in requests {
             let mut headers = vec![
@@ -5342,6 +5348,260 @@ mod scenario {
         server.stop().await;
     }
 
+    /// PRG-08 to PRG-11 and the title progress operations' responses:
+    /// saving, reading, listing with a prefix across pages, key validation,
+    /// the device refusal, failures, and the file last played outliving
+    /// its torrent across a restart.
+    pub async fn title_progress() {
+        let server = TestServer::start().await;
+        let profile = default_profile(&server).await;
+        let titles = format!("{profile}/title-progress");
+        let at = |key: &str| format!("{titles}/{key}");
+        let media = catalog::media_names();
+        let torrent = server.upload(&media.metainfo().bytes, None).await.json();
+        let torrent_id = torrent["id"].as_str().unwrap().to_owned();
+        let torrent_path = torrent["links"]["self"].as_str().unwrap().to_owned();
+        let video = file_ids(&server, &torrent_path).await["video.mkv"].clone();
+
+        // PRG-08: saving, reading, and listing.
+        let first = server
+            .send(put_progress(&at("tmdb-tv-1399-s1e1"), 100.0, 2760.0, false))
+            .await;
+        assert_eq!(first.status, StatusCode::CREATED);
+        assert_eq!(
+            first.header(header::LOCATION),
+            Some(at("tmdb-tv-1399-s1e1").as_str())
+        );
+        let episode = server
+            .send(json_request(
+                Method::PUT,
+                &at("tmdb-tv-1399-s1e2"),
+                &json!({
+                    "position_seconds": 812.0,
+                    "duration_seconds": 2760.0,
+                    "viewed": false,
+                    "torrent_id": torrent_id,
+                    "file_id": video,
+                }),
+            ))
+            .await;
+        assert_eq!(episode.status, StatusCode::CREATED);
+        let episode = episode.json();
+        assert_eq!(episode["torrent_id"], torrent_id.as_str());
+        assert_eq!(
+            episode["links"]["file"],
+            format!("{torrent_path}/files/{video}").as_str()
+        );
+        server
+            .send(put_progress(&at("tmdb-movie-603"), 10.0, 100.0, false))
+            .await;
+        let viewed = server
+            .send(put_progress(
+                &at("tmdb-tv-1399-s1e1"),
+                2700.0,
+                2760.0,
+                false,
+            ))
+            .await;
+        assert_eq!(viewed.status, StatusCode::OK);
+        assert_eq!(viewed.json()["viewed"], true, "90% marks it viewed");
+        let read = server.get(&at("tmdb-tv-1399-s1e2")).await;
+        assert_eq!(read.status, StatusCode::OK);
+        assert_eq!(read.json()["position_seconds"], 812.0);
+
+        let mut keys = Vec::new();
+        let mut page = format!("{titles}?title_key_prefix=tmdb-tv-1399-&page_size=1");
+        loop {
+            let listed = server.get(&page).await;
+            assert_eq!(listed.status, StatusCode::OK);
+            let listed = listed.json();
+            for item in listed["items"].as_array().unwrap() {
+                keys.push(item["title_key"].as_str().unwrap().to_owned());
+            }
+            match listed["links"]["next"].as_str() {
+                Some(next) => page = next.to_owned(),
+                None => break,
+            }
+        }
+        assert_eq!(
+            keys,
+            ["tmdb-tv-1399-s1e1", "tmdb-tv-1399-s1e2"],
+            "the episodes, most recently saved first"
+        );
+        let all = server.get(&titles).await.json();
+        assert_eq!(all["items"].as_array().unwrap().len(), 3);
+
+        // PRG-09: keys, parameters, and bodies the operations refuse.
+        for key in ["tmdb-tv-1399", "tmdb-movie-0603", "imdb-603"] {
+            for exchange in [
+                server.send_unchecked(empty(Method::GET, &at(key))).await,
+                server
+                    .send_unchecked(put_progress(&at(key), 1.0, 10.0, false))
+                    .await,
+                server.send_unchecked(empty(Method::DELETE, &at(key))).await,
+            ] {
+                assert_problem(&exchange, StatusCode::BAD_REQUEST, "malformed-request");
+            }
+        }
+        for query in ["title_key_prefix=", "color=red", "cursor=x"] {
+            assert_problem(
+                &server
+                    .send_unchecked(empty(Method::GET, &format!("{titles}?{query}")))
+                    .await,
+                StatusCode::BAD_REQUEST,
+                "malformed-request",
+            );
+        }
+        for body in [
+            json!({ "position_seconds": 1, "duration_seconds": 10, "viewed": false, "torrent_id": torrent_id }),
+            json!({ "position_seconds": 1, "duration_seconds": 10, "viewed": false, "torrent_id": torrent_id, "file_id": "fil_aaaaaaaaaaaaaaaaaaaaaaaaaa" }),
+            json!({ "position_seconds": 11, "duration_seconds": 10, "viewed": false }),
+        ] {
+            assert_problem(
+                &server
+                    .send_unchecked(json_request(Method::PUT, &at("tmdb-movie-603"), &body))
+                    .await,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation-failed",
+            );
+        }
+        assert_problem(
+            &server
+                .send_unchecked(
+                    request(Method::PUT, &at("tmdb-movie-603"))
+                        .header(header::CONTENT_TYPE, "text/plain")
+                        .body(b"{}".to_vec())
+                        .unwrap(),
+                )
+                .await,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported-media-type",
+        );
+        assert_problem(
+            &server
+                .send_unchecked(
+                    request(Method::PUT, &at("tmdb-movie-603"))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(vec![b' '; 16385])
+                        .unwrap(),
+                )
+                .await,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "content-too-large",
+        );
+        let unknown = "/api/v1/profiles/prf_aaaaaaaaaaaaaaaaaaaaaaaaaa/title-progress";
+        for exchange in [
+            server.get(unknown).await,
+            server.get(&format!("{unknown}/tmdb-movie-603")).await,
+            server
+                .send(put_progress(
+                    &format!("{unknown}/tmdb-movie-603"),
+                    1.0,
+                    10.0,
+                    false,
+                ))
+                .await,
+            server
+                .send(empty(Method::DELETE, &format!("{unknown}/tmdb-movie-603")))
+                .await,
+            server.get(&at("tmdb-movie-604")).await,
+            server
+                .send(empty(Method::DELETE, &at("tmdb-movie-604")))
+                .await,
+        ] {
+            assert_problem(&exchange, StatusCode::NOT_FOUND, "not-found");
+        }
+
+        // PRG-10: the device profile's title progress is never saved.
+        let device = device_profile(&server).await;
+        let device_title = format!("{device}/title-progress/tmdb-movie-603");
+        assert_problem(
+            &server
+                .send(put_progress(&device_title, 1.0, 10.0, false))
+                .await,
+            StatusCode::CONFLICT,
+            "lifecycle-conflict",
+        );
+        assert_problem(
+            &server.get(&device_title).await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+
+        // Failed writes change nothing.
+        server.app.store().fail_writes(true);
+        for exchange in [
+            server
+                .send(put_progress(&at("tmdb-movie-603"), 50.0, 100.0, false))
+                .await,
+            server
+                .send(empty(Method::DELETE, &at("tmdb-movie-603")))
+                .await,
+        ] {
+            assert_problem(
+                &exchange,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal-error",
+            );
+        }
+        server.app.store().fail_writes(false);
+        assert_eq!(
+            server.get(&at("tmdb-movie-603")).await.json()["position_seconds"],
+            10.0
+        );
+
+        // Deleting clears it.
+        assert_eq!(
+            server
+                .send(empty(Method::DELETE, &at("tmdb-movie-603")))
+                .await
+                .status,
+            StatusCode::NO_CONTENT
+        );
+        assert_problem(
+            &server.get(&at("tmdb-movie-603")).await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+
+        // PRG-11: the file last played outlives its torrent and a restart.
+        assert_eq!(
+            server
+                .send(empty(Method::DELETE, &torrent_path))
+                .await
+                .status,
+            StatusCode::NO_CONTENT
+        );
+        let server = server.restart().await;
+        let kept = server.get(&at("tmdb-tv-1399-s1e2")).await;
+        assert_eq!(kept.status, StatusCode::OK);
+        let kept = kept.json();
+        assert_eq!(kept["torrent_id"], torrent_id.as_str());
+        assert_eq!(kept["file_id"], video.as_str());
+        assert_eq!(kept["position_seconds"], 812.0);
+        assert!(
+            kept["links"].get("file").is_none() && kept["links"].get("content").is_none(),
+            "{kept}"
+        );
+
+        server.app.begin_shutdown();
+        for exchange in [
+            server
+                .send(put_progress(&at("tmdb-movie-605"), 1.0, 10.0, false))
+                .await,
+            server
+                .send(empty(Method::DELETE, &at("tmdb-tv-1399-s1e2")))
+                .await,
+        ] {
+            assert_problem(
+                &exchange,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "engine-unavailable",
+            );
+        }
+        server.stop().await;
+    }
+
     /// PRG-06: failed writes change no profile, progress, or dismissal.
     pub async fn profiles_store_failures() {
         let server = TestServer::start().await;
@@ -6281,6 +6541,8 @@ const EXEMPT: &[(&str, u16)] = &[
     ("headProfileAvatar", 500),
     ("listTorrentProgress", 500),
     ("getFileProgress", 500),
+    ("listTitleProgress", 500),
+    ("getTitleProgress", 500),
     ("listUpNext", 500),
     ("getUpNextEntry", 500),
     // These answer from the credentials in memory, and issuing a playback
@@ -6347,6 +6609,7 @@ scenarios!(
     cache_capacity_settings,
     preloads,
     viewings,
+    title_progress,
     library,
     library_filters,
     posters,

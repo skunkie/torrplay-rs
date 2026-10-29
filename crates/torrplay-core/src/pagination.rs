@@ -610,6 +610,53 @@ impl SortKey for UpNextSortKey {
     }
 }
 
+/// The sort key of a profile's title progress: most recently saved first,
+/// then by title key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TitleProgressSortKey {
+    updated_at: SystemTime,
+    key: String,
+}
+
+impl TitleProgressSortKey {
+    /// Returns the key of a title's progress saved at `updated_at`.
+    pub fn of(key: &str, updated_at: SystemTime) -> Self {
+        Self {
+            updated_at,
+            key: key.to_owned(),
+        }
+    }
+}
+
+impl Ord for TitleProgressSortKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other
+            .updated_at
+            .cmp(&self.updated_at)
+            .then_with(|| self.key.cmp(&other.key))
+    }
+}
+
+impl PartialOrd for TitleProgressSortKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl SortKey for TitleProgressSortKey {
+    const KIND: u8 = 7;
+
+    fn encode(&self, out: &mut Vec<u8>) {
+        encode_time(self.updated_at, out);
+        out.extend_from_slice(self.key.as_bytes());
+    }
+
+    fn decode(bytes: &[u8]) -> Option<Self> {
+        let (updated_at, key) = decode_time(bytes)?;
+        Some(Self { updated_at, key })
+    }
+}
+
 /// The sort key of a torrent's files collection: metadata order, as the
 /// position in [`Metadata::files`](crate::metadata::Metadata::files).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

@@ -46,6 +46,7 @@ mod representation;
 mod retention;
 mod service;
 mod settings;
+mod titles;
 mod torrents;
 mod up_next;
 mod viewings;
@@ -156,6 +157,16 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
             get(progress::get::<E>)
                 .put(progress::put::<E>)
                 .delete(progress::delete::<E>),
+        )
+        .route(
+            "/api/v1/profiles/{profile_id}/title-progress",
+            get(titles::list::<E>),
+        )
+        .route(
+            "/api/v1/profiles/{profile_id}/title-progress/{title_key}",
+            get(titles::get::<E>)
+                .put(titles::put::<E>)
+                .delete(titles::delete::<E>),
         )
         .route(
             "/api/v1/profiles/{profile_id}/up-next",

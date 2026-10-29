@@ -25,7 +25,7 @@ use crate::images::{self, Images};
 use crate::{StoreError, StoredTorrent};
 
 /// The schema version this build creates and migrates to.
-pub(crate) const VERSION: u32 = 13;
+pub(crate) const VERSION: u32 = 14;
 
 /// The schema at each version, applied in order to reach the next one.
 const MIGRATIONS: [&str; VERSION as usize] = [
@@ -191,6 +191,20 @@ const MIGRATIONS: [&str; VERSION as usize] = [
     "ALTER TABLE profiles
         ADD COLUMN kind TEXT NOT NULL DEFAULT 'person' CHECK (kind IN ('person', 'device'));
     CREATE UNIQUE INDEX profiles_kind_device_key ON profiles (kind) WHERE kind = 'device';",
+    // Version 14: each profile's progress of titles in external catalogs,
+    // which outlives torrents, so the file last played has no foreign key.
+    "CREATE TABLE title_progress (
+        profile_id TEXT NOT NULL REFERENCES profiles (id) ON DELETE CASCADE,
+        title_key TEXT NOT NULL,
+        position_ms INTEGER NOT NULL CHECK (position_ms >= 0),
+        duration_ms INTEGER NOT NULL CHECK (duration_ms > 0 AND position_ms <= duration_ms),
+        viewed_at_ns INTEGER CHECK (viewed_at_ns >= 0),
+        updated_at_ns INTEGER NOT NULL CHECK (updated_at_ns >= 0),
+        torrent_id TEXT,
+        file_id TEXT,
+        CHECK ((torrent_id IS NULL) = (file_id IS NULL)),
+        PRIMARY KEY (profile_id, title_key)
+    ) STRICT;",
 ];
 
 /// Opens the database at `path`, takes its lock, and migrates it.
