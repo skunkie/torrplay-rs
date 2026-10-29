@@ -300,6 +300,12 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 : Progress the application saves itself, from the ranges a client streams,
   in the device profile.
 
+**Viewing**
+: The streams of one file that a playback position is estimated from. The
+  device profile's viewings save inferred progress; an **application
+  viewing**, which an application creates for a player that reports no
+  progress, only estimates, and the application saves what it chooses.
+
 **Seek index**
 : What a media file's container lists of where its playback moments lie:
   an MP4 file's sample tables, or a Matroska file's cues. The application

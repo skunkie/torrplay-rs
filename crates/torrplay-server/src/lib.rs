@@ -48,6 +48,7 @@ mod service;
 mod settings;
 mod torrents;
 mod up_next;
+mod viewings;
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -108,6 +109,14 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
         .route(
             &format!("{torrent}/files/{{file_id}}/preloads/{{preload_id}}"),
             get(preloads::get::<E>).delete(preloads::delete::<E>),
+        )
+        .route(
+            &format!("{torrent}/files/{{file_id}}/viewings"),
+            post(viewings::create::<E>),
+        )
+        .route(
+            &format!("{torrent}/files/{{file_id}}/viewings/{{viewing_id}}"),
+            get(viewings::get::<E>).delete(viewings::delete::<E>),
         )
         .route(
             &format!("{torrent}/statistics"),

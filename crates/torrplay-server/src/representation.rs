@@ -270,6 +270,7 @@ pub(crate) fn file(torrent: &TorrentId, file: &MetadataFile) -> api::TorrentFile
         links: api::TorrentFileLinks {
             content: format!("{path}/content"),
             preloads: format!("{path}/preloads"),
+            viewings: format!("{path}/viewings"),
             self_field: path,
             torrent: torrent_path(torrent),
         },

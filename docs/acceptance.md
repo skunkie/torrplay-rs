@@ -195,6 +195,21 @@ These scenarios accept the lifecycle's preloads (M6).
 | PRL-08 | Create 5 preloads of one file | The fifth is `409 too-many-preloads`; after one ends, another can be created |
 | PRL-09 | Preload a disk torrent's file, change its storage mode, restart, and delete a torrent with preloads | The disk preload pins nothing and never queues; the transition keeps its preload; a restart and the deletion leave the preloads `not-found` |
 
+### Viewings
+
+These scenarios accept the lifecycle's application viewings.
+
+| ID | Scenario | Expected |
+|---|---|---|
+| VWG-01 | Create a viewing of a file, and of an unknown file and a torrent without metadata | `201` with `Location`, no position, and a `content` link with its `viewing_id`; `404`; `409 lifecycle-conflict` |
+| VWG-02 | Stream the content link, then read the viewing while it streams and after the stream ends | The position follows real time up to what was delivered, `streaming` is `true`, then `false` with the position where the stream ended; the device profile has no progress |
+| VWG-03 | Stream a file without a seek index through a viewing | `position_seconds` and `duration_seconds` stay `null` |
+| VWG-04 | Stream with an unknown `viewing_id`, another file's, and with `HEAD` | `404`, `404`, and `HEAD` ignores it |
+| VWG-05 | Let a viewing go 24 hours without activity | It is `404`, and its content link too |
+| VWG-06 | Delete a viewing, then read it and stream its link | `204`, then `404` and `404` |
+| VWG-07 | Stream a temporary torrent through a viewing past the idle time, then read it | The torrent stays until the viewing is read, then expires |
+| VWG-08 | Delete a torrent with a viewing | The viewing is `404` |
+
 ### Disk storage
 
 These scenarios accept [ADR 9](adr/0009-disk-storage.md)'s disk storage

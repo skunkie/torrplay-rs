@@ -401,12 +401,19 @@ impl<E: Engine> App<E> {
     }
 
     /// Deletes the temporary torrents that have gone the
-    /// `temporary_idle_seconds` setting without a reader. The task
+    /// `temporary_idle_seconds` setting without a reader, unless an
+    /// application viewing of them ended unread within the last hour. The task
     /// [`spawn_retention`](Self::spawn_retention) starts calls it every 10
     /// seconds.
     pub async fn expire_temporaries(&self) {
         let limit = self.effective_settings().temporary_idle;
-        for id in self.temporaries.expired(self.now(), limit) {
+        let now = self.now();
+        for id in self.temporaries.expired(now, limit) {
+            // The application that launched the player has yet to read
+            // where it stopped.
+            if self.inference.holds(&id, now) {
+                continue;
+            }
             match self.remove_torrent(&id).await {
                 Ok(()) => tracing::info!(%id, "an unwatched temporary torrent was deleted"),
                 Err(problem) => {

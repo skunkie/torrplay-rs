@@ -44,6 +44,10 @@ tags:
     description: Where a profile is in each file, and what is up next.
   - name: Preloads
     description: Parts of files fetched before playback starts.
+  - name: Viewings
+    description: >-
+      Playback of a file by a player that reports no progress, estimated from
+      what it streams.
   - name: Settings
     description: The application's settings, which tune streaming and shutdown.
   - name: Authentication
@@ -849,6 +853,7 @@ paths:
                           self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
                           content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
                           preloads: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads
+                          viewings: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/viewings
                           torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
                     links:
                       self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files
@@ -891,6 +896,7 @@ paths:
                       self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
                       content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
                       preloads: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads
+                      viewings: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/viewings
                       torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
         '404':
           $ref: '#/components/responses/NotFound'
@@ -924,6 +930,7 @@ paths:
         - $ref: '#/components/parameters/Range'
         - $ref: '#/components/parameters/IfRange'
         - $ref: '#/components/parameters/IfNoneMatch'
+        - $ref: '#/components/parameters/ViewingQuery'
       responses:
         '200':
           description: The whole file.
@@ -1026,6 +1033,7 @@ paths:
         - $ref: '#/components/parameters/Range'
         - $ref: '#/components/parameters/IfRange'
         - $ref: '#/components/parameters/IfNoneMatch'
+        - $ref: '#/components/parameters/ViewingQuery'
       responses:
         '200':
           description: The headers of the whole file.
@@ -1296,6 +1304,138 @@ paths:
       responses:
         '204':
           description: The preload was canceled.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/LifecycleConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
+  /api/v1/torrents/{torrent_id}/files/{file_id}/viewings:
+    parameters:
+      - $ref: '#/components/parameters/TorrentId'
+      - $ref: '#/components/parameters/FileId'
+    post:
+      operationId: createFileViewing
+      summary: Start a viewing of a file
+      description: >-
+        Creates a viewing of the file, for an application that launches a
+        player which reports no progress: the player streams the viewing's
+        content link, and the application reads the viewing's estimated
+        position when the player exits and saves the progress it chooses.
+        The request takes no body. Viewings of persisted and temporary
+        torrents alike are kept in memory, as docs/lifecycle.md describes,
+        and the path names no listing.
+      tags: [Viewings]
+      responses:
+        '201':
+          description: The viewing was created.
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Viewing'
+              examples:
+                created:
+                  summary: A viewing nothing has streamed yet
+                  value:
+                    id: vwg_q62qwv4xfuperelxpq4qhvgmt
+                    position_seconds: null
+                    duration_seconds: null
+                    streaming: false
+                    created_at: '2026-10-19T20:00:00Z'
+                    last_active_at: null
+                    expires_at: '2026-10-20T20:00:00Z'
+                    links:
+                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/viewings/vwg_q62qwv4xfuperelxpq4qhvgmt
+                      file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
+                      torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+                      content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content?viewing_id=vwg_q62qwv4xfuperelxpq4qhvgmt
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/LifecycleConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
+  /api/v1/torrents/{torrent_id}/files/{file_id}/viewings/{viewing_id}:
+    parameters:
+      - $ref: '#/components/parameters/TorrentId'
+      - $ref: '#/components/parameters/FileId'
+      - $ref: '#/components/parameters/ViewingId'
+    get:
+      operationId: getFileViewing
+      summary: Read a viewing
+      description: >-
+        Returns the viewing's estimated position and activity. Reading it
+        after its last stream ended releases the hold an unread viewing keeps
+        on a temporary torrent.
+      tags: [Viewings]
+      responses:
+        '200':
+          description: The viewing.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Viewing'
+              examples:
+                streaming:
+                  summary: A viewing whose player is streaming
+                  value:
+                    id: vwg_q62qwv4xfuperelxpq4qhvgmt
+                    position_seconds: 1325.5
+                    duration_seconds: 5400.0
+                    streaming: true
+                    created_at: '2026-10-19T20:00:00Z'
+                    last_active_at: '2026-10-19T20:22:05Z'
+                    expires_at: '2026-10-20T20:22:05Z'
+                    links:
+                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/viewings/vwg_q62qwv4xfuperelxpq4qhvgmt
+                      file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
+                      torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+                      content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content?viewing_id=vwg_q62qwv4xfuperelxpq4qhvgmt
+                ended:
+                  summary: A viewing whose player exited
+                  value:
+                    id: vwg_q62qwv4xfuperelxpq4qhvgmt
+                    position_seconds: 1410.0
+                    duration_seconds: 5400.0
+                    streaming: false
+                    created_at: '2026-10-19T20:00:00Z'
+                    last_active_at: '2026-10-19T20:23:30Z'
+                    expires_at: '2026-10-20T20:23:30Z'
+                    links:
+                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/viewings/vwg_q62qwv4xfuperelxpq4qhvgmt
+                      file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
+                      torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+                      content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content?viewing_id=vwg_q62qwv4xfuperelxpq4qhvgmt
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/LifecycleConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+    delete:
+      operationId: deleteFileViewing
+      summary: Remove a viewing
+      description: >-
+        Removes the viewing. Streams of its content link that are open
+        continue, and later ones are not-found.
+      tags: [Viewings]
+      responses:
+        '204':
+          description: The viewing was removed.
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -2095,6 +2235,7 @@ paths:
                         torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
                         content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
                         preloads: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads
+                        viewings: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/viewings
                     progress: null
                     links:
                       self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next/upn_5hdq2m7kzb6hxw3rjpt4yc2ula
@@ -2780,6 +2921,24 @@ components:
       schema:
         type: string
       example: prl_4qhvgmtq62qwv4xfuperelxpq
+    ViewingId:
+      name: viewing_id
+      in: path
+      required: true
+      description: The viewing's ID.
+      schema:
+        type: string
+      example: vwg_q62qwv4xfuperelxpq4qhvgmt
+    ViewingQuery:
+      name: viewing_id
+      in: query
+      description: >-
+        A viewing of this file, from createFileViewing, whose estimate the
+        stream feeds. An unknown or expired viewing, or one of another file,
+        is not-found. HEAD ignores it.
+      schema:
+        type: string
+      example: vwg_q62qwv4xfuperelxpq4qhvgmt
     PageSize:
       name: page_size
       in: query
@@ -4686,7 +4845,7 @@ components:
         links:
           type: object
           description: Links from a file.
-          required: [self, content, preloads, torrent]
+          required: [self, content, preloads, viewings, torrent]
           properties:
             self:
               type: string
@@ -4703,6 +4862,11 @@ components:
               format: uri-reference
               description: The file's preloads.
               examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads]
+            viewings:
+              type: string
+              format: uri-reference
+              description: Where viewings of the file are created.
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/viewings]
             torrent:
               type: string
               format: uri-reference
@@ -4867,6 +5031,91 @@ components:
               format: uri-reference
               description: The preloaded file's content.
               examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content]
+
+    Viewing:
+      type: object
+      description: >-
+        A viewing of a file: the streams of its content link, and the
+        playback position they suggest, as docs/lifecycle.md describes. Every
+        member is observed state.
+      required: [id, position_seconds, duration_seconds, streaming, created_at, last_active_at, expires_at, links]
+      properties:
+        id:
+          type: string
+          description: >-
+            The viewing's ID, valid until it is removed or expires, its
+            torrent is deleted, or the application restarts.
+          examples: [vwg_q62qwv4xfuperelxpq4qhvgmt]
+        position_seconds:
+          type: [number, 'null']
+          format: double
+          minimum: 0
+          description: >-
+            The estimated playback position, at most duration_seconds: where
+            the latest stream that plays started, plus the lesser of the time
+            since it started, until it ended, and the media time it
+            delivered. It is null until the file's seek index is read, and
+            stays null for a file without one or before anything plays.
+          examples: [1325.5]
+        duration_seconds:
+          type: [number, 'null']
+          format: double
+          exclusiveMinimum: 0
+          description: >-
+            The file's playback duration from its seek index, or null while
+            position_seconds is.
+          examples: [5400.0]
+        streaming:
+          type: boolean
+          description: Whether a stream of the content link is open.
+          examples: [true]
+        created_at:
+          type: string
+          format: date-time
+          description: When the viewing was created, in UTC.
+          examples: ['2026-10-19T20:00:00Z']
+        last_active_at:
+          type: [string, 'null']
+          format: date-time
+          description: >-
+            When a stream of the content link was last open, in UTC, or null
+            before the first.
+          examples: ['2026-10-19T20:22:05Z']
+        expires_at:
+          type: string
+          format: date-time
+          description: >-
+            When the viewing expires, in UTC: 24 hours after its last
+            activity, or after its creation before any; later while a stream
+            is open.
+          examples: ['2026-10-20T20:22:05Z']
+        links:
+          type: object
+          description: Links from a viewing.
+          required: [self, file, torrent, content]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: This viewing.
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/viewings/vwg_q62qwv4xfuperelxpq4qhvgmt]
+            file:
+              type: string
+              format: uri-reference
+              description: The viewed file.
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4]
+            torrent:
+              type: string
+              format: uri-reference
+              description: The torrent of the viewed file.
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula]
+            content:
+              type: string
+              format: uri-reference
+              description: >-
+                The file's content with this viewing's viewing_id, the URL to
+                give the player.
+              examples: ['/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content?viewing_id=vwg_q62qwv4xfuperelxpq4qhvgmt']
 
     PreloadRange:
       type: object
