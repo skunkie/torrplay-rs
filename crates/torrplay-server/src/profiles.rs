@@ -18,7 +18,7 @@ use torrplay_core::engine::Engine;
 use torrplay_core::id::{ProfileId, random_torrent_id_bytes};
 use torrplay_core::image::ImageInfo;
 use torrplay_core::pagination::{FilterFingerprint, PageRequest, ProfileSortKey, paginate};
-use torrplay_core::profiles::{self, PROFILES_MAX, Profile};
+use torrplay_core::profiles::{self, PROFILES_MAX, Profile, ProfileKind};
 use torrplay_store::StoreError;
 
 use crate::app::{App, store_failed};
@@ -186,16 +186,19 @@ pub(crate) async fn create<E: Engine>(
     let profile = Profile {
         id,
         name,
+        kind: ProfileKind::Person,
         created_at: SystemTime::now(),
         avatar: None,
     };
     {
         let _lane = app.write_lane().await;
         let viewing = app.viewing()?;
-        if viewing.len() >= PROFILES_MAX {
+        if viewing.people() >= PROFILES_MAX {
             return Err(Problem::new(
                 ProblemType::TooManyProfiles,
-                format!("The application keeps at most {PROFILES_MAX} profiles; delete one first."),
+                format!(
+                    "The application keeps at most {PROFILES_MAX} person profiles; delete one first."
+                ),
             ));
         }
         require_free(&app, &profile.name, None)?;
@@ -275,6 +278,12 @@ pub(crate) async fn update<E: Engine>(
         ));
     }
     if let Some(name) = name.filter(|name| *name != profile.name) {
+        if profile.kind == ProfileKind::Device {
+            return Err(Problem::new(
+                ProblemType::LifecycleConflict,
+                "The device profile's name is fixed.",
+            ));
+        }
         require_free(&app, &name, Some(&profile.id))?;
         app.store()
             .rename_profile(&profile.id, &name)
@@ -295,10 +304,16 @@ pub(crate) async fn delete<E: Engine>(
     let _lane = app.write_lane().await;
     let profile = find(&app, &id)?;
     let viewing = app.viewing()?;
-    if viewing.len() <= 1 {
+    if profile.kind == ProfileKind::Device {
         return Err(Problem::new(
             ProblemType::LifecycleConflict,
-            "The application keeps at least one profile; create another first.",
+            "The device profile cannot be deleted.",
+        ));
+    }
+    if viewing.people() <= 1 {
+        return Err(Problem::new(
+            ProblemType::LifecycleConflict,
+            "The application keeps at least one person profile; create another first.",
         ));
     }
     app.store()
@@ -307,6 +322,14 @@ pub(crate) async fn delete<E: Engine>(
         .map_err(stored)?;
     viewing.remove_profile(&profile.id);
     Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// The device profile's progress is the application's to infer.
+pub(crate) fn device_conflict() -> Problem {
+    Problem::new(
+        ProblemType::LifecycleConflict,
+        "The device profile's progress is inferred by the application; clear it instead.",
+    )
 }
 
 fn no_avatar() -> Problem {

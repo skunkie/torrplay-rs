@@ -25,7 +25,7 @@ use crate::images::{self, Images};
 use crate::{StoreError, StoredTorrent};
 
 /// The schema version this build creates and migrates to.
-pub(crate) const VERSION: u32 = 12;
+pub(crate) const VERSION: u32 = 13;
 
 /// The schema at each version, applied in order to reach the next one.
 const MIGRATIONS: [&str; VERSION as usize] = [
@@ -186,6 +186,11 @@ const MIGRATIONS: [&str; VERSION as usize] = [
         ADD COLUMN temporary_idle_seconds INTEGER CHECK (temporary_idle_seconds >= 0);
     ALTER TABLE settings
         ADD COLUMN temporary_torrents_max INTEGER CHECK (temporary_torrents_max >= 0);",
+    // Version 13: each profile's kind, existing ones being people's, and at
+    // most one device profile.
+    "ALTER TABLE profiles
+        ADD COLUMN kind TEXT NOT NULL DEFAULT 'person' CHECK (kind IN ('person', 'device'));
+    CREATE UNIQUE INDEX profiles_kind_device_key ON profiles (kind) WHERE kind = 'device';",
 ];
 
 /// Opens the database at `path`, takes its lock, and migrates it.

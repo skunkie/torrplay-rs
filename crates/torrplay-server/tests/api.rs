@@ -199,11 +199,26 @@ async fn create_with(server: &TestServer, n: u8, members: Value) -> String {
 }
 
 /// The path of the first profile, the default one on a new data directory.
-async fn default_profile(server: &TestServer) -> String {
-    server.get("/api/v1/profiles").await.json()["items"][0]["links"]["self"]
+/// The path of the first listed profile of `kind`.
+async fn profile_of_kind(server: &TestServer, kind: &str) -> String {
+    let listed = server.get("/api/v1/profiles").await.json();
+    listed["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["kind"] == kind)
+        .unwrap_or_else(|| panic!("a {kind} profile is listed"))["links"]["self"]
         .as_str()
         .unwrap()
         .to_owned()
+}
+
+async fn default_profile(server: &TestServer) -> String {
+    profile_of_kind(server, "person").await
+}
+
+async fn device_profile(server: &TestServer) -> String {
+    profile_of_kind(server, "device").await
 }
 
 /// A request to save progress at `path`.
@@ -4171,13 +4186,62 @@ mod scenario {
         server.stop().await;
     }
 
-    /// PRF-01 to PRF-03: profiles are created, renamed under preconditions,
-    /// limited, unique by name, and carry avatars.
+    /// PRF-01 to PRF-04: profiles are created, renamed under preconditions,
+    /// limited, unique by name, and carry avatars, and the device profile
+    /// keeps its name and stays.
     pub async fn profiles() {
         let server = TestServer::start().await;
         let listed = server.get("/api/v1/profiles").await;
         assert_eq!(listed.status, StatusCode::OK);
-        assert_eq!(listed.json()["items"][0]["name"], "Default");
+        let names: Vec<(String, String)> = listed.json()["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| {
+                (
+                    item["name"].as_str().unwrap().to_owned(),
+                    item["kind"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("Default".to_owned(), "person".to_owned()),
+                ("Devices".to_owned(), "device".to_owned())
+            ],
+            "the default and device profiles are created at startup"
+        );
+
+        // The device profile keeps its name and stays.
+        let device = device_profile(&server).await;
+        let device_etag = server
+            .get(&device)
+            .await
+            .header(header::ETAG)
+            .unwrap()
+            .to_owned();
+        let renamed_device = server
+            .send(merge_patch(&device, &device_etag, &json!({ "name": "TV" })))
+            .await;
+        assert_problem(&renamed_device, StatusCode::CONFLICT, "lifecycle-conflict");
+        let unchanged = server
+            .send(merge_patch(
+                &device,
+                &device_etag,
+                &json!({ "name": "Devices" }),
+            ))
+            .await;
+        assert_eq!(
+            unchanged.status,
+            StatusCode::OK,
+            "its own name is no change"
+        );
+        assert_problem(
+            &server.send(empty(Method::DELETE, &device)).await,
+            StatusCode::CONFLICT,
+            "lifecycle-conflict",
+        );
         assert_eq!(
             server.get("/api/v1").await.json()["links"]["profiles"],
             "/api/v1/profiles"
@@ -4451,11 +4515,20 @@ mod scenario {
             assert_problem(&exchange, StatusCode::NOT_FOUND, "not-found");
         }
         let everyone: Vec<String> = listed_ids_of(&server, "/api/v1/profiles").await;
-        for (index, id) in everyone.iter().enumerate() {
+        let people: Vec<&String> = everyone
+            .iter()
+            .filter(|id| !device.ends_with(id.as_str()))
+            .collect();
+        assert_eq!(
+            people.len(),
+            32,
+            "the device profile does not count toward the limit"
+        );
+        for (index, id) in people.iter().enumerate() {
             let deleted = server
                 .send(empty(Method::DELETE, &format!("/api/v1/profiles/{id}")))
                 .await;
-            if index + 1 == everyone.len() {
+            if index + 1 == people.len() {
                 assert_problem(&deleted, StatusCode::CONFLICT, "lifecycle-conflict");
             } else {
                 assert_eq!(deleted.status, StatusCode::NO_CONTENT);
@@ -4492,6 +4565,20 @@ mod scenario {
 
         // PRG-01.
         assert_problem(&server.get(&item).await, StatusCode::NOT_FOUND, "not-found");
+        let device = device_profile(&server).await;
+        let device_item = format!("{device}/torrents/{torrent_id}/progress/{mkv}");
+        assert_problem(
+            &server
+                .send(put_progress(&device_item, 600.5, 5400.0, false))
+                .await,
+            StatusCode::CONFLICT,
+            "lifecycle-conflict",
+        );
+        assert_problem(
+            &server.send(empty(Method::DELETE, &device_item)).await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
         let created = server.send(put_progress(&item, 600.5, 5400.0, false)).await;
         assert_eq!(created.status, StatusCode::CREATED);
         assert_eq!(created.header(header::LOCATION), Some(item.as_str()));
@@ -4866,7 +4953,44 @@ mod scenario {
         server.stop().await;
     }
 
-    /// PRG-05: profiles, avatars, progress, and dismissals survive a restart.
+    /// PRF-04: a person profile that has the device profile's name keeps
+    /// it, and no default profile is added beside it.
+    pub async fn device_profile_name_taken() {
+        let data = tempfile::TempDir::new().unwrap();
+        {
+            let (store, _) = torrplay_store::Store::open(data.path()).unwrap();
+            store
+                .insert_profile(&torrplay_core::profiles::Profile {
+                    id: torrplay_core::id::ProfileId::from_random_bytes(
+                        [7; torrplay_core::id::TORRENT_ID_RANDOM_BYTES],
+                    ),
+                    name: "Devices".into(),
+                    kind: torrplay_core::profiles::ProfileKind::Person,
+                    created_at: std::time::SystemTime::UNIX_EPOCH,
+                    avatar: None,
+                })
+                .await
+                .unwrap();
+        }
+        let server = TestServer::start_in(data).await;
+        let listed = server.get("/api/v1/profiles").await.json();
+        let names: Vec<(&str, &str)> = listed["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| {
+                (
+                    item["name"].as_str().unwrap(),
+                    item["kind"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(names, [("Devices", "person"), ("Devices 2", "device")]);
+        server.stop().await;
+    }
+
+    /// PRG-05 and PRF-04: profiles, avatars, progress, and dismissals
+    /// survive a restart, and the device profile keeps its ID.
     pub async fn profiles_restart() {
         let server = TestServer::start().await;
         let profile = default_profile(&server).await;
@@ -4900,7 +5024,14 @@ mod scenario {
         let up_next_before = server.get(&up_next).await.json();
         let avatar_before = server.get(&format!("{profile}/avatar")).await;
 
+        let device = device_profile(&server).await;
+
         let server = server.restart().await;
+        assert_eq!(
+            device_profile(&server).await,
+            device,
+            "the device profile keeps its ID"
+        );
         let profile_after = server.get(&profile).await;
         assert_eq!(profile_after.json(), profile_before.json());
         assert_eq!(
@@ -4921,8 +5052,8 @@ mod scenario {
         );
         assert_eq!(
             listed_ids_of(&server, "/api/v1/profiles").await.len(),
-            1,
-            "no second default"
+            2,
+            "no second default or device profile"
         );
         server.stop().await;
     }
@@ -5941,6 +6072,7 @@ scenarios!(
     profiles,
     progress,
     up_next,
+    device_profile_name_taken,
     profiles_restart,
     profiles_store_failures,
     authentication_off,

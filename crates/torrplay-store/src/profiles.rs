@@ -7,7 +7,7 @@
 
 use rusqlite::{Connection, params};
 use torrplay_core::id::{FileId, ProfileId, TorrentId, UpNextEntryId};
-use torrplay_core::profiles::{Profile, Progress};
+use torrplay_core::profiles::{Profile, ProfileKind, Progress};
 
 use crate::images::{self, Images};
 use crate::schema::{from_ns, to_ns};
@@ -20,21 +20,24 @@ fn corrupt(what: String) -> StoreError {
 /// Reads every profile with its avatar's description.
 pub(crate) fn profiles(connection: &Connection) -> Result<Vec<Profile>, StoreError> {
     let mut avatars = images::all(connection, Images::Avatars)?;
-    let mut statement = connection.prepare("SELECT id, name, created_at_ns FROM profiles")?;
+    let mut statement = connection.prepare("SELECT id, name, kind, created_at_ns FROM profiles")?;
     let rows = statement.query_map([], |row| {
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
-            row.get::<_, i64>(2)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, i64>(3)?,
         ))
     })?;
     let mut profiles = Vec::new();
     for row in rows {
-        let (id, name, created_at_ns) = row?;
+        let (id, name, kind, created_at_ns) = row?;
         profiles.push(Profile {
             id: ProfileId::from_stored(&id)
                 .ok_or_else(|| corrupt(format!("profile {id}: malformed ID")))?,
             name,
+            kind: ProfileKind::from_stored(&kind)
+                .ok_or_else(|| corrupt(format!("profile {id}: unknown kind {kind}")))?,
             created_at: from_ns(created_at_ns)
                 .ok_or_else(|| corrupt(format!("profile {id}: the time is out of range")))?,
             avatar: avatars.remove(&id),
@@ -129,10 +132,11 @@ fn require(
 
 pub(crate) fn insert_profile(connection: &Connection, profile: &Profile) -> Result<(), StoreError> {
     connection.execute(
-        "INSERT INTO profiles (id, name, created_at_ns) VALUES (?1, ?2, ?3)",
+        "INSERT INTO profiles (id, name, kind, created_at_ns) VALUES (?1, ?2, ?3, ?4)",
         params![
             profile.id.as_str(),
             profile.name,
+            profile.kind.as_str(),
             to_ns(profile.created_at)?
         ],
     )?;

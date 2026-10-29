@@ -514,13 +514,22 @@ and the library are the same for every profile. Authentication decides
 who may use the application, not who is watching: every access token may
 use every profile.
 
-- At startup the application creates a profile named `Default` if none is
-  stored, so a client that never chooses a profile still works.
+- At startup the application creates a person profile named `Default` if
+  no person profile is stored, so a client that never chooses a profile
+  still works.
+- It also creates the device profile if none is stored: one profile, of
+  kind `device`, for the progress it infers from clients that report none.
+  It is named `Devices`, or `Devices 2` and so on if a person profile
+  already has that name, and keeps its ID across restarts. Renaming or
+  deleting it is `lifecycle-conflict`, and so is a client's `PUT` of its
+  progress; clearing its progress and dismissing its up next entries work
+  as in any profile. Clients should not offer it as the profile someone
+  watches as.
 - A name is normalized as a category is, to 1 to 64 characters, and is
   unique among profiles after normalization, case included; another
   profile's name is `duplicate-profile`. The application keeps at most 32
-  profiles, so a 33rd is `too-many-profiles`, and deleting the last one is
-  `lifecycle-conflict`.
+  person profiles, so a 33rd is `too-many-profiles`, and deleting the last
+  one is `lifecycle-conflict`. The device profile does not count.
 - A profile's ETag digests its representation, avatar included, and a
   `PATCH` must carry it in `If-Match`. Its avatar follows the rules of a
   torrent's poster. Deleting a profile deletes its avatar, progress, and
