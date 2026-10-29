@@ -20,7 +20,7 @@ use torrplay_core::metadata::Metadata;
 use torrplay_core::pagination::{
     CURSOR_PARAMETER, FileSortKey, FilterFingerprint, PAGE_SIZE_PARAMETER, PageRequest, paginate,
 };
-use torrplay_core::profiles::{self, DURATION_MAX_MS, Profile, ProgressUpdate};
+use torrplay_core::profiles::{self, DURATION_MAX_MS, Profile, ProfileKind, ProgressUpdate};
 use torrplay_store::{StoreError, StoredProgress};
 
 use crate::app::{App, store_failed};
@@ -222,6 +222,9 @@ pub(crate) async fn put<E: Engine>(
     let file = file(&metadata, &file_id)?;
     if app.temporaries().contains(&torrent) {
         return Err(crate::torrents::temporary_conflict("record its progress"));
+    }
+    if profile.kind == ProfileKind::Device {
+        return Err(profile_routes::device_conflict());
     }
     if MediaType::of_request(&headers).is_none_or(|media| media.essence != JSON) {
         return Err(Problem::new(

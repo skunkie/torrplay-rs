@@ -58,6 +58,7 @@ fn through(schema: &str, example: &Value) -> Option<Result<Value, String>> {
         "Profile" => round_trip::<api::Profile>(example),
         "ProfileConflictProblem" => round_trip::<api::ProfileConflictProblem>(example),
         "ProfileCreation" => round_trip::<api::ProfileCreation>(example),
+        "ProfileKind" => round_trip::<api::ProfileKind>(example),
         "ProfileName" => round_trip::<api::ProfileName>(example),
         "Retention" => round_trip::<api::Retention>(example),
         "ProfilePage" => round_trip::<api::ProfilePage>(example),

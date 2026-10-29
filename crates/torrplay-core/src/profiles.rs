@@ -18,14 +18,19 @@ use crate::id::{FileId, ProfileId, TorrentId, UpNextEntryId};
 use crate::image::ImageInfo;
 use crate::library::{self, TextError};
 
-/// The most profiles the application keeps.
+/// The most person profiles the application keeps; the device profile is
+/// not counted.
 pub const PROFILES_MAX: usize = 32;
 
 /// The most characters a profile's name has.
 pub const PROFILE_NAME_MAX_CHARS: usize = 64;
 
-/// The name of the profile created when none is stored.
+/// The name of the person profile created when none is stored.
 pub const DEFAULT_PROFILE_NAME: &str = "Default";
+
+/// The device profile's name, or the first of it with a number that no
+/// person profile has, since names are unique.
+pub const DEVICE_PROFILE_NAME: &str = "Devices";
 
 /// The longest duration a file's progress may have, in milliseconds.
 pub const DURATION_MAX_MS: u64 = 1_000_000_000;
@@ -35,13 +40,46 @@ pub fn normalize_profile_name(text: &str) -> Result<String, TextError> {
     library::normalize_line(text, PROFILE_NAME_MAX_CHARS)
 }
 
-/// A person's viewing identity.
+/// What a profile is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ProfileKind {
+    /// A person's viewing identity, which clients create and write.
+    #[default]
+    Person,
+    /// The one profile holding the progress the application infers from
+    /// clients that report none. It cannot be renamed or deleted, and
+    /// clients cannot save its progress, only clear it.
+    Device,
+}
+
+impl ProfileKind {
+    /// The kind's stored and serialized name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Person => "person",
+            Self::Device => "device",
+        }
+    }
+
+    /// The kind with the stored name.
+    pub fn from_stored(text: &str) -> Option<Self> {
+        match text {
+            "person" => Some(Self::Person),
+            "device" => Some(Self::Device),
+            _ => None,
+        }
+    }
+}
+
+/// A viewing identity: a person's, or the device profile.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Profile {
     /// The profile's ID.
     pub id: ProfileId,
     /// Its normalized name, unique among profiles.
     pub name: String,
+    /// Whether it is a person's or the device profile.
+    pub kind: ProfileKind,
     /// When it was created.
     pub created_at: SystemTime,
     /// Its avatar, if one was uploaded.
@@ -265,14 +303,22 @@ impl Viewing {
         profiles
     }
 
-    /// Returns the number of profiles.
-    pub fn len(&self) -> usize {
-        self.lock().profiles.len()
+    /// Returns the number of person profiles.
+    pub fn people(&self) -> usize {
+        self.lock()
+            .profiles
+            .values()
+            .filter(|profile| profile.kind == ProfileKind::Person)
+            .count()
     }
 
-    /// Returns whether there is no profile.
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
+    /// Returns the device profile, once it is recorded.
+    pub fn device(&self) -> Option<Profile> {
+        self.lock()
+            .profiles
+            .values()
+            .find(|profile| profile.kind == ProfileKind::Device)
+            .cloned()
     }
 
     /// Returns the profile other than `except` with the normalized `name`.

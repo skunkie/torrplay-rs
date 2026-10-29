@@ -1263,7 +1263,7 @@ pub struct ProfilePageLinks {
 pub struct ProfileCreation {
     pub name: ProfileName,
 }
-///A duplicate-profile problem, which links to the profile with the name, or a too-many-profiles problem, which does not.
+///A duplicate-profile problem, which links to the profile with the name, or a too-many-profiles or lifecycle-conflict problem, which does not.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProfileConflictProblem {
     ///An explanation of this occurrence, omitted when there is none.
@@ -1283,7 +1283,7 @@ pub struct ProfileConflictProblem {
     ///The problem type, a tag URI under tag:skunkie.github.io,2026:torrplay/problems/.
     pub r#type: url::Url,
 }
-///A person's viewing identity.
+///A viewing identity: a person's, or the device profile, which holds the progress the application infers from clients that do not report it.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Profile {
     ///The profile's avatar, or null if it has none.
@@ -1292,6 +1292,7 @@ pub struct Profile {
     pub created_at: chrono::DateTime<chrono::Utc>,
     ///The profile's opaque, stable ID.
     pub id: String,
+    pub kind: ProfileKind,
     ///Links from a profile.
     pub links: ProfileLinks,
     pub name: ProfileName,
@@ -1308,6 +1309,33 @@ pub struct ProfileLinks {
     pub self_field: String,
     ///What the profile can resume or watch next.
     pub up_next: String,
+}
+///What the profile is. A person profile is someone's viewing identity, created by clients. The device profile is created by the application, exactly one, and holds the progress it infers from clients that do not report their own, such as DLNA media renderers; it cannot be renamed or deleted, and clients cannot save its progress, only clear it or dismiss its up next entries. Clients should not offer the device profile as the profile someone watches as. Clients must handle values added later.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum ProfileKind {
+    #[default]
+    #[serde(rename = "person")]
+    Person,
+    #[serde(rename = "device")]
+    Device,
+}
+impl ProfileKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Person => "person",
+            Self::Device => "device",
+        }
+    }
+}
+impl ::std::fmt::Display for ProfileKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for ProfileKind {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
 }
 ///The profile's avatar, or null if it has none.
 #[derive(Debug, Clone, Deserialize, Serialize)]

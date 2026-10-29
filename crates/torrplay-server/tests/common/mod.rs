@@ -114,6 +114,19 @@ impl TestServer {
         .await
     }
 
+    /// Starts a server over a data directory a test prepared.
+    pub async fn start_in(data: TempDir) -> Self {
+        Self::start_over(
+            Arc::new(data),
+            FakeEngine::with_catalog(),
+            None,
+            true,
+            AllowedHosts::default(),
+            Overrides::default(),
+        )
+        .await
+    }
+
     /// Starts a server that also allows requests to name `hosts`.
     pub async fn start_allowing(hosts: &[&str]) -> Self {
         let data = Arc::new(TempDir::new().expect("a data directory"));

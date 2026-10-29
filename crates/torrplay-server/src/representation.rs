@@ -16,7 +16,7 @@ use torrplay_core::image::{ImageInfo, ImageType};
 use torrplay_core::library::{self, Kind, Library};
 use torrplay_core::lifecycle::{self, Configuration, EntityTag, ObservedState, Retention};
 use torrplay_core::metadata::{Metadata, MetadataFile};
-use torrplay_core::profiles::{Profile, Progress};
+use torrplay_core::profiles::{Profile, ProfileKind, Progress};
 
 use crate::app::TorrentView;
 use crate::content;
@@ -323,6 +323,10 @@ pub(crate) fn profile(value: &Profile) -> api::Profile {
     api::Profile {
         id: value.id.to_string(),
         name: value.name.clone(),
+        kind: match value.kind {
+            ProfileKind::Person => api::ProfileKind::Person,
+            ProfileKind::Device => api::ProfileKind::Device,
+        },
         created_at: value.created_at.into(),
         avatar: value.avatar.as_ref().map(|avatar| api::ProfileAvatar {
             media_type: image_type(avatar.image_type),

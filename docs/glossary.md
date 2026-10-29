@@ -287,9 +287,18 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 ## Profiles and progress
 
 **Profile**
-: A person's viewing identity, with its own progress and up next. It is
-  independent of authentication, which decides only who may use the
-  application.
+: A viewing identity, with its own progress and up next: a **person
+  profile**, someone's, or the device profile. It is independent of
+  authentication, which decides only who may use the application.
+
+**Device profile**
+: The one profile the application creates for the progress it infers from
+  clients that report none, such as DLNA media renderers. It cannot be
+  renamed or deleted, and clients cannot save its progress, only clear it.
+
+**Inferred progress**
+: Progress the application saves itself, from the ranges a client streams,
+  in the device profile.
 
 **Avatar**
 : An image a client uploads to show a profile, under a poster's rules.

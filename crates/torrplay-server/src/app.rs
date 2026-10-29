@@ -25,7 +25,9 @@ use torrplay_core::engine::{CacheStatistics, Engine, EngineError, Source};
 use torrplay_core::id::{ProfileId, TorrentId, random_torrent_id_bytes};
 use torrplay_core::lifecycle::{Failure, ObservedState, Readiness, StorageMode};
 use torrplay_core::metadata::Metadata;
-use torrplay_core::profiles::{DEFAULT_PROFILE_NAME, Profile, Viewing};
+use torrplay_core::profiles::{
+    DEFAULT_PROFILE_NAME, DEVICE_PROFILE_NAME, Profile, ProfileKind, Viewing,
+};
 use torrplay_core::registry::{Registry, TorrentRecord};
 use torrplay_core::settings::{LogLevel, Overrides, Settings};
 use torrplay_dlna::description::Device;
@@ -388,29 +390,46 @@ impl<E: Engine> App<E> {
         Ok(&self.viewing)
     }
 
-    /// Creates and stores the default profile if there is none, so clients
-    /// that never choose a profile still have one.
-    async fn ensure_profile(&self) {
+    /// Creates and stores the default profile if no person profile is
+    /// stored, so clients that never choose a profile still have one, and
+    /// the device profile if it is missing.
+    async fn ensure_profiles(&self) {
         let _lane = self.writes.lock().await;
-        if !self.viewing.is_empty() {
-            return;
+        if self.viewing.people() == 0 {
+            self.create_profile(DEFAULT_PROFILE_NAME.to_owned(), ProfileKind::Person)
+                .await;
         }
+        if self.viewing.device().is_none() {
+            // Names are unique, so a person profile may already have it.
+            let name = std::iter::once(DEVICE_PROFILE_NAME.to_owned())
+                .chain((2..).map(|n| format!("{DEVICE_PROFILE_NAME} {n}")))
+                .find(|name| self.viewing.named(name, None).is_none());
+            if let Some(name) = name {
+                self.create_profile(name, ProfileKind::Device).await;
+            }
+        }
+    }
+
+    async fn create_profile(&self, name: String, kind: ProfileKind) {
         let id = match random_torrent_id_bytes() {
             Ok(bytes) => ProfileId::from_random_bytes(bytes),
             Err(error) => {
-                tracing::error!(%error, "no random bytes for the default profile's ID");
+                tracing::error!(%error, kind = kind.as_str(), "no random bytes for a profile's ID");
                 return;
             }
         };
         let profile = Profile {
             id,
-            name: DEFAULT_PROFILE_NAME.to_owned(),
+            name,
+            kind,
             created_at: std::time::SystemTime::now(),
             avatar: None,
         };
         match self.store.insert_profile(&profile).await {
             Ok(()) => self.viewing.set_profile(profile),
-            Err(error) => tracing::error!(%error, "the default profile could not be stored"),
+            Err(error) => {
+                tracing::error!(%error, kind = kind.as_str(), "a profile could not be stored");
+            }
         }
     }
 
@@ -543,7 +562,7 @@ impl<E: Engine> App<E> {
                     .restore_failure = Some(Failure { detail });
             }
         }
-        self.ensure_profile().await;
+        self.ensure_profiles().await;
         self.restoring.store(false, Ordering::SeqCst);
         Ok(())
     }
