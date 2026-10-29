@@ -17,7 +17,8 @@
 
 use std::collections::HashSet;
 use std::future::{Future, IntoFuture};
-use std::net::{Ipv4Addr, SocketAddr};
+use std::io;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -39,6 +40,18 @@ use torrplay_store::{Contents, Store};
 /// The default API port, as the contract's server URL documents.
 pub const DEFAULT_PORT: u16 = 8080;
 
+/// The API's default address: every interface, dual-stack.
+pub const DEFAULT_LISTEN: SocketAddr =
+    SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), DEFAULT_PORT);
+
+/// The address the API falls back to where the system has no IPv6.
+const FALLBACK_LISTEN: SocketAddr =
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), DEFAULT_PORT);
+
+/// The environment variable that names the API's address where `--listen`
+/// does not.
+pub const LISTEN_VARIABLE: &str = "TORRPLAY_LISTEN";
+
 /// How long the whole shutdown may take before the process exits anyway.
 pub const DEFAULT_SHUTDOWN_LIMIT: Duration = Duration::from_secs(30);
 
@@ -57,8 +70,9 @@ standard input, and `password remove` turns authentication off and revokes
 every token; both need the application stopped.
 
 Options:
-  --listen <ADDRESS>         The API's address; any but a loopback one reaches the
-                             network [default: 127.0.0.1:8080]
+  --listen <ADDRESS>         The API's address, or TORRPLAY_LISTEN; until a
+                             password is set, only local networks may use it
+                             [default: [::]:8080, every interface]
   --allowed-host <NAME>      A host name requests may give besides IP addresses,
                              localhost, and .local names, such as a reverse
                              proxy's; repeat for each
@@ -83,11 +97,55 @@ The DLNA media server, its name, and the DHT are settings of the API.
   -V, --version              Print the version
 ";
 
+/// Binds the API's listener on `listen`, or on [`DEFAULT_LISTEN`] when it is
+/// `None`, falling back to `0.0.0.0:8080` where the system has no IPv6. An
+/// unspecified IPv6 address is dual-stack on every system, which some leave
+/// IPv6-only by default, so IPv4 clients reach it as IPv4-mapped addresses.
+pub fn bind_api(listen: Option<SocketAddr>) -> io::Result<TcpListener> {
+    let Some(address) = listen else {
+        return match bind(DEFAULT_LISTEN) {
+            // Another process holding the port holds it on IPv4 too.
+            Err(error)
+                if !matches!(
+                    error.kind(),
+                    io::ErrorKind::AddrInUse | io::ErrorKind::PermissionDenied
+                ) =>
+            {
+                tracing::warn!(%error, "no IPv6 listener; the API listens on IPv4 only");
+                bind(FALLBACK_LISTEN)
+            }
+            bound => bound,
+        };
+    };
+    bind(address)
+}
+
+fn bind(address: SocketAddr) -> io::Result<TcpListener> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let socket = Socket::new(
+        Domain::for_address(address),
+        Type::STREAM,
+        Some(Protocol::TCP),
+    )?;
+    if address.is_ipv6() && address.ip().is_unspecified() {
+        socket.set_only_v6(false)?;
+    }
+    // As the standard library's listeners do, so a restart need not wait
+    // for the old connections' TIME_WAIT.
+    #[cfg(unix)]
+    socket.set_reuse_address(true)?;
+    socket.bind(&address.into())?;
+    socket.listen(1024)?;
+    socket.set_nonblocking(true)?;
+    TcpListener::from_std(socket.into())
+}
+
 /// The application's configuration from its command line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
-    /// The API's listen address.
-    pub listen: SocketAddr,
+    /// The API's listen address, or `None` for [`DEFAULT_LISTEN`]; see
+    /// [`bind_api`].
+    pub listen: Option<SocketAddr>,
     /// The host names requests may give beyond those always allowed,
     /// normalized.
     pub allowed_hosts: Vec<String>,
@@ -114,7 +172,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            listen: (Ipv4Addr::LOCALHOST, DEFAULT_PORT).into(),
+            listen: None,
             allowed_hosts: Vec::new(),
             peer_port: DEFAULT_PEER_PORT,
             log_level: None,
@@ -220,9 +278,20 @@ pub enum ArgsError {
     },
 }
 
-/// Parses the command line's arguments, without the program name.
-pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, ArgsError> {
+/// Parses the command line's arguments, without the program name, with the
+/// value of [`LISTEN_VARIABLE`], which `--listen` overrides.
+pub fn parse_args(
+    args: impl IntoIterator<Item = String>,
+    listen_variable: Option<String>,
+) -> Result<Command, ArgsError> {
     let mut config = Config::default();
+    if let Some(value) = listen_variable {
+        config.listen = Some(value.parse().map_err(|_| ArgsError::InvalidValue {
+            option: LISTEN_VARIABLE.to_owned(),
+            value,
+            reason: "an IP address and port",
+        })?);
+    }
     let mut args = args.into_iter().peekable();
     let password = if args.peek().map(String::as_str) == Some("password") {
         args.next();
@@ -262,9 +331,11 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, Arg
             "--no-dht" if inline.is_none() => config.dht = false,
             "--listen" => {
                 let value = value()?;
-                config.listen = value
-                    .parse()
-                    .map_err(|_| invalid(value.clone(), "an IP address and port"))?;
+                config.listen = Some(
+                    value
+                        .parse()
+                        .map_err(|_| invalid(value.clone(), "an IP address and port"))?,
+                );
             }
             "--allowed-host" => {
                 let value = value()?;
@@ -558,8 +629,8 @@ pub async fn serve(
     {
         tracing::warn!(
             %address,
-            "authentication is off and the API listens beyond loopback; anyone who can reach \
-             it may use it until a password is set"
+            "authentication is off: anyone on a local network may use the API, and other \
+             clients are refused until a password is set"
         );
     }
     let listen = listener.local_addr()?;
@@ -737,7 +808,7 @@ mod tests {
     use super::*;
 
     fn parse(args: &[&str]) -> Result<Command, ArgsError> {
-        parse_args(args.iter().map(|&arg| arg.to_owned()))
+        parse_args(args.iter().map(|&arg| arg.to_owned()), None)
     }
 
     #[test]
@@ -767,10 +838,8 @@ mod tests {
     #[test]
     fn no_arguments_run_with_the_defaults() {
         assert_eq!(parse(&[]), Ok(Command::Run(Config::default())));
-        assert_eq!(
-            Config::default().listen,
-            "127.0.0.1:8080".parse::<SocketAddr>().unwrap()
-        );
+        assert_eq!(Config::default().listen, None, "the default address");
+        assert_eq!(DEFAULT_LISTEN, "[::]:8080".parse::<SocketAddr>().unwrap());
         assert_eq!(
             Config::default().download_dir(Path::new("/srv/torrplay")),
             Path::new("/srv/torrplay/downloads"),
@@ -797,7 +866,7 @@ mod tests {
         assert_eq!(
             config,
             Config {
-                listen: "[::1]:9000".parse().unwrap(),
+                listen: Some("[::1]:9000".parse().unwrap()),
                 allowed_hosts: Vec::new(),
                 peer_port: 6881,
                 log_level: Some(LogLevel::Debug),
@@ -823,8 +892,66 @@ mod tests {
             let Ok(Command::Run(config)) = parse(&["--listen", address]) else {
                 panic!("{address} parses");
             };
-            assert_eq!(config.listen, address.parse::<SocketAddr>().unwrap());
+            assert_eq!(config.listen, Some(address.parse::<SocketAddr>().unwrap()));
         }
+    }
+
+    #[test]
+    fn the_environment_names_the_address_unless_listen_does() {
+        let run = |args: &[&str], variable: &str| {
+            parse_args(
+                args.iter().map(|&arg| arg.to_owned()),
+                Some(variable.to_owned()),
+            )
+        };
+        let Ok(Command::Run(config)) = run(&[], "127.0.0.1:9000") else {
+            panic!("the variable parses");
+        };
+        assert_eq!(config.listen, Some("127.0.0.1:9000".parse().unwrap()));
+        let Ok(Command::Run(config)) = run(&["--listen", "0.0.0.0:9001"], "127.0.0.1:9000") else {
+            panic!("the option parses");
+        };
+        assert_eq!(
+            config.listen,
+            Some("0.0.0.0:9001".parse().unwrap()),
+            "--listen wins"
+        );
+        assert_eq!(
+            run(&[], "localhost"),
+            Err(ArgsError::InvalidValue {
+                option: LISTEN_VARIABLE.to_owned(),
+                value: "localhost".into(),
+                reason: "an IP address and port",
+            })
+        );
+    }
+
+    /// AUT-11.
+    #[tokio::test]
+    async fn an_unspecified_ipv6_address_takes_ipv4_clients_too() {
+        let listener = match bind_api(Some("[::]:0".parse().unwrap())) {
+            Ok(listener) => listener,
+            // A system without IPv6 has nothing to check.
+            Err(error) => {
+                assert!(
+                    bind_api(Some("0.0.0.0:0".parse().unwrap())).is_ok(),
+                    "IPv4 binds: {error}"
+                );
+                return;
+            }
+        };
+        let port = listener.local_addr().unwrap().port();
+        let (accepted, connected) = tokio::join!(
+            listener.accept(),
+            tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+        );
+        connected.unwrap();
+        let (_, peer) = accepted.unwrap();
+        assert_eq!(
+            peer.ip().to_canonical(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            "an IPv4 client arrives IPv4-mapped"
+        );
     }
 
     #[test]

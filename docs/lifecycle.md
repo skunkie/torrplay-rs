@@ -672,9 +672,10 @@ Viewings are kept in memory:
 
 ## Authentication
 
-Authentication is off until a password is set. While it is off, anyone who
-can reach the application may use every operation, credentials are ignored,
-and content URLs need no token. There is one password and no user names:
+Authentication is off until a password is set. While it is off, anyone on
+a local network may use every operation, credentials are ignored, and
+content URLs need no token; other clients are refused, as
+[Listening](#listening) describes. There is one password and no user names:
 the application serves one household, whose people are profiles.
 
 - `PUT /api/v1/password` sets the password, `201` with `Location`, which
@@ -767,12 +768,36 @@ application. That holds whether or not authentication is on.
   name given with `--allowed-host` are allowed, ignoring case, the port,
   and a trailing dot. Any other name is `421 misdirected-request`. A
   request without `Host`, which no browser sends, is not refused.
-- The application listens on loopback by default, and `--listen` may name
-  any address. It logs a warning when the address is not a loopback one
-  while authentication is off. It serves no TLS; a reverse proxy can, and
-  its host name needs `--allowed-host`.
+- It serves no TLS; a reverse proxy can, and its host name needs
+  `--allowed-host`.
 - Logs never record credentials: requests are logged without their
   queries, and `Authorization` is never logged.
+
+### Listening
+
+The application listens on every interface by default, so phones,
+televisions, and other computers on the local network reach it:
+
+- The default is `[::]:8080`, dual-stack, accepting IPv4 clients as
+  IPv4-mapped addresses. Where the system has no IPv6, it falls back to
+  `0.0.0.0:8080` and logs why. `--listen` names another address, such as
+  `127.0.0.1:8080` for this computer only; the `TORRPLAY_LISTEN`
+  environment variable does the same where `--listen` is not given. An
+  explicit `[::]` address is dual-stack too.
+- While authentication is off, the operations that need a credential once
+  a password is set answer only clients on a local network, and others
+  `403 forbidden`, setting the password included, so no one beyond it can
+  take the application over. A local network is loopback, RFC 1918 and
+  link-local IPv4, unique-local and link-local IPv6, and the shared address
+  space `100.64.0.0/10`, which carrier-grade NAT and overlay networks such
+  as Tailscale use. The entry point, the OpenAPI document, the API
+  reference, and the health checks answer everyone. Once a password is set,
+  every client may connect and every request needs its credential.
+- Behind a reverse proxy, the client's address is the proxy's, so a proxy
+  on this computer makes every client local: set a password before
+  exposing the application.
+- At startup it logs whether authentication is off and to which clients
+  the API answers.
 
 ## Persistence
 
