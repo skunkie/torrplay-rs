@@ -300,6 +300,11 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 : Progress the application saves itself, from the ranges a client streams,
   in the device profile.
 
+**Seek index**
+: What a media file's container lists of where its playback moments lie:
+  an MP4 file's sample tables, or a Matroska file's cues. The application
+  reads it to map byte offsets to playback times and back.
+
 **Avatar**
 : An image a client uploads to show a profile, under a poster's rules.
 

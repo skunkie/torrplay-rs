@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "torrplay-media"
+version = "0.1.0"
+description = "TorrPlay's media seek indexes: mapping byte offsets and playback times of MP4 and Matroska files through their containers' own indexes."
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
