@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-//! DLNA-02 and DLNA-09: the SSDP announcer over loopback, with
+//! DLNA-02, DLNA-09, and DLNA-19: the SSDP announcer over loopback, with
 //! announcements sent to a test socket instead of the multicast group.
 
 // The cases assert as tests do; clippy's test exemption covers only test
@@ -144,4 +144,39 @@ async fn repeated_starts_and_stops_release_the_socket() {
         (4 * 10, 4 * 5),
         "every start announced and every stop said goodbye"
     );
+}
+
+/// Binds `port` the way UPnP libraries such as libupnp do: with
+/// SO_REUSEADDR, and SO_REUSEPORT where the system has it.
+fn bind_like_a_player(port: u16) -> std::io::Result<socket2::Socket> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+    socket.set_reuse_address(true)?;
+    #[cfg(all(unix, not(any(target_os = "solaris", target_os = "illumos"))))]
+    socket.set_reuse_port(true)?;
+    socket.bind(&SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)).into())?;
+    Ok(socket)
+}
+
+#[tokio::test]
+async fn other_upnp_programs_share_the_port() {
+    let listener = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let mut config = config(listener.local_addr().unwrap());
+
+    // A player started after the announcer, as a media player on the same
+    // host is.
+    let announcer = Announcer::start(config.clone()).await.unwrap();
+    let port = announcer.local_addr().port();
+    let player = bind_like_a_player(port);
+    assert!(player.is_ok(), "a later player binds: {player:?}");
+    drop(player);
+    announcer.stop().await.unwrap();
+
+    // And one already running when the announcer starts.
+    let player = bind_like_a_player(port).unwrap();
+    config.bind.set_port(port);
+    let announcer = Announcer::start(config).await;
+    assert!(announcer.is_ok(), "the announcer binds after a player");
+    announcer.unwrap().stop().await.unwrap();
+    drop(player);
 }

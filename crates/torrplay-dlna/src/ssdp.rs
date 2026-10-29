@@ -174,8 +174,21 @@ impl Announcer {
     /// [`stop`](Self::stop).
     pub async fn start(config: Config) -> io::Result<Self> {
         let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
-        // Other media servers on the host may hold the port too.
+        // Other UPnP programs on the host, such as media players, bind the
+        // port too. BSD systems, macOS among them, share a bound port only
+        // between sockets that all set SO_REUSEPORT; without it, a player
+        // started later cannot discover any server. Linux shares it through
+        // SO_REUSEADDR alone, and there SO_REUSEPORT would instead spread
+        // unicast searches across the sockets.
         socket.set_reuse_address(true)?;
+        #[cfg(any(
+            target_vendor = "apple",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+            target_os = "dragonfly"
+        ))]
+        socket.set_reuse_port(true)?;
         socket.set_nonblocking(true)?;
         socket.bind(&SocketAddr::V4(config.bind).into())?;
         if let Some(interface) = config.interface {
