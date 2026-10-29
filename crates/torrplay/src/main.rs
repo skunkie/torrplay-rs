@@ -5,13 +5,16 @@
 //! The `torrplay` executable: parses the command line, starts logging and
 //! the runtime, opens the store in the data directory, binds the API's
 //! listener, and serves until a termination signal. `torrplay password`
-//! changes a stopped application's password instead.
+//! changes a stopped application's password instead, and `torrplay mcp`
+//! serves a running application's API to an MCP client.
 
 use std::process::ExitCode;
 use std::time::Duration;
 
 use anyhow::Context;
-use torrplay::{Command, Config, PasswordChange, PasswordChanged, ShutdownTimings, USAGE};
+use torrplay::{
+    Command, Config, McpConfig, PasswordChange, PasswordChanged, ShutdownTimings, USAGE,
+};
 use torrplay_core::credentials::AllowedHosts;
 use torrplay_engine::LibrqbitEngine;
 use torrplay_store::Store;
@@ -25,6 +28,7 @@ fn main() -> ExitCode {
     let config = match torrplay::parse_args(std::env::args().skip(1), listen_variable) {
         Ok(Command::Run(config)) => config,
         Ok(Command::Password(change, config)) => return password(change, &config),
+        Ok(Command::Mcp(config)) => return mcp(config),
         Ok(Command::Help) => {
             print!("{USAGE}");
             return ExitCode::SUCCESS;
@@ -150,6 +154,72 @@ fn password(change: PasswordChange, config: &Config) -> ExitCode {
         }
         Err(error) => {
             eprintln!("torrplay: {error:#}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Serves the MCP server, logging to standard error only: on stdio,
+/// standard output carries nothing but protocol messages.
+fn mcp(config: McpConfig) -> ExitCode {
+    torrplay::init_logging(config.log_level.unwrap_or_default(), None);
+    let url = match config.url {
+        Some(url) => url,
+        None => {
+            let value = std::env::var(torrplay::URL_VARIABLE)
+                .unwrap_or_else(|_| torrplay_mcp::DEFAULT_URL.to_owned());
+            match torrplay::parse_origin(&value) {
+                Some(url) => url,
+                None => {
+                    eprintln!(
+                        "torrplay: {} must be an origin such as {}",
+                        torrplay::URL_VARIABLE,
+                        torrplay_mcp::DEFAULT_URL
+                    );
+                    return ExitCode::from(2);
+                }
+            }
+        }
+    };
+    let token = std::env::var(torrplay::TOKEN_VARIABLE)
+        .ok()
+        .filter(|token| !token.is_empty());
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            tracing::error!(%error, "the runtime did not start");
+            return ExitCode::FAILURE;
+        }
+    };
+    let result = runtime.block_on(async {
+        let client = torrplay_mcp::Client::new(url.clone(), token)?;
+        let server = torrplay_mcp::Server::new(client);
+        match config.http {
+            None => {
+                tracing::info!(application = %url, "serving MCP on standard input and output");
+                torrplay_mcp::serve_stdio(server).await?;
+            }
+            Some(address) => {
+                let listener = torrplay_mcp::HttpListener::bind(address).await?;
+                tracing::info!(
+                    application = %url,
+                    address = %listener.local_addr()?,
+                    path = torrplay_mcp::HTTP_PATH,
+                    "serving MCP over Streamable HTTP"
+                );
+                listener.serve(server, termination()).await?;
+            }
+        }
+        anyhow::Ok(())
+    });
+    runtime.shutdown_timeout(RUNTIME_SHUTDOWN);
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            tracing::error!(error = %format!("{error:#}"), "torrplay mcp failed");
             ExitCode::FAILURE
         }
     }

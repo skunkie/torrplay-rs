@@ -113,7 +113,7 @@ document that schedules it.
 |---|---|---|---|
 | DLNA/UPnP media server | `internal/dlna` | Verified | `torrplay-dlna` and [the DLNA contract](dlna.md); DLNA scenarios: discovery, browsing, search, sorting, eventing, media, and icons (DLNA-15); its name is the `dlna_name` setting (SET-10) |
 | Stremio addon | `internal/stremio` | Planned | Its own adapter, with path and query token authentication |
-| MCP server | `internal/mcp` | Planned | Over the application's HTTP API |
+| MCP server | `internal/mcp` | Verified | `torrplay mcp` and [the MCP contract](mcp.md), over the application's HTTP API; MCP-01 to MCP-08. Go's logs and metrics tools wait for those API resources |
 | qBittorrent API | `POST /api/v2/torrents/add` | Deferred | Optional; only if a later product scope includes it |
 | TorrServer API | `/echo`, `/play`, `/stream`, and others | Excluded | Out of scope for the Rust implementation |
 

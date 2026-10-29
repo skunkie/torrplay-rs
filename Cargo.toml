@@ -13,6 +13,7 @@ members = [
     "crates/torrplay-dlna",
     "crates/torrplay-engine",
     "crates/torrplay-fixtures",
+    "crates/torrplay-mcp",
     "crates/torrplay-media",
     "crates/torrplay-server",
     "crates/torrplay-store",
@@ -89,9 +90,13 @@ memchr = "2"
 quick-xml = { version = "0.41", default-features = false }
 # Tests reach the server over loopback HTTP only, so they need no TLS.
 reqwest = { version = "0.13", default-features = false }
+# The official MCP SDK, for the MCP server's protocol and transports.
+rmcp = { version = "3.5.1", default-features = false, features = ["macros", "server", "transport-io", "transport-streamable-http-server"] }
 # The database ADR 8 chose, compiled from the bundled amalgamation so builds
 # do not depend on a system library.
 rusqlite = { version = "0.40", features = ["bundled"] }
+# Tool argument schemas, as rmcp reads them.
+schemars = "1"
 serde = { version = "1", features = ["derive"] }
 serde-saphyr = "2"
 serde_json = "1"
@@ -109,6 +114,7 @@ torrplay-core = { path = "crates/torrplay-core" }
 torrplay-dlna = { path = "crates/torrplay-dlna" }
 torrplay-engine = { path = "crates/torrplay-engine" }
 torrplay-fixtures = { path = "crates/torrplay-fixtures" }
+torrplay-mcp = { path = "crates/torrplay-mcp" }
 torrplay-media = { path = "crates/torrplay-media" }
 torrplay-server = { path = "crates/torrplay-server" }
 torrplay-store = { path = "crates/torrplay-store" }
