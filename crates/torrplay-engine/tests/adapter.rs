@@ -103,8 +103,8 @@ async fn applied_settings_reach_idle_readers_and_later_waits() -> anyhow::Result
     .await?;
 
     let mut settings = Settings::DEFAULT;
-    settings.idle_readers_per_torrent = 0;
-    settings.idle_readers_total = 0;
+    settings.idle_reader_limit_per_torrent = 0;
+    settings.idle_reader_limit = 0;
     settings.piece_wait = Duration::from_secs(1);
     engine.apply_settings(&settings)?;
     assert_eq!(
@@ -798,7 +798,7 @@ async fn turning_background_downloads_off_stops_them_until_turned_on() -> anyhow
     .await?;
     let engine = &started.engine;
     let mut settings = Settings::DEFAULT;
-    settings.background_downloads = false;
+    settings.background_downloads_enabled = false;
     engine.apply_settings(&settings)?;
     engine
         .add_in(
@@ -815,7 +815,7 @@ async fn turning_background_downloads_off_stops_them_until_turned_on() -> anyhow
         "nothing downloads in the background while they are off"
     );
 
-    settings.background_downloads = true;
+    settings.background_downloads_enabled = true;
     engine.apply_settings(&settings)?;
     completed(engine, 1).await?;
 

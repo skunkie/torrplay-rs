@@ -218,7 +218,11 @@ database, and common SQL usage for the rest:
   since the Unix epoch, the precision listings sort by.
 - Enumerations as text with the contract's values, checked by the database,
   such as `storage_mode TEXT NOT NULL CHECK (storage_mode IN ('memory',
-  'disk'))`; booleans as integers checked to 0 or 1, named `is_` or `has_`.
+  'disk'))`; booleans as integers checked to 0 or 1, named as the API
+  conventions name booleans, as adjectives or past participles such as
+  `dlna_enabled` and `clean_shutdown`, without an `is_` prefix.
+- Info hashes as 20-byte blobs, checked by length, wherever they are
+  stored.
 - Indexes and constraints named by table and columns, such as
   `torrents_created_at_ns_id_idx` and `torrents_info_hash_key`, so a
   constraint's failure names what failed.

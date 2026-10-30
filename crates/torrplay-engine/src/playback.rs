@@ -34,7 +34,7 @@ use crate::preload::Preloads;
 use crate::scheduler::{Reader, TorrentScheduler};
 
 /// The default idle timeout, as the lifecycle defines it.
-pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+pub const DEFAULT_IDLE_READER_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The default least readahead of a ramping reader, as Go TorrPlay's. A
 /// 16 MiB start, tried against the benchmark's slow-profile stalls, delayed
@@ -43,10 +43,10 @@ pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DEFAULT_READAHEAD_RAMP_BYTES: u64 = 1024 * 1024;
 
 /// The default limit of idle readers per torrent.
-pub const DEFAULT_IDLE_READERS_PER_TORRENT: usize = 4;
+pub const DEFAULT_IDLE_READER_LIMIT_PER_TORRENT: usize = 4;
 
 /// The default limit of idle readers across torrents.
-pub const DEFAULT_IDLE_READERS_TOTAL: usize = 16;
+pub const DEFAULT_IDLE_READER_LIMIT: usize = 16;
 
 /// How readers share readahead and how long idle readers stay.
 #[derive(Clone, Copy, Debug)]
@@ -58,11 +58,11 @@ pub struct PlaybackConfig {
     /// once.
     pub readahead_ramp_bytes: u64,
     /// How long a reader stays idle after its stream ends.
-    pub idle_timeout: Duration,
+    pub idle_reader_timeout: Duration,
     /// The most idle readers one torrent keeps.
-    pub idle_readers_per_torrent: usize,
+    pub idle_reader_limit_per_torrent: usize,
     /// The most idle readers all torrents keep together.
-    pub idle_readers_total: usize,
+    pub idle_reader_limit: usize,
 }
 
 impl PlaybackConfig {
@@ -71,9 +71,9 @@ impl PlaybackConfig {
         Self {
             readahead_bytes,
             readahead_ramp_bytes: DEFAULT_READAHEAD_RAMP_BYTES,
-            idle_timeout: DEFAULT_IDLE_TIMEOUT,
-            idle_readers_per_torrent: DEFAULT_IDLE_READERS_PER_TORRENT,
-            idle_readers_total: DEFAULT_IDLE_READERS_TOTAL,
+            idle_reader_timeout: DEFAULT_IDLE_READER_TIMEOUT,
+            idle_reader_limit_per_torrent: DEFAULT_IDLE_READER_LIMIT_PER_TORRENT,
+            idle_reader_limit: DEFAULT_IDLE_READER_LIMIT,
         }
     }
 }
@@ -102,7 +102,7 @@ pub struct Playback {
     cache_readers: AtomicU64,
     // Whether disk torrents download the rest of themselves while no reader
     // exists, which settings change.
-    background_downloads: AtomicBool,
+    background_downloads_enabled: AtomicBool,
     // The cache bytes preloads pin, which readers' readahead leaves them.
     preload_pinned: AtomicU64,
     // The engine's preloads, which the cache's bounded fallback ends.
@@ -127,7 +127,7 @@ impl Playback {
             readahead_bytes: AtomicU64::new(config.readahead_bytes),
             readers: AtomicU64::new(0),
             cache_readers: AtomicU64::new(0),
-            background_downloads: AtomicBool::new(true),
+            background_downloads_enabled: AtomicBool::new(true),
             preload_pinned: AtomicU64::new(0),
             preloads: Mutex::new(Weak::new()),
             opened: AtomicU64::new(0),
@@ -200,14 +200,14 @@ impl Playback {
 
     /// Whether disk torrents download the pieces they lack while no reader
     /// exists; they do unless turned off.
-    pub fn background_downloads(&self) -> bool {
-        self.background_downloads.load(Ordering::Acquire)
+    pub fn background_downloads_enabled(&self) -> bool {
+        self.background_downloads_enabled.load(Ordering::Acquire)
     }
 
     /// Turns background downloads on or off, replanning every torrent so
     /// the change takes effect at once.
     pub fn set_background_downloads(&self, on: bool) {
-        if self.background_downloads.swap(on, Ordering::AcqRel) != on {
+        if self.background_downloads_enabled.swap(on, Ordering::AcqRel) != on {
             self.replan_all();
         }
     }
@@ -462,9 +462,9 @@ impl<T> IdlePool<T> {
     pub(crate) fn new(config: &PlaybackConfig) -> Self {
         Self {
             entries: VecDeque::new(),
-            timeout: config.idle_timeout,
-            per_torrent: config.idle_readers_per_torrent,
-            total: config.idle_readers_total,
+            timeout: config.idle_reader_timeout,
+            per_torrent: config.idle_reader_limit_per_torrent,
+            total: config.idle_reader_limit,
         }
     }
 
@@ -602,8 +602,8 @@ mod tests {
 
     fn pool(per_torrent: usize, total: usize) -> IdlePool<&'static str> {
         IdlePool::new(&PlaybackConfig {
-            idle_readers_per_torrent: per_torrent,
-            idle_readers_total: total,
+            idle_reader_limit_per_torrent: per_torrent,
+            idle_reader_limit: total,
             ..PlaybackConfig::new(0)
         })
     }
@@ -685,12 +685,15 @@ mod tests {
         let mut pool = pool(4, 16);
         pool.park(start, 1, 0, 0, "first");
         pool.park(later(start, 10_000), 1, 0, 0, "second");
-        assert_eq!(pool.next_deadline(), Some(start + DEFAULT_IDLE_TIMEOUT));
-        assert!(pool.expire(later(start, 29_999)).is_empty());
-        assert_eq!(pool.expire(start + DEFAULT_IDLE_TIMEOUT), ["first"]);
         assert_eq!(
             pool.next_deadline(),
-            Some(later(start, 10_000) + DEFAULT_IDLE_TIMEOUT)
+            Some(start + DEFAULT_IDLE_READER_TIMEOUT)
+        );
+        assert!(pool.expire(later(start, 29_999)).is_empty());
+        assert_eq!(pool.expire(start + DEFAULT_IDLE_READER_TIMEOUT), ["first"]);
+        assert_eq!(
+            pool.next_deadline(),
+            Some(later(start, 10_000) + DEFAULT_IDLE_READER_TIMEOUT)
         );
         assert_eq!(pool.expire(later(start, 60_000)), ["second"]);
         assert_eq!(pool.next_deadline(), None);

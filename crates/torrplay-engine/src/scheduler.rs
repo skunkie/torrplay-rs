@@ -634,7 +634,7 @@ impl PieceSelector for TorrentScheduler {
     // effect at once.
     fn download_other_pieces(&self) -> bool {
         !self.cached.load(Ordering::Acquire)
-            && self.playback.background_downloads()
+            && self.playback.background_downloads_enabled()
             && self.playback.readers() == 0
     }
 

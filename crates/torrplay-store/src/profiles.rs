@@ -146,7 +146,7 @@ pub(crate) fn temporary_progress(
     let rows = statement.query_map([], |row| {
         Ok((
             row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
+            row.get::<_, Vec<u8>>(1)?,
             row.get::<_, String>(2)?,
             row.get::<_, i64>(3)?,
             row.get::<_, i64>(4)?,
@@ -157,16 +157,13 @@ pub(crate) fn temporary_progress(
     let mut all = Vec::new();
     for row in rows {
         let (profile, info_hash, file, position, duration, viewed_at, updated_at) = row?;
-        let bad = |what: &str| {
-            corrupt(format!(
-                "progress of {profile}, {info_hash}, {file}: {what}"
-            ))
-        };
+        let bad = |what: &str| corrupt(format!("progress of {profile}, {file}: {what}"));
         let time = |nanos| from_ns(nanos).ok_or_else(|| bad("a time is out of range"));
         all.push(StoredTemporaryProgress {
             profile: ProfileId::from_stored(&profile).ok_or_else(|| bad("malformed profile ID"))?,
-            info_hash: InfoHashV1::from_hex(&info_hash)
-                .ok_or_else(|| bad("malformed info hash"))?,
+            info_hash: <[u8; 20]>::try_from(info_hash)
+                .map(InfoHashV1::from_bytes)
+                .map_err(|_| bad("malformed info hash"))?,
             file: FileId::from_stored(&file).ok_or_else(|| bad("malformed file ID"))?,
             progress: Progress {
                 position_ms: u64::try_from(position).map_err(|_| bad("negative position"))?,
@@ -182,7 +179,7 @@ pub(crate) fn temporary_progress(
 /// Reads every profile's dismissals.
 pub(crate) fn dismissals(connection: &Connection) -> Result<Vec<StoredDismissal>, StoreError> {
     let mut statement = connection.prepare(
-        "SELECT profile_id, entry_id, torrent_id, dismissed_at_ns FROM up_next_dismissals",
+        "SELECT profile_id, up_next_entry_id, torrent_id, dismissed_at_ns FROM up_next_dismissals",
     )?;
     let rows = statement.query_map([], |row| {
         Ok((
@@ -333,7 +330,7 @@ pub(crate) fn set_temporary_progress(
              updated_at_ns = excluded.updated_at_ns",
         params![
             stored.profile.as_str(),
-            stored.info_hash.to_string(),
+            stored.info_hash.as_bytes().as_slice(),
             stored.file.as_str(),
             count(progress.position_ms)?,
             count(progress.duration_ms)?,
@@ -353,7 +350,11 @@ pub(crate) fn delete_temporary_progress(
     connection.execute(
         "DELETE FROM temporary_progress
          WHERE profile_id = ?1 AND info_hash = ?2 AND file_id = ?3",
-        params![profile.as_str(), info_hash.to_string(), file.as_str()],
+        params![
+            profile.as_str(),
+            info_hash.as_bytes().as_slice(),
+            file.as_str()
+        ],
     )?;
     Ok(())
 }
@@ -376,7 +377,7 @@ pub(crate) fn adopt_temporary_progress(
     info_hash: &InfoHashV1,
     torrent: &TorrentId,
 ) -> Result<(), StoreError> {
-    let info_hash = info_hash.to_string();
+    let info_hash = info_hash.as_bytes().as_slice();
     connection.execute(
         "INSERT INTO progress
              (profile_id, torrent_id, file_id, position_ms, duration_ms, viewed_at_ns,
@@ -458,9 +459,9 @@ pub(crate) fn set_dismissal(
 ) -> Result<(), StoreError> {
     require(connection, &stored.profile, &stored.torrent)?;
     connection.execute(
-        "INSERT INTO up_next_dismissals (profile_id, entry_id, torrent_id, dismissed_at_ns)
+        "INSERT INTO up_next_dismissals (profile_id, up_next_entry_id, torrent_id, dismissed_at_ns)
          VALUES (?1, ?2, ?3, ?4)
-         ON CONFLICT (profile_id, entry_id) DO UPDATE SET
+         ON CONFLICT (profile_id, up_next_entry_id) DO UPDATE SET
              torrent_id = excluded.torrent_id,
              dismissed_at_ns = excluded.dismissed_at_ns",
         params![

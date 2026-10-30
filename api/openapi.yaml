@@ -2928,16 +2928,16 @@ paths:
                   summary: Settings at their defaults
                   value:
                     piece_wait_seconds: 60
-                    idle_timeout_seconds: 30
-                    idle_readers_per_torrent: 4
-                    idle_readers_total: 16
+                    idle_reader_timeout_seconds: 30
+                    idle_reader_limit_per_torrent: 4
+                    idle_reader_limit: 16
                     drain_period_seconds: 10
                     peer_limit: 50
                     cache_capacity_bytes: 268435456
                     temporary_idle_seconds: 600
-                    temporary_torrents_max: 16
+                    temporary_torrent_limit: 16
                     temporary_progress_seconds: 2592000
-                    background_downloads: true
+                    background_downloads_enabled: true
                     dlna_enabled: false
                     dlna_name: TorrPlay
                     dht_enabled: true
@@ -2949,16 +2949,16 @@ paths:
                   summary: Settings while --no-dht and --log-level debug are given
                   value:
                     piece_wait_seconds: 60
-                    idle_timeout_seconds: 30
-                    idle_readers_per_torrent: 4
-                    idle_readers_total: 16
+                    idle_reader_timeout_seconds: 30
+                    idle_reader_limit_per_torrent: 4
+                    idle_reader_limit: 16
                     drain_period_seconds: 10
                     peer_limit: 50
                     cache_capacity_bytes: 268435456
                     temporary_idle_seconds: 600
-                    temporary_torrents_max: 16
+                    temporary_torrent_limit: 16
                     temporary_progress_seconds: 2592000
-                    background_downloads: true
+                    background_downloads_enabled: true
                     dlna_enabled: true
                     dlna_name: Living room
                     dht_enabled: true
@@ -3018,16 +3018,16 @@ paths:
                   summary: Settings with a longer piece wait
                   value:
                     piece_wait_seconds: 120
-                    idle_timeout_seconds: 30
-                    idle_readers_per_torrent: 4
-                    idle_readers_total: 16
+                    idle_reader_timeout_seconds: 30
+                    idle_reader_limit_per_torrent: 4
+                    idle_reader_limit: 16
                     drain_period_seconds: 10
                     peer_limit: 50
                     cache_capacity_bytes: 268435456
                     temporary_idle_seconds: 600
-                    temporary_torrents_max: 16
+                    temporary_torrent_limit: 16
                     temporary_progress_seconds: 2592000
-                    background_downloads: true
+                    background_downloads_enabled: true
                     dlna_enabled: false
                     dlna_name: TorrPlay
                     dht_enabled: true
@@ -5440,7 +5440,7 @@ components:
         The application's settings. Each value is the one set, or its default
         while it is unset. Command-line options may override some of them for
         one run, which overrides lists.
-      required: [piece_wait_seconds, idle_timeout_seconds, idle_readers_per_torrent, idle_readers_total, drain_period_seconds, peer_limit, cache_capacity_bytes, temporary_idle_seconds, temporary_torrents_max, temporary_progress_seconds, background_downloads, dlna_enabled, dlna_name, dht_enabled, log_level, overrides, links]
+      required: [piece_wait_seconds, idle_reader_timeout_seconds, idle_reader_limit_per_torrent, idle_reader_limit, drain_period_seconds, peer_limit, cache_capacity_bytes, temporary_idle_seconds, temporary_torrent_limit, temporary_progress_seconds, background_downloads_enabled, dlna_enabled, dlna_name, dht_enabled, log_level, overrides, links]
       properties:
         piece_wait_seconds:
           type: integer
@@ -5453,7 +5453,7 @@ components:
             and how long a peer may hold requests without delivering before it
             is disconnected. Applies to waits that begin after the change.
           examples: [60]
-        idle_timeout_seconds:
+        idle_reader_timeout_seconds:
           type: integer
           format: int32
           minimum: 0
@@ -5464,7 +5464,7 @@ components:
             player's next range request to continue it; 0 releases it at once.
             Applies at once: idle readers idle for longer are released.
           examples: [30]
-        idle_readers_per_torrent:
+        idle_reader_limit_per_torrent:
           type: integer
           format: int32
           minimum: 0
@@ -5472,10 +5472,10 @@ components:
           default: 4
           description: >-
             The most idle readers one torrent keeps; at most
-            idle_readers_total. Applies at once: the oldest idle readers over
+            idle_reader_limit. Applies at once: the oldest idle readers over
             the limit are released.
           examples: [4]
-        idle_readers_total:
+        idle_reader_limit:
           type: integer
           format: int32
           minimum: 0
@@ -5537,7 +5537,7 @@ components:
             creation. Applies at once, to the time each torrent has already
             gone unwatched.
           examples: [600]
-        temporary_torrents_max:
+        temporary_torrent_limit:
           type: integer
           format: int32
           minimum: 1
@@ -5560,7 +5560,7 @@ components:
             it was last saved, by the torrent's info hash, so adding the
             torrent again finds it. Applies at once.
           examples: [2592000]
-        background_downloads:
+        background_downloads_enabled:
           type: boolean
           default: true
           description: >-
@@ -5660,21 +5660,21 @@ components:
           maximum: 600
           description: The new value, or null for the default, 60.
           examples: [60, null]
-        idle_timeout_seconds:
+        idle_reader_timeout_seconds:
           type: [integer, 'null']
           format: int32
           minimum: 0
           maximum: 3600
           description: The new value, or null for the default, 30.
           examples: [30, null]
-        idle_readers_per_torrent:
+        idle_reader_limit_per_torrent:
           type: [integer, 'null']
           format: int32
           minimum: 0
           maximum: 64
           description: The new value, or null for the default, 4.
           examples: [4, null]
-        idle_readers_total:
+        idle_reader_limit:
           type: [integer, 'null']
           format: int32
           minimum: 0
@@ -5709,7 +5709,7 @@ components:
           maximum: 86400
           description: The new value, or null for the default, 600.
           examples: [600, null]
-        temporary_torrents_max:
+        temporary_torrent_limit:
           type: [integer, 'null']
           format: int32
           minimum: 1
@@ -5725,7 +5725,7 @@ components:
             The new retention of temporary torrents' progress, or null for the
             default, 2592000.
           examples: [2592000, null]
-        background_downloads:
+        background_downloads_enabled:
           type: [boolean, 'null']
           description: The new value, or null for the default, true.
           examples: [false, null]

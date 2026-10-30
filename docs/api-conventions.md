@@ -271,7 +271,7 @@ The initial problem types, by name, each appended to the base above:
 | `duplicate-profile` | 409 | Another profile has the name; the `profile` extension member holds its URI. |
 | `too-many-profiles` | 409 | Creating a profile would exceed the limit of profiles. |
 | `too-many-access-tokens` | 409 | Creating an access token would exceed the limit of access tokens. |
-| `too-many-temporary-torrents` | 409 | Adding a temporary torrent would exceed the `temporary_torrents_max` setting while every temporary torrent is streaming. |
+| `too-many-temporary-torrents` | 409 | Adding a temporary torrent would exceed the `temporary_torrent_limit` setting while every temporary torrent is streaming. |
 | `precondition-failed` | 412 | `If-Match` does not match the current ETag. |
 | `content-too-large` | 413 | The request body exceeds its documented limit. |
 | `unsupported-media-type` | 415 | The request's `Content-Type` is not accepted by the operation. |

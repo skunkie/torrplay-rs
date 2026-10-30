@@ -68,7 +68,7 @@ pub struct StoredTorrent {
     /// The torrent file: an uploaded one's original bytes, or the one built
     /// from retrieved metadata and the magnet URI's trackers. At least one of
     /// this and `magnet_uri` is present.
-    pub torrent_file: Option<Vec<u8>>,
+    pub metainfo: Option<Vec<u8>>,
     /// The poster's description, without its image; a new torrent has
     /// none, and [`Store::insert`] ignores it.
     pub poster: Option<ImageInfo>,
@@ -223,11 +223,11 @@ enum Command {
     SetStorageMode(TorrentId, StorageMode, Reply<()>),
     RecordCleanShutdown(Reply<()>),
     SetSettings(StoredSettings, Reply<()>),
-    SetTorrentFile(TorrentId, Vec<u8>, Reply<()>),
+    SetMetainfo(TorrentId, Vec<u8>, Reply<()>),
     SetPoster(TorrentId, ImageInfo, Vec<u8>, Reply<()>),
     DeletePoster(TorrentId, Reply<()>),
     Poster(TorrentId, Reply<Option<(ImageInfo, Vec<u8>)>>),
-    TorrentFile(TorrentId, Reply<Option<Vec<u8>>>),
+    Metainfo(TorrentId, Reply<Option<Vec<u8>>>),
     InsertProfile(Profile, Reply<()>),
     RenameProfile(ProfileId, String, Reply<()>),
     DeleteProfile(ProfileId, Reply<()>),
@@ -368,13 +368,13 @@ impl Store {
 
     /// Stores the torrent file of a torrent that has none; a torrent file
     /// already stored is kept.
-    pub async fn set_torrent_file(
+    pub async fn set_metainfo(
         &self,
         id: &TorrentId,
         torrent_file: Vec<u8>,
     ) -> Result<(), StoreError> {
         let id = id.clone();
-        self.send(|reply| Command::SetTorrentFile(id, torrent_file, reply))
+        self.send(|reply| Command::SetMetainfo(id, torrent_file, reply))
             .await
     }
 
@@ -406,9 +406,9 @@ impl Store {
 
     /// Reads a stored torrent's torrent file, in a read-only transaction, or
     /// `None` if it has none yet.
-    pub async fn torrent_file(&self, id: &TorrentId) -> Result<Option<Vec<u8>>, StoreError> {
+    pub async fn metainfo(&self, id: &TorrentId) -> Result<Option<Vec<u8>>, StoreError> {
         let id = id.clone();
-        self.send(|reply| Command::TorrentFile(id, reply)).await
+        self.send(|reply| Command::Metainfo(id, reply)).await
     }
 
     /// Stores a new profile. Its ID and name must be free.

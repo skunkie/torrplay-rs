@@ -70,7 +70,7 @@ async fn torrent_file<E: Engine>(app: &App<E>, id: &str) -> Result<Vec<u8>, Prob
     match app.temporaries().source(&record.id) {
         Some(Source::TorrentFile(bytes)) => Ok(bytes),
         Some(Source::MagnetUri(_)) => Err(Problem::internal()),
-        None => match app.store().torrent_file(&record.id).await {
+        None => match app.store().metainfo(&record.id).await {
             Ok(Some(bytes)) => Ok(bytes),
             Ok(None) => Err(Problem::internal()),
             Err(StoreError::UnknownTorrent) => Err(torrents::not_found()),

@@ -72,11 +72,11 @@ impl Worker {
                     let _ = reply
                         .send(self.write(|connection| schema::set_settings(connection, &settings)));
                 }
-                Command::SetTorrentFile(id, bytes, reply) => {
+                Command::SetMetainfo(id, bytes, reply) => {
                     let _ = reply.send(self.write(|connection| {
                         require(connection, &id)?;
                         connection.execute(
-                            "INSERT INTO torrent_files (torrent_id, bytes) VALUES (?1, ?2)
+                            "INSERT INTO torrent_metainfo (torrent_id, bytes) VALUES (?1, ?2)
                              ON CONFLICT (torrent_id) DO NOTHING",
                             params![id.as_str(), bytes],
                         )?;
@@ -99,12 +99,12 @@ impl Worker {
                             images::one(connection, Images::Posters, id.as_str())
                         }));
                 }
-                Command::TorrentFile(id, reply) => {
+                Command::Metainfo(id, reply) => {
                     let _ = reply.send(self.read(|connection| {
                         require(connection, &id)?;
                         Ok(connection
                             .query_row(
-                                "SELECT bytes FROM torrent_files WHERE torrent_id = ?1",
+                                "SELECT bytes FROM torrent_metainfo WHERE torrent_id = ?1",
                                 params![id.as_str()],
                                 |row| row.get(0),
                             )
@@ -352,9 +352,9 @@ fn insert(connection: &Connection, torrent: &StoredTorrent) -> Result<(), StoreE
         ],
     )?;
     set_labels(connection, &torrent.id, library)?;
-    if let Some(bytes) = &torrent.torrent_file {
+    if let Some(bytes) = &torrent.metainfo {
         connection.execute(
-            "INSERT INTO torrent_files (torrent_id, bytes) VALUES (?1, ?2)",
+            "INSERT INTO torrent_metainfo (torrent_id, bytes) VALUES (?1, ?2)",
             params![torrent.id.as_str(), bytes],
         )?;
     }

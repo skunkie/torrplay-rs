@@ -392,7 +392,7 @@ temporary`; every other torrent is persisted.
   preload's creation, or from its own creation, whichever is latest. The
   application looks for unwatched torrents every 10 seconds. Deletion
   follows [Deletion](#deletion), so a later request is `not-found`.
-- At most `temporary_torrents_max` temporary torrents exist. Adding one
+- At most `temporary_torrent_limit` temporary torrents exist. Adding one
   more deletes the one unwatched longest; if every one is streaming, the
   creation is `409 too-many-temporary-torrents` and nothing changes.
 - A configuration change to `retention: persisted` keeps the torrent: it is

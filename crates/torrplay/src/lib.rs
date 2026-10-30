@@ -1050,17 +1050,17 @@ mod tests {
         assert_eq!(
             (
                 engine.piece_wait,
-                engine.idle_timeout,
-                engine.idle_readers_per_torrent,
-                engine.idle_readers_total,
+                engine.idle_reader_timeout,
+                engine.idle_reader_limit_per_torrent,
+                engine.idle_reader_limit,
                 engine.peer_limit,
                 engine.cache_capacity_bytes,
             ),
             (
                 settings.piece_wait,
-                settings.idle_timeout,
-                settings.idle_readers_per_torrent,
-                settings.idle_readers_total,
+                settings.idle_reader_timeout,
+                settings.idle_reader_limit_per_torrent,
+                settings.idle_reader_limit,
                 settings.peer_limit,
                 settings.cache_capacity_bytes,
             ),

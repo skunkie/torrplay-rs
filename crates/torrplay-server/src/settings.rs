@@ -72,14 +72,14 @@ fn log_override(level: LogOverride) -> api::SettingsOverridesLogLevel {
 fn representation(stored: &Stored, overrides: &Overrides) -> api::Settings {
     let [
         piece_wait,
-        idle_timeout,
+        idle_reader_timeout,
         per_torrent,
         total,
         drain,
         peers,
         capacity,
         temporary_idle,
-        temporary_max,
+        temporary_limit,
         temporary_progress,
     ] = stored.explicit.values();
     // Every value lies within its bounds: the counts and durations far below
@@ -87,16 +87,16 @@ fn representation(stored: &Stored, overrides: &Overrides) -> api::Settings {
     let int = |value: u64| i32::try_from(value).unwrap_or(i32::MAX);
     api::Settings {
         piece_wait_seconds: int(piece_wait),
-        idle_timeout_seconds: int(idle_timeout),
-        idle_readers_per_torrent: int(per_torrent),
-        idle_readers_total: int(total),
+        idle_reader_timeout_seconds: int(idle_reader_timeout),
+        idle_reader_limit_per_torrent: int(per_torrent),
+        idle_reader_limit: int(total),
         drain_period_seconds: int(drain),
         peer_limit: int(peers),
         cache_capacity_bytes: i64::try_from(capacity).unwrap_or(i64::MAX),
         temporary_idle_seconds: int(temporary_idle),
-        temporary_torrents_max: int(temporary_max),
+        temporary_torrent_limit: int(temporary_limit),
         temporary_progress_seconds: int(temporary_progress),
-        background_downloads: stored.explicit.effective().background_downloads,
+        background_downloads_enabled: stored.explicit.effective().background_downloads_enabled,
         dlna_enabled: stored.explicit.effective().dlna_enabled,
         dlna_name: stored.explicit.dlna_name().to_owned(),
         dht_enabled: stored.explicit.effective().dht_enabled,
@@ -186,7 +186,7 @@ pub(crate) async fn update<E: Engine>(
             Change::Switch(name, value) => match name {
                 settings::DLNA_ENABLED => explicit.dlna_enabled = value,
                 settings::DHT_ENABLED => explicit.dht_enabled = value,
-                _ => explicit.background_downloads = value,
+                _ => explicit.background_downloads_enabled = value,
             },
             Change::Name(value) => explicit.dlna_name = value,
             Change::LogLevel(value) => explicit.log_level = value,
@@ -299,8 +299,8 @@ fn parse_patch(value: Value) -> Result<Vec<Change>, Problem> {
     for (member, value) in &members {
         let switch = [
             (
-                settings::BACKGROUND_DOWNLOADS,
-                settings::BACKGROUND_DOWNLOADS_DEFAULT,
+                settings::BACKGROUND_DOWNLOADS_ENABLED,
+                settings::BACKGROUND_DOWNLOADS_ENABLED_DEFAULT,
             ),
             (settings::DLNA_ENABLED, settings::DLNA_ENABLED_DEFAULT),
             (settings::DHT_ENABLED, settings::DHT_ENABLED_DEFAULT),
@@ -390,10 +390,10 @@ pub(crate) fn usable(explicit: Explicit) -> Explicit {
     if usable.validate().is_err() {
         // Only the limits' relation can still fail: both now at the defaults
         // or one of them set, so the per-torrent limit yields.
-        usable.idle_readers_per_torrent = None;
+        usable.idle_reader_limit_per_torrent = None;
     }
     if usable.validate().is_err() {
-        usable.idle_readers_total = None;
+        usable.idle_reader_limit = None;
     }
     usable
 }

@@ -36,22 +36,22 @@ pub const PIECE_WAIT_SECONDS: Bounds = Bounds {
     default: 60,
 };
 /// The idle timeout, in seconds.
-pub const IDLE_TIMEOUT_SECONDS: Bounds = Bounds {
-    name: "idle_timeout_seconds",
+pub const IDLE_READER_TIMEOUT_SECONDS: Bounds = Bounds {
+    name: "idle_reader_timeout_seconds",
     minimum: 0,
     maximum: 3600,
     default: 30,
 };
 /// The idle reader limit per torrent.
-pub const IDLE_READERS_PER_TORRENT: Bounds = Bounds {
-    name: "idle_readers_per_torrent",
+pub const IDLE_READER_LIMIT_PER_TORRENT: Bounds = Bounds {
+    name: "idle_reader_limit_per_torrent",
     minimum: 0,
     maximum: 64,
     default: 4,
 };
 /// The idle reader limit across torrents.
-pub const IDLE_READERS_TOTAL: Bounds = Bounds {
-    name: "idle_readers_total",
+pub const IDLE_READER_LIMIT: Bounds = Bounds {
+    name: "idle_reader_limit",
     minimum: 0,
     maximum: 256,
     default: 16,
@@ -86,8 +86,8 @@ pub const TEMPORARY_IDLE_SECONDS: Bounds = Bounds {
     default: 600,
 };
 /// The most temporary torrents the application holds.
-pub const TEMPORARY_TORRENTS_MAX: Bounds = Bounds {
-    name: "temporary_torrents_max",
+pub const TEMPORARY_TORRENT_LIMIT: Bounds = Bounds {
+    name: "temporary_torrent_limit",
     minimum: 1,
     maximum: 64,
     default: 16,
@@ -102,9 +102,9 @@ pub const TEMPORARY_PROGRESS_SECONDS: Bounds = Bounds {
 };
 
 /// The name of the background downloads switch.
-pub const BACKGROUND_DOWNLOADS: &str = "background_downloads";
+pub const BACKGROUND_DOWNLOADS_ENABLED: &str = "background_downloads_enabled";
 /// Whether background downloads run while unset.
-pub const BACKGROUND_DOWNLOADS_DEFAULT: bool = true;
+pub const BACKGROUND_DOWNLOADS_ENABLED_DEFAULT: bool = true;
 
 /// The name of the DLNA media server switch.
 pub const DLNA_ENABLED: &str = "dlna_enabled";
@@ -174,14 +174,14 @@ impl LogLevel {
 /// other settings follow them.
 pub const ALL: [Bounds; 10] = [
     PIECE_WAIT_SECONDS,
-    IDLE_TIMEOUT_SECONDS,
-    IDLE_READERS_PER_TORRENT,
-    IDLE_READERS_TOTAL,
+    IDLE_READER_TIMEOUT_SECONDS,
+    IDLE_READER_LIMIT_PER_TORRENT,
+    IDLE_READER_LIMIT,
     DRAIN_PERIOD_SECONDS,
     PEER_LIMIT,
     CACHE_CAPACITY_BYTES,
     TEMPORARY_IDLE_SECONDS,
-    TEMPORARY_TORRENTS_MAX,
+    TEMPORARY_TORRENT_LIMIT,
     TEMPORARY_PROGRESS_SECONDS,
 ];
 
@@ -192,11 +192,11 @@ pub struct Settings {
     /// requests without delivering.
     pub piece_wait: Duration,
     /// How long a reader stays idle after its stream ends.
-    pub idle_timeout: Duration,
+    pub idle_reader_timeout: Duration,
     /// The most idle readers one torrent keeps.
-    pub idle_readers_per_torrent: usize,
+    pub idle_reader_limit_per_torrent: usize,
     /// The most idle readers all torrents keep together.
-    pub idle_readers_total: usize,
+    pub idle_reader_limit: usize,
     /// How long streams may continue after a termination signal.
     pub drain_period: Duration,
     /// The most peers one torrent connects to at a time.
@@ -206,13 +206,13 @@ pub struct Settings {
     /// How long a temporary torrent may go without a reader.
     pub temporary_idle: Duration,
     /// The most temporary torrents the application holds.
-    pub temporary_torrents_max: usize,
+    pub temporary_torrent_limit: usize,
     /// How long a temporary torrent's file keeps its progress after it was
     /// last saved.
     pub temporary_progress: Duration,
     /// Whether started torrents in disk storage download the pieces they
     /// lack while no reader exists.
-    pub background_downloads: bool,
+    pub background_downloads_enabled: bool,
     /// Whether the DLNA media server announces the library to the local
     /// network.
     pub dlna_enabled: bool,
@@ -226,16 +226,16 @@ impl Settings {
     /// Every setting at its default.
     pub const DEFAULT: Self = Self {
         piece_wait: Duration::from_secs(PIECE_WAIT_SECONDS.default),
-        idle_timeout: Duration::from_secs(IDLE_TIMEOUT_SECONDS.default),
-        idle_readers_per_torrent: IDLE_READERS_PER_TORRENT.default as usize,
-        idle_readers_total: IDLE_READERS_TOTAL.default as usize,
+        idle_reader_timeout: Duration::from_secs(IDLE_READER_TIMEOUT_SECONDS.default),
+        idle_reader_limit_per_torrent: IDLE_READER_LIMIT_PER_TORRENT.default as usize,
+        idle_reader_limit: IDLE_READER_LIMIT.default as usize,
         drain_period: Duration::from_secs(DRAIN_PERIOD_SECONDS.default),
         peer_limit: PEER_LIMIT.default as usize,
         cache_capacity_bytes: CACHE_CAPACITY_BYTES.default,
         temporary_idle: Duration::from_secs(TEMPORARY_IDLE_SECONDS.default),
-        temporary_torrents_max: TEMPORARY_TORRENTS_MAX.default as usize,
+        temporary_torrent_limit: TEMPORARY_TORRENT_LIMIT.default as usize,
         temporary_progress: Duration::from_secs(TEMPORARY_PROGRESS_SECONDS.default),
-        background_downloads: BACKGROUND_DOWNLOADS_DEFAULT,
+        background_downloads_enabled: BACKGROUND_DOWNLOADS_ENABLED_DEFAULT,
         dlna_enabled: DLNA_ENABLED_DEFAULT,
         dht_enabled: DHT_ENABLED_DEFAULT,
         log_level: LogLevel::Info,
@@ -278,12 +278,12 @@ pub enum LogOverride {
 pub struct Explicit {
     /// [`PIECE_WAIT_SECONDS`].
     pub piece_wait_seconds: Option<u64>,
-    /// [`IDLE_TIMEOUT_SECONDS`].
-    pub idle_timeout_seconds: Option<u64>,
-    /// [`IDLE_READERS_PER_TORRENT`].
-    pub idle_readers_per_torrent: Option<u64>,
-    /// [`IDLE_READERS_TOTAL`].
-    pub idle_readers_total: Option<u64>,
+    /// [`IDLE_READER_TIMEOUT_SECONDS`].
+    pub idle_reader_timeout_seconds: Option<u64>,
+    /// [`IDLE_READER_LIMIT_PER_TORRENT`].
+    pub idle_reader_limit_per_torrent: Option<u64>,
+    /// [`IDLE_READER_LIMIT`].
+    pub idle_reader_limit: Option<u64>,
     /// [`DRAIN_PERIOD_SECONDS`].
     pub drain_period_seconds: Option<u64>,
     /// [`PEER_LIMIT`].
@@ -292,12 +292,12 @@ pub struct Explicit {
     pub cache_capacity_bytes: Option<u64>,
     /// [`TEMPORARY_IDLE_SECONDS`].
     pub temporary_idle_seconds: Option<u64>,
-    /// [`TEMPORARY_TORRENTS_MAX`].
-    pub temporary_torrents_max: Option<u64>,
+    /// [`TEMPORARY_TORRENT_LIMIT`].
+    pub temporary_torrent_limit: Option<u64>,
     /// [`TEMPORARY_PROGRESS_SECONDS`].
     pub temporary_progress_seconds: Option<u64>,
-    /// [`BACKGROUND_DOWNLOADS`].
-    pub background_downloads: Option<bool>,
+    /// [`BACKGROUND_DOWNLOADS_ENABLED`].
+    pub background_downloads_enabled: Option<bool>,
     /// [`DLNA_ENABLED`].
     pub dlna_enabled: Option<bool>,
     /// [`DLNA_NAME`].
@@ -322,14 +322,14 @@ impl Explicit {
     pub fn slot(&mut self, name: &str) -> Option<&mut Option<u64>> {
         Some(match name {
             "piece_wait_seconds" => &mut self.piece_wait_seconds,
-            "idle_timeout_seconds" => &mut self.idle_timeout_seconds,
-            "idle_readers_per_torrent" => &mut self.idle_readers_per_torrent,
-            "idle_readers_total" => &mut self.idle_readers_total,
+            "idle_reader_timeout_seconds" => &mut self.idle_reader_timeout_seconds,
+            "idle_reader_limit_per_torrent" => &mut self.idle_reader_limit_per_torrent,
+            "idle_reader_limit" => &mut self.idle_reader_limit,
             "drain_period_seconds" => &mut self.drain_period_seconds,
             "peer_limit" => &mut self.peer_limit,
             "cache_capacity_bytes" => &mut self.cache_capacity_bytes,
             "temporary_idle_seconds" => &mut self.temporary_idle_seconds,
-            "temporary_torrents_max" => &mut self.temporary_torrents_max,
+            "temporary_torrent_limit" => &mut self.temporary_torrent_limit,
             "temporary_progress_seconds" => &mut self.temporary_progress_seconds,
             _ => return None,
         })
@@ -341,14 +341,20 @@ impl Explicit {
         let value = |explicit: Option<u64>, bounds: Bounds| explicit.unwrap_or(bounds.default);
         [
             value(self.piece_wait_seconds, PIECE_WAIT_SECONDS),
-            value(self.idle_timeout_seconds, IDLE_TIMEOUT_SECONDS),
-            value(self.idle_readers_per_torrent, IDLE_READERS_PER_TORRENT),
-            value(self.idle_readers_total, IDLE_READERS_TOTAL),
+            value(
+                self.idle_reader_timeout_seconds,
+                IDLE_READER_TIMEOUT_SECONDS,
+            ),
+            value(
+                self.idle_reader_limit_per_torrent,
+                IDLE_READER_LIMIT_PER_TORRENT,
+            ),
+            value(self.idle_reader_limit, IDLE_READER_LIMIT),
             value(self.drain_period_seconds, DRAIN_PERIOD_SECONDS),
             value(self.peer_limit, PEER_LIMIT),
             value(self.cache_capacity_bytes, CACHE_CAPACITY_BYTES),
             value(self.temporary_idle_seconds, TEMPORARY_IDLE_SECONDS),
-            value(self.temporary_torrents_max, TEMPORARY_TORRENTS_MAX),
+            value(self.temporary_torrent_limit, TEMPORARY_TORRENT_LIMIT),
             value(self.temporary_progress_seconds, TEMPORARY_PROGRESS_SECONDS),
         ]
     }
@@ -380,8 +386,8 @@ impl Explicit {
         }
         if invalid.iter().all(|invalid| invalid.name == DLNA_NAME) && per_torrent > total {
             invalid.push(InvalidSetting {
-                name: IDLE_READERS_PER_TORRENT.name,
-                detail: format!("Must not exceed idle_readers_total, {total}."),
+                name: IDLE_READER_LIMIT_PER_TORRENT.name,
+                detail: format!("Must not exceed idle_reader_limit, {total}."),
             });
         }
         if invalid.is_empty() {
@@ -395,31 +401,31 @@ impl Explicit {
     pub fn effective(&self) -> Settings {
         let [
             piece_wait,
-            idle_timeout,
+            idle_reader_timeout,
             per_torrent,
             total,
             drain,
             peers,
             capacity,
             temporary_idle,
-            temporary_max,
+            temporary_limit,
             temporary_progress,
         ] = self.values();
         // The counts' bounds are far below any usize.
         Settings {
             piece_wait: Duration::from_secs(piece_wait),
-            idle_timeout: Duration::from_secs(idle_timeout),
-            idle_readers_per_torrent: per_torrent as usize,
-            idle_readers_total: total as usize,
+            idle_reader_timeout: Duration::from_secs(idle_reader_timeout),
+            idle_reader_limit_per_torrent: per_torrent as usize,
+            idle_reader_limit: total as usize,
             drain_period: Duration::from_secs(drain),
             peer_limit: peers as usize,
             cache_capacity_bytes: capacity,
             temporary_idle: Duration::from_secs(temporary_idle),
-            temporary_torrents_max: temporary_max as usize,
+            temporary_torrent_limit: temporary_limit as usize,
             temporary_progress: Duration::from_secs(temporary_progress),
-            background_downloads: self
-                .background_downloads
-                .unwrap_or(BACKGROUND_DOWNLOADS_DEFAULT),
+            background_downloads_enabled: self
+                .background_downloads_enabled
+                .unwrap_or(BACKGROUND_DOWNLOADS_ENABLED_DEFAULT),
             dlna_enabled: self.dlna_enabled.unwrap_or(DLNA_ENABLED_DEFAULT),
             dht_enabled: self.dht_enabled.unwrap_or(DHT_ENABLED_DEFAULT),
             log_level: self.log_level.unwrap_or_default(),
@@ -479,25 +485,25 @@ mod tests {
     fn unset_values_take_the_defaults_and_explicit_zero_is_kept() {
         assert_eq!(Explicit::default().effective(), Settings::DEFAULT);
         let explicit = Explicit {
-            idle_timeout_seconds: Some(0),
-            idle_readers_total: Some(0),
-            idle_readers_per_torrent: Some(0),
+            idle_reader_timeout_seconds: Some(0),
+            idle_reader_limit: Some(0),
+            idle_reader_limit_per_torrent: Some(0),
             ..Explicit::default()
         };
         let settings = explicit.validate().unwrap();
-        assert_eq!(settings.idle_timeout, Duration::ZERO);
-        assert_eq!(settings.idle_readers_total, 0);
+        assert_eq!(settings.idle_reader_timeout, Duration::ZERO);
+        assert_eq!(settings.idle_reader_limit, 0);
         assert_eq!(settings.piece_wait, Settings::DEFAULT.piece_wait);
     }
 
     #[test]
     fn background_downloads_are_on_unless_turned_off() {
-        assert!(Explicit::default().effective().background_downloads);
+        assert!(Explicit::default().effective().background_downloads_enabled);
         let off = Explicit {
-            background_downloads: Some(false),
+            background_downloads_enabled: Some(false),
             ..Explicit::default()
         };
-        assert!(!off.validate().unwrap().background_downloads);
+        assert!(!off.validate().unwrap().background_downloads_enabled);
         assert_ne!(off, Explicit::default(), "explicit false is kept");
     }
 
@@ -611,7 +617,7 @@ mod tests {
     #[test]
     fn the_per_torrent_limit_must_not_exceed_the_total() {
         let explicit = Explicit {
-            idle_readers_total: Some(3),
+            idle_reader_limit: Some(3),
             ..Explicit::default()
         };
         let invalid = explicit.validate().unwrap_err();
@@ -620,10 +626,10 @@ mod tests {
             1,
             "the default per-torrent limit, 4, is too high"
         );
-        assert_eq!(invalid[0].name, "idle_readers_per_torrent");
+        assert_eq!(invalid[0].name, "idle_reader_limit_per_torrent");
         assert!(
             Explicit {
-                idle_readers_per_torrent: Some(3),
+                idle_reader_limit_per_torrent: Some(3),
                 ..explicit
             }
             .validate()

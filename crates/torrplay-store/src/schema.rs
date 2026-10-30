@@ -25,7 +25,7 @@ use crate::images::{self, Images};
 use crate::{StoreError, StoredTorrent};
 
 /// The schema version this build creates and migrates to.
-pub(crate) const VERSION: u32 = 17;
+pub(crate) const VERSION: u32 = 18;
 
 /// The schema at each version, applied in order to reach the next one.
 const MIGRATIONS: [&str; VERSION as usize] = [
@@ -237,6 +237,52 @@ const MIGRATIONS: [&str; VERSION as usize] = [
     ALTER TABLE access_tokens_v16 RENAME TO access_tokens;",
     // Version 17: each torrent's IMDb title ID.
     "ALTER TABLE torrents ADD COLUMN imdb_id TEXT CHECK (imdb_id GLOB 'tt[0-9]*');",
+    // Version 18: names aligned with the contract and the glossary. The
+    // settings' switch is named as the contract's other switches are, and
+    // their limits and the idle reader timeout name what they bound; the
+    // metainfo table is named for the glossary's term; and an up next entry's
+    // ID is named as the contract names it. Temporary progress stores info
+    // hashes as torrents do, and the access tokens' constraint loses the
+    // name version 16 gave it; SQLite cannot change a column's type or a
+    // constraint's name, so those tables are rebuilt.
+    "ALTER TABLE settings RENAME COLUMN background_downloads TO background_downloads_enabled;
+    ALTER TABLE settings RENAME COLUMN temporary_torrents_max TO temporary_torrent_limit;
+    ALTER TABLE settings RENAME COLUMN idle_readers_total TO idle_reader_limit;
+    ALTER TABLE settings
+        RENAME COLUMN idle_readers_per_torrent TO idle_reader_limit_per_torrent;
+    ALTER TABLE settings RENAME COLUMN idle_timeout_seconds TO idle_reader_timeout_seconds;
+    ALTER TABLE torrent_files RENAME TO torrent_metainfo;
+    ALTER TABLE up_next_dismissals RENAME COLUMN entry_id TO up_next_entry_id;
+    ALTER TABLE temporary_progress RENAME TO temporary_progress_v17;
+    CREATE TABLE temporary_progress (
+        profile_id TEXT NOT NULL REFERENCES profiles (id) ON DELETE CASCADE,
+        info_hash BLOB NOT NULL CHECK (length(info_hash) = 20),
+        file_id TEXT NOT NULL,
+        position_ms INTEGER NOT NULL CHECK (position_ms >= 0),
+        duration_ms INTEGER NOT NULL CHECK (duration_ms > 0 AND position_ms <= duration_ms),
+        viewed_at_ns INTEGER CHECK (viewed_at_ns >= 0),
+        updated_at_ns INTEGER NOT NULL CHECK (updated_at_ns >= 0),
+        PRIMARY KEY (profile_id, info_hash, file_id)
+    ) STRICT;
+    -- unhex() is NULL for text that is not hexadecimal, which NOT NULL
+    -- refuses, so a damaged row fails the migration rather than vanishing.
+    INSERT INTO temporary_progress SELECT profile_id, unhex(info_hash), file_id, position_ms,
+        duration_ms, viewed_at_ns, updated_at_ns FROM temporary_progress_v17;
+    DROP TABLE temporary_progress_v17;
+    ALTER TABLE access_tokens RENAME TO access_tokens_v17;
+    CREATE TABLE access_tokens (
+        id TEXT PRIMARY KEY,
+        secret_digest BLOB NOT NULL CHECK (length(secret_digest) = 32),
+        name TEXT NOT NULL,
+        scope TEXT NOT NULL CHECK (scope IN ('api', 'playback', 'metrics')),
+        created_at_ns INTEGER NOT NULL CHECK (created_at_ns >= 0),
+        expires_at_ns INTEGER CHECK (expires_at_ns >= 0),
+        last_used_at_ns INTEGER CHECK (last_used_at_ns >= 0),
+        CONSTRAINT access_tokens_secret_digest_key UNIQUE (secret_digest)
+    ) STRICT;
+    INSERT INTO access_tokens SELECT id, secret_digest, name, scope, created_at_ns,
+        expires_at_ns, last_used_at_ns FROM access_tokens_v17;
+    DROP TABLE access_tokens_v17;",
 ];
 
 /// Opens the database at `path`, takes its lock, and migrates it.
@@ -319,7 +365,7 @@ pub(crate) fn torrents(connection: &mut Connection) -> Result<Vec<StoredTorrent>
         "SELECT t.id, t.info_hash, t.created_at_ns, t.desired_state, t.configuration_version,
                 t.magnet_uri, f.bytes, t.desired_storage_mode, t.storage_mode,
                 t.title, t.kind, t.year, t.description, t.imdb_id
-         FROM torrents t LEFT JOIN torrent_files f ON f.torrent_id = t.id
+         FROM torrents t LEFT JOIN torrent_metainfo f ON f.torrent_id = t.id
          ORDER BY t.created_at_ns, t.id",
     )?;
     let rows = statement.query_map([], |row| {
@@ -404,7 +450,7 @@ pub(crate) fn torrents(connection: &mut Connection) -> Result<Vec<StoredTorrent>
             storage_mode,
             poster: posters.remove(&id),
             magnet_uri,
-            torrent_file,
+            metainfo: torrent_file,
         });
     }
     drop(statement);
@@ -495,10 +541,10 @@ pub(crate) fn begin_run(connection: &mut Connection) -> Result<bool, StoreError>
 pub(crate) fn settings(connection: &Connection) -> Result<Stored, StoreError> {
     let row = connection
         .query_row(
-            "SELECT version, piece_wait_seconds, idle_timeout_seconds, idle_readers_per_torrent,
-                    idle_readers_total, drain_period_seconds, peer_limit, cache_capacity_bytes,
-                    temporary_idle_seconds, temporary_torrents_max, temporary_progress_seconds,
-                    background_downloads, dlna_enabled, dlna_name, dht_enabled, log_level
+            "SELECT version, piece_wait_seconds, idle_reader_timeout_seconds, idle_reader_limit_per_torrent,
+                    idle_reader_limit, drain_period_seconds, peer_limit, cache_capacity_bytes,
+                    temporary_idle_seconds, temporary_torrent_limit, temporary_progress_seconds,
+                    background_downloads_enabled, dlna_enabled, dlna_name, dht_enabled, log_level
              FROM settings WHERE id = 1",
             [],
             |row| {
@@ -521,7 +567,7 @@ pub(crate) fn settings(connection: &Connection) -> Result<Stored, StoreError> {
     let Some((
         version,
         values,
-        (background_downloads, dlna_enabled, dlna_name, dht_enabled, log_level),
+        (background_downloads_enabled, dlna_enabled, dlna_name, dht_enabled, log_level),
     )) = row
     else {
         return Ok(Stored::default());
@@ -535,7 +581,7 @@ pub(crate) fn settings(connection: &Connection) -> Result<Stored, StoreError> {
         .map(|name| settings::LogLevel::parse(&name).ok_or_else(|| corrupt("the log level")))
         .transpose()?;
     let mut explicit = Explicit {
-        background_downloads,
+        background_downloads_enabled,
         dlna_enabled,
         dlna_name,
         dht_enabled,
@@ -561,14 +607,14 @@ pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(
     let mut values = [None; settings::ALL.len()];
     for (value, explicit) in values.iter_mut().zip([
         explicit.piece_wait_seconds,
-        explicit.idle_timeout_seconds,
-        explicit.idle_readers_per_torrent,
-        explicit.idle_readers_total,
+        explicit.idle_reader_timeout_seconds,
+        explicit.idle_reader_limit_per_torrent,
+        explicit.idle_reader_limit,
         explicit.drain_period_seconds,
         explicit.peer_limit,
         explicit.cache_capacity_bytes,
         explicit.temporary_idle_seconds,
-        explicit.temporary_torrents_max,
+        explicit.temporary_torrent_limit,
         explicit.temporary_progress_seconds,
     ]) {
         *value = explicit
@@ -578,38 +624,38 @@ pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(
     }
     let [
         piece_wait,
-        idle_timeout,
+        idle_reader_timeout,
         per_torrent,
         total,
         drain,
         peers,
         capacity,
         temporary_idle,
-        temporary_max,
+        temporary_limit,
         temporary_progress,
     ] = values;
     connection.execute(
-        "INSERT INTO settings (id, version, piece_wait_seconds, idle_timeout_seconds,
-                               idle_readers_per_torrent, idle_readers_total,
+        "INSERT INTO settings (id, version, piece_wait_seconds, idle_reader_timeout_seconds,
+                               idle_reader_limit_per_torrent, idle_reader_limit,
                                drain_period_seconds, peer_limit, cache_capacity_bytes,
-                               temporary_idle_seconds, temporary_torrents_max,
+                               temporary_idle_seconds, temporary_torrent_limit,
                                temporary_progress_seconds,
-                               background_downloads, dlna_enabled, dlna_name,
+                               background_downloads_enabled, dlna_enabled, dlna_name,
                                dht_enabled, log_level)
          VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
          ON CONFLICT (id) DO UPDATE SET
              version = excluded.version,
              piece_wait_seconds = excluded.piece_wait_seconds,
-             idle_timeout_seconds = excluded.idle_timeout_seconds,
-             idle_readers_per_torrent = excluded.idle_readers_per_torrent,
-             idle_readers_total = excluded.idle_readers_total,
+             idle_reader_timeout_seconds = excluded.idle_reader_timeout_seconds,
+             idle_reader_limit_per_torrent = excluded.idle_reader_limit_per_torrent,
+             idle_reader_limit = excluded.idle_reader_limit,
              drain_period_seconds = excluded.drain_period_seconds,
              peer_limit = excluded.peer_limit,
              cache_capacity_bytes = excluded.cache_capacity_bytes,
              temporary_idle_seconds = excluded.temporary_idle_seconds,
-             temporary_torrents_max = excluded.temporary_torrents_max,
+             temporary_torrent_limit = excluded.temporary_torrent_limit,
              temporary_progress_seconds = excluded.temporary_progress_seconds,
-             background_downloads = excluded.background_downloads,
+             background_downloads_enabled = excluded.background_downloads_enabled,
              dlna_enabled = excluded.dlna_enabled,
              dlna_name = excluded.dlna_name,
              dht_enabled = excluded.dht_enabled,
@@ -617,16 +663,16 @@ pub(crate) fn set_settings(connection: &Connection, stored: &Stored) -> Result<(
         rusqlite::params![
             version,
             piece_wait,
-            idle_timeout,
+            idle_reader_timeout,
             per_torrent,
             total,
             drain,
             peers,
             capacity,
             temporary_idle,
-            temporary_max,
+            temporary_limit,
             temporary_progress,
-            explicit.background_downloads,
+            explicit.background_downloads_enabled,
             explicit.dlna_enabled,
             explicit.dlna_name,
             explicit.dht_enabled,
