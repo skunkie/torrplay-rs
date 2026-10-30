@@ -1104,14 +1104,14 @@ mod scenario {
 
         // Trackers keep their scheme, host, and port only.
         let announcing = catalog::single_small();
-        let announce = "http://tracker.test:8080/announce?passkey=secret";
+        let announce = "http://tracker.test:8642/announce?passkey=secret";
         server.engine.add_announcing(&announcing, announce);
         let previewed = server
             .send(preview_of(&announcing.metainfo_announcing(announce).bytes))
             .await;
         assert_eq!(
             previewed.json()["trackers"],
-            json!(["http://tracker.test:8080"])
+            json!(["http://tracker.test:8642"])
         );
         assert!(
             !String::from_utf8_lossy(&previewed.body).contains("secret"),
@@ -7461,8 +7461,8 @@ mod scenario {
         let port = server.get("/api/v1").await.status;
         assert_eq!(port, StatusCode::OK);
         for host in [
-            "192.168.1.10:8080",
-            "localhost:8080",
+            "192.168.1.10:8642",
+            "localhost:8642",
             "mypc.local",
             "TorrPlay.home.arpa.",
         ] {
@@ -7476,7 +7476,7 @@ mod scenario {
                 Method::GET,
                 "/api/v1/torrents",
                 header::HOST,
-                "evil.example:8080",
+                "evil.example:8642",
             ))
             .await;
         assert_problem(

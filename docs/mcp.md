@@ -26,7 +26,7 @@ torrplay mcp [--url <URL>] [--transport stdio|http] [--listen <address>]
 - `--url`, or else the `TORRPLAY_URL` environment variable, is the
   application's origin, without a path or credentials, such as
   `https://torrplay.home.arpa`. It defaults to
-  `http://127.0.0.1:8080`.
+  `http://127.0.0.1:8642`.
 - The credential comes only from the `TORRPLAY_TOKEN` environment
   variable: the secret of an access token of the `api` scope. A command
   line argument would be visible to every local user. Without it, requests
@@ -62,7 +62,7 @@ torrplay mcp [--url <URL>] [--transport stdio|http] [--listen <address>]
   writes no log files.
 - **Streamable HTTP**, with `--transport http`: the protocol's HTTP
   transport, with its SSE streams, at `/mcp` on `--listen`, which defaults
-  to `127.0.0.1:8090`. The address must be a loopback address; any other
+  to `127.0.0.1:8643`. The address must be a loopback address; any other
   is refused at startup. Remote access requires an authenticated proxy or
   a mutually authenticated TLS tunnel. Requests whose `Origin` is not a
   loopback origin are `403`, which defeats DNS rebinding.

@@ -42,7 +42,7 @@ pub use torrplay_server::log_files::{LogFiles, LogWriter};
 use torrplay_store::{Contents, Store};
 
 /// The default API port, as the contract's server URL documents.
-pub const PORT_DEFAULT: u16 = 8080;
+pub const PORT_DEFAULT: u16 = 8642;
 
 /// The API's default address: every interface, dual-stack.
 pub const LISTEN_DEFAULT: SocketAddr =
@@ -78,15 +78,15 @@ password is set. `password set` reads a new password from the first line of
 standard input, and `password remove` turns authentication off and revokes
 every token; both need the application stopped. `mcp` serves a running
 application's API to an MCP client: it reaches the application at --url or
-TORRPLAY_URL [default: http://127.0.0.1:8080], sends TORRPLAY_TOKEN, an api
+TORRPLAY_URL [default: http://127.0.0.1:8642], sends TORRPLAY_TOKEN, an api
 access token, as its credential, and speaks on standard input and output, or
 with --transport http at /mcp on --listen, a loopback address [default:
-127.0.0.1:8090].
+127.0.0.1:8643].
 
 Options:
   --listen <ADDRESS>         The API's address, or TORRPLAY_LISTEN; until a
                              password is set, only local networks may use it
-                             [default: [::]:8080, every interface]
+                             [default: [::]:8642, every interface]
   --allowed-host <NAME>      A host name requests may give besides IP addresses,
                              localhost, and .local names, such as a reverse
                              proxy's; repeat for each
@@ -114,7 +114,7 @@ The DLNA media server, its name, and the DHT are settings of the API.
 ";
 
 /// Binds the API's listener on `listen`, or on [`LISTEN_DEFAULT`] when it is
-/// `None`, falling back to `0.0.0.0:8080` where the system has no IPv6. An
+/// `None`, falling back to `0.0.0.0:8642` where the system has no IPv6. An
 /// unspecified IPv6 address is dual-stack on every system, which some leave
 /// IPv6-only by default, so IPv4 clients reach it as IPv4-mapped addresses.
 pub fn bind_api(listen: Option<SocketAddr>) -> io::Result<TcpListener> {
@@ -329,7 +329,7 @@ fn parse_mcp(args: impl Iterator<Item = String>) -> Result<Command, ArgsError> {
                 let value = value()?;
                 config.url =
                     Some(parse_origin(&value).ok_or_else(|| {
-                        invalid(value, "an origin such as http://127.0.0.1:8080")
+                        invalid(value, "an origin such as http://127.0.0.1:8642")
                     })?);
             }
             "--transport" => match value()?.as_str() {
@@ -1097,12 +1097,12 @@ mod tests {
     #[test]
     fn mcp_refuses_what_it_cannot_serve() {
         for args in [
-            &["mcp", "--listen", "0.0.0.0:8090", "--transport", "http"][..],
-            &["mcp", "--listen", "127.0.0.1:8090"],
+            &["mcp", "--listen", "0.0.0.0:8643", "--transport", "http"][..],
+            &["mcp", "--listen", "127.0.0.1:8643"],
             &["mcp", "--transport", "sse"],
             &["mcp", "--url", "ftp://127.0.0.1"],
-            &["mcp", "--url", "http://127.0.0.1:8080/api/v1"],
-            &["mcp", "--url", "http://user:secret@127.0.0.1:8080"],
+            &["mcp", "--url", "http://127.0.0.1:8642/api/v1"],
+            &["mcp", "--url", "http://user:secret@127.0.0.1:8642"],
             &["mcp", "--token", "atk"],
             &["mcp", "--data-dir", "/tmp"],
         ] {
@@ -1114,7 +1114,7 @@ mod tests {
     fn no_arguments_run_with_the_defaults() {
         assert_eq!(parse(&[]), Ok(Command::Run(Config::default())));
         assert_eq!(Config::default().listen, None, "the default address");
-        assert_eq!(LISTEN_DEFAULT, "[::]:8080".parse::<SocketAddr>().unwrap());
+        assert_eq!(LISTEN_DEFAULT, "[::]:8642".parse::<SocketAddr>().unwrap());
         assert_eq!(
             Config::default().download_dir(Path::new("/srv/torrplay")),
             Path::new("/srv/torrplay/downloads"),
@@ -1191,7 +1191,7 @@ mod tests {
 
     #[test]
     fn the_api_may_listen_on_any_address() {
-        for address in ["0.0.0.0:8080", "192.0.2.1:8080", "[::]:8080"] {
+        for address in ["0.0.0.0:8642", "192.0.2.1:8642", "[::]:8642"] {
             let Ok(Command::Run(config)) = parse(&["--listen", address]) else {
                 panic!("{address} parses");
             };

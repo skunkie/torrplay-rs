@@ -329,7 +329,7 @@ mod tests {
     fn every_target_has_its_unique_service_name() {
         let config = Config::new(
             "4b1c0b2a-6f5e-4d3c-8b2a-1f0e9d8c7b6a".into(),
-            "http://192.168.1.10:8080/dlna/description.xml".into(),
+            "http://192.168.1.10:8642/dlna/description.xml".into(),
             Ipv4Addr::new(192, 168, 1, 10),
         );
         let targets = config.targets();
@@ -341,7 +341,7 @@ mod tests {
         let alive = config.notify(&targets[0].0, &targets[0].1, true);
         assert!(
             alive.contains("NTS: ssdp:alive\r\n")
-                && alive.contains("LOCATION: http://192.168.1.10:8080/dlna/description.xml\r\n")
+                && alive.contains("LOCATION: http://192.168.1.10:8642/dlna/description.xml\r\n")
         );
         let byebye = config.notify(&targets[0].0, &targets[0].1, false);
         assert!(byebye.contains("NTS: ssdp:byebye\r\n") && !byebye.contains("LOCATION"));

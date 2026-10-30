@@ -976,14 +976,14 @@ mod tests {
             AllowedHosts::normalize("TorrPlay.Home.Arpa.").unwrap(),
         ]);
         for allowed in [
-            "127.0.0.1:8080",
+            "127.0.0.1:8642",
             "192.168.1.10",
-            "[::1]:8080",
+            "[::1]:8642",
             "[fe80::1]",
-            "localhost:8080",
+            "localhost:8642",
             "LOCALHOST",
             "app.localhost",
-            "mypc.local:8080",
+            "mypc.local:8642",
             "mypc.local.",
             "torrplay.home.arpa",
             "torrplay.home.arpa.:443",
@@ -991,7 +991,7 @@ mod tests {
             assert!(hosts.allows(allowed), "{allowed}");
         }
         for refused in [
-            "evil.example:8080",
+            "evil.example:8642",
             "evil.example",
             "localhost.evil.example",
             "local",

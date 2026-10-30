@@ -838,10 +838,10 @@ application. That holds whether or not authentication is on.
 The application listens on every interface by default, so phones,
 televisions, and other computers on the local network reach it:
 
-- The default is `[::]:8080`, dual-stack, accepting IPv4 clients as
+- The default is `[::]:8642`, dual-stack, accepting IPv4 clients as
   IPv4-mapped addresses. Where the system has no IPv6, it falls back to
-  `0.0.0.0:8080` and logs why. `--listen` names another address, such as
-  `127.0.0.1:8080` for this computer only; the `TORRPLAY_LISTEN`
+  `0.0.0.0:8642` and logs why. `--listen` names another address, such as
+  `127.0.0.1:8642` for this computer only; the `TORRPLAY_LISTEN`
   environment variable does the same where `--listen` is not given. An
   explicit `[::]` address is dual-stack too.
 - While authentication is off, the operations that need a credential once

@@ -388,7 +388,7 @@ mod tests {
         assert_eq!(ok[0].port, 49152);
         assert_eq!(ok[0].path, "/events");
         let two = parse_callbacks(
-            "<http://192.168.1.20/a> <http://192.168.1.20:8080>",
+            "<http://192.168.1.20/a> <http://192.168.1.20:8642>",
             subscriber(),
         )
         .unwrap();
