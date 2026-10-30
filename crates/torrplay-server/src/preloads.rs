@@ -183,7 +183,7 @@ fn parse_request(value: Value) -> Result<PreloadRequest, Problem> {
     let mut errors = Vec::new();
     let mut request = PreloadRequest {
         offset_bytes: None,
-        ttl: preload::DEFAULT_TTL,
+        expires_in: preload::DEFAULT_EXPIRES_IN,
     };
     for (member, value) in &members {
         match member.as_str() {
@@ -195,18 +195,20 @@ fn parse_request(value: Value) -> Result<PreloadRequest, Problem> {
                 )),
             },
             "expires_in_seconds" => {
-                let ttl = value
+                let expires_in = value
                     .as_u64()
                     .map(Duration::from_secs)
-                    .filter(|ttl| (preload::MIN_TTL..=preload::MAX_TTL).contains(ttl));
-                match ttl {
-                    Some(ttl) => request.ttl = ttl,
+                    .filter(|expires_in| {
+                        (preload::EXPIRES_IN_MIN..=preload::EXPIRES_IN_MAX).contains(expires_in)
+                    });
+                match expires_in {
+                    Some(expires_in) => request.expires_in = expires_in,
                     None => errors.push(InvalidValue::pointer(
                         pointer(member),
                         format!(
                             "Must be an integer from {} to {}.",
-                            preload::MIN_TTL.as_secs(),
-                            preload::MAX_TTL.as_secs()
+                            preload::EXPIRES_IN_MIN.as_secs(),
+                            preload::EXPIRES_IN_MAX.as_secs()
                         ),
                     )),
                 }

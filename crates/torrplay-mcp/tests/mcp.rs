@@ -217,7 +217,7 @@ impl Session {
         let magnet_uri = spec.magnet_uri(&spec.metainfo().info_hash);
         let created = self
             .ok(
-                "add_torrent",
+                "create_torrent",
                 json!({ "magnet_uri": magnet_uri, "title": title }),
             )
             .await;
@@ -249,8 +249,9 @@ async fn tools_and_resources_are_listed() {
     assert_eq!(
         names,
         [
-            "add_torrent",
-            "cancel_preload",
+            "create_preload",
+            "create_torrent",
+            "delete_preload",
             "delete_torrent",
             "get_cache_statistics",
             "get_statistics",
@@ -260,7 +261,6 @@ async fn tools_and_resources_are_listed() {
             "list_log_records",
             "list_torrents",
             "list_up_next",
-            "preload_file",
             "update_torrent",
         ]
     );
@@ -418,12 +418,12 @@ async fn preloads_are_reused_and_canceled() {
     let session = Session::open(application.origin.clone(), None).await;
     let (torrent_id, torrent) = session.add(&catalog::single_small(), "Sintel").await;
     let file = json!({ "torrent_id": torrent_id, "file_id": torrent["files"][0]["id"] });
-    let first = session.ok("preload_file", file.clone()).await;
-    let again = session.ok("preload_file", file.clone()).await;
+    let first = session.ok("create_preload", file.clone()).await;
+    let again = session.ok("create_preload", file.clone()).await;
     assert_eq!(first["id"], again["id"], "the active preload is reported");
-    let canceled = session.ok("cancel_preload", file.clone()).await;
+    let canceled = session.ok("delete_preload", file.clone()).await;
     assert_eq!(canceled["canceled"], json!([first["id"]]));
-    let none = session.ok("cancel_preload", file).await;
+    let none = session.ok("delete_preload", file).await;
     assert_eq!(none["canceled"], json!([]));
     session.close().await;
     application.stop().await;
@@ -437,7 +437,7 @@ async fn failures_are_reported() {
     let session = Session::open(application.origin.clone(), None).await;
     let (failed, problem) = session
         .call(
-            "add_torrent",
+            "create_torrent",
             json!({ "magnet_uri": "magnet:?xt=urn:btih:nothing" }),
         )
         .await;
@@ -449,7 +449,7 @@ async fn failures_are_reported() {
         ("get_torrent", json!({ "torrent_id": "trr_../../settings" })),
         ("get_torrent", json!({})),
         (
-            "add_torrent",
+            "create_torrent",
             json!({ "magnet_uri": "magnet:?xt=x", "kind": "film" }),
         ),
         ("list_torrents", json!({ "limit": 1000 })),

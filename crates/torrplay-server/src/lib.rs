@@ -38,6 +38,7 @@ mod inference;
 mod library;
 pub mod log_files;
 mod metainfo;
+mod playable;
 mod posters;
 mod preloads;
 mod previews;
@@ -50,7 +51,6 @@ mod representation;
 mod retention;
 mod service;
 mod settings;
-mod shelf;
 mod stremio;
 mod system;
 mod telemetry;
@@ -105,7 +105,7 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
             &format!("{torrent}/poster"),
             get(posters::get::<E>)
                 .head(posters::head::<E>)
-                .put(posters::put::<E>)
+                .put(posters::set::<E>)
                 .delete(posters::delete::<E>),
         )
         .route(&format!("{torrent}/files"), get(files::list::<E>))
@@ -162,7 +162,7 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
             "/api/v1/profiles/{profile_id}/avatar",
             get(profiles::get_avatar::<E>)
                 .head(profiles::head_avatar::<E>)
-                .put(profiles::put_avatar::<E>)
+                .put(profiles::set_avatar::<E>)
                 .delete(profiles::delete_avatar::<E>),
         )
         .route(
@@ -172,7 +172,7 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
         .route(
             "/api/v1/profiles/{profile_id}/torrents/{torrent_id}/progress/{file_id}",
             get(progress::get::<E>)
-                .put(progress::put::<E>)
+                .put(progress::set::<E>)
                 .delete(progress::delete::<E>),
         )
         .route(
@@ -182,7 +182,7 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
         .route(
             "/api/v1/profiles/{profile_id}/title-progress/{title_key}",
             get(titles::get::<E>)
-                .put(titles::put::<E>)
+                .put(titles::set::<E>)
                 .delete(titles::delete::<E>),
         )
         .route(

@@ -292,12 +292,12 @@ fn preview(parts: &[(&str, Option<&str>, Vec<u8>)]) -> http::Request<Vec<u8>> {
     request
 }
 
-/// A preview request of `torrent_file`.
-fn preview_of(torrent_file: &[u8]) -> http::Request<Vec<u8>> {
+/// A preview request of `metainfo`.
+fn preview_of(metainfo: &[u8]) -> http::Request<Vec<u8>> {
     preview(&[(
         "metainfo",
         Some("application/x-bittorrent"),
-        torrent_file.to_vec(),
+        metainfo.to_vec(),
     )])
 }
 
@@ -3777,7 +3777,7 @@ mod scenario {
             };
             (at("expires_at") - at("created_at")).num_seconds()
         };
-        assert_eq!(expires(&body), 120, "the default time to live");
+        assert_eq!(expires(&body), 120, "the default expiry");
 
         // Refused requests.
         let invalid = server
@@ -3845,16 +3845,16 @@ mod scenario {
         // At most 4 active preloads of a file; an ended one frees a place
         // and stays listed.
         let mut ids = vec![body["id"].as_str().unwrap().to_owned()];
-        for ttl in [10, 600, 3600] {
+        for expires_in in [10, 600, 3600] {
             let created = server
                 .send(json_request(
                     Method::POST,
                     &preloads,
-                    &json!({ "expires_in_seconds": ttl, "offset_bytes": 0 }),
+                    &json!({ "expires_in_seconds": expires_in, "offset_bytes": 0 }),
                 ))
                 .await;
             assert_eq!(created.status, StatusCode::CREATED);
-            assert_eq!(expires(&created.json()), ttl);
+            assert_eq!(expires(&created.json()), expires_in);
             ids.push(created.json()["id"].as_str().unwrap().to_owned());
         }
         let fifth = server
@@ -4353,14 +4353,14 @@ mod scenario {
         // A form takes one part per category and genre.
         let small = catalog::single_small();
         let file = |name, value: &str| (name, None, value.as_bytes().to_vec());
-        let torrent_file = (
+        let metainfo = (
             "metainfo",
             Some("application/x-bittorrent"),
             small.metainfo().bytes,
         );
         let uploaded = server
             .send(form(&[
-                torrent_file.clone(),
+                metainfo.clone(),
                 file("title", "Small"),
                 file("kind", "other"),
                 file("year", "1999"),
@@ -4377,7 +4377,7 @@ mod scenario {
         assert_eq!(small_torrent["year"], 1999);
         let refused = server
             .send_unchecked(form(&[
-                torrent_file,
+                metainfo,
                 file("year", "19x9"),
                 file("title", "a"),
                 file("title", "b"),

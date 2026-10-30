@@ -445,11 +445,8 @@ pub(crate) async fn create<E: Engine>(
                 supplies_metadata,
             } => {
                 let supplied = match (&source, &metadata) {
-                    (Source::TorrentFile(bytes), Some(metadata)) if supplies_metadata => {
-                        if !app
-                            .temporaries()
-                            .record_torrent_file(&existing, bytes.clone())
-                        {
+                    (Source::Metainfo(bytes), Some(metadata)) if supplies_metadata => {
+                        if !app.temporaries().record_metainfo(&existing, bytes.clone()) {
                             app.store()
                                 .set_metainfo(&existing, bytes.clone())
                                 .await
@@ -462,7 +459,7 @@ pub(crate) async fn create<E: Engine>(
                     _ => false,
                 };
                 drop(_lane);
-                if supplied && let Source::TorrentFile(bytes) = &source {
+                if supplied && let Source::Metainfo(bytes) = &source {
                     app.engine()
                         .supply_metadata(&existing, bytes)
                         .await
@@ -570,7 +567,7 @@ fn too_many_temporary<E: Engine>(app: &App<E>) -> Problem {
 /// The record to store for a new torrent from `source`.
 fn stored(record: &TorrentRecord, source: &Source) -> StoredTorrent {
     let (magnet_uri, metainfo) = match source {
-        Source::TorrentFile(bytes) => (None, Some(bytes.clone())),
+        Source::Metainfo(bytes) => (None, Some(bytes.clone())),
         Source::MagnetUri(uri) => (Some(uri.clone()), None),
     };
     StoredTorrent {
@@ -612,7 +609,7 @@ pub(crate) async fn read_form<E: Engine>(
 }
 
 /// A torrent file part, refused when it exceeds the limit.
-pub(crate) fn torrent_file_part(data: Bytes) -> Result<Bytes, Problem> {
+pub(crate) fn metainfo_part(data: Bytes) -> Result<Bytes, Problem> {
     if data.len() > TORRENT_FILE_LIMIT_BYTES {
         return Err(Problem::new(
             ProblemType::ContentTooLarge,
@@ -805,7 +802,7 @@ fn creation_from_form(bytes: &Bytes, boundary: &str) -> Result<Creation, Problem
         )
     })?;
     let mut errors = Vec::new();
-    let mut torrent_file = None;
+    let mut metainfo = None;
     let mut desired_state = None;
     let mut storage_mode = None;
     let mut retention = None;
@@ -833,7 +830,7 @@ fn creation_from_form(bytes: &Bytes, boundary: &str) -> Result<Creation, Problem
         seen.push(part.name.clone());
         match part.name.as_str() {
             "metainfo" => {
-                torrent_file = Some(torrent_file_part(part.data)?);
+                metainfo = Some(metainfo_part(part.data)?);
             }
             "desired_state" => {
                 let value = Value::String(String::from_utf8_lossy(&part.data).into_owned());
@@ -877,9 +874,9 @@ fn creation_from_form(bytes: &Bytes, boundary: &str) -> Result<Creation, Problem
         library_members.keys().map(String::as_str),
         &mut errors,
     );
-    match torrent_file {
+    match metainfo {
         Some(file) if errors.is_empty() => Ok(Creation {
-            source: Source::TorrentFile(file.to_vec()),
+            source: Source::Metainfo(file.to_vec()),
             desired_state: desired_state.unwrap_or(DesiredState::Started),
             storage_mode,
             retention,

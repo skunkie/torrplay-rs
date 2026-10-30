@@ -17,7 +17,7 @@ use url::Url;
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The largest response body read from the application.
-pub const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
+pub const BODY_MAX_BYTES: usize = 4 * 1024 * 1024;
 
 const JSON: HeaderValue = HeaderValue::from_static("application/json");
 const MERGE_PATCH: HeaderValue = HeaderValue::from_static("application/merge-patch+json");
@@ -148,9 +148,9 @@ impl Client {
             .await
             .map_err(|error| self.unreachable(error))?
         {
-            if body.len() + chunk.len() > MAX_BODY_BYTES {
+            if body.len() + chunk.len() > BODY_MAX_BYTES {
                 return Err(Failure::Unusable(format!(
-                    "its body is larger than {MAX_BODY_BYTES} bytes"
+                    "its body is larger than {BODY_MAX_BYTES} bytes"
                 )));
             }
             body.extend_from_slice(&chunk);

@@ -6,7 +6,7 @@
 //! patches, which share their rules.
 
 use serde_json::Value;
-use torrplay_core::library::{self, Kind, LABELS_MAX, Library, ListError, TextError, YEARS};
+use torrplay_core::library::{self, Kind, LABEL_LIMIT, Library, ListError, TextError, YEARS};
 
 use crate::problem::InvalidValue;
 
@@ -167,7 +167,7 @@ fn labels(pointer: &str, value: &Value, errors: &mut Vec<InvalidValue>) -> Optio
         Err(ListError::TooMany) => {
             errors.push(InvalidValue::pointer(
                 pointer,
-                format!("Must have at most {LABELS_MAX} entries."),
+                format!("Must have at most {LABEL_LIMIT} entries."),
             ));
             None
         }
@@ -262,7 +262,7 @@ mod tests {
                 "/year"
             ]
         );
-        let many: Vec<String> = (0..=LABELS_MAX).map(|n| n.to_string()).collect();
+        let many: Vec<String> = (0..=LABEL_LIMIT).map(|n| n.to_string()).collect();
         let (_, errors) = read(json!({ "genres": many, "year": 2201 }));
         assert_eq!(errors, ["/genres", "/year"]);
     }

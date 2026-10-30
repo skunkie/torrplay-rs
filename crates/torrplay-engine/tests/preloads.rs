@@ -29,7 +29,7 @@ fn preload_id(n: u8) -> PreloadId {
 fn request(offset_bytes: Option<u64>) -> PreloadRequest {
     PreloadRequest {
         offset_bytes,
-        ttl: Duration::from_secs(120),
+        expires_in: Duration::from_secs(120),
     }
 }
 
@@ -281,7 +281,7 @@ async fn preloads_queue_for_their_share_of_the_budget() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// PRL-03: a preload expires at its time to live, releasing its pins, and
+/// PRL-03: a preload expires once its expiry passes, releasing its pins, and
 /// stays listed as expired.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_preload_expires_at_its_time_to_live() -> anyhow::Result<()> {
@@ -299,7 +299,7 @@ async fn a_preload_expires_at_its_time_to_live() -> anyhow::Result<()> {
             preload_id(1),
             PreloadRequest {
                 offset_bytes: None,
-                ttl: Duration::from_secs(10),
+                expires_in: Duration::from_secs(10),
             },
         )
         .await?;

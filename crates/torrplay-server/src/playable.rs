@@ -20,7 +20,7 @@ use crate::problem::Problem;
 use crate::representation::{self, file_name};
 
 /// A torrent an adapter may present.
-pub(crate) struct Shelved {
+pub(crate) struct PlayableTorrent {
     pub(crate) id: TorrentId,
     /// Its library title, if it has one.
     pub(crate) title: Option<String>,
@@ -35,11 +35,11 @@ pub(crate) struct Shelved {
     pub(crate) created_at: SystemTime,
     /// Its files served with an `audio/`, `video/`, or `image/` media type,
     /// at least one: in metadata order, or a series' in episode order.
-    pub(crate) files: Vec<ShelvedFile>,
+    pub(crate) files: Vec<PlayableFile>,
 }
 
 /// A playable file.
-pub(crate) struct ShelvedFile {
+pub(crate) struct PlayableFile {
     pub(crate) id: FileId,
     pub(crate) name: String,
     pub(crate) size_bytes: u64,
@@ -50,7 +50,9 @@ pub(crate) struct ShelvedFile {
 
 /// The torrents adapters present, newest first, or `None` while the stored
 /// torrents are being restored.
-pub(crate) async fn shelved<E: Engine>(app: &App<E>) -> Result<Option<Vec<Shelved>>, Problem> {
+pub(crate) async fn torrents<E: Engine>(
+    app: &App<E>,
+) -> Result<Option<Vec<PlayableTorrent>>, Problem> {
     let Ok(registry) = app.registry() else {
         return Ok(None);
     };
@@ -73,7 +75,7 @@ pub(crate) async fn shelved<E: Engine>(app: &App<E>) -> Result<Option<Vec<Shelve
         };
         let library = record.configuration.library();
         let kind = representation::reported_kind(library, Some(metadata));
-        let mut files: Vec<(usize, ShelvedFile)> = metadata
+        let mut files: Vec<(usize, PlayableFile)> = metadata
             .files()
             .iter()
             .enumerate()
@@ -86,7 +88,7 @@ pub(crate) async fn shelved<E: Engine>(app: &App<E>) -> Result<Option<Vec<Shelve
                 playable.then(|| {
                     (
                         index,
-                        ShelvedFile {
+                        PlayableFile {
                             id: file.id().clone(),
                             episode: library::episode_number(&name),
                             name,
@@ -105,7 +107,7 @@ pub(crate) async fn shelved<E: Engine>(app: &App<E>) -> Result<Option<Vec<Shelve
             // without a pattern last, metadata order breaking ties.
             files.sort_by_key(|(index, file)| (file.episode.is_none(), file.episode, *index));
         }
-        torrents.push(Shelved {
+        torrents.push(PlayableTorrent {
             title: library.title.clone(),
             name: metadata.display_name(),
             kind,

@@ -18,7 +18,7 @@
 //! The device profile's viewings, which DLNA streams feed, save their
 //! positions and end after the gap. An application's viewing, which it
 //! creates for a player that reports nothing, only estimates; it lasts
-//! [`APP_VIEWING_TTL`] after its last activity, and the application reads
+//! [`APP_VIEWING_EXPIRY`] after its last activity, and the application reads
 //! it and saves what it chooses.
 
 use std::collections::{HashMap, VecDeque};
@@ -59,17 +59,17 @@ pub(crate) const RESUME_BACK_OFF: Duration = Duration::from_secs(10);
 pub(crate) const INDEX_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The most files whose seek index, or its absence, is remembered.
-pub(crate) const INDEXES_MAX: usize = 64;
+pub(crate) const INDEX_LIMIT: usize = 64;
 
 /// The most streams a viewing remembers, the latest.
 const STREAMS_KEPT: usize = 8;
 
 /// How long an application's viewing lasts after its last activity.
-pub(crate) const APP_VIEWING_TTL: Duration = Duration::from_secs(24 * 3600);
+pub(crate) const APP_VIEWING_EXPIRY: Duration = Duration::from_secs(24 * 3600);
 
 /// The most application viewings kept; a new one past it drops the one
 /// inactive longest.
-pub(crate) const APP_VIEWINGS_MAX: usize = 256;
+pub(crate) const APP_VIEWING_LIMIT: usize = 256;
 
 /// How long an unread application viewing keeps its temporary torrent after
 /// its last stream ended.
@@ -125,7 +125,7 @@ impl AppViewing {
     }
 
     fn expires_at(&self, now: SystemTime) -> SystemTime {
-        self.last_active(now).unwrap_or(self.created_at) + APP_VIEWING_TTL
+        self.last_active(now).unwrap_or(self.created_at) + APP_VIEWING_EXPIRY
     }
 }
 
@@ -153,7 +153,7 @@ enum IndexState {
     Missing,
 }
 
-/// The seek indexes of at most [`INDEXES_MAX`] files, the oldest dropped
+/// The seek indexes of at most [`INDEX_LIMIT`] files, the oldest dropped
 /// first.
 #[derive(Default)]
 struct Indexes {
@@ -166,7 +166,7 @@ impl Indexes {
         if self.entries.insert(key.clone(), state).is_none() {
             self.order.push_back(key);
         }
-        while self.order.len() > INDEXES_MAX {
+        while self.order.len() > INDEX_LIMIT {
             if let Some(oldest) = self.order.pop_front() {
                 self.entries.remove(&oldest);
             }
@@ -314,7 +314,7 @@ impl Inference {
     }
 
     /// Creates an application viewing of the file, dropping the one inactive
-    /// longest past [`APP_VIEWINGS_MAX`].
+    /// longest past [`APP_VIEWING_LIMIT`].
     pub(crate) fn create(&self, id: ViewingId, key: FileKey, now: SystemTime) -> AppStatus {
         let mut state = self.lock();
         let viewing = AppViewing {
@@ -326,7 +326,7 @@ impl Inference {
         };
         let status = app_status(&viewing, None, now);
         state.apps.insert(id, viewing);
-        while state.apps.len() > APP_VIEWINGS_MAX {
+        while state.apps.len() > APP_VIEWING_LIMIT {
             let oldest = state
                 .apps
                 .iter()
@@ -815,7 +815,7 @@ mod tests {
         let created = harness.inference.create(id.clone(), key(), harness.now());
         assert_eq!(created.position, None);
         assert_eq!(created.last_active_at, None);
-        assert_eq!(created.expires_at, harness.now() + APP_VIEWING_TTL);
+        assert_eq!(created.expires_at, harness.now() + APP_VIEWING_EXPIRY);
 
         let stream = harness.app_stream(&id, key(), 1000).unwrap();
         deliver(&stream, 30_000_000);
@@ -845,7 +845,7 @@ mod tests {
         assert!(!ended.streaming);
         assert_eq!(
             ended.expires_at,
-            harness.now() - Duration::from_secs(600) + APP_VIEWING_TTL
+            harness.now() - Duration::from_secs(600) + APP_VIEWING_EXPIRY
         );
         assert!(
             !harness.inference.is_viewing(&key()),
@@ -915,7 +915,7 @@ mod tests {
             .create(first.clone(), key(), harness.now());
         harness.advance(1);
         drop(harness.app_stream(&first, key(), 1000));
-        for n in 0..APP_VIEWINGS_MAX {
+        for n in 0..APP_VIEWING_LIMIT {
             let mut bytes = [2; torrplay_core::id::TORRENT_ID_RANDOM_BYTES];
             bytes[..8].copy_from_slice(&(n as u64).to_be_bytes());
             harness
@@ -929,9 +929,9 @@ mod tests {
                 .is_some(),
             "the limit drops the one inactive longest first"
         );
-        assert_eq!(harness.inference.lock().apps.len(), APP_VIEWINGS_MAX);
+        assert_eq!(harness.inference.lock().apps.len(), APP_VIEWING_LIMIT);
 
-        harness.advance(APP_VIEWING_TTL.as_secs());
+        harness.advance(APP_VIEWING_EXPIRY.as_secs());
         assert!(
             !harness
                 .inference
@@ -1074,12 +1074,12 @@ mod tests {
     fn indexes_past_the_most_drop_the_oldest() {
         let mut indexes = Indexes::default();
         let file = |n: usize| (key().0, FileId::derive(&[&format!("{n}.mkv")]));
-        for n in 0..=INDEXES_MAX {
+        for n in 0..=INDEX_LIMIT {
             indexes.insert(file(n), IndexState::Missing);
         }
-        assert_eq!(indexes.entries.len(), INDEXES_MAX);
+        assert_eq!(indexes.entries.len(), INDEX_LIMIT);
         assert!(!indexes.entries.contains_key(&file(0)));
-        assert!(indexes.entries.contains_key(&file(INDEXES_MAX)));
+        assert!(indexes.entries.contains_key(&file(INDEX_LIMIT)));
         indexes.forget_torrent(&key().0);
         assert!(indexes.entries.is_empty() && indexes.order.is_empty());
     }

@@ -114,11 +114,11 @@ pub const DEFAULT_PEER_READ_TIMEOUT: Duration = Duration::from_secs(150);
 pub const DEFAULT_PEER_PORT: u16 = 4240;
 
 /// The first delay before a failed metadata retrieval runs again; it
-/// doubles up to [`MAX_RETRIEVAL_DELAY`].
+/// doubles up to [`RETRIEVAL_DELAY_MAX`].
 const FIRST_RETRIEVAL_DELAY: Duration = Duration::from_secs(1);
 
 /// The longest delay between metadata retrieval attempts.
-const MAX_RETRIEVAL_DELAY: Duration = Duration::from_secs(60);
+const RETRIEVAL_DELAY_MAX: Duration = Duration::from_secs(60);
 
 /// The failure detail of a torrent librqbit stopped with an error.
 const ENGINE_FAILURE: &str = "The torrent engine stopped the torrent after an error.";
@@ -1024,7 +1024,7 @@ impl LibrqbitEngine {
                         "metadata retrieval failed; retrying"
                     );
                     tokio::time::sleep(delay).await;
-                    delay = (delay * 2).min(MAX_RETRIEVAL_DELAY);
+                    delay = (delay * 2).min(RETRIEVAL_DELAY_MAX);
                 }
             }
         }
@@ -1554,8 +1554,8 @@ impl Engine for LibrqbitEngine {
     async fn inspect(&self, source: &Source) -> Result<Inspection, EngineError> {
         self.running()?;
         match source {
-            Source::TorrentFile(bytes) => {
-                let inspected = inspect::torrent_file(bytes)?;
+            Source::Metainfo(bytes) => {
+                let inspected = inspect::metainfo(bytes)?;
                 Ok(Inspection {
                     info_hash: inspected.info_hash,
                     metadata: Some(Arc::new(inspected.metadata)),
@@ -1580,8 +1580,8 @@ impl Engine for LibrqbitEngine {
         let running = self.running()?;
         let directory = self.config.download_dir.join(id.as_str());
         let (info_hash, metadata, magnet_uri, initial) = match source {
-            Source::TorrentFile(bytes) => {
-                let inspected = inspect::torrent_file(bytes)?;
+            Source::Metainfo(bytes) => {
+                let inspected = inspect::metainfo(bytes)?;
                 self.check_storage(&inspected, storage_mode, &directory)?;
                 let initial = match storage_mode {
                     StorageMode::Memory => None,
@@ -1631,7 +1631,7 @@ impl Engine for LibrqbitEngine {
         }
         let _operations = torrent.operations.lock().await;
         match source {
-            Source::TorrentFile(bytes) => {
+            Source::Metainfo(bytes) => {
                 match self
                     .add_to_session(
                         &running,
@@ -1675,7 +1675,7 @@ impl Engine for LibrqbitEngine {
                 None => return Ok(()),
             }
         };
-        let inspected = inspect::torrent_file(&bytes)?;
+        let inspected = inspect::metainfo(&bytes)?;
         self.check_storage(&inspected, storage_mode, &torrent.directory)
     }
 
@@ -1708,14 +1708,10 @@ impl Engine for LibrqbitEngine {
         }
     }
 
-    async fn supply_metadata(
-        &self,
-        id: &TorrentId,
-        torrent_file: &[u8],
-    ) -> Result<(), EngineError> {
+    async fn supply_metadata(&self, id: &TorrentId, metainfo: &[u8]) -> Result<(), EngineError> {
         let running = self.running()?;
         let torrent = self.torrent(id)?;
-        let inspected = inspect::torrent_file(torrent_file)?;
+        let inspected = inspect::metainfo(metainfo)?;
         if inspected.info_hash != torrent.info_hash {
             return Err(EngineError::MetadataMismatch);
         }
@@ -1731,7 +1727,7 @@ impl Engine for LibrqbitEngine {
             .add_to_session(
                 &running,
                 &torrent,
-                AddTorrent::from_bytes(torrent_file.to_vec()),
+                AddTorrent::from_bytes(metainfo.to_vec()),
                 desired,
                 None,
             )
@@ -1863,7 +1859,7 @@ impl Engine for LibrqbitEngine {
         })
     }
 
-    async fn torrent_file(&self, id: &TorrentId) -> Result<Option<Vec<u8>>, EngineError> {
+    async fn metainfo(&self, id: &TorrentId) -> Result<Option<Vec<u8>>, EngineError> {
         self.running()?;
         let torrent = self.torrent(id)?;
         let state = torrent.state();

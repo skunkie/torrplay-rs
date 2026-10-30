@@ -33,7 +33,7 @@ use crate::telemetry::PieceWaits;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {
     /// The bytes of an uploaded torrent file.
-    TorrentFile(Vec<u8>),
+    Metainfo(Vec<u8>),
     /// A magnet URI.
     MagnetUri(String),
 }
@@ -43,7 +43,7 @@ impl Source {
     /// source, for the `errors` entry of a `validation-failed` problem.
     pub fn pointer(&self) -> &'static str {
         match self {
-            Self::TorrentFile(_) => "/metainfo",
+            Self::Metainfo(_) => "/metainfo",
             Self::MagnetUri(_) => "/magnet_uri",
         }
     }
@@ -392,7 +392,7 @@ pub trait Engine: Send + Sync + 'static {
     fn supply_metadata(
         &self,
         id: &TorrentId,
-        torrent_file: &[u8],
+        metainfo: &[u8],
     ) -> impl Future<Output = Result<(), EngineError>> + Send;
 
     /// Checks that a torrent can move to `storage_mode` without changing
@@ -453,7 +453,7 @@ pub trait Engine: Send + Sync + 'static {
     /// the retrieved info dictionary and the URI's trackers, which the
     /// application stores. `None` while metadata is unavailable, or while the
     /// engine cannot produce the bytes yet.
-    fn torrent_file(
+    fn metainfo(
         &self,
         id: &TorrentId,
     ) -> impl Future<Output = Result<Option<Vec<u8>>, EngineError>> + Send;
@@ -562,7 +562,7 @@ mod tests {
 
     #[test]
     fn sources_name_their_request_member() {
-        assert_eq!(Source::TorrentFile(Vec::new()).pointer(), "/metainfo");
+        assert_eq!(Source::Metainfo(Vec::new()).pointer(), "/metainfo");
         assert_eq!(Source::MagnetUri(String::new()).pointer(), "/magnet_uri");
     }
 }

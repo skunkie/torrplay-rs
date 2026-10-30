@@ -23,13 +23,13 @@ use crate::headers::{MediaType, negotiate};
 use crate::problem::{InvalidValue, Problem, ProblemType};
 use crate::representation::{self, JSON, NO_STORE, count, info_hashes, preview_file, torrent_path};
 use crate::torrents::{
-    form_boundary, identify, pointer, read_form, source_problem, torrent_file_part, unknown_member,
+    form_boundary, identify, metainfo_part, pointer, read_form, source_problem, unknown_member,
 };
 
 const FORM_DATA: &str = "multipart/form-data";
 
 /// How many files a preview lists.
-const MAX_FILES: usize = 1000;
+const FILE_LIMIT: usize = 1000;
 
 pub(crate) async fn create<E: Engine>(
     State(app): State<Arc<App<E>>>,
@@ -47,7 +47,7 @@ pub(crate) async fn create<E: Engine>(
     }
     let boundary = form_boundary(media_type.as_ref())?;
     let bytes = read_form(&app, &headers, body).await?;
-    let source = Source::TorrentFile(torrent_file(&bytes, &boundary)?.to_vec());
+    let source = Source::Metainfo(form_metainfo(&bytes, &boundary)?.to_vec());
 
     app.require_engine()?;
     let inspection = app
@@ -72,8 +72,8 @@ pub(crate) async fn create<E: Engine>(
             name: metadata.display_name(),
             size_bytes: count(metadata.size_bytes()),
             file_count: count(files.len() as u64),
-            files: files.iter().take(MAX_FILES).map(preview_file).collect(),
-            files_truncated: files.len() > MAX_FILES,
+            files: files.iter().take(FILE_LIMIT).map(preview_file).collect(),
+            files_truncated: files.len() > FILE_LIMIT,
             trackers: tracker_origins(&inspection.trackers),
             links: api::TorrentPreviewLinks { torrent: existing },
         },
@@ -84,8 +84,8 @@ pub(crate) async fn create<E: Engine>(
     Ok(response)
 }
 
-/// The form's one part, `torrent_file`.
-fn torrent_file(bytes: &Bytes, boundary: &str) -> Result<Bytes, Problem> {
+/// The form's one part, `metainfo`.
+fn form_metainfo(bytes: &Bytes, boundary: &str) -> Result<Bytes, Problem> {
     let parts = parse_form(bytes, boundary).map_err(|_| {
         Problem::new(
             ProblemType::MalformedRequest,
@@ -93,23 +93,23 @@ fn torrent_file(bytes: &Bytes, boundary: &str) -> Result<Bytes, Problem> {
         )
     })?;
     let mut errors = Vec::new();
-    let mut torrent_file = None;
+    let mut metainfo = None;
     for part in parts {
         match part.name.as_str() {
-            "metainfo" if torrent_file.is_some() => {
+            "metainfo" if metainfo.is_some() => {
                 errors.push(InvalidValue::pointer(
                     pointer(&part.name),
                     "Must appear once.",
                 ));
             }
-            "metainfo" => torrent_file = Some(torrent_file_part(part.data)?),
+            "metainfo" => metainfo = Some(metainfo_part(part.data)?),
             other => errors.push(unknown_member(other)),
         }
     }
-    if torrent_file.is_none() {
+    if metainfo.is_none() {
         errors.push(InvalidValue::pointer("/metainfo", "Is required."));
     }
-    match torrent_file {
+    match metainfo {
         Some(file) if errors.is_empty() => Ok(file),
         _ => Err(Problem::invalid_body(errors)),
     }

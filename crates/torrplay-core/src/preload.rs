@@ -13,20 +13,20 @@ use crate::lifecycle::Failure;
 use crate::metadata::FileIndex;
 
 /// The most a preload covers.
-pub const MAX_PRELOAD_BYTES: u64 = 32 << 20;
+pub const PRELOAD_MAX_BYTES: u64 = 32 << 20;
 
 /// The least of a file's end a head-and-tail preload covers; at least one
 /// piece.
 pub const TAIL_BYTES: u64 = 4 << 20;
 
-/// The time to live of a preload whose request sets none.
-pub const DEFAULT_TTL: Duration = Duration::from_secs(120);
+/// How long a preload lasts when its request sets no expiry.
+pub const DEFAULT_EXPIRES_IN: Duration = Duration::from_secs(120);
 
-/// The shortest time to live a request may set.
-pub const MIN_TTL: Duration = Duration::from_secs(10);
+/// The shortest expiry a request may set.
+pub const EXPIRES_IN_MIN: Duration = Duration::from_secs(10);
 
-/// The longest time to live a request may set.
-pub const MAX_TTL: Duration = Duration::from_secs(3600);
+/// The longest expiry a request may set.
+pub const EXPIRES_IN_MAX: Duration = Duration::from_secs(3600);
 
 /// How long an expired or failed preload stays readable.
 pub const RETENTION: Duration = Duration::from_secs(300);
@@ -82,8 +82,8 @@ pub struct PreloadRequest {
     /// or `None` for the file's head and tail. It lies within the file.
     pub offset_bytes: Option<u64>,
     /// How long the preload lasts from its creation, within
-    /// [`MIN_TTL`]..=[`MAX_TTL`].
-    pub ttl: Duration,
+    /// [`EXPIRES_IN_MIN`]..=[`EXPIRES_IN_MAX`].
+    pub expires_in: Duration,
 }
 
 /// The engine's view of a preload.
@@ -136,6 +136,6 @@ mod tests {
 
     #[test]
     fn the_default_ttl_lies_within_its_bounds() {
-        assert!((MIN_TTL..=MAX_TTL).contains(&DEFAULT_TTL));
+        assert!((EXPIRES_IN_MIN..=EXPIRES_IN_MAX).contains(&DEFAULT_EXPIRES_IN));
     }
 }

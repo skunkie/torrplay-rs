@@ -703,7 +703,7 @@ impl<E: Engine> App<E> {
     pub async fn restore(&self, torrents: Vec<StoredTorrent>) -> Result<(), EngineError> {
         for stored in torrents {
             let source = match (&stored.metainfo, &stored.magnet_uri) {
-                (Some(bytes), _) => Source::TorrentFile(bytes.clone()),
+                (Some(bytes), _) => Source::Metainfo(bytes.clone()),
                 (None, Some(uri)) => Source::MagnetUri(uri.clone()),
                 // The store returns no torrent without either.
                 (None, None) => continue,
@@ -951,7 +951,7 @@ impl<E: Engine> App<E> {
         id: &TorrentId,
         metadata: &Arc<Metadata>,
     ) -> Result<bool, Problem> {
-        let torrent_file = match self.engine.torrent_file(id).await {
+        let metainfo = match self.engine.metainfo(id).await {
             Ok(Some(bytes)) => bytes,
             Ok(None) | Err(EngineError::Unavailable { .. } | EngineError::UnknownTorrent) => {
                 return Ok(false);
@@ -968,10 +968,8 @@ impl<E: Engine> App<E> {
         }
         // A temporary torrent keeps it in memory, to be stored if it is
         // persisted.
-        if !self
-            .temporaries
-            .record_torrent_file(id, torrent_file.clone())
-            && let Err(error) = self.store.set_metainfo(id, torrent_file).await
+        if !self.temporaries.record_metainfo(id, metainfo.clone())
+            && let Err(error) = self.store.set_metainfo(id, metainfo).await
         {
             tracing::error!(%error, %id, "retrieved metadata could not be stored");
             return Ok(false);

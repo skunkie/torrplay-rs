@@ -73,10 +73,10 @@ impl Temporaries {
 
     /// Replaces a temporary torrent's source with its torrent file, once its
     /// metadata is known; returns whether it is temporary.
-    pub(crate) fn record_torrent_file(&self, id: &TorrentId, torrent_file: Vec<u8>) -> bool {
+    pub(crate) fn record_metainfo(&self, id: &TorrentId, metainfo: Vec<u8>) -> bool {
         match self.lock().get_mut(id) {
             Some(temporary) => {
-                temporary.source = Source::TorrentFile(torrent_file);
+                temporary.source = Source::Metainfo(metainfo);
                 true
             }
             None => false,

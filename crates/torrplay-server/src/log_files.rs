@@ -7,7 +7,7 @@
 //! first, for `/api/v1/log-records`.
 //!
 //! The current file is `torrplay.jsonl`. When a record would take it past
-//! [`MAX_FILE_BYTES`], it becomes `torrplay.1.jsonl`, each older file moves
+//! [`FILE_MAX_BYTES`], it becomes `torrplay.1.jsonl`, each older file moves
 //! up one number, and the oldest beyond [`FILES`] is deleted. Logging never
 //! waits for the disk: records go through a bounded queue, and those the
 //! queue or the disk cannot take are dropped and counted.
@@ -25,7 +25,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 /// The largest a file grows before it rotates.
-pub const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
+pub const FILE_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
 /// The number of files kept, the current one included.
 pub const FILES: usize = 4;
@@ -95,7 +95,7 @@ impl LogFiles {
     /// Opens the log files in `directory`, creating it, and starts their
     /// writer. The sequence continues from the last record the files hold.
     pub fn open(directory: &Path) -> io::Result<(Self, LogWriter)> {
-        Self::open_bounded(directory, MAX_FILE_BYTES)
+        Self::open_bounded(directory, FILE_MAX_BYTES)
     }
 
     /// Opens the files as [`open`](Self::open) does, rotating at

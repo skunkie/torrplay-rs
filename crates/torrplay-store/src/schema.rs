@@ -397,7 +397,7 @@ pub(crate) fn torrents(connection: &mut Connection) -> Result<Vec<StoredTorrent>
             desired_state,
             version,
             magnet_uri,
-            torrent_file,
+            metainfo,
             desired_storage_mode,
             storage_mode,
             (title, kind, year, description, imdb_id),
@@ -439,7 +439,7 @@ pub(crate) fn torrents(connection: &mut Connection) -> Result<Vec<StoredTorrent>
                 Configuration::from_stored(desired_state, desired_storage_mode, library, version)
             })
             .ok_or_else(|| corrupt("the configuration version is out of range"))?;
-        if magnet_uri.is_none() && torrent_file.is_none() {
+        if magnet_uri.is_none() && metainfo.is_none() {
             return Err(corrupt("neither a magnet URI nor a torrent file"));
         }
         torrents.push(StoredTorrent {
@@ -450,7 +450,7 @@ pub(crate) fn torrents(connection: &mut Connection) -> Result<Vec<StoredTorrent>
             storage_mode,
             poster: posters.remove(&id),
             magnet_uri,
-            metainfo: torrent_file,
+            metainfo,
         });
     }
     drop(statement);

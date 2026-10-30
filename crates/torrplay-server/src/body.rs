@@ -103,13 +103,13 @@ pub(crate) struct Part {
 pub(crate) struct MalformedForm;
 
 /// The longest boundary RFC 2046 allows.
-const MAX_BOUNDARY_CHARS: usize = 70;
+const BOUNDARY_MAX_CHARS: usize = 70;
 
 /// Splits a `multipart/form-data` body into its named parts. Part headers
 /// other than `Content-Disposition` are ignored: the form's fields say what
 /// each part is.
 pub(crate) fn parse_form(body: &Bytes, boundary: &str) -> Result<Vec<Part>, MalformedForm> {
-    if boundary.is_empty() || boundary.len() > MAX_BOUNDARY_CHARS {
+    if boundary.is_empty() || boundary.len() > BOUNDARY_MAX_CHARS {
         return Err(MalformedForm);
     }
     let delimiter = format!("\r\n--{boundary}");

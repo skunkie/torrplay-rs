@@ -44,7 +44,7 @@ impl FixtureDir {
         self.root.join("content")
     }
 
-    pub fn torrent_file(&self, name: &str) -> PathBuf {
+    pub fn metainfo_path(&self, name: &str) -> PathBuf {
         self.root.join(format!("{name}.torrent"))
     }
 
@@ -69,7 +69,7 @@ impl FixtureDir {
                 spec.write_content(&self.content())?;
             }
             let metainfo = spec.metainfo_announcing(announce);
-            fs::write(self.torrent_file(&spec.id), &metainfo.bytes)?;
+            fs::write(self.metainfo_path(&spec.id), &metainfo.bytes)?;
             fs::write(
                 self.magnet_file(&spec.id),
                 spec.magnet_uri_announcing(&metainfo.info_hash, announce),
@@ -79,7 +79,7 @@ impl FixtureDir {
     }
 
     pub fn read_torrent(&self, name: &str) -> anyhow::Result<Vec<u8>> {
-        let path = self.torrent_file(name);
+        let path = self.metainfo_path(name);
         fs::read(&path).with_context(|| format!("reading {}", path.display()))
     }
 

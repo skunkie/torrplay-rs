@@ -253,7 +253,7 @@ pub fn id(n: u8) -> TorrentId {
 }
 
 pub fn upload(spec: &FixtureSpec) -> Source {
-    Source::TorrentFile(spec.metainfo().bytes)
+    Source::Metainfo(spec.metainfo().bytes)
 }
 
 pub fn magnet(spec: &FixtureSpec) -> Source {

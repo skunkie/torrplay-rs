@@ -38,7 +38,7 @@ const MESSAGE_MAX_BYTES: usize = 4096;
 const VALUE_MAX_BYTES: usize = 1024;
 
 /// The most fields a record keeps.
-const FIELDS_MAX: usize = 32;
+const FIELD_LIMIT: usize = 32;
 
 /// The field that names a record's request, which the record carries as a
 /// member of its own rather than among its fields.
@@ -210,7 +210,7 @@ impl<W> JsonLayer<W> {
         for (name, value) in values {
             if name == REQUEST_ID_FIELD {
                 request_id = Some(bounded(&value, VALUE_MAX_BYTES));
-            } else if members.len() < FIELDS_MAX {
+            } else if members.len() < FIELD_LIMIT {
                 members.insert(name.to_owned(), bounded(&value, VALUE_MAX_BYTES));
             }
         }
@@ -385,6 +385,6 @@ mod tests {
             let _entered = span.enter();
             tracing::info!(d0 = 0, d1 = 1, d2 = 2, "many fields");
         });
-        assert_eq!(records[0]["fields"].as_object().unwrap().len(), FIELDS_MAX);
+        assert_eq!(records[0]["fields"].as_object().unwrap().len(), FIELD_LIMIT);
     }
 }

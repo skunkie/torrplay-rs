@@ -20,7 +20,7 @@ use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value};
 use torrplay_api as api;
 use torrplay_core::credentials::{
-    ACCESS_TOKEN_LIFETIME, ACCESS_TOKENS_MAX, AccessToken, Grant, PLAYBACK_TOKEN_DEFAULT_LIFETIME,
+    ACCESS_TOKEN_LIFETIME, ACCESS_TOKEN_LIMIT, AccessToken, Grant, PLAYBACK_TOKEN_DEFAULT_LIFETIME,
     PLAYBACK_TOKEN_LIFETIME, PasswordHash, PlaybackGrant, Scope, SigningKey, new_secret,
     normalize_password, normalize_token_name,
 };
@@ -408,11 +408,11 @@ pub(crate) async fn create_access_token<E: Engine>(
     let _lane = app.credential_lane().await;
     check_password(&app, given).await?;
     let now = app.now();
-    if app.credentials().tokens(now).len() >= ACCESS_TOKENS_MAX {
+    if app.credentials().tokens(now).len() >= ACCESS_TOKEN_LIMIT {
         return Err(Problem::new(
             ProblemType::TooManyAccessTokens,
             format!(
-                "The application keeps at most {ACCESS_TOKENS_MAX} access tokens; revoke one first."
+                "The application keeps at most {ACCESS_TOKEN_LIMIT} access tokens; revoke one first."
             ),
         ));
     }

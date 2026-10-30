@@ -377,13 +377,9 @@ impl Store {
 
     /// Stores the torrent file of a torrent that has none; a torrent file
     /// already stored is kept.
-    pub async fn set_metainfo(
-        &self,
-        id: &TorrentId,
-        torrent_file: Vec<u8>,
-    ) -> Result<(), StoreError> {
+    pub async fn set_metainfo(&self, id: &TorrentId, metainfo: Vec<u8>) -> Result<(), StoreError> {
         let id = id.clone();
-        self.send(|reply| Command::SetMetainfo(id, torrent_file, reply))
+        self.send(|reply| Command::SetMetainfo(id, metainfo, reply))
             .await
     }
 

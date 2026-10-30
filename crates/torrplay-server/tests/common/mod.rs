@@ -574,8 +574,8 @@ impl TestServer {
     }
 
     /// Creates a torrent from an uploaded torrent file.
-    pub async fn upload(&self, torrent_file: &[u8], desired_state: Option<&str>) -> Exchange {
-        self.send(form_request(torrent_file, desired_state)).await
+    pub async fn upload(&self, metainfo: &[u8], desired_state: Option<&str>) -> Exchange {
+        self.send(form_request(metainfo, desired_state)).await
     }
 
     /// Returns the ID of a torrent from its creation response.
@@ -647,11 +647,11 @@ pub fn json_request(method: Method, path: &str, body: &Value) -> Request<Vec<u8>
 pub const BOUNDARY: &str = "torrplay-test-boundary";
 
 /// A creation request with a multipart form.
-pub fn form_request(torrent_file: &[u8], desired_state: Option<&str>) -> Request<Vec<u8>> {
+pub fn form_request(metainfo: &[u8], desired_state: Option<&str>) -> Request<Vec<u8>> {
     let mut parts = vec![(
         "metainfo",
         Some("application/x-bittorrent"),
-        torrent_file.to_vec(),
+        metainfo.to_vec(),
     )];
     if let Some(state) = desired_state {
         parts.push(("desired_state", None, state.as_bytes().to_vec()));

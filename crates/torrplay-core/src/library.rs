@@ -21,7 +21,7 @@ pub const LABEL_MAX_CHARS: usize = 128;
 pub const DESCRIPTION_MAX_CHARS: usize = 4096;
 
 /// The most categories, and the most genres, a torrent has.
-pub const LABELS_MAX: usize = 16;
+pub const LABEL_LIMIT: usize = 16;
 
 /// The years a torrent may have.
 pub const YEARS: RangeInclusive<u16> = 1800..=2200;
@@ -103,8 +103,8 @@ pub enum TextError {
 /// Why a list cannot be a torrent's categories or genres.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ListError {
-    /// It has more than [`LABELS_MAX`] entries.
-    #[error("Must have at most {LABELS_MAX} entries.")]
+    /// It has more than [`LABEL_LIMIT`] entries.
+    #[error("Must have at most {LABEL_LIMIT} entries.")]
     TooMany,
     /// An entry is invalid.
     #[error("{error}")]
@@ -177,7 +177,7 @@ pub fn normalize_description(text: &str) -> Result<String, TextError> {
 pub fn normalize_labels<'a>(
     entries: impl ExactSizeIterator<Item = &'a str>,
 ) -> Result<Vec<String>, ListError> {
-    if entries.len() > LABELS_MAX {
+    if entries.len() > LABEL_LIMIT {
         return Err(ListError::TooMany);
     }
     let mut labels: Vec<String> = Vec::with_capacity(entries.len());
@@ -378,7 +378,7 @@ mod tests {
                 error: TextError::Empty
             })
         );
-        let many: Vec<String> = (0..=LABELS_MAX).map(|n| n.to_string()).collect();
+        let many: Vec<String> = (0..=LABEL_LIMIT).map(|n| n.to_string()).collect();
         assert_eq!(
             normalize_labels(many.iter().map(String::as_str)),
             Err(ListError::TooMany)

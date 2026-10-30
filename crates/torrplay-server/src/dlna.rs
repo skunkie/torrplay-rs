@@ -36,10 +36,10 @@ use torrplay_dlna::tree::{self, Base, Catalog};
 use crate::app::App;
 use crate::body::read_limited;
 use crate::files::{self, Watcher};
+use crate::playable;
 use crate::posters;
 use crate::problem::{Problem, ProblemType};
 use crate::representation::file_name;
-use crate::shelf;
 
 /// The `SOAPACTION` request header.
 const SOAP_ACTION: &str = "soapaction";
@@ -383,11 +383,11 @@ pub(crate) async fn connection_manager<E: Engine>(
 /// torrents are being restored: the torrents with metadata and a playable
 /// file that are neither paused nor failed, newest first.
 async fn catalog<E: Engine>(app: &App<E>) -> Result<Option<Catalog>, Problem> {
-    let Some(shelved) = shelf::shelved(app).await? else {
+    let Some(playable) = playable::torrents(app).await? else {
         return Ok(None);
     };
     let progress = device_progress(app);
-    let torrents = shelved
+    let torrents = playable
         .into_iter()
         .map(|torrent| {
             let saved = progress.get(&torrent.id);

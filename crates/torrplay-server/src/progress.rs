@@ -261,7 +261,7 @@ pub(crate) fn update_of(
     }
 }
 
-pub(crate) async fn put<E: Engine>(
+pub(crate) async fn set<E: Engine>(
     State(app): State<Arc<App<E>>>,
     Path((profile, torrent, file_id)): Path<(String, String, String)>,
     headers: HeaderMap,
