@@ -11,7 +11,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use torrplay_api as api;
 use torrplay_core::engine;
-use torrplay_core::id::{FileId, ProfileId, TorrentId};
+use torrplay_core::id::{FileId, InfoHashV1, ProfileId, TorrentId};
 use torrplay_core::image::{ImageInfo, ImageType};
 use torrplay_core::library::{self, Kind, Library};
 use torrplay_core::lifecycle::{self, Configuration, EntityTag, ObservedState, Retention};
@@ -151,10 +151,7 @@ pub(crate) fn torrent(view: &TorrentView) -> api::Torrent {
         }),
         file_count: metadata.map(|metadata| count(metadata.files().len() as u64)),
         id: record.id.to_string(),
-        info_hashes: vec![api::InfoHash {
-            algorithm: api::InfoHashAlgorithm::Sha1,
-            value: record.info_hash.to_string(),
-        }],
+        info_hashes: info_hashes(&record.info_hash),
         links: api::TorrentLinks {
             configuration: format!("{path}/configuration"),
             files: format!("{path}/files"),
@@ -267,6 +264,23 @@ pub(crate) fn configuration(id: &TorrentId, value: &Configuration) -> api::Torre
 /// Returns a file's name: the last component of its path.
 pub(crate) fn file_name(file: &MetadataFile) -> String {
     file.display_path().pop().unwrap_or_default()
+}
+
+/// A file as a torrent preview lists it: as the torrent would, without links.
+pub(crate) fn preview_file(file: &MetadataFile) -> api::PreviewFile {
+    api::PreviewFile {
+        id: file.id().to_string(),
+        media_type: content::media_type(&file_name(file)).0.to_owned(),
+        path: file.display_path(),
+        size_bytes: count(file.size_bytes()),
+    }
+}
+
+pub(crate) fn info_hashes(info_hash: &InfoHashV1) -> Vec<api::InfoHash> {
+    vec![api::InfoHash {
+        algorithm: api::InfoHashAlgorithm::Sha1,
+        value: info_hash.to_string(),
+    }]
 }
 
 pub(crate) fn file(torrent: &TorrentId, file: &MetadataFile) -> api::TorrentFile {

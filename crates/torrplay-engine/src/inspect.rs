@@ -36,6 +36,8 @@ pub(crate) struct InspectedFile {
     pub(crate) metadata: ReportedMetadata,
     pub(crate) piece_length: u32,
     pub(crate) piece_count: u32,
+    /// The announce URLs, from `announce-list`, or else `announce`.
+    pub(crate) trackers: Vec<String>,
 }
 
 /// Inspects the bytes of a torrent file.
@@ -53,6 +55,11 @@ pub(crate) fn torrent_file(bytes: &[u8]) -> Result<InspectedFile, SourceRejectio
         });
     };
     let info_hash = InfoHashV1::from_bytes(parsed.info_hash.0);
+    let trackers = distinct(
+        parsed
+            .iter_announce()
+            .filter_map(|url| std::str::from_utf8(url.as_ref()).ok()),
+    );
     let validated = match parsed.info.data.validate() {
         Ok(validated) => validated,
         Err(librqbit_core::Error::BadTorrentDuplicateFilenames) => {
@@ -66,6 +73,7 @@ pub(crate) fn torrent_file(bytes: &[u8]) -> Result<InspectedFile, SourceRejectio
     };
     Ok(InspectedFile {
         info_hash,
+        trackers,
         piece_length: validated.info().piece_length,
         piece_count: validated.lengths().total_pieces(),
         metadata: reported_metadata(&validated),
@@ -120,6 +128,24 @@ pub(crate) fn magnet_uri(uri: &str) -> Result<InfoHashV1, SourceRejection> {
         }),
         (None, None) => Err(invalid()),
     }
+}
+
+/// A magnet URI's `tr` trackers, or none if it does not parse.
+pub(crate) fn magnet_trackers(uri: &str) -> Vec<String> {
+    Magnet::parse(uri)
+        .map(|magnet| distinct(magnet.trackers.iter().map(String::as_str)))
+        .unwrap_or_default()
+}
+
+/// `urls` in order, each once.
+fn distinct<'a>(urls: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let mut seen = Vec::new();
+    for url in urls {
+        if !seen.iter().any(|known: &String| known == url) {
+            seen.push(url.to_owned());
+        }
+    }
+    seen
 }
 
 /// Returns whether `bytes` are bencoded metainfo whose info dictionary
@@ -177,6 +203,36 @@ mod tests {
             inspected.metadata.files[0].path,
             [b"single-small.bin".to_vec()]
         );
+    }
+
+    #[test]
+    fn trackers_come_from_the_announce_urls() {
+        let spec = catalog::single_small();
+        assert!(
+            torrent_file(&spec.metainfo().bytes)
+                .unwrap()
+                .trackers
+                .is_empty()
+        );
+        let announce = "http://tracker.test/announce?passkey=secret";
+        let announcing = spec.metainfo_announcing(announce);
+        assert_eq!(
+            torrent_file(&announcing.bytes).unwrap().trackers,
+            [announce]
+        );
+
+        let info_hash = spec.metainfo().info_hash;
+        let uri = format!(
+            "{}&tr=udp%3A%2F%2Ftracker.test%3A6969",
+            spec.magnet_uri_announcing(&info_hash, announce)
+        );
+        let repeated = format!("{uri}&tr=udp%3A%2F%2Ftracker.test%3A6969");
+        assert_eq!(
+            magnet_trackers(&repeated),
+            [announce, "udp://tracker.test:6969"],
+            "in order, each once"
+        );
+        assert!(magnet_trackers("not a magnet").is_empty());
     }
 
     #[test]

@@ -100,6 +100,11 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
   link, the torrent file the engine builds from the retrieved metadata and
   the link's trackers.
 
+**Torrent preview**
+: What adding a torrent file would create, computed without adding it: its
+  info hash, name, files with the IDs the torrent would give them, and its
+  trackers reduced to their scheme, host, and port. Nothing is stored.
+
 ## Pieces and the cache
 
 **Piece**

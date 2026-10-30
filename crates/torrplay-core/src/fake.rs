@@ -73,6 +73,9 @@ struct State {
 
 struct Fixture {
     metainfo: Vec<u8>,
+    /// Other torrent files of the same metadata, with the trackers each
+    /// announces to.
+    announcing: Vec<(Vec<u8>, Vec<String>)>,
     metadata: Arc<ReportedMetadata>,
     /// The content of each file in the metadata's list.
     contents: Vec<Content>,
@@ -229,11 +232,24 @@ impl FakeEngine {
         let info_hash = InfoHashV1::from_bytes(info_hash);
         let fixture = Fixture {
             metainfo,
+            announcing: Vec::new(),
             metadata: Arc::new(ReportedMetadata { name, files }),
             contents,
         };
         self.lock().fixtures.insert(info_hash, fixture);
         info_hash
+    }
+
+    /// Adds [`FixtureSpec::metainfo_announcing`] `announce` as another
+    /// torrent file of `spec`'s fixture, which must have been added.
+    pub fn add_announcing(&self, spec: &FixtureSpec, announce: &str) {
+        let metainfo = spec.metainfo_announcing(announce);
+        let info_hash = InfoHashV1::from_bytes(metainfo.info_hash);
+        if let Some(fixture) = self.lock().fixtures.get_mut(&info_hash) {
+            fixture
+                .announcing
+                .push((metainfo.bytes, vec![announce.to_owned()]));
+        }
     }
 
     /// Sets whether peers supply the metadata of the fixture with
@@ -407,14 +423,21 @@ impl State {
     fn inspect(&self, source: &Source) -> Result<Inspection, SourceRejection> {
         match source {
             Source::TorrentFile(bytes) => {
-                if let Some((info_hash, fixture)) = self
-                    .fixtures
-                    .iter()
-                    .find(|(_, fixture)| &fixture.metainfo == bytes)
-                {
+                let found = self.fixtures.iter().find_map(|(info_hash, fixture)| {
+                    if &fixture.metainfo == bytes {
+                        return Some((info_hash, fixture, Vec::new()));
+                    }
+                    fixture
+                        .announcing
+                        .iter()
+                        .find(|(metainfo, _)| metainfo == bytes)
+                        .map(|(_, trackers)| (info_hash, fixture, trackers.clone()))
+                });
+                if let Some((info_hash, fixture, trackers)) = found {
                     Ok(Inspection {
                         info_hash: *info_hash,
                         metadata: Some(Arc::clone(&fixture.metadata)),
+                        trackers,
                     })
                 } else if self.unsupported.contains(bytes) {
                     Err(SourceRejection::Unsupported {
@@ -429,6 +452,7 @@ impl State {
             Source::MagnetUri(uri) => Ok(Inspection {
                 info_hash: parse_magnet_uri(uri)?,
                 metadata: None,
+                trackers: Vec::new(),
             }),
         }
     }

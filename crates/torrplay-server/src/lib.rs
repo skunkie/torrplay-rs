@@ -40,6 +40,7 @@ pub mod log_files;
 mod metainfo;
 mod posters;
 mod preloads;
+mod previews;
 mod problem;
 mod profiles;
 mod progress;
@@ -87,6 +88,7 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
             "/api/v1/torrents",
             get(torrents::list::<E>).post(torrents::create::<E>),
         )
+        .route("/api/v1/torrent-previews", post(previews::create::<E>))
         .route(
             torrent,
             get(torrents::get::<E>).delete(torrents::delete::<E>),

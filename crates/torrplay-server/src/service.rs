@@ -41,6 +41,7 @@ pub(crate) async fn entry_point(headers: HeaderMap) -> Result<Response, Problem>
                 profiles: format!("{BASE}/profiles"),
                 settings: format!("{BASE}/settings"),
                 torrents: torrents_path(),
+                torrent_previews: format!("{BASE}/torrent-previews"),
                 password: password_path(),
                 access_tokens: access_tokens_path(),
                 playback_tokens: playback_tokens_path(),

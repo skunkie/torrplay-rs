@@ -69,6 +69,10 @@ at any moment. Clients must handle observed states added later.
   download directory cannot hold are `unsupported-torrent`; and too little
   free space for a torrent in disk storage is `insufficient-storage`.
 - Torrent IDs are random, so they are not reused, including across restarts.
+- `POST /api/v1/torrent-previews` reads a torrent file as creation does and
+  answers what creating it would give, without creating it: a client can
+  show its files, pick one, or learn from `links.torrent` that the library
+  already has it. Input creation would reject is rejected the same way.
 
 ## Metadata retrieval
 

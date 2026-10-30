@@ -84,6 +84,7 @@ paths:
                     links:
                       self: /api/v1
                       torrents: /api/v1/torrents
+                      torrent_previews: /api/v1/torrent-previews
                       profiles: /api/v1/profiles
                       cache_statistics: /api/v1/cache/statistics
                       statistics: /api/v1/statistics
@@ -420,6 +421,102 @@ paths:
           $ref: '#/components/responses/EngineUnavailable'
         '507':
           $ref: '#/components/responses/InsufficientStorage'
+
+  /api/v1/torrent-previews:
+    post:
+      operationId: createTorrentPreview
+      summary: Preview a torrent file
+      description: >-
+        Reads an uploaded torrent file and returns what adding it would
+        create, without adding it: its info hash, name, files with the IDs
+        createTorrent would give them, and trackers. Nothing is stored, and
+        no peer is contacted. A client uses it to show a torrent's files
+        before adding it, to pick a file, or to find that the library already
+        has the torrent. It answers 200, since no resource is created. A
+        magnet URI cannot be previewed, since its metadata comes from peers.
+      tags: [Torrents]
+      requestBody:
+        description: >-
+          A torrent file of at most 10485760 bytes in a multipart form, as
+          createTorrent takes it. Larger bodies are content-too-large, and a
+          body that does not arrive within 30 seconds is request-timeout.
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TorrentPreviewUpload'
+            encoding:
+              torrent_file:
+                contentType: application/x-bittorrent
+            examples:
+              upload:
+                summary: An uploaded torrent file
+                value:
+                  torrent_file: d8:announce20:http://tracker.test/4:infod6:lengthi1024e4:name8:file.bin12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaaee
+      responses:
+        '200':
+          description: What adding the torrent file would create.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TorrentPreview'
+              examples:
+                new:
+                  summary: A torrent the library does not have
+                  value:
+                    info_hashes:
+                      - algorithm: sha1
+                        value: 0123456789abcdef0123456789abcdef01234567
+                    name: Example Collection
+                    size_bytes: 2147481600
+                    file_count: 2
+                    files:
+                      - id: fil_xfuperelxpqq4qhvgmtq62qwv4
+                        path: [Example Collection, part-1.mkv]
+                        size_bytes: 1073740800
+                        media_type: video/x-matroska
+                      - id: fil_3ngq2wvukdllyvbbvfw5yglt7q
+                        path: [Example Collection, part-2.mkv]
+                        size_bytes: 1073740800
+                        media_type: video/x-matroska
+                    files_truncated: false
+                    trackers: ['udp://tracker.test:6969']
+                    links: {}
+                added:
+                  summary: A torrent the library already has
+                  value:
+                    info_hashes:
+                      - algorithm: sha1
+                        value: 0123456789abcdef0123456789abcdef01234567
+                    name: file.bin
+                    size_bytes: 1024
+                    file_count: 1
+                    files:
+                      - id: fil_xfuperelxpqq4qhvgmtq62qwv4
+                        path: [file.bin]
+                        size_bytes: 1024
+                        media_type: application/octet-stream
+                    files_truncated: false
+                    trackers: ['http://tracker.test']
+                    links:
+                      torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/UnprocessableTorrent'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
 
   /api/v1/torrents/{torrent_id}:
     parameters:
@@ -4461,7 +4558,7 @@ components:
         links:
           type: object
           description: Links to the top-level resources, the OpenAPI document, and the API reference.
-          required: [self, torrents, profiles, cache_statistics, statistics, system, log_records, metrics, settings, password, access_tokens, playback_tokens, service-desc, service-doc]
+          required: [self, torrents, torrent_previews, profiles, cache_statistics, statistics, system, log_records, metrics, settings, password, access_tokens, playback_tokens, service-desc, service-doc]
           properties:
             self:
               type: string
@@ -4473,6 +4570,11 @@ components:
               format: uri-reference
               description: The torrents collection.
               examples: [/api/v1/torrents]
+            torrent_previews:
+              type: string
+              format: uri-reference
+              description: Where a torrent file is previewed without adding it.
+              examples: [/api/v1/torrent-previews]
             profiles:
               type: string
               format: uri-reference
@@ -4581,6 +4683,119 @@ components:
           $ref: '#/components/schemas/Categories'
         genres:
           $ref: '#/components/schemas/Genres'
+
+    TorrentPreviewUpload:
+      type: object
+      description: The multipart form that previews a torrent file.
+      additionalProperties: false
+      required: [torrent_file]
+      properties:
+        torrent_file:
+          type: string
+          contentMediaType: application/x-bittorrent
+          description: The torrent file to preview, at most 10485760 bytes.
+          examples: ['d8:announce20:http://tracker.test/4:infod6:lengthi1024e4:name8:file.bin12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaaee']
+
+    TorrentPreview:
+      type: object
+      description: >-
+        What adding a torrent file would create. Its files carry the IDs the
+        torrent's files would have, but no links, since no torrent exists.
+      required: [info_hashes, name, size_bytes, file_count, files, files_truncated, trackers, links]
+      properties:
+        info_hashes:
+          type: array
+          description: The torrent's info hashes, as the torrent would report them.
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/InfoHash'
+          examples:
+            - - algorithm: sha1
+                value: 0123456789abcdef0123456789abcdef01234567
+        name:
+          type: string
+          description: The name from the metadata, as the torrent would report it.
+          examples: [Example Collection]
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The total size of the torrent's files.
+          examples: [2147481600]
+        file_count:
+          type: integer
+          format: int64
+          minimum: 1
+          description: The number of files, including any that files leaves out.
+          examples: [2]
+        files:
+          type: array
+          description: >-
+            The first 1000 files, in metadata order, as the torrent's file
+            listing would order them.
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/PreviewFile'
+          examples:
+            - - id: fil_xfuperelxpqq4qhvgmtq62qwv4
+                path: [Example Collection, part-1.mkv]
+                size_bytes: 1073740800
+                media_type: video/x-matroska
+        files_truncated:
+          type: boolean
+          description: Whether the torrent has more files than files lists.
+          examples: [false]
+        trackers:
+          type: array
+          description: >-
+            The trackers the torrent file announces to, in its order and
+            without duplicates, each reduced to its scheme, host, and port.
+            A tracker URL's path, query, and credentials are left out, since
+            a private tracker's passkey may be among them.
+          items:
+            type: string
+          examples:
+            - ['udp://tracker.test:6969']
+        links:
+          type: object
+          description: Links from the preview.
+          properties:
+            torrent:
+              type: string
+              format: uri-reference
+              description: >-
+                The library's torrent with the same info hash, present only
+                when it has one; creating the torrent would be a
+                duplicate-torrent problem.
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula]
+
+    PreviewFile:
+      type: object
+      description: A file a torrent file lists, as the torrent would list it.
+      required: [id, path, size_bytes, media_type]
+      properties:
+        id:
+          type: string
+          description: The ID the file would have in the torrent.
+          examples: [fil_xfuperelxpqq4qhvgmtq62qwv4]
+        path:
+          type: array
+          description: The path components the file would have, in order.
+          minItems: 1
+          items:
+            type: string
+          examples:
+            - [Example Collection, part-1.mkv]
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The file's size, from the metadata.
+          examples: [1073740800]
+        media_type:
+          type: string
+          description: The media type the file's content would be served with.
+          examples: [video/x-matroska]
 
     TorrentFileUpload:
       type: object

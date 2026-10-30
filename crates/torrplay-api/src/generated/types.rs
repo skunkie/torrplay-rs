@@ -193,6 +193,51 @@ pub struct TorrentStatisticsLinks {
     ///The torrent these statistics measure.
     pub torrent: String,
 }
+///What adding a torrent file would create. Its files carry the IDs the torrent's files would have, but no links, since no torrent exists.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TorrentPreview {
+    ///The number of files, including any that files leaves out.
+    ///Constraint: minimum=1
+    pub file_count: i64,
+    ///The first 1000 files, in metadata order, as the torrent's file listing would order them.
+    ///Constraint: maxItems=1000
+    pub files: Vec<PreviewFile>,
+    ///Whether the torrent has more files than files lists.
+    pub files_truncated: bool,
+    ///The torrent's info hashes, as the torrent would report them.
+    ///Constraint: minItems=1
+    pub info_hashes: Vec<InfoHash>,
+    ///Links from the preview.
+    pub links: TorrentPreviewLinks,
+    ///The name from the metadata, as the torrent would report it.
+    pub name: String,
+    ///The total size of the torrent's files.
+    ///Constraint: minimum=0
+    pub size_bytes: i64,
+    ///The trackers the torrent file announces to, in its order and without duplicates, each reduced to its scheme, host, and port. A tracker URL's path, query, and credentials are left out, since a private tracker's passkey may be among them.
+    pub trackers: Vec<String>,
+}
+///Links from the preview.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct TorrentPreviewLinks {
+    ///The library's torrent with the same info hash, present only when it has one; creating the torrent would be a duplicate-torrent problem.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub torrent: Option<String>,
+}
+///A file a torrent file lists, as the torrent would list it.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PreviewFile {
+    ///The ID the file would have in the torrent.
+    pub id: String,
+    ///The media type the file's content would be served with.
+    pub media_type: String,
+    ///The path components the file would have, in order.
+    ///Constraint: minItems=1
+    pub path: Vec<String>,
+    ///The file's size, from the metadata.
+    ///Constraint: minimum=0
+    pub size_bytes: i64,
+}
 ///A page of torrents.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TorrentPage {
@@ -2014,6 +2059,8 @@ pub struct EntryPointLinks {
     pub statistics: String,
     ///The running process, with its build and memory use.
     pub system: String,
+    ///Where a torrent file is previewed without adding it.
+    pub torrent_previews: String,
     ///The torrents collection.
     pub torrents: String,
 }
@@ -2418,4 +2465,10 @@ impl TitleProgressUpdateBuilder {
     pub fn build(self) -> TitleProgressUpdate {
         self.value
     }
+}
+///The multipart form that previews a torrent file.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TorrentPreviewUpload {
+    ///The torrent file to preview, at most 10485760 bytes.
+    pub torrent_file: String,
 }
