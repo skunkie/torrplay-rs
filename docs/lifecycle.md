@@ -707,6 +707,10 @@ a scope, and an optional lifetime.
   the playback operations: `GET` and `HEAD` of a file's content and of a
   torrent's poster, for a television or a player that keeps one URL, and
   the [Stremio addon](stremio.md)'s resources.
+- The `metrics` scope allows only reading `/metrics`, the system
+  resource, and the application's and the piece cache's statistics, for a
+  monitoring scraper. Like an `api` token, it is refused in a URL
+  ([observability](observability.md#access)).
 - A token lasts from one hour to a year, or until it is revoked. An
   expired token is refused as an unknown one, is neither listed nor read,
   and is deleted at the next startup or token creation. The application

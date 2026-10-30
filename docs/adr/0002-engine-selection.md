@@ -624,7 +624,7 @@ outside the prototype's scope.
 
 ### Patch set
 
-The fork's `torrplay/patches` branch holds twenty-one commits on upstream
+The fork's `torrplay/patches` branch holds twenty-two commits on upstream
 `57e95d16`, each small enough to propose on its own:
 
 | Commit | Patch | Purpose |
@@ -644,6 +644,7 @@ The fork's `torrplay/patches` branch holds twenty-one commits on upstream
 | `ea389311` | P11 | Let the embedder start and stop the session's DHT at runtime: stopping ends every torrent's DHT search at once, and a started DHT serves torrents as they start, for the `dht_enabled` setting (milestone 7) |
 | `fa1ba579` | P12 | Keep a piece whose hash is being checked from being acquired again, so no peer is left owning a stale in-flight piece that it later fetches without a reservation; requeue a piece whose check could not run or that a pause interrupted (milestone 7) |
 | `bb76ca3e` | P13 | On a steal, release only the old owner's chunk claims, so a shared piece's joiners are not handed chunks they already requested (milestone 7) |
+| `2419e0c5` | P14 | Count downloaded pieces that pass and fail their hash check in the session's counters, for the hash check metric (milestone 7) |
 
 Two more patches remain candidates. Setting `TCP_NODELAY` on peer sockets
 cut the time to first byte after a reconnect from about 43 ms to about

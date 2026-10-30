@@ -13,8 +13,9 @@
 //! readers. Errors are Problem Details of the types the API conventions
 //! define, including `405` and `406` for every resource.
 //!
-//! Each response is logged with `tracing` by method, route template, and
-//! status. Logs never carry request paths, queries, headers, or bodies, and
+//! Each response carries a request ID, which its log records name, and is
+//! logged with `tracing` and counted for the metrics by method, route
+//! template, and status. Logs never carry request paths, queries, headers, or bodies, and
 //! engine errors are logged with URLs and magnet URIs redacted, so private
 //! tracker passkeys and credentials stay out of them.
 //!
@@ -35,6 +36,7 @@ mod headers;
 mod images;
 mod inference;
 mod library;
+pub mod log_files;
 mod posters;
 mod preloads;
 mod problem;
@@ -48,6 +50,8 @@ mod service;
 mod settings;
 mod shelf;
 mod stremio;
+mod system;
+mod telemetry;
 mod titles;
 mod torrents;
 mod up_next;
@@ -57,7 +61,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use axum::Router;
-use axum::extract::{MatchedPath, Request};
+use axum::extract::{MatchedPath, Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -67,6 +71,7 @@ use tracing::Level;
 
 pub use crate::app::{App, Clock, MediaServerSetting, SeekIndexes};
 use crate::problem::{Problem, ProblemType};
+pub use crate::telemetry::Run;
 
 /// Returns the router of the API over `app`.
 pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
@@ -129,6 +134,9 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
             "/api/v1/cache/statistics",
             get(torrents::cache_statistics::<E>),
         )
+        .route("/api/v1/statistics", get(system::statistics::<E>))
+        .route("/api/v1/system", get(system::system::<E>))
+        .route("/api/v1/log-records", get(system::log_records::<E>))
         .route(
             "/api/v1/settings",
             get(settings::get::<E>).patch(settings::update::<E>),
@@ -263,6 +271,7 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
             "/dlna/posters/{torrent_id}",
             get(dlna::get_poster::<E>).head(dlna::head_poster::<E>),
         )
+        .route("/metrics", get(system::metrics::<E>))
         .route("/livez", get(service::liveness))
         .route("/readyz", get(service::readiness::<E>))
         .fallback(unknown_resource)
@@ -272,20 +281,33 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
         ))
         .layer(axum::middleware::map_response(method_not_allowed))
         .layer(axum::middleware::from_fn(allow_stremio_origins))
-        .layer(axum::middleware::from_fn(log_response))
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&app),
+            log_response::<E>,
+        ))
+        .layer(axum::middleware::from_fn(telemetry::assign_request_id))
         .with_state(app)
 }
 
 /// Logs each response by method, route template, and status, when its
-/// headers are ready, at [`response_level`]. The template names the route
-/// without the IDs, query, or anything else the client sent.
-async fn log_response(route: Option<MatchedPath>, request: Request, next: Next) -> Response {
+/// headers are ready, at [`response_level`], and records it for the
+/// metrics. The template names the route without the IDs, query, or
+/// anything else the client sent.
+async fn log_response<E: Engine>(
+    State(app): State<Arc<App<E>>>,
+    route: Option<MatchedPath>,
+    request: Request,
+    next: Next,
+) -> Response {
     let method = request.method().clone();
     let started = Instant::now();
     let response = next.run(request).await;
     let route = route.as_ref().map_or("unmatched", MatchedPath::as_str);
     let status = response.status();
-    let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    let elapsed = started.elapsed();
+    app.telemetry()
+        .record_response(&method, route, status, elapsed);
+    let elapsed_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX);
     macro_rules! log {
         ($level:expr) => {
             tracing::event!(

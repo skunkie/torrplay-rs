@@ -7,6 +7,7 @@
 //! listener, and serves until a termination signal. `torrplay password`
 //! changes a stopped application's password instead.
 
+use std::io::IsTerminal;
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -38,10 +39,40 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    let variable = std::env::var_os(torrplay::LOG_FORMAT_VARIABLE)
+        .map(|value| value.to_string_lossy().into_owned());
+    let format =
+        match torrplay::log_format(config.log_format, variable, std::io::stderr().is_terminal()) {
+            Ok(format) => format,
+            Err(error) => {
+                eprintln!("torrplay: {error}\n\n{USAGE}");
+                return ExitCode::from(2);
+            }
+        };
+    let process_run = torrplay::Run::draw();
+    // The log files live in the data directory; without one, records go to
+    // standard error alone, and the failure is logged once logging starts.
+    let files = config
+        .data_dir()
+        .and_then(|data_dir| Ok(torrplay::LogFiles::open(&data_dir.join("logs"))?));
+    let (files, files_failed) = match files {
+        Ok(files) => (Some(files), None),
+        Err(error) => (None, Some(error)),
+    };
+    let log_files = files.as_ref().map(|(files, _)| files.clone());
     let log = torrplay::init_logging(
         config.log_level.unwrap_or_default(),
         config.log_filter.as_deref(),
+        format,
+        &process_run,
+        files,
     );
+    if let Some(error) = files_failed {
+        tracing::warn!(
+            error = %format!("{error:#}"),
+            "the log files could not be opened; logs go to standard error only"
+        );
+    }
     match torrplay_engine::raise_open_file_limit() {
         Ok(limit) => tracing::info!(limit, "open file limit"),
         Err(error) => tracing::warn!(
@@ -59,20 +90,29 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let result = runtime.block_on(run(&config, log));
+    let result = runtime.block_on(run(&config, log.clone(), process_run, log_files));
     // Shutdown has stopped the engine; blocking work still running must not
     // hold the process.
     runtime.shutdown_timeout(RUNTIME_SHUTDOWN);
-    match result {
+    let code = match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             tracing::error!(error = %format!("{error:#}"), "torrplay failed");
             ExitCode::FAILURE
         }
-    }
+    };
+    log.flush();
+    code
 }
 
-async fn run(config: &Config, log: torrplay::LogControl) -> anyhow::Result<()> {
+async fn run(
+    config: &Config,
+    log: torrplay::LogControl,
+    run: torrplay::Run,
+    log_files: Option<torrplay::LogFiles>,
+) -> anyhow::Result<()> {
+    // Before the listener binds, so the API never answers without them.
+    let terminated = termination();
     let data_dir = config.data_dir()?;
     let opening = data_dir.clone();
     let (store, contents) = tokio::task::spawn_blocking(move || Store::open(&opening))
@@ -105,9 +145,11 @@ async fn run(config: &Config, log: torrplay::LogControl) -> anyhow::Result<()> {
             allowed_hosts: AllowedHosts::new(config.allowed_hosts.clone()),
             overrides: config.overrides(),
             log: Some(log),
+            run,
+            log_files,
         },
         ShutdownTimings::default(),
-        termination(),
+        terminated,
     )
     .await
 }
@@ -157,25 +199,51 @@ fn password(change: PasswordChange, config: &Config) -> ExitCode {
 
 /// Completes on the first termination signal: SIGTERM or SIGINT on Unix,
 /// Ctrl+C elsewhere.
-async fn termination() {
+/// Waits for SIGTERM or SIGINT, or Ctrl+C on Windows. The handlers are
+/// installed when this is called, not when the future is first polled, so
+/// a signal that arrives once the API listens shuts down gracefully instead
+/// of ending the process.
+fn termination() -> impl std::future::Future<Output = ()> {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
-        match signal(SignalKind::terminate()) {
-            Ok(mut terminate) => {
-                tokio::select! {
-                    _ = terminate.recv() => {}
-                    _ = tokio::signal::ctrl_c() => {}
+        let terminate = signal(SignalKind::terminate());
+        let interrupt = signal(SignalKind::interrupt());
+        async move {
+            match (terminate, interrupt) {
+                (Ok(mut terminate), Ok(mut interrupt)) => {
+                    tokio::select! {
+                        _ = terminate.recv() => {}
+                        _ = interrupt.recv() => {}
+                    }
                 }
-            }
-            Err(error) => {
-                tracing::warn!(%error, "SIGTERM cannot be handled; waiting for SIGINT");
-                let _ = tokio::signal::ctrl_c().await;
+                (terminate, interrupt) => {
+                    if let Err(error) = terminate.as_ref().and(interrupt.as_ref()) {
+                        tracing::warn!(%error, "a termination signal cannot be handled");
+                    }
+                    match (terminate, interrupt) {
+                        (Ok(mut signal), Err(_)) | (Err(_), Ok(mut signal)) => {
+                            signal.recv().await;
+                        }
+                        _ => std::future::pending().await,
+                    }
+                }
             }
         }
     }
     #[cfg(not(unix))]
     {
-        let _ = tokio::signal::ctrl_c().await;
+        let interrupt = tokio::signal::windows::ctrl_c();
+        async move {
+            match interrupt {
+                Ok(mut interrupt) => {
+                    interrupt.recv().await;
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "Ctrl+C cannot be handled");
+                    std::future::pending().await
+                }
+            }
+        }
     }
 }

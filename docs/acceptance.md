@@ -343,6 +343,7 @@ These scenarios accept the lifecycle's
 | AUT-11 | Bind the default address, and `[::]` with an IPv4 client | `[::]:8080` where IPv6 is available, else `0.0.0.0:8080`; the IPv4 client connects as an IPv4-mapped address |
 | AUT-10 | A database write fails while setting the password and signing in | `500 internal-error`; nothing changes |
 | AUT-11 | Run `torrplay password set` and `torrplay password remove` on a stopped application's data directory | The next start requires the new password; then none |
+| AUT-12 | Sign in with the `metrics` scope, read the metrics, the system resource, and both statistics resources, then torrents, a torrent's statistics, and content, and content with the token in the URL; read the metrics with a playback token and with none | `200` four times; `403 insufficient-scope` three times; `401 invalid_token`; `403 insufficient-scope`; `401` |
 
 ### Stremio
 
@@ -385,6 +386,21 @@ These scenarios accept [the DLNA contract](dlna.md) (M7).
 | DLNA-18 | Browse the root | `recently-viewed` follows `recent`, with its child count |
 | DLNA-19 | Bind the SSDP port as a UPnP media player does, after the media server starts and before it starts | Both bind, on macOS and the BSDs as on Linux and Windows |
 | DLNA-20 | Browse a file in progress, in its torrent and in `recently-viewed`, and once it is viewed | `upnp:lastPlaybackPosition` and `sec:dcmInfo` `BM=` with its saved position in both; neither once viewed |
+
+### Observability
+
+| ID | Scenario | Expected |
+|---|---|---|
+| OBS-01 | Read the system resource | The version, platform, a `run_` ID, and, on Linux, resident memory |
+| OBS-02 | Stream a file, with one torrent downloading and one paused, then read the statistics | Counts by every observed state that add up; `streamed_bytes` is the file's length; the engine's reader and byte counts |
+| OBS-03 | Read `/metrics` | `text/plain; version=0.0.4`; each family typed once before its samples; build info, torrents by state, readers, connections, and responses by route template; no torrent ID in a label |
+| OBS-04 | Send a usable `X-Request-Id`, an unusable one, and none to a missing torrent | The first is kept; the second is replaced by a `req_` ID; the problem's `request_id` equals the header, and the response's log record names it |
+| OBS-05 | Read the statistics and metrics while the engine is unavailable, then while it fails | `503`, and metrics with the process but no engine families; `500 internal-error` for both |
+| OBS-06 | Run `torrplay --log-format json` and read the system resource | Every line of standard error is a JSON record of the system resource's run, with sequences from 1; the response's record names its request ID |
+| OBS-07 | A reader waits for a piece no peer has, then a torrent downloads from a local seeder | One timed-out wait of at least the bound and no reader waiting; engine totals count the download and the connection |
+| OBS-08 | List log records with `min_level`, `contains` naming a field and a request ID, `after_sequence`, and pages of 2; then bad parameters, a restart, and an unreadable file | Newest first, filtered and bounded; next links reach the oldest; `400 malformed-request` for each bad parameter and a cursor of other filters; the sequence continues after the restart; `500 internal-error` |
+| OBS-09 | Request the system resource, stop `torrplay`, start it again on the same data directory, and list records containing the request ID | The earlier run's response record, with its run ID, which differs from the new run's |
+| OBS-10 | Download from a peer that serves corrupt blocks, then from a valid one; and from a valid seeder alone | At least one failed hash check and one passed check per piece; with the valid seeder alone, every piece passes and none fails |
 
 ### Peers
 

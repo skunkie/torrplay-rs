@@ -223,6 +223,8 @@ pub enum Scope {
     Api,
     /// Only the playback operations.
     Playback,
+    /// Only reading the metrics, the system resource, and statistics.
+    Metrics,
 }
 
 impl Scope {
@@ -231,6 +233,7 @@ impl Scope {
         match self {
             Self::Api => "api",
             Self::Playback => "playback",
+            Self::Metrics => "metrics",
         }
     }
 
@@ -239,6 +242,7 @@ impl Scope {
         match text {
             "api" => Some(Self::Api),
             "playback" => Some(Self::Playback),
+            "metrics" => Some(Self::Metrics),
             _ => None,
         }
     }
