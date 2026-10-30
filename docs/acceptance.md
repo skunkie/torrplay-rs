@@ -122,10 +122,11 @@ milestones. Later milestones keep every scenario passing.
 | LIF-12 | One local peer sends metadata that does not match the info hash, another sends valid metadata | The mismatched metadata is discarded, the torrent never fails, and metadata from the valid peer is used (M2) |
 | LIF-13 | Delete a torrent, then restart | The torrent stays `not-found`, and its info hash creates a new torrent (M6) |
 | LIF-14 | A database write fails during creation, a configuration change, and deletion | `500 internal-error`; the collection, the configuration, and its ETag are unchanged (M6) |
-| LIF-15 | Requests while stored torrents are being restored | `/readyz` and torrent operations `503`, the latter `engine-unavailable` (M6) |
+| LIF-15 | Requests while stored torrents are being restored | `/readyz`, torrent, preview, and profile operations, the application statistics, and settings changes `503`, all but the first `engine-unavailable`; the entry point, cache statistics, the system resource, log records, settings reads, and credentials served (M6) |
 | LIF-16 | Restart with a stored torrent the engine refuses | Restored as `failed` with a failure detail; content and configuration changes `409 lifecycle-conflict`; deletion works (M6) |
 | LIF-17 | A process writing torrents is killed at moments spread across its commits | The database opens with whole torrents only, keeping every insert reported before the kill (M6) |
 | LIF-18 | A second application opens the same data directory | It fails at startup, naming the database as in use (M6) |
+| LIF-19 | A database read fails for a poster, an avatar, and a torrent's metainfo, with GET and HEAD | `500 internal-error`, and `200` once reads work again |
 
 ### Streaming
 
@@ -213,6 +214,7 @@ These scenarios accept the lifecycle's application viewings.
 | VWG-06 | Delete a viewing, then read it and stream its link | `204`, then `404` and `404` |
 | VWG-07 | Stream a temporary torrent through a viewing past the idle time, then read it | The torrent stays until the viewing is read, then expires |
 | VWG-08 | Delete a torrent with a viewing | The viewing is `404` |
+| VWG-09 | Create, read, and delete viewings while the engine is unavailable, then read and delete one during shutdown | Creating is `503 engine-unavailable`, reading `200`, deleting `204`; during shutdown both are `503 engine-unavailable` |
 
 ### Disk storage
 

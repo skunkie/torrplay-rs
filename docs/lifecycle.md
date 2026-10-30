@@ -411,8 +411,19 @@ temporary`; every other torrent is persisted.
   stored torrents are restored, as [Restarts](#restarts) describes. Until
   both are done, `/readyz` returns `503`, and operations that read or change
   engine state return `engine-unavailable`, with `Retry-After` when a retry
-  time is known. Operations answered from the application's own records are
-  served normally.
+  time is known.
+- While stored torrents are restored, the torrents are not all known yet,
+  so every operation under `/api/v1/torrents` and `/api/v1/profiles`, whose
+  progress and up next refer to torrents, returns `engine-unavailable`, as
+  do torrent previews, the application statistics, and settings changes.
+  The entry point, the OpenAPI document and its reference, the cache
+  statistics, the system resource, metrics, log records, settings reads,
+  the password, and access tokens are served.
+- While the engine is unavailable after the torrents are restored,
+  operations answered from the application's own records are served:
+  torrents, their files, configurations other than lifecycle changes,
+  posters, metainfo, viewings other than their creation, and profiles with
+  their progress and up next.
 - If the engine stops unexpectedly, the same rules apply until it is ready
   again, and torrents it cannot resume become `failed`.
 
@@ -423,8 +434,9 @@ forces exit if it has not finished after 30 seconds:
 
 1. `/readyz` returns `503`. The listener keeps accepting connections, so
    clients see that status rather than a refused connection.
-2. Requests that change state or start streams return `engine-unavailable`;
-   other reads are still served.
+2. Requests that change state or start streams return `engine-unavailable`,
+   including reading a viewing, which can release a temporary torrent;
+   other reads, torrent statistics among them, are still served.
 3. Streams in progress may finish during the drain period, 10 seconds by
    default; streams still running afterward are canceled.
 4. The listener closes, idle readers are released, and metadata retrieval
@@ -702,6 +714,9 @@ Viewings are kept in memory:
   so an application the system stopped while the player ran can still
   read where it stopped. The first `GET` while no stream is open releases
   it.
+- Creating a viewing needs the engine, since its content link streams.
+  Reading and deleting one are served while the engine is unavailable, but
+  not during shutdown, since a read can release a temporary torrent.
 
 ## Authentication
 

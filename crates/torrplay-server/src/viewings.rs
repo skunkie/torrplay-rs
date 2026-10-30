@@ -22,10 +22,12 @@ use crate::inference::{AppStatus, FileKey};
 use crate::problem::Problem;
 use crate::representation::{self, JSON, NO_CACHE, json};
 
-/// The torrent `id`'s file `file_id`, whose metadata must be available,
-/// while the engine is ready to stream it.
+/// The torrent `id`'s file `file_id`, whose metadata must be available.
+/// Viewings are the application's own records, so only creating one, for
+/// streaming, needs the engine; reading one releases a temporary torrent,
+/// so reads and removals are changes that shutdown refuses.
 async fn resolve<E: Engine>(app: &App<E>, id: &str, file_id: &str) -> Result<FileKey, Problem> {
-    app.require_engine()?;
+    app.require_running()?;
     let (view, metadata) = with_metadata(app, id).await?;
     let (_, file) = metadata
         .file(file_id)
@@ -63,6 +65,7 @@ pub(crate) async fn create<E: Engine>(
     headers: HeaderMap,
 ) -> Result<Response, Problem> {
     negotiate(&headers, JSON)?;
+    app.require_engine()?;
     let key = resolve(&app, &id, &file_id).await?;
     let viewing = ViewingId::from_random_bytes(random_torrent_id_bytes().map_err(|error| {
         tracing::error!(%error, "no random bytes for a viewing ID");
