@@ -143,7 +143,8 @@ BitTorrent peer port (4240), and override settings for one run, as
 [the lifecycle](lifecycle.md#settings) describes: `--no-dht` turns the DHT
 off, and `--log-level` and `--log-filter` set the level of TorrPlay's own
 logs, which go to standard error; other crates log warnings and errors
-only. The DLNA media server, its name, and the DHT are settings
+only. `--log-format text|json` chooses their format, JSON when standard
+error is not a terminal ([observability](observability.md#log-records)). The DLNA media server, its name, and the DHT are settings
 ([the DLNA contract](dlna.md)).
 
 Authentication is off until a password is set through the API or on the
@@ -317,7 +318,7 @@ Rust 1.99.1 with rustfmt and Clippy, and rustup installs it on first use, so
 local and CI builds use the same version. `clippy.toml` lets tests use
 `unwrap` and `expect`, which the workspace lints flag in production code.
 
-The workspace has eleven members:
+The workspace has thirteen members:
 
 - `crates/torrplay` is the application: the `torrplay` executable, which
   serves `torrplay-server` over `LibrqbitEngine`, and the library that holds
@@ -350,6 +351,9 @@ The workspace has eleven members:
   as [ADR 10](adr/0010-media-seek-index.md) decides, mapping byte offsets to
   playback times and back. It knows nothing of torrents or engines; its
   tests build synthetic files in code.
+- `crates/torrplay-stremio` answers the Stremio addon's resources, as
+  [its contract](stremio.md) specifies them, from a library the server
+  builds. It knows nothing of engines or HTTP frameworks.
 - `crates/torrplay-engine` holds `LibrqbitEngine`, which implements the
   `Engine` trait over librqbit, and beneath it the piece cache, its evictor
   task, the librqbit storage over it, and the scheduler that turns readers

@@ -380,8 +380,9 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
   digest.
 
 **Scope**
-: What a credential allows: `api`, every operation, or `playback`, only
-  reading file content and posters.
+: What a credential allows: `api`, every operation; `playback`, only
+  reading file content and posters; or `metrics`, only reading the metrics,
+  the system resource, and statistics.
 
 **Playback operation**
 : `GET` or `HEAD` of a file's content or a torrent's poster, the operations
@@ -396,3 +397,25 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 : A name a request's `Host` may give: an IP address, `localhost`, a
   `.localhost` or `.local` name, or one configured with `--allowed-host`.
   Other names are refused, which defeats DNS rebinding.
+
+## Observability
+
+**Log record**
+: One message the application logged, with its level, target, fields, and
+  a sequence number that continues across restarts.
+
+**Log file**
+: One of the rotating JSON-lines files in the data directory that keep log
+  records across restarts, which `/api/v1/log-records` lists.
+
+**Run ID**
+: The ID a process chooses when it starts, which tells its log records
+  from an earlier run's.
+
+**Request ID**
+: The ID of one HTTP request, in its response's `X-Request-Id` header and
+  in the log records written while serving it.
+
+**Metric**
+: A named number in the Prometheus exposition at `/metrics`: a counter,
+  which only grows until the process restarts, a gauge, or a histogram.

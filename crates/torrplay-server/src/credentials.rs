@@ -80,6 +80,7 @@ fn scope(scope: Scope) -> api::AccessTokenScope {
     match scope {
         Scope::Api => api::AccessTokenScope::Api,
         Scope::Playback => api::AccessTokenScope::Playback,
+        Scope::Metrics => api::AccessTokenScope::Metrics,
     }
 }
 

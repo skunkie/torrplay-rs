@@ -47,6 +47,8 @@ async fn statistics(running: &Running, client: &Client, path: &str) -> anyhow::R
 fn without_date(headers: &HeaderMap) -> HeaderMap {
     let mut headers = headers.clone();
     headers.remove(DATE);
+    // Every response has an ID of its own.
+    headers.remove("x-request-id");
     headers
 }
 

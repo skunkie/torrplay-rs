@@ -93,8 +93,11 @@ document that schedules it.
 | Torrent statistics | `GET /api/stats/torrents/{hash}` | Verified | `statistics` |
 | Cache statistics | `GET /api/stats/memory` | Verified | CAC scenarios, `statistics` |
 | Piece and reader maps of a torrent | `pieces`, `readers` in statistics | Deferred | With the client's piece grid |
-| System information, recent logs, and metrics | `/api/system/info`, `/logs`, `/metrics` | Deferred | After the client |
-| Prometheus metrics | `GET /metrics` | Deferred | After the client |
+| System information | `/api/system/info` | Verified | `/api/v1/system`, OBS-01 |
+| Global statistics | `/api/system/metrics` | Verified | `/api/v1/statistics`, OBS-02 |
+| Prometheus metrics | `GET /metrics` | Verified | OBS-03, OBS-05, AUT-12; [observability](observability.md#metrics) |
+| Structured logs and request IDs | Text logs | Verified | `--log-format json`, `X-Request-Id`, OBS-04, OBS-06 |
+| Recent logs | `/api/system/logs` | Verified | Rotating log files and `/api/v1/log-records`, OBS-08, OBS-09 |
 | Update checks | Client and release feed | Deferred | With release automation |
 
 ## Access
@@ -112,7 +115,8 @@ document that schedules it.
 | Feature | Go TorrPlay | Status | Evidence or plan |
 |---|---|---|---|
 | DLNA/UPnP media server | `internal/dlna` | Verified | `torrplay-dlna` and [the DLNA contract](dlna.md); DLNA scenarios: discovery, browsing, search, sorting, eventing, media, and icons (DLNA-15); its name is the `dlna_name` setting (SET-10) |
-| Stremio addon | `internal/stremio` | Planned | Its own adapter, with path and query token authentication |
+| Stremio addon | `internal/stremio` | Verified | [Its own adapter](stremio.md): movie and series catalogs with search, skip, and genre, metadata, and streams, with path and query token authentication; STM-01 to STM-08 |
+| Stremio streams on Cinemeta's IMDb items | Not present | Verified | The `imdb_id` library member and the `tt` ID prefix; STM-09 to STM-11 |
 | MCP server | `internal/mcp` | Verified | `torrplay mcp` and [the MCP contract](mcp.md), over the application's HTTP API; MCP-01 to MCP-08. Go's logs and metrics tools wait for those API resources |
 | qBittorrent API | `POST /api/v2/torrents/add` | Deferred | Optional; only if a later product scope includes it |
 | TorrServer API | `/echo`, `/play`, `/stream`, and others | Excluded | Out of scope for the Rust implementation |

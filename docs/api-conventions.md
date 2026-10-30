@@ -233,6 +233,10 @@ Errors use Problem Details with `application/problem+json`.
   `unsupported-torrent` is reserved for valid torrents the engine cannot
   handle, such as v2-only torrents and torrents whose piece length exceeds
   cache capacity.
+- Every problem the application answers has a `request_id` member, the
+  request's ID that the `X-Request-Id` header of every response gives, so a
+  reported problem leads to its log records
+  ([observability](observability.md#request-ids)).
 - Problems never include credentials, private tracker parameters, or
   internal paths.
 

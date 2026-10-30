@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "torrplay-stremio"
+version = "0.1.0"
+description = "TorrPlay's Stremio addon protocol: the manifest, catalogs, metadata, and streams of docs/stremio.md."
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+form_urlencoded.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+torrplay-core.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

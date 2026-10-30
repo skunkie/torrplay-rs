@@ -343,6 +343,25 @@ These scenarios accept the lifecycle's
 | AUT-11 | Bind the default address, and `[::]` with an IPv4 client | `[::]:8080` where IPv6 is available, else `0.0.0.0:8080`; the IPv4 client connects as an IPv4-mapped address |
 | AUT-10 | A database write fails while setting the password and signing in | `500 internal-error`; nothing changes |
 | AUT-11 | Run `torrplay password set` and `torrplay password remove` on a stopped application's data directory | The next start requires the new password; then none |
+| AUT-12 | Sign in with the `metrics` scope, read the metrics, the system resource, and both statistics resources, then torrents, a torrent's statistics, and content, and content with the token in the URL; read the metrics with a playback token and with none | `200` four times; `403 insufficient-scope` three times; `401 invalid_token`; `403 insufficient-scope`; `401` |
+
+### Stremio
+
+These scenarios accept the [Stremio addon](stremio.md).
+
+| ID | Scenario | Expected |
+|---|---|---|
+| STM-01 | Read the manifest without a password, and with one, through a `playback` token in the path, in the query, and without one | Two catalogs with `search`, `skip`, and `genre`, the library's genres as options; `401` without a token |
+| STM-02 | List both catalogs with a movie, a series, a paused torrent, a temporary torrent, and one without video files | Each lists its kind's started, persisted torrents with video files, newest first, with names, genres, and posters |
+| STM-03 | List with `search` and a typo, with `genre`, and with `skip` past the first page of 100 | The matches, the better first; the genre's torrents; the rest after the first 100 |
+| STM-04 | Read a series' meta and a movie's meta, and an unknown item's | The series' videos in episode order with seasons and episodes; the movie's files with its default video; `404` for the unknown item |
+| STM-05 | Read the streams of a video and of an item | One stream, and one per video file, each with a play URL ending in the file's name, `filename`, `bingeGroup`, and `notWebReady` for a Matroska file |
+| STM-06 | Stream a play URL with ranges and `HEAD`, and with a wrong file name | The native content behavior; `404` |
+| STM-07 | Request with an `api` token in the path, a playback token for one torrent, and from a public address without a password | `401`, `403 insufficient-scope`, and `403 forbidden` |
+| STM-08 | Read any resource, and send `POST` to one | `Access-Control-Allow-Origin: *`; `405` |
+| STM-09 | Link a movie and a season pack to IMDb IDs, list the catalogs, and read the manifest | The linked torrents are listed by their `tt` IDs; the manifest's `idPrefixes` are `torrplay:` and `tt`, with `meta` for `torrplay:` only |
+| STM-10 | Read the streams of the movie's `tt` ID, an episode's `tt:season:episode`, an episode the pack lacks, and an unlinked `tt` ID | Each of the movie's video files; the pack's file for that episode; none; none |
+| STM-11 | Set `imdb_id` at creation and by merge patch, clear it with `null`, and send `tt123` and `nm0000001` | Stored and shown in the torrent and its configuration, then cleared; `422 validation-failed` naming `/imdb_id` |
 
 ### DLNA
 
@@ -385,6 +404,21 @@ These scenarios accept [the MCP contract](mcp.md) (M7).
 | MCP-06 | Set a password, then call a tool without and with an `api` access token, play the URL `get_stream_url` returns, and call a tool after the application stops | `401` as a tool error; the listing; the URL streams with its playback token alone; a tool error naming the application's origin |
 | MCP-07 | Bind the HTTP transport on `0.0.0.0`, then on loopback, initialize with a foreign `Origin`, a loopback one, and none, and shut down | Refused at startup; `403`, `200`, `200`; the listener stops |
 | MCP-08 | Run `torrplay mcp` with `TORRPLAY_URL` and `TORRPLAY_TOKEN`, initialize, call a tool, and close its input | Only JSON-RPC lines on standard output; a tool error naming the origin; exit status 0; the token never in its log |
+
+### Observability
+
+| ID | Scenario | Expected |
+|---|---|---|
+| OBS-01 | Read the system resource | The version, platform, a `run_` ID, and, on Linux, resident memory |
+| OBS-02 | Stream a file, with one torrent downloading and one paused, then read the statistics | Counts by every observed state that add up; `streamed_bytes` is the file's length; the engine's reader and byte counts |
+| OBS-03 | Read `/metrics` | `text/plain; version=0.0.4`; each family typed once before its samples; build info, torrents by state, readers, connections, and responses by route template; no torrent ID in a label |
+| OBS-04 | Send a usable `X-Request-Id`, an unusable one, and none to a missing torrent | The first is kept; the second is replaced by a `req_` ID; the problem's `request_id` equals the header, and the response's log record names it |
+| OBS-05 | Read the statistics and metrics while the engine is unavailable, then while it fails | `503`, and metrics with the process but no engine families; `500 internal-error` for both |
+| OBS-06 | Run `torrplay --log-format json` and read the system resource | Every line of standard error is a JSON record of the system resource's run, with sequences from 1; the response's record names its request ID |
+| OBS-07 | A reader waits for a piece no peer has, then a torrent downloads from a local seeder | One timed-out wait of at least the bound and no reader waiting; engine totals count the download and the connection |
+| OBS-08 | List log records with `min_level`, `contains` naming a field and a request ID, `after_sequence`, and pages of 2; then bad parameters, a restart, and an unreadable file | Newest first, filtered and bounded; next links reach the oldest; `400 malformed-request` for each bad parameter and a cursor of other filters; the sequence continues after the restart; `500 internal-error` |
+| OBS-09 | Request the system resource, stop `torrplay`, start it again on the same data directory, and list records containing the request ID | The earlier run's response record, with its run ID, which differs from the new run's |
+| OBS-10 | Download from a peer that serves corrupt blocks, then from a valid one; and from a valid seeder alone | At least one failed hash check and one passed check per piece; with the valid seeder alone, every piece passes and none fails |
 
 ### Peers
 

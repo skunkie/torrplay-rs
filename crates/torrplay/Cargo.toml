@@ -18,7 +18,9 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+chrono.workspace = true
 directories.workspace = true
+serde_json.workspace = true
 socket2.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
@@ -36,7 +38,6 @@ url.workspace = true
 [dev-dependencies]
 h2.workspace = true
 reqwest = { workspace = true, features = ["http2"] }
-serde_json.workspace = true
 torrplay-engine = { workspace = true, features = ["faults", "test-support"] }
 torrplay-fixtures.workspace = true
 # The MCP scenario runs the executable.

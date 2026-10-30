@@ -55,9 +55,12 @@ enum Requirement {
     Nothing,
     /// An allowed host only.
     Host,
-    /// A credential of any scope, of the operation's torrent: the playback
-    /// operations.
+    /// An `api` or `playback` credential, of the operation's torrent: the
+    /// playback operations.
     Playback,
+    /// An `api` or `metrics` credential: reading the metrics, the system
+    /// resource, and statistics.
+    Metrics,
     /// An `api` credential.
     Api,
 }
@@ -72,6 +75,11 @@ fn requirement(route: Option<&str>, method: &Method) -> Requirement {
         // The media server's own access rule applies instead.
         return Requirement::Host;
     }
+    if route.starts_with("/stremio/") {
+        // The addon's resources are playback operations, which the token
+        // in its path may allow.
+        return Requirement::Playback;
+    }
     match route {
         "/livez" | "/readyz" => Requirement::Nothing,
         "/api/v1"
@@ -85,6 +93,11 @@ fn requirement(route: Option<&str>, method: &Method) -> Requirement {
             if reads =>
         {
             Requirement::Playback
+        }
+        "/metrics" | "/api/v1/system" | "/api/v1/statistics" | "/api/v1/cache/statistics"
+            if reads =>
+        {
+            Requirement::Metrics
         }
         _ => Requirement::Api,
     }
@@ -149,7 +162,8 @@ pub(crate) async fn guard<E: Engine>(
         }
         return next.run(request).await;
     }
-    let (credential, in_query) = match credential(&request, requirement) {
+    let route = route.as_ref().map(MatchedPath::as_str);
+    let (credential, in_query) = match credential(&request, route, requirement) {
         Ok(found) => found,
         Err(problem) => return problem.into_response(),
     };
@@ -173,16 +187,16 @@ pub(crate) async fn guard<E: Engine>(
         });
     }
     let allowed = match (&checked.grant, requirement) {
-        (Grant::Token { scope, .. }, _) if in_query && *scope == Scope::Api => {
+        (Grant::Token { scope, .. }, _) if in_query && *scope != Scope::Playback => {
             return unauthenticated(
                 Some("invalid_token"),
-                "Send an api token in the Authorization header, not in a URL.",
+                "Only a playback token may travel in a URL; send this one in the \
+                 Authorization header.",
             )
             .into_response();
         }
-        (Grant::Token { scope, .. }, Requirement::Api) => *scope == Scope::Api,
-        (Grant::Token { .. }, _) => true,
-        (Grant::Playback { .. }, Requirement::Api) => false,
+        (Grant::Token { scope, .. }, requirement) => allows(*scope, requirement),
+        (Grant::Playback { .. }, Requirement::Api | Requirement::Metrics) => false,
         (Grant::Playback { torrent: None }, _) => true,
         (
             Grant::Playback {
@@ -206,13 +220,35 @@ pub(crate) async fn guard<E: Engine>(
     next.run(request).await
 }
 
+/// Whether an access token of `scope` allows an operation that needs
+/// `requirement`.
+fn allows(scope: Scope, requirement: Requirement) -> bool {
+    match requirement {
+        Requirement::Nothing | Requirement::Host => true,
+        Requirement::Playback => matches!(scope, Scope::Api | Scope::Playback),
+        Requirement::Metrics => matches!(scope, Scope::Api | Scope::Metrics),
+        Requirement::Api => scope == Scope::Api,
+    }
+}
+
 /// The request's credential, and whether it came from the query: the
 /// bearer token, or else, for a playback operation, the `token` query
 /// parameter.
 fn credential(
     request: &Request,
+    route: Option<&str>,
     requirement: Requirement,
 ) -> Result<(Option<String>, bool), Problem> {
+    // The Stremio addon is installed from a URL that carries its token in
+    // the path, which counts as a URL's token, as the query's does.
+    if route.is_some_and(|route| route.starts_with("/stremio/{token}/")) {
+        let token = request.uri().path().split('/').nth(2).map(|token| {
+            form_urlencoded::parse(format!("t={token}").as_bytes())
+                .next()
+                .map_or_else(|| token.to_owned(), |(_, value)| value.into_owned())
+        });
+        return Ok((token, true));
+    }
     if let Some(value) = request.headers().get(header::AUTHORIZATION) {
         let token = value
             .to_str()
@@ -295,6 +331,16 @@ mod tests {
             (Some("/livez"), Method::GET, Requirement::Nothing),
             (Some("/readyz"), Method::GET, Requirement::Nothing),
             (Some("/api/v1"), Method::GET, Requirement::Host),
+            (
+                Some("/stremio/{token}/manifest.json"),
+                Method::GET,
+                Requirement::Playback,
+            ),
+            (
+                Some("/stremio/play/{torrent}/{file}/{name}"),
+                Method::HEAD,
+                Requirement::Playback,
+            ),
             (Some("/api/v1/openapi.yaml"), Method::GET, Requirement::Host),
             (Some("/api/v1/reference"), Method::GET, Requirement::Host),
             (
@@ -324,10 +370,45 @@ mod tests {
                 Requirement::Api,
             ),
             (Some("/api/v1/torrents"), Method::GET, Requirement::Api),
+            (Some("/metrics"), Method::GET, Requirement::Metrics),
+            (Some("/api/v1/system"), Method::HEAD, Requirement::Metrics),
+            (
+                Some("/api/v1/statistics"),
+                Method::GET,
+                Requirement::Metrics,
+            ),
+            (
+                Some("/api/v1/cache/statistics"),
+                Method::GET,
+                Requirement::Metrics,
+            ),
+            (
+                Some("/api/v1/torrents/{torrent_id}/statistics"),
+                Method::GET,
+                Requirement::Api,
+            ),
             (None, Method::GET, Requirement::Host),
         ];
         for (route, method, expected) in cases {
             assert_eq!(requirement(route, &method), expected, "{method} {route:?}");
+        }
+    }
+
+    #[test]
+    fn each_scope_allows_only_its_operations() {
+        let cases = [
+            (Scope::Api, [true, true, true]),
+            (Scope::Playback, [true, false, false]),
+            (Scope::Metrics, [false, true, false]),
+        ];
+        for (scope, expected) in cases {
+            let allowed = [
+                Requirement::Playback,
+                Requirement::Metrics,
+                Requirement::Api,
+            ]
+            .map(|requirement| allows(scope, requirement));
+            assert_eq!(allowed, expected, "{}", scope.as_str());
         }
     }
 
