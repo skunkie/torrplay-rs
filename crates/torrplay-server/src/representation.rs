@@ -31,6 +31,12 @@ pub(crate) const BASE: &str = "/api/v1";
 /// `Cache-Control` of state-bearing responses.
 pub(crate) const NO_CACHE: HeaderValue = HeaderValue::from_static("no-cache");
 
+/// Sets `response`'s `Cache-Control` to `value`.
+pub(crate) fn cached(mut response: Response, value: HeaderValue) -> Response {
+    response.headers_mut().insert(header::CACHE_CONTROL, value);
+    response
+}
+
 /// `Cache-Control` of responses that hold a secret.
 pub(crate) const NO_STORE: HeaderValue = HeaderValue::from_static("no-store");
 

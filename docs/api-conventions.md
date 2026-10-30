@@ -49,6 +49,9 @@ follow their own specifications instead.
 - Operation IDs start with `list`, `get`, `create`, `update`, or `delete`
   for the standard methods on a resource, with `set` for a `PUT` that
   creates or replaces it, and with `head` for an explicit HEAD operation.
+  Every GET also answers HEAD; the contract declares HEAD explicitly only
+  where clients use it to learn a download's size or validator first:
+  file content, posters, avatars, and metainfo.
 - A request body that differs from the resource's representation is named
   after the resource with a purpose suffix: `TorrentCreation` for creation
   input, `TorrentConfigurationPatch` for a merge patch.
@@ -182,7 +185,10 @@ URLs.
 - Observed state lives in resources that are not patched, so changing state
   never invalidates a client's `If-Match` value.
 - State-bearing responses send `Cache-Control: no-cache`, so caches
-  revalidate with the ETag before reuse.
+  revalidate with the ETag before reuse. Every JSON response does, as do
+  the OpenAPI document, posters, and avatars. Health checks send
+  `no-store`, since a stale answer would hide an outage. File content
+  sends none and relies on its strong ETag, which identifies its bytes.
 
 ## Content resources
 
@@ -317,6 +323,10 @@ status is not.
   for a `Host` that is not allowed. Like `405` and `406`, the contract
   leaves these to the conventions rather than repeating them on each
   operation.
+- Every response carries `X-Request-Id`, as
+  [observability](observability.md#request-ids) describes. Like the
+  statuses above, the contract leaves it to the conventions rather than
+  declaring it on each response.
 - Responses that hold a secret carry `Cache-Control: no-store`.
 - Request bodies, uploaded torrent files, and magnet URIs have documented
   size limits, and oversized input is rejected before it is fully buffered.

@@ -16,7 +16,7 @@ use crate::app::App;
 use crate::credentials::{access_tokens_path, password_path, playback_tokens_path};
 use crate::headers::negotiate;
 use crate::problem::Problem;
-use crate::representation::{BASE, JSON, json, torrents_path};
+use crate::representation::{BASE, JSON, NO_CACHE, NO_STORE, cached, json, torrents_path};
 
 /// The contract, served as the API's description.
 const DOCUMENT: &str = include_str!("../../../api/openapi.yaml");
@@ -26,7 +26,7 @@ const YAML: &str = "application/yaml";
 
 pub(crate) async fn entry_point(headers: HeaderMap) -> Result<Response, Problem> {
     negotiate(&headers, JSON)?;
-    json(
+    let response = json(
         StatusCode::OK,
         &api::EntryPoint {
             links: api::EntryPointLinks {
@@ -47,7 +47,8 @@ pub(crate) async fn entry_point(headers: HeaderMap) -> Result<Response, Problem>
                 playback_tokens: playback_tokens_path(),
             },
         },
-    )
+    )?;
+    Ok(cached(response, NO_CACHE))
 }
 
 /// Answers `/api/v1/` with a permanent redirect to `/api/v1`, since API
@@ -59,19 +60,25 @@ pub(crate) async fn entry_point_with_slash() -> Redirect {
 pub(crate) async fn document(headers: HeaderMap) -> Result<Response, Problem> {
     negotiate(&headers, YAML)?;
     Ok((
-        [(header::CONTENT_TYPE, HeaderValue::from_static(YAML))],
+        [
+            (header::CONTENT_TYPE, HeaderValue::from_static(YAML)),
+            (header::CACHE_CONTROL, NO_CACHE),
+        ],
         DOCUMENT,
     )
         .into_response())
 }
 
+/// A health answer, which no cache may keep: a stale one would hide a
+/// change of state.
 fn healthy() -> Result<Response, Problem> {
-    json(
+    let response = json(
         StatusCode::OK,
         &api::Health {
             status: api::HealthStatus::Ok,
         },
-    )
+    )?;
+    Ok(cached(response, NO_STORE))
 }
 
 /// Liveness: the process is running and serving requests.

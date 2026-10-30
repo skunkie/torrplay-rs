@@ -73,6 +73,9 @@ paths:
       responses:
         '200':
           description: The entry point's links.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
           content:
             application/json:
               schema:
@@ -111,6 +114,9 @@ paths:
       responses:
         '200':
           description: The OpenAPI document as YAML.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
           content:
             application/yaml:
               schema:
@@ -1033,6 +1039,9 @@ paths:
       responses:
         '200':
           description: A page of files.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
           content:
             application/json:
               schema:
@@ -1077,6 +1086,9 @@ paths:
       responses:
         '200':
           description: The file.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
           content:
             application/json:
               schema:
@@ -2762,8 +2774,6 @@ paths:
           headers:
             Cache-Control:
               $ref: '#/components/headers/CacheControl'
-            X-Request-Id:
-              $ref: '#/components/headers/RequestId'
           content:
             application/json:
               schema:
@@ -2811,8 +2821,6 @@ paths:
           headers:
             Cache-Control:
               $ref: '#/components/headers/CacheControl'
-            X-Request-Id:
-              $ref: '#/components/headers/RequestId'
           content:
             application/json:
               schema:
@@ -2863,8 +2871,6 @@ paths:
           headers:
             Cache-Control:
               $ref: '#/components/headers/CacheControl'
-            X-Request-Id:
-              $ref: '#/components/headers/RequestId'
           content:
             application/json:
               schema:
@@ -3440,8 +3446,6 @@ paths:
           headers:
             Cache-Control:
               $ref: '#/components/headers/CacheControl'
-            X-Request-Id:
-              $ref: '#/components/headers/RequestId'
           content:
             text/plain:
               schema:
@@ -3818,17 +3822,6 @@ components:
       example: '"sha1-0123456789abcdef0123456789abcdef01234567-0"'
 
   headers:
-    RequestId:
-      description: >-
-        The request's ID: the X-Request-Id the request carried, when it has 1
-        to 128 letters, digits, and the characters . _ : -, or else one the
-        application chose. Every response carries it, and the request's log
-        records name it.
-      required: true
-      schema:
-        type: string
-        pattern: '^[A-Za-z0-9._:-]{1,128}$'
-      example: req_hxw3rjpt5yc4ula7ndq4m2kzb4
     Location:
       description: The created resource's URI.
       required: true
@@ -3922,7 +3915,9 @@ components:
         const: no-cache
       example: no-cache
     NoStore:
-      description: Forbids caches from storing a response that holds a secret.
+      description: >-
+        Forbids caches from storing the response, which holds a secret or
+        reports health that must never be stale.
       required: true
       schema:
         type: string
@@ -4037,6 +4032,9 @@ components:
           $ref: '#/components/headers/MatchedETag'
     Healthy:
       description: The check passes.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
       content:
         application/json:
           schema:
@@ -4541,9 +4539,6 @@ components:
                 detail: Send If-Match with the configuration's current ETag.
     InternalError:
       description: An unexpected failure.
-      headers:
-        X-Request-Id:
-          $ref: '#/components/headers/RequestId'
       content:
         application/problem+json:
           schema:
