@@ -851,9 +851,15 @@ impl<E: Engine> App<E> {
     }
 
     /// Fails with `engine-unavailable` unless the engine can serve requests
-    /// that read or change its state.
+    /// that change its state or start streams.
     pub(crate) fn require_engine(&self) -> Result<(), Problem> {
         self.require_running()?;
+        self.require_engine_ready()
+    }
+
+    /// Fails with `engine-unavailable` unless the engine can serve requests
+    /// that read its state, which shutdown leaves served.
+    pub(crate) fn require_engine_ready(&self) -> Result<(), Problem> {
         if self.restoring.load(Ordering::SeqCst) {
             return Err(Problem::engine_unavailable(
                 "The stored torrents are being restored.",

@@ -1892,6 +1892,11 @@ mod scenario {
             "engine-unavailable",
         );
         assert_eq!(server.get(&path).await.status, StatusCode::OK);
+        assert_eq!(
+            server.get(&format!("{path}/statistics")).await.status,
+            StatusCode::OK,
+            "reads of engine state are served during shutdown"
+        );
         server.stop().await;
     }
 
@@ -2756,8 +2761,9 @@ mod scenario {
         server.stop().await;
     }
 
-    /// LIF-14: a failed database write is an internal error and changes
-    /// nothing, and the change succeeds once writes work again.
+    /// LIF-14 and LIF-19: a failed database write is an internal error and
+    /// changes nothing, and the change succeeds once writes work again; a
+    /// failed read of stored bytes is an internal error.
     pub async fn store_failures() {
         let server = TestServer::start().await;
         let small = catalog::single_small();
@@ -2818,6 +2824,39 @@ mod scenario {
             "the change that succeeded was stored"
         );
         assert_eq!(listed_len(&server).await, 1, "the failed creation was not");
+
+        // LIF-19: a failed read of stored bytes is an internal error too.
+        let poster = format!("{path}/poster");
+        let put = server.send(put_poster(&poster, "image/png", PNG)).await;
+        assert_eq!(put.status, StatusCode::CREATED);
+        let profile = server
+            .send(json_request(
+                Method::POST,
+                "/api/v1/profiles",
+                &json!({ "name": "Alex" }),
+            ))
+            .await
+            .json();
+        let avatar = format!("{}/avatar", profile["links"]["self"].as_str().unwrap());
+        let put = server.send(put_poster(&avatar, "image/png", PNG)).await;
+        assert_eq!(put.status, StatusCode::CREATED);
+        let metainfo = format!("{path}/metainfo");
+        let reads = [
+            empty(Method::GET, &poster),
+            empty(Method::GET, &avatar),
+            empty(Method::GET, &metainfo),
+            empty(Method::HEAD, &metainfo),
+        ];
+        server.app.store().fail_reads(true);
+        for read in reads {
+            let path = read.uri().to_string();
+            let failed = server.send(read).await;
+            assert_eq!(failed.status, StatusCode::INTERNAL_SERVER_ERROR, "{path}");
+        }
+        server.app.store().fail_reads(false);
+        for read in [&poster, &avatar, &metainfo] {
+            assert_eq!(server.get(read).await.status, StatusCode::OK, "{read}");
+        }
         server.stop().await;
     }
 
@@ -4156,20 +4195,23 @@ mod scenario {
             );
         }
         server.engine.inject_fault(None);
+        // VWG-09: viewings are the application's own records, so without
+        // the engine only creating one, to stream, is refused.
+        let removed = server.send(empty(Method::POST, &viewings)).await.json();
+        let removed = removed["links"]["self"].as_str().unwrap().to_owned();
         server
             .engine
             .set_readiness(Readiness::Unavailable { retry_after: None });
-        for exchange in [
-            server.send(empty(Method::POST, &viewings)).await,
-            server.get(&path).await,
-            server.send(empty(Method::DELETE, &path)).await,
-        ] {
-            assert_problem(
-                &exchange,
-                StatusCode::SERVICE_UNAVAILABLE,
-                "engine-unavailable",
-            );
-        }
+        assert_problem(
+            &server.send(empty(Method::POST, &viewings)).await,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "engine-unavailable",
+        );
+        assert_eq!(server.get(&path).await.status, StatusCode::OK);
+        assert_eq!(
+            server.send(empty(Method::DELETE, &removed)).await.status,
+            StatusCode::NO_CONTENT
+        );
         server.engine.set_readiness(Readiness::Ready);
 
         // VWG-05: a day without activity expires a viewing.
@@ -4239,6 +4281,30 @@ mod scenario {
             StatusCode::NOT_FOUND,
             "not-found",
         );
+
+        // A read can release a temporary torrent, so shutdown refuses it.
+        let readded = server.upload(&spec.metainfo().bytes, None).await.json();
+        let (readded_film, _) =
+            film_files(&server, readded["links"]["self"].as_str().unwrap()).await;
+        let last = server
+            .send(empty(
+                Method::POST,
+                readded_film["links"]["viewings"].as_str().unwrap(),
+            ))
+            .await
+            .json();
+        let last = last["links"]["self"].as_str().unwrap().to_owned();
+        server.app.begin_shutdown();
+        for exchange in [
+            server.get(&last).await,
+            server.send(empty(Method::DELETE, &last)).await,
+        ] {
+            assert_problem(
+                &exchange,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "engine-unavailable",
+            );
+        }
         server.stop().await;
     }
 
@@ -7426,15 +7492,19 @@ mod scenario {
 
     /// The order the matrix sends requests in: the password and access
     /// tokens last, so a password set by an example leaves the others
-    /// unchanged, and deletions before them, nested resources before their
-    /// parents, so the other operations find what they address.
-    fn matrix_order(request: &http::Request<Vec<u8>>) -> (bool, bool, std::cmp::Reverse<usize>) {
+    /// unchanged, and deletions before them, so the other operations find
+    /// what they address. Up next entries, which follow from progress, go
+    /// first among deletions, then nested resources before their parents.
+    fn matrix_order(
+        request: &http::Request<Vec<u8>>,
+    ) -> (bool, bool, bool, std::cmp::Reverse<usize>) {
         let path = request.uri().path();
         let credentials =
             path.starts_with("/api/v1/password") || path.starts_with("/api/v1/access-tokens");
         let delete = request.method() == Method::DELETE;
+        let derived = delete && path.contains("/up-next/");
         let depth = if delete { path.matches('/').count() } else { 0 };
-        (credentials, delete, std::cmp::Reverse(depth))
+        (credentials, delete, !derived, std::cmp::Reverse(depth))
     }
 
     /// Sends one example request with `fault` applied, and returns how its
@@ -7708,17 +7778,12 @@ const EXEMPT: &[(&str, u16)] = &[
     ("getSystem", 500),
     // A process that answers is live.
     ("getLiveness", 503),
-    // A failed read of the store, which tests cannot inject, and a HEAD,
-    // which answers from the registry without the store.
-    ("getTorrentPoster", 500),
+    // A HEAD of an image answers from the records without the store.
     ("headTorrentPoster", 500),
-    ("getTorrentMetainfo", 500),
-    ("headTorrentMetainfo", 500),
     // These answer from the application's own records, as the entry point
-    // does, or read an avatar from the store, which tests cannot fail.
+    // and a HEAD of an image do.
     ("listProfiles", 500),
     ("getProfile", 500),
-    ("getProfileAvatar", 500),
     ("headProfileAvatar", 500),
     ("listTorrentProgress", 500),
     ("getFileProgress", 500),

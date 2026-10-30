@@ -1588,7 +1588,8 @@ paths:
       description: >-
         Returns the viewing's estimated position and activity. Reading it
         after its last stream ended releases the hold an unread viewing keeps
-        on a temporary torrent.
+        on a temporary torrent, so it is served while the engine is
+        unavailable but not during shutdown, as docs/lifecycle.md describes.
       tags: [Viewings]
       responses:
         '200':
