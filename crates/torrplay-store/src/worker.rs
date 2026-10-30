@@ -25,6 +25,8 @@ pub(crate) struct Worker {
     pub(crate) connection: Connection,
     #[cfg(feature = "test-support")]
     pub(crate) failing: Arc<AtomicBool>,
+    #[cfg(feature = "test-support")]
+    pub(crate) failing_reads: Arc<AtomicBool>,
 }
 
 impl Worker {
@@ -251,6 +253,10 @@ impl Worker {
         &mut self,
         read: impl FnOnce(&Connection) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
+        #[cfg(feature = "test-support")]
+        if self.failing_reads.load(Ordering::SeqCst) {
+            return Err(StoreError::Injected);
+        }
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Deferred)?;

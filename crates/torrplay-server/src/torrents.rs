@@ -1266,7 +1266,7 @@ pub(crate) async fn statistics<E: Engine>(
 ) -> Result<Response, Problem> {
     negotiate(&headers, JSON)?;
     let record = app.registry()?.get(&id).ok_or_else(not_found)?;
-    app.require_engine()?;
+    app.require_engine_ready()?;
     let statistics = app.engine().torrent_statistics(&record.id).await?;
     let body = representation::torrent_statistics(&record.id, &statistics);
     let mut response = json(StatusCode::OK, &body)?;

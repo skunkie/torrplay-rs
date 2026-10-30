@@ -258,6 +258,8 @@ pub struct Store {
     worker: Mutex<Option<JoinHandle<Result<(), StoreError>>>>,
     #[cfg(feature = "test-support")]
     failing: Arc<AtomicBool>,
+    #[cfg(feature = "test-support")]
+    failing_reads: Arc<AtomicBool>,
 }
 
 impl Store {
@@ -284,11 +286,16 @@ impl Store {
         let clean_shutdown = schema::begin_run(&mut connection)?;
         let (sender, receiver) = mpsc::channel(QUEUE);
         #[cfg(feature = "test-support")]
-        let failing = Arc::new(AtomicBool::new(false));
+        let (failing, failing_reads) = (
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        );
         let worker = worker::Worker {
             connection,
             #[cfg(feature = "test-support")]
             failing: Arc::clone(&failing),
+            #[cfg(feature = "test-support")]
+            failing_reads: Arc::clone(&failing_reads),
         };
         let worker = std::thread::Builder::new()
             .name("torrplay-store".into())
@@ -303,6 +310,8 @@ impl Store {
             worker: Mutex::new(Some(worker)),
             #[cfg(feature = "test-support")]
             failing,
+            #[cfg(feature = "test-support")]
+            failing_reads,
         };
         Ok((
             store,
@@ -638,6 +647,14 @@ impl Store {
     #[cfg(feature = "test-support")]
     pub fn fail_writes(&self, failing: bool) {
         self.failing
+            .store(failing, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Makes every later read of a poster, an avatar, or a torrent file
+    /// fail with [`StoreError::Injected`], or succeed again.
+    #[cfg(feature = "test-support")]
+    pub fn fail_reads(&self, failing: bool) {
+        self.failing_reads
             .store(failing, std::sync::atomic::Ordering::SeqCst);
     }
 
