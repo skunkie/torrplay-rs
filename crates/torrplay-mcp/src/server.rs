@@ -30,10 +30,17 @@ const MAX_TORRENTS: u32 = 100;
 /// How many files `get_torrent` reports.
 const MAX_FILES: u32 = 200;
 
+/// How many records a page of `list_log_records` holds by default, and at
+/// most, as the native listing's page size allows.
+const DEFAULT_LOG_RECORDS: u32 = 50;
+const MAX_LOG_RECORDS: u32 = 200;
+
 const TORRENTS_URI: &str = "torrplay://torrents";
 const TORRENT_URI_PREFIX: &str = "torrplay://torrents/";
 const CACHE_URI: &str = "torrplay://cache";
 const SETTINGS_URI: &str = "torrplay://settings";
+const SYSTEM_URI: &str = "torrplay://system";
+const STATISTICS_URI: &str = "torrplay://statistics";
 
 const INSTRUCTIONS: &str = "\
 TorrPlay streams torrents. These tools manage its library and hand out \
@@ -42,7 +49,10 @@ fil_...: find them with list_torrents and get_torrent. To play a file, pick \
 the torrent's largest file with a video/ media type that is not a sample, \
 and pass it to get_stream_url. A stream's health shows in get_torrent's \
 statistics: its peers, download rate, and piece progress. preload_file \
-fetches a file's head and tail so playback starts at once.";
+fetches a file's head and tail so playback starts at once. To look into a \
+failure, read list_log_records at warn or above, narrowed with contains to \
+a torrent's ID or a request_id from a problem; get_system and \
+get_statistics describe the process and every torrent and reader.";
 
 /// The MCP server of one application.
 #[derive(Clone, Debug)]
@@ -212,6 +222,25 @@ pub struct FileArgument {
     pub torrent_id: String,
     /// The file's ID, fil_...
     pub file_id: String,
+}
+
+/// The arguments of `list_log_records`.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct ListLogRecords {
+    /// Only records at this level or more severe: error, warn, info, debug,
+    /// or trace.
+    pub min_level: Option<String>,
+    /// Text to find in a record's message, target, request ID, or fields,
+    /// ignoring case, such as a torrent's ID; a plain substring.
+    pub contains: Option<String>,
+    /// Only records with a greater sequence: a previous result's
+    /// latest_sequence, for what was logged since.
+    pub after_sequence: Option<u64>,
+    /// How many records to return, 1 to 200; 50 by default.
+    pub limit: Option<u32>,
+    /// The cursor query parameter of a previous result's links.next, for
+    /// the page after it.
+    pub cursor: Option<String>,
 }
 
 /// The arguments of `list_up_next`.
@@ -525,6 +554,71 @@ impl Server {
             .await,
         )
     }
+
+    #[tool(
+        description = "Get the running application's version, platform, run \
+            ID, uptime, and memory use.",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn get_system(&self) -> CallToolResult {
+        let system = self.client.get("/api/v1/system", &[]).await;
+        answer(system.map(|system| system.body))
+    }
+
+    #[tool(
+        description = "Get measurements across every torrent and reader: \
+            torrents by observed state, readers, peers, and the transfer \
+            totals and rates.",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn get_statistics(&self) -> CallToolResult {
+        let statistics = self.client.get("/api/v1/statistics", &[]).await;
+        answer(statistics.map(|statistics| statistics.body))
+    }
+
+    #[tool(
+        description = "List the application's log records, newest first, \
+            optionally at a minimum level, containing some text, or after a \
+            sequence. latest_sequence is the newest record's sequence.",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn list_log_records(
+        &self,
+        Parameters(arguments): Parameters<ListLogRecords>,
+    ) -> CallToolResult {
+        answer(
+            async {
+                let limit = arguments.limit.unwrap_or(DEFAULT_LOG_RECORDS);
+                if !(1..=MAX_LOG_RECORDS).contains(&limit) {
+                    return Err(Failure::Argument(format!(
+                        "limit must be 1 to {MAX_LOG_RECORDS}"
+                    )));
+                }
+                let mut query = vec![("page_size", limit.to_string())];
+                if let Some(level) = arguments.min_level {
+                    let _: api::LogLevel = member("min_level", level.clone())?;
+                    query.push(("min_level", level));
+                }
+                let filters = [
+                    ("contains", arguments.contains),
+                    (
+                        "after_sequence",
+                        arguments
+                            .after_sequence
+                            .map(|sequence| sequence.to_string()),
+                    ),
+                    ("cursor", arguments.cursor),
+                ];
+                query.extend(
+                    filters
+                        .into_iter()
+                        .filter_map(|(name, value)| Some((name, value?))),
+                );
+                Ok(self.client.get("/api/v1/log-records", &query).await?.body)
+            }
+            .await,
+        )
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -562,6 +656,16 @@ impl ServerHandler for Server {
                 "The piece cache's capacity and usage.",
             ),
             resource(SETTINGS_URI, "Settings", "The application's settings."),
+            resource(
+                SYSTEM_URI,
+                "System",
+                "The running application's version, platform, and uptime.",
+            ),
+            resource(
+                STATISTICS_URI,
+                "Statistics",
+                "Measurements across every torrent and reader.",
+            ),
         ]))
     }
 
@@ -599,6 +703,16 @@ impl ServerHandler for Server {
                 .get("/api/v1/settings", &[])
                 .await
                 .map(|settings| settings.body),
+            SYSTEM_URI => self
+                .client
+                .get("/api/v1/system", &[])
+                .await
+                .map(|system| system.body),
+            STATISTICS_URI => self
+                .client
+                .get("/api/v1/statistics", &[])
+                .await
+                .map(|statistics| statistics.body),
             other => match other.strip_prefix(TORRENT_URI_PREFIX) {
                 Some(torrent_id) if is_segment(torrent_id, "trr_") => {
                     self.torrent(torrent_id).await

@@ -4,7 +4,7 @@
 
 //! MCP-08: `torrplay mcp` speaks only the protocol on standard output, takes
 //! the application's origin from its environment, and ends when its input
-//! closes.
+//! closes. MCP-10: over HTTP, it shuts down on SIGTERM.
 
 use std::process::Stdio;
 use std::time::Duration;
@@ -84,4 +84,45 @@ async fn stdio_carries_only_protocol_messages() {
     let log = String::from_utf8_lossy(&finished.stderr);
     assert!(log.contains("serving MCP"), "{log}");
     assert!(!log.contains("atk_secret"), "the token stays out of logs");
+}
+
+/// MCP-10: a termination signal that arrives once the HTTP transport
+/// listens shuts it down rather than ending the process.
+#[cfg(unix)]
+#[tokio::test]
+async fn the_http_transport_stops_on_sigterm() {
+    let unused = std::net::TcpListener::bind("127.0.0.1:0").expect("a port");
+    let address = unused.local_addr().expect("an address");
+    drop(unused);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_torrplay"))
+        .args(["mcp", "--transport", "http", "--listen"])
+        .arg(address.to_string())
+        .env_remove("TORRPLAY_URL")
+        .env_remove("TORRPLAY_TOKEN")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("torrplay mcp starts");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    while tokio::net::TcpStream::connect(address).await.is_err() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "torrplay mcp did not listen"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let pid = child.id().expect("its process ID");
+    let sent = Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status()
+        .await
+        .expect("kill runs");
+    assert!(sent.success());
+    let status = tokio::time::timeout(Duration::from_secs(20), child.wait())
+        .await
+        .expect("it stops in time")
+        .expect("its exit");
+    assert!(status.success(), "{status}");
 }

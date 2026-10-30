@@ -26,6 +26,7 @@ use torrplay_core::id::InfoHashV1;
 use torrplay_fixtures::FixtureSpec;
 use torrplay_fixtures::catalog;
 use torrplay_mcp::{Client, HttpListener, Server};
+use torrplay_server::log_files::{LogFiles, LogRecord, LogWriter};
 use torrplay_server::{App, router};
 use torrplay_store::Store;
 use url::Url;
@@ -38,6 +39,8 @@ struct Application {
     http: reqwest::Client,
     shutdown: oneshot::Sender<()>,
     task: JoinHandle<std::io::Result<()>>,
+    log_files: LogFiles,
+    log_writer: LogWriter,
     _data: TempDir,
 }
 
@@ -48,9 +51,12 @@ impl Application {
         let engine = FakeEngine::with_catalog();
         let spec = catalog::single_small();
         engine.set_metadata_retrievable(InfoHashV1::from_bytes(spec.metainfo().info_hash), true);
+        let (log_files, log_writer) =
+            LogFiles::open(&data.path().join("logs")).expect("the log files open");
         let app = App::new(Arc::new(engine), store)
             .with_settings(contents.settings)
-            .with_credentials(contents.credentials);
+            .with_credentials(contents.credentials)
+            .with_log_files(Some(log_files.clone()));
         let app = Arc::new(app);
         app.apply_dht()
             .await
@@ -76,6 +82,8 @@ impl Application {
             http: reqwest::Client::new(),
             shutdown,
             task,
+            log_files,
+            log_writer,
             _data: data,
         }
     }
@@ -86,6 +94,28 @@ impl Application {
             .await
             .expect("the server task")
             .expect("the server stops cleanly");
+        self.log_writer.close().expect("the log files close");
+    }
+
+    /// Writes a log record of `level` and `message`, naming `torrent_id`,
+    /// and waits until the files hold it.
+    fn log(&self, level: &str, message: &str, torrent_id: &str) {
+        let record = LogRecord {
+            sequence: self.log_files.next_sequence(),
+            time: "2026-10-30T09:15:02.481Z".into(),
+            level: level.into(),
+            run_id: "run_q4m2kzb6hxw3rjpt5yc4ula7nd".into(),
+            request_id: None,
+            target: "torrplay_server".into(),
+            message: message.into(),
+            fields: [("torrent_id".to_owned(), torrent_id.to_owned())].into(),
+        };
+        self.log_writer
+            .write(serde_json::to_string(&record).unwrap());
+        assert!(
+            self.log_writer.flush(Duration::from_secs(10)),
+            "the record is written"
+        );
     }
 
     /// Sets the password and returns an `api` access token's secret.
@@ -223,8 +253,11 @@ async fn tools_and_resources_are_listed() {
             "cancel_preload",
             "delete_torrent",
             "get_cache_statistics",
+            "get_statistics",
             "get_stream_url",
+            "get_system",
             "get_torrent",
+            "list_log_records",
             "list_torrents",
             "list_up_next",
             "preload_file",
@@ -240,6 +273,7 @@ async fn tools_and_resources_are_listed() {
     };
     assert_eq!(hints("delete_torrent").destructive_hint, Some(true));
     assert_eq!(hints("list_torrents").read_only_hint, Some(true));
+    assert_eq!(hints("list_log_records").read_only_hint, Some(true));
 
     let resources = session
         .client
@@ -256,6 +290,8 @@ async fn tools_and_resources_are_listed() {
         [
             "torrplay://cache",
             "torrplay://settings",
+            "torrplay://statistics",
+            "torrplay://system",
             "torrplay://torrents"
         ]
     );
@@ -545,5 +581,103 @@ async fn the_http_transport_stays_on_loopback() {
         .expect("the listener stops")
         .expect("the listener task")
         .expect("the listener stops cleanly");
+    application.stop().await;
+}
+
+/// MCP-09: the system, the statistics, and the log records, as the API
+/// reports them.
+#[tokio::test]
+async fn the_system_statistics_and_log_records_are_read() {
+    let application = Application::start().await;
+    let session = Session::open(application.origin.clone(), None).await;
+    let api = |path: &str| {
+        let url = application.origin.join(path).unwrap();
+        let http = application.http.clone();
+        async move {
+            http.get(url)
+                .send()
+                .await
+                .unwrap()
+                .json::<Value>()
+                .await
+                .unwrap()
+        }
+    };
+    let (torrent_id, _) = session.add(&catalog::single_small(), "Sintel").await;
+
+    let system = session.ok("get_system", json!({})).await;
+    assert_eq!(system["run_id"], api("/api/v1/system").await["run_id"]);
+    assert_eq!(
+        session.read("torrplay://system").await["run_id"],
+        system["run_id"]
+    );
+    let statistics = session.ok("get_statistics", json!({})).await;
+    assert_eq!(statistics["torrent_count"], 1);
+    assert_eq!(
+        session.read("torrplay://statistics").await["torrent_count"],
+        1
+    );
+
+    application.log("info", "metadata retrieved", &torrent_id);
+    application.log("warn", "a peer was banned", &torrent_id);
+    application.log("warn", "a tracker failed", "trr_other");
+    application.log("error", "a piece failed", &torrent_id);
+    let messages = |page: &Value| -> Vec<String> {
+        page["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .map(|record| record["message"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let first = session
+        .ok(
+            "list_log_records",
+            json!({ "min_level": "warn", "contains": torrent_id, "limit": 1 }),
+        )
+        .await;
+    assert_eq!(messages(&first), ["a piece failed"], "newest first");
+    let latest = first["latest_sequence"]
+        .as_u64()
+        .expect("a latest sequence");
+    let next = first["links"]["next"].as_str().expect("a next link");
+    let cursor = Url::parse("http://next")
+        .unwrap()
+        .join(next)
+        .unwrap()
+        .query_pairs()
+        .find(|(name, _)| name == "cursor")
+        .expect("a cursor")
+        .1
+        .into_owned();
+    let second = session
+        .ok(
+            "list_log_records",
+            json!({
+                "min_level": "warn",
+                "contains": torrent_id,
+                "limit": 1,
+                "cursor": cursor,
+            }),
+        )
+        .await;
+    assert_eq!(messages(&second), ["a peer was banned"]);
+    assert!(
+        second["links"]["next"].is_null(),
+        "the info record is left out"
+    );
+
+    application.log("info", "a stream ended", &torrent_id);
+    let since = session
+        .ok("list_log_records", json!({ "after_sequence": latest }))
+        .await;
+    assert_eq!(messages(&since), ["a stream ended"], "only what is newer");
+
+    let (failed, body) = session
+        .call("list_log_records", json!({ "min_level": "fatal" }))
+        .await;
+    assert!(failed);
+    assert_eq!(body["title"], "Invalid argument");
+    session.close().await;
     application.stop().await;
 }

@@ -261,6 +261,7 @@ fn mcp(config: McpConfig) -> ExitCode {
                 torrplay_mcp::serve_stdio(server).await?;
             }
             Some(address) => {
+                let shutdown = termination();
                 let listener = torrplay_mcp::HttpListener::bind(address).await?;
                 tracing::info!(
                     application = %url,
@@ -268,7 +269,7 @@ fn mcp(config: McpConfig) -> ExitCode {
                     path = torrplay_mcp::HTTP_PATH,
                     "serving MCP over Streamable HTTP"
                 );
-                listener.serve(server, termination()).await?;
+                listener.serve(server, shutdown).await?;
             }
         }
         anyhow::Ok(())
@@ -283,8 +284,6 @@ fn mcp(config: McpConfig) -> ExitCode {
     }
 }
 
-/// Completes on the first termination signal: SIGTERM or SIGINT on Unix,
-/// Ctrl+C elsewhere.
 /// Waits for SIGTERM or SIGINT, or Ctrl+C on Windows. The handlers are
 /// installed when this is called, not when the future is first polled, so
 /// a signal that arrives once the API listens shuts down gracefully instead

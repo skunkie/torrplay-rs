@@ -396,7 +396,7 @@ These scenarios accept [the MCP contract](mcp.md) (M7).
 
 | ID | Scenario | Expected |
 |---|---|---|
-| MCP-01 | List the tools, resources, and resource templates | The ten tools, `delete_torrent` destructive and the reads read-only; the three resources and the torrent template |
+| MCP-01 | List the tools, resources, and resource templates | The thirteen tools, `delete_torrent` destructive and the reads read-only; the five resources and the torrent template |
 | MCP-02 | Add a torrent with a title, find it with a typo, read it as a tool and a resource, and play the URL `get_stream_url` returns, without a password | The torrent, its files, and its statistics; the URL streams the file and carries no token |
 | MCP-03 | Update a torrent's kind and year, clear the year with `null`, and delete it | Omitted members kept; the year cleared; then `404` as a tool error |
 | MCP-04 | Preload a file twice, then cancel its preloads twice | The same preload both times; it is canceled, then nothing is |
@@ -404,6 +404,8 @@ These scenarios accept [the MCP contract](mcp.md) (M7).
 | MCP-06 | Set a password, then call a tool without and with an `api` access token, play the URL `get_stream_url` returns, and call a tool after the application stops | `401` as a tool error; the listing; the URL streams with its playback token alone; a tool error naming the application's origin |
 | MCP-07 | Bind the HTTP transport on `0.0.0.0`, then on loopback, initialize with a foreign `Origin`, a loopback one, and none, and shut down | Refused at startup; `403`, `200`, `200`; the listener stops |
 | MCP-08 | Run `torrplay mcp` with `TORRPLAY_URL` and `TORRPLAY_TOKEN`, initialize, call a tool, and close its input | Only JSON-RPC lines on standard output; a tool error naming the origin; exit status 0; the token never in its log |
+| MCP-09 | Read the system and the statistics as tools and resources, write log records, and list them with a level, a substring, a small limit and its cursor, and `after_sequence`, then with an unknown level | The run ID and torrent count the API reports; the matching records newest first, the next page, and only the newer records; then `Invalid argument` |
+| MCP-10 | Run `torrplay mcp --transport http`, and send SIGTERM once it listens | Exit status 0 |
 
 ### Observability
 
