@@ -727,12 +727,13 @@ content URLs need no token; other clients are refused, as
 the application serves one household, whose people are profiles.
 
 - `PUT /api/v1/password` sets the password, `201` with `Location`, which
-  turns authentication on. While it is off anyone may set it, as anyone may
-  change everything else. Changing a password that is set needs an access
-  token, as every request then does, and `current_password`; a wrong one is
-  `invalid-credentials`, and `current_password` is `validation-failed` when
-  missing while a password is set or present while none is. A change keeps
-  access tokens unless `revoke_access_tokens` is true.
+  turns authentication on. While it is off, a client on a local network
+  may set it, as it may use every operation. Changing a password that is
+  set needs an access token, as every request then does, and
+  `current_password`; a wrong one is `invalid-credentials`, and
+  `current_password` is `validation-failed` when missing while a password
+  is set or present while none is. A change keeps access tokens unless
+  `revoke_access_tokens` is true.
 - A password has 8 to 256 characters after NFC normalization. It is stored
   only as an Argon2id hash in PHC format, with 19 MiB of memory, 2 passes,
   and 1 lane, and no response or log holds it.
@@ -844,8 +845,9 @@ televisions, and other computers on the local network reach it:
   link-local IPv4, unique-local and link-local IPv6, and the shared address
   space `100.64.0.0/10`, which carrier-grade NAT and overlay networks such
   as Tailscale use. The entry point, the API catalog, the OpenAPI
-  document, the API reference, and the health checks answer everyone. Once a password is set,
-  every client may connect and every request needs its credential.
+  document, the API reference, and the health checks answer everyone. Once
+  a password is set, every client may connect and every request needs its
+  credential.
 - Behind a reverse proxy, the client's address is the proxy's, so a proxy
   on this computer makes every client local: set a password before
   exposing the application.
