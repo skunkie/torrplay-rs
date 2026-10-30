@@ -824,6 +824,8 @@ pub struct TorrentLinks {
     pub configuration: String,
     ///The torrent's files, which return lifecycle-conflict until metadata is available.
     pub files: String,
+    ///The torrent's torrent file, which returns lifecycle-conflict until metadata is available.
+    pub metainfo: String,
     ///The torrent's poster, which is not-found while the torrent has none.
     pub poster: String,
     ///This torrent.

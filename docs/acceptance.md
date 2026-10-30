@@ -99,6 +99,7 @@ milestones. Later milestones keep every scenario passing.
 | API-20 | Create from `hybrid` fixtures, including one with two padding files of equal length | Torrents that load are v1 torrents with one `sha1` info hash; the spike records which hybrid files fail and how (M2) |
 | API-21 | Create from a magnet URI with a private tracker passkey, then exercise every operation and an error | The passkey appears in no response, problem, or log line |
 | API-22 | GET `/api/v1/reference` and its script, with and without gzip in `Accept-Encoding`, then with the script's ETag | An HTML page whose policy allows only its own origin; the bundle gzipped or not, each with its own strong ETag; `304` for a matching ETag; both need no credential |
+| API-23 | GET an uploaded torrent's `metainfo`, with its ETag, and as HEAD; GET a magnet torrent's before and after its metadata; delete that torrent and upload its torrent file; GET a temporary torrent's | The upload's own bytes as `application/x-bittorrent`, an attachment, `no-store`; `304`; headers only; `409`, then a torrent file; `404`, then `201` with a new ID, the same info hash and file IDs, and no metadata wait; the bytes from memory |
 
 ### Lifecycle
 

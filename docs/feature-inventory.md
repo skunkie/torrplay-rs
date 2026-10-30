@@ -38,6 +38,7 @@ document that schedules it.
 | Retrieve metadata from peers | Implicit on add | Verified | LIF-01, LIF-02, LIF-12 |
 | Pause and start a torrent | Not exposed | Verified | LIF-03 to LIF-05, `configuration_changes` |
 | Delete a torrent, with its disk data | `DELETE /api/v1/torrents/{hash}` | Verified | LIF-07, LIF-08, DSK-06, `deletion` |
+| Download a torrent's torrent file, to recover it after deletion | Not present | Verified | API-23, `metainfo`; the client re-creates a deleted torrent, as [lifecycle](lifecycle.md#recovering-a-deleted-torrent) describes, so the server keeps nothing of it |
 | Persist torrents across restarts | BBolt database | Verified | LIF-11, LIF-13 to LIF-18, `restart` ([ADR 8](adr/0008-database.md)) |
 | Memory and disk storage, with transitions | `storage` member | Verified | DSK-01 to DSK-09 ([ADR 9](adr/0009-disk-storage.md)) |
 | Play a torrent without keeping it | TorrServer `save_to_db`, excluded | Verified | TMP-01 to TMP-12; `retention: temporary`, deleted once unwatched, its progress kept by info hash; no one-URL play endpoint |
@@ -58,6 +59,7 @@ document that schedules it.
 |---|---|---|---|
 | List a torrent's files | In the torrent resource | Verified | `file_pages` |
 | Stream a file with byte ranges, conditional requests, and HEAD | `GET`, `HEAD /api/v1/stream/{hash}` | Verified | STR-01 to STR-10, `content_ranges`, `content_types` |
+| Adaptive streaming with HLS or DASH | Not present | Deferred | Its own milestone, decided with the client's playback path: it needs repackaging or transcoding and a segment cache within the cache capacity |
 | Readers that continue across range requests | Stream pool | Verified | RDR-01 to RDR-06 |
 | Memory cache with eviction and pinning | Piece storage | Verified | CAC-01 to CAC-11 ([ADR 5](adr/0005-storage.md)) |
 | Preload a file's head and tail, or at a byte offset | `PUT /api/v1/torrents/{hash}/preload` | Verified | PRL-01 to PRL-09 |
@@ -72,7 +74,7 @@ document that schedules it.
 | Up next: resume and next episode | Not present | Verified | UPN-01 to UPN-05 |
 | Progress estimates for players without progress reports | Not present | Verified | Application viewings; the launching application saves the progress; VWG-01 to VWG-08 |
 | Progress by TMDB or IMDb title, for catalog cards | Not present | Verified | Title progress, kept when torrents are deleted; PRG-08 to PRG-11 |
-| Playlists for external players | `GET /api/v1/playlist` | Planned | Playlists and scoped playback access |
+| Playlists for external players | `GET /api/v1/playlist` | Deferred | No consumer: Stremio, DLNA, and the client's up next play episodes in order |
 
 ## Settings and operations
 

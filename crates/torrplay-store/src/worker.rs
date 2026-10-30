@@ -10,7 +10,7 @@ use std::sync::Arc;
 #[cfg(feature = "test-support")]
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use rusqlite::{Connection, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use tokio::sync::mpsc;
 use torrplay_core::id::TorrentId;
 use torrplay_core::library::Library;
@@ -98,6 +98,18 @@ impl Worker {
                         reply.send(self.read(|connection| {
                             images::one(connection, Images::Posters, id.as_str())
                         }));
+                }
+                Command::TorrentFile(id, reply) => {
+                    let _ = reply.send(self.read(|connection| {
+                        require(connection, &id)?;
+                        Ok(connection
+                            .query_row(
+                                "SELECT bytes FROM torrent_files WHERE torrent_id = ?1",
+                                params![id.as_str()],
+                                |row| row.get(0),
+                            )
+                            .optional()?)
+                    }));
                 }
                 Command::InsertProfile(profile, reply) => {
                     let _ = reply.send(

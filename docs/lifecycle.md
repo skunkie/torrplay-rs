@@ -331,6 +331,31 @@ only until the application restarts.
 - Creating a torrent with the same info hash afterward creates a new torrent
   with a new ID.
 
+### Recovering a deleted torrent
+
+A client that keeps torrent and file IDs can recover when one stops
+existing, whether someone deleted it or a temporary torrent expired. The
+server keeps nothing of a deleted torrent; the client keeps what it needs.
+
+1. While the torrent exists, the client saves its torrent file from
+   `GET /api/v1/torrents/{torrent_id}/metainfo`, once metadata is
+   available, or else the magnet URI it created the torrent from. The file
+   may carry a private tracker's passkey, so the client stores it as a
+   secret.
+2. When the torrent answers `not-found`, the client creates it again from
+   that file or URI, with the retention it had, since creation defaults to
+   `persisted`. The answer is `201` with the new torrent, or a
+   `duplicate-torrent` problem whose `torrent` member links to one created
+   meanwhile; either gives the torrent's new ID.
+3. File IDs derive from the metadata, so the file IDs the client kept name
+   the same files. The client reads the file and follows its links, rather
+   than rebuilding a URL it saved.
+
+A torrent file gives the metadata at once; a magnet URI makes the new
+torrent retrieve it from peers first, so its files are `lifecycle-conflict`
+until then. A URL saved in an external player, such as a player's history,
+cannot recover this way: the application that launched the player does.
+
 ## Retention
 
 A temporary torrent is one to play without keeping. It streams like any

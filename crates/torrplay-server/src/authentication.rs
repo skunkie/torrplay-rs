@@ -369,6 +369,11 @@ mod tests {
                 Method::PUT,
                 Requirement::Api,
             ),
+            (
+                Some("/api/v1/torrents/{torrent_id}/metainfo"),
+                Method::GET,
+                Requirement::Api,
+            ),
             (Some("/api/v1/torrents"), Method::GET, Requirement::Api),
             (Some("/metrics"), Method::GET, Requirement::Metrics),
             (Some("/api/v1/system"), Method::HEAD, Requirement::Metrics),
