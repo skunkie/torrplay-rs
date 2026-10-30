@@ -13,8 +13,12 @@ info:
     conventions every operation follows, including the 401, 403, 405, 406,
     and 421 responses any operation may return. Authentication is off until
     a password is set; then every operation needs an access token unless
-    its security requirements include the empty one, and docs/lifecycle.md
-    describes access tokens, playback tokens, and the allowed hosts.
+    its security requirements include the empty one. While it is off, those
+    operations answer only clients on a local network (loopback, private,
+    and link-local addresses, and the shared address space 100.64.0.0/10),
+    and others 403 forbidden, setting the password included.
+    docs/lifecycle.md describes access tokens, playback tokens, local
+    networks, and the allowed hosts.
   version: 0.1.0
   license:
     name: MIT
@@ -1416,7 +1420,7 @@ paths:
       tags: [Preloads]
       requestBody:
         description: >-
-          The preload's offset and time to live, in a JSON body of at most
+          The preload's offset and expiry, in a JSON body of at most
           16384 bytes; an empty object asks for the head and tail for 120
           seconds. Larger bodies are content-too-large, and a body that does
           not arrive within 30 seconds is request-timeout.
@@ -1881,6 +1885,9 @@ paths:
     get:
       operationId: getProfile
       summary: Read a profile
+      description: >-
+        Returns the profile: its name, kind, creation time, avatar, and
+        links.
       tags: [Profiles]
       parameters:
         - $ref: '#/components/parameters/IfNoneMatch'
@@ -3146,11 +3153,11 @@ paths:
       summary: Set or change the password
       description: >-
         Sets the password, which turns authentication on, or changes it.
-        While no password is set anyone who can reach the server may set
-        one, as anyone may change everything else. Changing it needs an
-        access token, as every request then does, and the current password.
-        Access tokens keep working across a change unless the request
-        revokes them. The password is stored only as an Argon2id hash before
+        While no password is set, a client on a local network may set one,
+        as it may use every operation, and clients elsewhere are forbidden.
+        Changing it needs an access token, as every request then does, and
+        the current password. Access tokens keep working across a change
+        unless the request revokes them. The password is stored only as an Argon2id hash before
         this returns, and no operation returns it.
       tags: [Authentication]
       requestBody:
@@ -5631,7 +5638,7 @@ components:
           description: >-
             How long streams in progress may continue after a termination
             signal before they are canceled, within the 30-second shutdown
-            limit. Applies to the next shutdown.
+            timeout. Applies to the next shutdown.
           examples: [10]
         peer_limit:
           type: integer

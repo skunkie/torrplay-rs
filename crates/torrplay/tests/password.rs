@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-//! AUT-11: `torrplay password` changes a stopped application's password.
+//! AUT-14: `torrplay password` changes a stopped application's password.
 
 use std::time::SystemTime;
 

@@ -1338,7 +1338,7 @@ pub struct Settings {
     ///Constraint: minLength=1, maxLength=64, pattern=`^[^\x00-\x1F\x7F]+$`
     #[serde(default)]
     pub dlna_name: String,
-    ///How long streams in progress may continue after a termination signal before they are canceled, within the 30-second shutdown limit. Applies to the next shutdown.
+    ///How long streams in progress may continue after a termination signal before they are canceled, within the 30-second shutdown timeout. Applies to the next shutdown.
     ///Constraint: minimum=0, maximum=25
     #[serde(default)]
     pub drain_period_seconds: i32,

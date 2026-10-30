@@ -447,11 +447,11 @@ forces exit if it has not finished after 30 seconds:
 ## Library
 
 A torrent's configuration also holds its library members: `title`, `kind`,
-`year`, `imdb_id`, `description`, `categories`, and `genres`. They are set at creation
-or by a merge patch, need no engine, and can change in any lifecycle state,
-including during metadata retrieval, a transition, or a failure. Each change
-gives the configuration a new ETag, and the torrent resource shows the new
-values with a new state ETag.
+`year`, `imdb_id`, `description`, `categories`, and `genres`. They are set
+at creation or by a merge patch, need no engine, and can change in any
+lifecycle state, including during metadata retrieval, a transition, or a
+failure. Each change gives the configuration a new ETag, and the torrent
+resource shows the new values with a new state ETag.
 
 - Text is normalized when it is written, and what the server stores and
   returns is the normalized text:
@@ -727,12 +727,13 @@ content URLs need no token; other clients are refused, as
 the application serves one household, whose people are profiles.
 
 - `PUT /api/v1/password` sets the password, `201` with `Location`, which
-  turns authentication on. While it is off anyone may set it, as anyone may
-  change everything else. Changing a password that is set needs an access
-  token, as every request then does, and `current_password`; a wrong one is
-  `invalid-credentials`, and `current_password` is `validation-failed` when
-  missing while a password is set or present while none is. A change keeps
-  access tokens unless `revoke_access_tokens` is true.
+  turns authentication on. While it is off, a client on a local network
+  may set it, as it may use every operation. Changing a password that is
+  set needs an access token, as every request then does, and
+  `current_password`; a wrong one is `invalid-credentials`, and
+  `current_password` is `validation-failed` when missing while a password
+  is set or present while none is. A change keeps access tokens unless
+  `revoke_access_tokens` is true.
 - A password has 8 to 256 characters after NFC normalization. It is stored
   only as an Argon2id hash in PHC format, with 19 MiB of memory, 2 passes,
   and 1 lane, and no response or log holds it.
@@ -843,9 +844,10 @@ televisions, and other computers on the local network reach it:
   take the application over. A local network is loopback, RFC 1918 and
   link-local IPv4, unique-local and link-local IPv6, and the shared address
   space `100.64.0.0/10`, which carrier-grade NAT and overlay networks such
-  as Tailscale use. The entry point, the OpenAPI document, the API
-  reference, and the health checks answer everyone. Once a password is set,
-  every client may connect and every request needs its credential.
+  as Tailscale use. The entry point, the API catalog, the OpenAPI
+  document, the API reference, and the health checks answer everyone. Once
+  a password is set, every client may connect and every request needs its
+  credential.
 - Behind a reverse proxy, the client's address is the proxy's, so a proxy
   on this computer makes every client local: set a password before
   exposing the application.
@@ -857,16 +859,16 @@ televisions, and other computers on the local network reach it:
 The application keeps a database in its data directory, which must be on a
 local filesystem, as [ADR 8](adr/0008-database.md) requires.
 
-- For each persisted torrent it stores the ID, the v1 info hash, the creation time to
-  the nanosecond, the configuration with the version its ETag derives from,
-  the storage mode in effect, and the source: an uploaded torrent file's
-  original bytes, or a magnet URI and, once metadata is recorded, the
-  torrent file built from it. The configuration includes the library
-  members, and a poster is stored with its bytes, media type, digest, and
-  upload time. Profiles, their avatars, progress, and dismissals are stored
-  too, and are read at startup, except avatar images. So are the password's
-  hash, the key that signs playback tokens, and the access tokens, by
-  their secrets' digests.
+- For each persisted torrent it stores the ID, the v1 info hash, the creation
+  time to the nanosecond, the configuration with the version its ETag derives
+  from, the storage mode in effect, and the source: an uploaded torrent file's
+  original bytes, or a magnet URI and, once metadata is recorded, the torrent
+  file built from it. The configuration includes the library members, and a
+  poster is stored with its bytes, media type, digest, and upload time.
+  Profiles, their avatars, progress, and dismissals are stored too, and are
+  read at startup, except avatar images. So are the password's hash, the key
+  that signs playback tokens, and the access tokens, by their secrets'
+  digests.
 - It records whether the application last shut down cleanly. A disk
   torrent's resume bitfield, the record of its verified pieces, lives in the
   download directory beside its files rather than in the database.
