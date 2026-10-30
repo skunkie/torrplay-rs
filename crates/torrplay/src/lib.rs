@@ -28,6 +28,7 @@ use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 pub use torrplay_core::credentials::AllowedHosts;
 use torrplay_dlna::description::Device;
+use url::Url;
 
 mod logging;
 mod media_server;
@@ -70,11 +71,17 @@ pub const USAGE: &str = "\
 Usage: torrplay [OPTIONS]
        torrplay password set [--data-dir <DIR>]
        torrplay password remove [--data-dir <DIR>]
+       torrplay mcp [--url <URL>] [--transport stdio|http] [--listen <ADDRESS>]
 
 Streams torrents through the TorrPlay REST API. Authentication is off until a
 password is set. `password set` reads a new password from the first line of
 standard input, and `password remove` turns authentication off and revokes
-every token; both need the application stopped.
+every token; both need the application stopped. `mcp` serves a running
+application's API to an MCP client: it reaches the application at --url or
+TORRPLAY_URL [default: http://127.0.0.1:8080], sends TORRPLAY_TOKEN, an api
+access token, as its credential, and speaks on standard input and output, or
+with --transport http at /mcp on --listen, a loopback address [default:
+127.0.0.1:8090].
 
 Options:
   --listen <ADDRESS>         The API's address, or TORRPLAY_LISTEN; until a
@@ -251,10 +258,111 @@ pub enum Command {
     /// Change the password of the stopped application whose data directory
     /// the configuration names.
     Password(PasswordChange, Config),
+    /// Serve the MCP server of `docs/mcp.md`.
+    Mcp(McpConfig),
     /// Print [`USAGE`].
     Help,
     /// Print the version.
     Version,
+}
+
+/// The options of `torrplay mcp`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct McpConfig {
+    /// The application's origin, overriding [`URL_VARIABLE`].
+    pub url: Option<Url>,
+    /// The Streamable HTTP listener's address, with `--transport http`;
+    /// `None` serves standard input and output.
+    pub http: Option<SocketAddr>,
+    /// The most verbose level the server logs, to standard error.
+    pub log_level: Option<LogLevel>,
+}
+
+/// The environment variable `torrplay mcp` reads the application's origin
+/// from.
+pub const URL_VARIABLE: &str = "TORRPLAY_URL";
+
+/// The environment variable `torrplay mcp` reads its access token from.
+/// There is no option for it, since arguments are visible to every user.
+pub const TOKEN_VARIABLE: &str = "TORRPLAY_TOKEN";
+
+/// The application's origin `value`, if it is an HTTP or HTTPS URL without
+/// a path, query, or credentials.
+pub fn parse_origin(value: &str) -> Option<Url> {
+    let url = Url::parse(value).ok()?;
+    (matches!(url.scheme(), "http" | "https")
+        && url.has_host()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.path() == "/"
+        && url.query().is_none()
+        && url.fragment().is_none())
+    .then_some(url)
+}
+
+fn parse_mcp(args: impl Iterator<Item = String>) -> Result<Command, ArgsError> {
+    let mut config = McpConfig::default();
+    let mut http = false;
+    let mut listen = None;
+    let mut args = args.peekable();
+    while let Some(arg) = args.next() {
+        let (option, inline) = match arg.split_once('=') {
+            Some((option, value)) if option.starts_with("--") => {
+                (option.to_owned(), Some(value.to_owned()))
+            }
+            _ => (arg, None),
+        };
+        let mut value = || {
+            inline
+                .clone()
+                .or_else(|| args.next())
+                .ok_or_else(|| ArgsError::MissingValue(option.clone()))
+        };
+        let invalid = |value: String, reason| ArgsError::InvalidValue {
+            option: option.clone(),
+            value,
+            reason,
+        };
+        match option.as_str() {
+            "-h" | "--help" => return Ok(Command::Help),
+            "--url" => {
+                let value = value()?;
+                config.url =
+                    Some(parse_origin(&value).ok_or_else(|| {
+                        invalid(value, "an origin such as http://127.0.0.1:8080")
+                    })?);
+            }
+            "--transport" => match value()?.as_str() {
+                "stdio" => http = false,
+                "http" => http = true,
+                other => return Err(invalid(other.to_owned(), "stdio or http")),
+            },
+            "--listen" => {
+                let value = value()?;
+                let address: SocketAddr = value
+                    .parse()
+                    .map_err(|_| invalid(value.clone(), "a loopback IP address and port"))?;
+                if !address.ip().is_loopback() {
+                    return Err(invalid(value, "a loopback IP address and port"));
+                }
+                listen = Some(address);
+            }
+            "--log-level" => {
+                let value = value()?;
+                config.log_level =
+                    Some(LogLevel::parse(&value.to_ascii_lowercase()).ok_or_else(|| {
+                        invalid(value.clone(), "error, warn, info, debug, or trace")
+                    })?);
+            }
+            _ => return Err(ArgsError::Unknown(option)),
+        }
+    }
+    if http {
+        config.http = Some(listen.unwrap_or(torrplay_mcp::DEFAULT_LISTEN));
+    } else if listen.is_some() {
+        return Err(ArgsError::McpListen);
+    }
+    Ok(Command::Mcp(config))
 }
 
 /// A change `torrplay password` makes.
@@ -318,6 +426,9 @@ pub enum ArgsError {
     /// it does not take.
     #[error("torrplay password takes set or remove, and only --data-dir")]
     PasswordUsage,
+    /// `--listen` for `torrplay mcp` without `--transport http`.
+    #[error("torrplay mcp takes --listen only with --transport http")]
+    McpListen,
     /// An option without its value.
     #[error("{0} needs a value")]
     MissingValue(String),
@@ -348,6 +459,10 @@ pub fn parse_args(
         })?);
     }
     let mut args = args.into_iter().peekable();
+    if args.peek().map(String::as_str) == Some("mcp") {
+        args.next();
+        return parse_mcp(args);
+    }
     let password = if args.peek().map(String::as_str) == Some("password") {
         args.next();
         match args.next().as_deref() {
@@ -950,6 +1065,49 @@ mod tests {
                 settings.cache_capacity_bytes,
             ),
         );
+    }
+
+    #[test]
+    fn mcp_serves_stdio_unless_http_is_asked_for() {
+        assert_eq!(parse(&["mcp"]), Ok(Command::Mcp(McpConfig::default())));
+        let Ok(Command::Mcp(config)) = parse(&[
+            "mcp",
+            "--url=https://torrplay.home.arpa:8443",
+            "--transport",
+            "http",
+            "--listen",
+            "[::1]:9000",
+            "--log-level",
+            "DEBUG",
+        ]) else {
+            panic!("an mcp command");
+        };
+        assert_eq!(
+            config.url.as_ref().map(Url::as_str),
+            Some("https://torrplay.home.arpa:8443/")
+        );
+        assert_eq!(config.http, Some("[::1]:9000".parse().unwrap()));
+        assert_eq!(config.log_level, Some(LogLevel::Debug));
+        let Ok(Command::Mcp(config)) = parse(&["mcp", "--transport", "http"]) else {
+            panic!("an mcp command");
+        };
+        assert_eq!(config.http, Some(torrplay_mcp::DEFAULT_LISTEN));
+    }
+
+    #[test]
+    fn mcp_refuses_what_it_cannot_serve() {
+        for args in [
+            &["mcp", "--listen", "0.0.0.0:8090", "--transport", "http"][..],
+            &["mcp", "--listen", "127.0.0.1:8090"],
+            &["mcp", "--transport", "sse"],
+            &["mcp", "--url", "ftp://127.0.0.1"],
+            &["mcp", "--url", "http://127.0.0.1:8080/api/v1"],
+            &["mcp", "--url", "http://user:secret@127.0.0.1:8080"],
+            &["mcp", "--token", "atk"],
+            &["mcp", "--data-dir", "/tmp"],
+        ] {
+            assert!(parse(args).is_err(), "{args:?}");
+        }
     }
 
     #[test]

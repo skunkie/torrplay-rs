@@ -390,6 +390,21 @@ These scenarios accept [the DLNA contract](dlna.md) (M7).
 | DLNA-19 | Bind the SSDP port as a UPnP media player does, after the media server starts and before it starts | Both bind, on macOS and the BSDs as on Linux and Windows |
 | DLNA-20 | Browse a file in progress, in its torrent and in `recently-viewed`, and once it is viewed | `upnp:lastPlaybackPosition` and `sec:dcmInfo` `BM=` with its saved position in both; neither once viewed |
 
+### MCP
+
+These scenarios accept [the MCP contract](mcp.md) (M7).
+
+| ID | Scenario | Expected |
+|---|---|---|
+| MCP-01 | List the tools, resources, and resource templates | The ten tools, `delete_torrent` destructive and the reads read-only; the three resources and the torrent template |
+| MCP-02 | Add a torrent with a title, find it with a typo, read it as a tool and a resource, and play the URL `get_stream_url` returns, without a password | The torrent, its files, and its statistics; the URL streams the file and carries no token |
+| MCP-03 | Update a torrent's kind and year, clear the year with `null`, and delete it | Omitted members kept; the year cleared; then `404` as a tool error |
+| MCP-04 | Preload a file twice, then cancel its preloads twice | The same preload both times; it is canceled, then nothing is |
+| MCP-05 | Add an invalid magnet URI, and call tools with an ID that would leave its path, a missing ID, an unknown kind, and too large a limit | Tool errors: the API's `422` problem, then `Invalid argument` for each |
+| MCP-06 | Set a password, then call a tool without and with an `api` access token, play the URL `get_stream_url` returns, and call a tool after the application stops | `401` as a tool error; the listing; the URL streams with its playback token alone; a tool error naming the application's origin |
+| MCP-07 | Bind the HTTP transport on `0.0.0.0`, then on loopback, initialize with a foreign `Origin`, a loopback one, and none, and shut down | Refused at startup; `403`, `200`, `200`; the listener stops |
+| MCP-08 | Run `torrplay mcp` with `TORRPLAY_URL` and `TORRPLAY_TOKEN`, initialize, call a tool, and close its input | Only JSON-RPC lines on standard output; a tool error naming the origin; exit status 0; the token never in its log |
+
 ### Observability
 
 | ID | Scenario | Expected |

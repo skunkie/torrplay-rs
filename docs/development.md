@@ -318,7 +318,7 @@ Rust 1.99.1 with rustfmt and Clippy, and rustup installs it on first use, so
 local and CI builds use the same version. `clippy.toml` lets tests use
 `unwrap` and `expect`, which the workspace lints flag in production code.
 
-The workspace has ten members:
+The workspace has thirteen members:
 
 - `crates/torrplay` is the application: the `torrplay` executable, which
   serves `torrplay-server` over `LibrqbitEngine`, and the library that holds
@@ -342,6 +342,11 @@ The workspace has ten members:
   actions, object IDs, and the content tree over a catalog the server
   builds. It knows nothing of torrents or axum; its SSDP tests announce
   over loopback to a test socket instead of the multicast group.
+- `crates/torrplay-mcp` is the MCP server `torrplay mcp` runs, as
+  [the MCP contract](mcp.md) specifies it, over the official Rust SDK,
+  `rmcp`. It is a client of the native API and knows nothing of engines or
+  the store; its tests drive it over an in-memory pipe against the server
+  on a loopback port with `FakeEngine`.
 - `crates/torrplay-media` reads the seek indexes of MP4 and Matroska files,
   as [ADR 10](adr/0010-media-seek-index.md) decides, mapping byte offsets to
   playback times and back. It knows nothing of torrents or engines; its

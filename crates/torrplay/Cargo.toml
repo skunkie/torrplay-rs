@@ -28,13 +28,17 @@ tokio.workspace = true
 torrplay-core.workspace = true
 torrplay-dlna.workspace = true
 torrplay-engine.workspace = true
+torrplay-mcp.workspace = true
 torrplay-server.workspace = true
 torrplay-store.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 h2.workspace = true
 reqwest = { workspace = true, features = ["http2"] }
 torrplay-engine = { workspace = true, features = ["faults", "test-support"] }
 torrplay-fixtures.workspace = true
+# The MCP scenario runs the executable.
+tokio = { workspace = true, features = ["process"] }
