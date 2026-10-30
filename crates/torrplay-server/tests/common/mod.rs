@@ -97,6 +97,11 @@ enum RequestCheck {
 
 impl TestServer {
     /// Starts a server over an engine with the catalog's small fixtures.
+    /// The origin requests go to, such as `http://127.0.0.1:41234`.
+    pub fn origin(&self) -> &str {
+        &self.base
+    }
+
     pub async fn start() -> Self {
         Self::start_with(None).await
     }

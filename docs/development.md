@@ -346,6 +346,9 @@ The workspace has ten members:
   as [ADR 10](adr/0010-media-seek-index.md) decides, mapping byte offsets to
   playback times and back. It knows nothing of torrents or engines; its
   tests build synthetic files in code.
+- `crates/torrplay-stremio` answers the Stremio addon's resources, as
+  [its contract](stremio.md) specifies them, from a library the server
+  builds. It knows nothing of engines or HTTP frameworks.
 - `crates/torrplay-engine` holds `LibrqbitEngine`, which implements the
   `Engine` trait over librqbit, and beneath it the piece cache, its evictor
   task, the librqbit storage over it, and the scheduler that turns readers

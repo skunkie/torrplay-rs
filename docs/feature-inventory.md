@@ -115,7 +115,8 @@ document that schedules it.
 | Feature | Go TorrPlay | Status | Evidence or plan |
 |---|---|---|---|
 | DLNA/UPnP media server | `internal/dlna` | Verified | `torrplay-dlna` and [the DLNA contract](dlna.md); DLNA scenarios: discovery, browsing, search, sorting, eventing, media, and icons (DLNA-15); its name is the `dlna_name` setting (SET-10) |
-| Stremio addon | `internal/stremio` | Planned | Its own adapter, with path and query token authentication |
+| Stremio addon | `internal/stremio` | Verified | [Its own adapter](stremio.md): movie and series catalogs with search, skip, and genre, metadata, and streams, with path and query token authentication; STM-01 to STM-08 |
+| Stremio streams on Cinemeta's IMDb items | Not present | Planned | An `imdb_id` library member and the `tt` ID prefix |
 | MCP server | `internal/mcp` | Planned | Over the application's HTTP API |
 | qBittorrent API | `POST /api/v2/torrents/add` | Deferred | Optional; only if a later product scope includes it |
 | TorrServer API | `/echo`, `/play`, `/stream`, and others | Excluded | Out of scope for the Rust implementation |

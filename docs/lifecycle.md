@@ -705,7 +705,8 @@ a scope, and an optional lifetime.
   SHA-256 digest, and the token's ID, `atk_`, is not secret.
 - The `api` scope allows every operation. The `playback` scope allows only
   the playback operations: `GET` and `HEAD` of a file's content and of a
-  torrent's poster, for a television or a player that keeps one URL.
+  torrent's poster, for a television or a player that keeps one URL, and
+  the [Stremio addon](stremio.md)'s resources.
 - The `metrics` scope allows only reading `/metrics`, the system
   resource, and the application's and the piece cache's statistics, for a
   monitoring scraper. Like an `api` token, it is refused in a URL

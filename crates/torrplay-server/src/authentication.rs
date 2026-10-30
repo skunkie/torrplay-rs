@@ -75,6 +75,11 @@ fn requirement(route: Option<&str>, method: &Method) -> Requirement {
         // The media server's own access rule applies instead.
         return Requirement::Host;
     }
+    if route.starts_with("/stremio/") {
+        // The addon's resources are playback operations, which the token
+        // in its path may allow.
+        return Requirement::Playback;
+    }
     match route {
         "/livez" | "/readyz" => Requirement::Nothing,
         "/api/v1"
@@ -157,7 +162,8 @@ pub(crate) async fn guard<E: Engine>(
         }
         return next.run(request).await;
     }
-    let (credential, in_query) = match credential(&request, requirement) {
+    let route = route.as_ref().map(MatchedPath::as_str);
+    let (credential, in_query) = match credential(&request, route, requirement) {
         Ok(found) => found,
         Err(problem) => return problem.into_response(),
     };
@@ -230,8 +236,19 @@ fn allows(scope: Scope, requirement: Requirement) -> bool {
 /// parameter.
 fn credential(
     request: &Request,
+    route: Option<&str>,
     requirement: Requirement,
 ) -> Result<(Option<String>, bool), Problem> {
+    // The Stremio addon is installed from a URL that carries its token in
+    // the path, which counts as a URL's token, as the query's does.
+    if route.is_some_and(|route| route.starts_with("/stremio/{token}/")) {
+        let token = request.uri().path().split('/').nth(2).map(|token| {
+            form_urlencoded::parse(format!("t={token}").as_bytes())
+                .next()
+                .map_or_else(|| token.to_owned(), |(_, value)| value.into_owned())
+        });
+        return Ok((token, true));
+    }
     if let Some(value) = request.headers().get(header::AUTHORIZATION) {
         let token = value
             .to_str()
@@ -314,6 +331,16 @@ mod tests {
             (Some("/livez"), Method::GET, Requirement::Nothing),
             (Some("/readyz"), Method::GET, Requirement::Nothing),
             (Some("/api/v1"), Method::GET, Requirement::Host),
+            (
+                Some("/stremio/{token}/manifest.json"),
+                Method::GET,
+                Requirement::Playback,
+            ),
+            (
+                Some("/stremio/play/{torrent}/{file}/{name}"),
+                Method::HEAD,
+                Requirement::Playback,
+            ),
             (Some("/api/v1/openapi.yaml"), Method::GET, Requirement::Host),
             (Some("/api/v1/reference"), Method::GET, Requirement::Host),
             (
