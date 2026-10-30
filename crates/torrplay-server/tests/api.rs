@@ -492,6 +492,64 @@ mod scenario {
         server.stop().await;
     }
 
+    /// API-27: the API catalog (RFC 9727) links what the host serves, with
+    /// the media types those resources are served as.
+    pub async fn api_catalog() {
+        let server = TestServer::start().await;
+        let entry = server.get("/api/v1").await;
+        assert_eq!(
+            entry.json()["links"]["api-catalog"],
+            "/.well-known/api-catalog"
+        );
+        let catalog = server.get("/.well-known/api-catalog").await;
+        assert_eq!(catalog.status, StatusCode::OK);
+        let media_type =
+            r#"application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727""#;
+        assert_eq!(catalog.header(header::CONTENT_TYPE), Some(media_type));
+        assert_eq!(catalog.header(header::CACHE_CONTROL), Some("no-cache"));
+        let body = catalog.json();
+        let contexts = body["linkset"].as_array().unwrap();
+        assert_eq!(contexts.len(), 1, "the host serves one API");
+        assert_eq!(contexts[0]["anchor"], "/api/v1");
+        for relation in ["service-desc", "service-doc", "status"] {
+            for link in contexts[0][relation].as_array().unwrap() {
+                let href = link["href"].as_str().unwrap();
+                let target = server.get(href).await;
+                assert_eq!(target.status, StatusCode::OK, "{relation} {href}");
+                let served = target.header(header::CONTENT_TYPE).unwrap();
+                assert_eq!(
+                    served.split(';').next(),
+                    link["type"].as_str(),
+                    "{relation} {href} is served as its link says"
+                );
+            }
+        }
+
+        let head = server
+            .send(empty(Method::HEAD, "/.well-known/api-catalog"))
+            .await;
+        assert_eq!(head.status, StatusCode::OK);
+        assert_eq!(head.header(header::CONTENT_TYPE), Some(media_type));
+        assert!(head.body.is_empty());
+        let json_only = server
+            .send(
+                request(Method::GET, "/.well-known/api-catalog")
+                    .header(header::ACCEPT, "application/json")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await;
+        assert_problem(&json_only, StatusCode::NOT_ACCEPTABLE, "not-acceptable");
+
+        // Clients find the API before they have a credential.
+        set_first_password(&server).await;
+        assert_eq!(
+            server.get("/.well-known/api-catalog").await.status,
+            StatusCode::OK
+        );
+        server.stop().await;
+    }
+
     /// API-22.
     pub async fn api_reference() {
         let server = TestServer::start().await;
@@ -7772,6 +7830,8 @@ const EXEMPT: &[(&str, u16)] = &[
     // These answer from constants and the registry without the engine;
     // only a failure to serialize their bodies could make them 500.
     ("getEntryPoint", 500),
+    ("getApiCatalog", 500),
+    ("headApiCatalog", 500),
     ("getOpenApiDocument", 500),
     // The page is a constant, and the script a bundle a unit test
     // decompresses, so only a failed worker could make them 500.
@@ -7830,6 +7890,7 @@ scenarios!(
     temporary_torrents,
     named_dht_and_log_settings,
     api_reference,
+    api_catalog,
     magnet_creation,
     upload_creation,
     duplicates,

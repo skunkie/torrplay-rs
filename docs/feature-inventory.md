@@ -93,6 +93,7 @@ document that schedules it.
 | Default trackers for magnet URIs | `torrent_trackers` | Deferred | After the global peer budget |
 | CORS origins | `cors_allowed_origins` | Planned | With the client |
 | Health checks | `GET /api/system/health` | Verified | `/livez`, `/readyz`, `service_endpoints` |
+| API discovery from the host | None | Verified | `/.well-known/api-catalog` (RFC 9727), API-27, `api_catalog` |
 | Torrent statistics | `GET /api/stats/torrents/{hash}` | Verified | `statistics` |
 | Cache statistics | `GET /api/stats/memory` | Verified | CAC scenarios, `statistics` |
 | Piece and reader maps of a torrent | `pieces`, `readers` in statistics | Deferred | With the client's piece grid |

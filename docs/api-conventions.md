@@ -304,6 +304,15 @@ status is not.
   it from loading anything from another origin. Like the document, the page
   needs no credential; test requests made from it do while authentication
   is on.
+- `/.well-known/api-catalog` serves the API catalog
+  ([RFC 9727](https://www.rfc-editor.org/rfc/rfc9727.html)): a linkset
+  ([RFC 9264](https://www.rfc-editor.org/rfc/rfc9264.html)) as
+  `application/linkset+json` of the RFC 9727 profile, whose one link
+  context, `/api/v1`, links the document as `service-desc`, the reference
+  page as `service-doc`, and `/readyz` as `status`, each with its media
+  type. It answers GET and HEAD without a credential, and the entry point
+  links it as `api-catalog`, so clients and crawlers find the API from the
+  host alone.
 - Liveness and readiness are outside the versioned API at `/livez` and
   `/readyz`. Both return `200 OK` when healthy and `503 Service Unavailable`
   with a Problem Details body when not. `/readyz` reports unavailable while

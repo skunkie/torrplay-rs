@@ -84,6 +84,7 @@ fn requirement(route: Option<&str>, method: &Method) -> Requirement {
         "/livez" | "/readyz" => Requirement::Nothing,
         "/api/v1"
         | "/api/v1/"
+        | "/.well-known/api-catalog"
         | "/api/v1/openapi.yaml"
         | "/api/v1/reference"
         | "/api/v1/reference/scalar.js" => Requirement::Host,
@@ -342,6 +343,11 @@ mod tests {
                 Requirement::Playback,
             ),
             (Some("/api/v1/openapi.yaml"), Method::GET, Requirement::Host),
+            (
+                Some("/.well-known/api-catalog"),
+                Method::GET,
+                Requirement::Host,
+            ),
             (Some("/api/v1/reference"), Method::GET, Requirement::Host),
             (
                 Some("/api/v1/reference/scalar.js"),

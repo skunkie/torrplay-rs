@@ -79,12 +79,16 @@ rules:
       functionOptions:
         type: snake
 
-  # Members of a links object are link relation names, kept as registered
-  # (RFC 8288) even when they contain hyphens, such as service-desc.
+  # Members of a links object, and of a linkset's link context (RFC 9264),
+  # are link relation names, kept as registered (RFC 8288) even when they
+  # contain hyphens, such as service-desc. A referenced schema is checked
+  # under its own name, so array items, which the API catalog's link
+  # contexts are reached through, are skipped; the contract declares no
+  # object schema inline in items.
   torrplay-property-snake-case:
     description: A JSON field is snake_case.
     severity: warn
-    given: $..[?(@property != 'links')].properties
+    given: $..[?(@property != 'links' && @property != 'ApiCatalogEntry' && @property != 'items')].properties
     then:
       field: '@key'
       function: casing

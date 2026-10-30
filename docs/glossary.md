@@ -29,6 +29,11 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
   Request and response representations of the same resource may differ, for
   example by omitting read-only members from requests.
 
+**API catalog**
+: The document at `/.well-known/api-catalog` that names the APIs a host
+  serves and links their descriptions, as a linkset
+  ([RFC 9727](https://www.rfc-editor.org/rfc/rfc9727.html)).
+
 **Validator**
 : A value, such as an entity tag (ETag), used to check whether a
   representation has changed (RFC 9110). Strong validators support

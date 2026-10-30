@@ -90,6 +90,7 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
         .route("/api/v1", get(service::get_entry_point))
         .route("/api/v1/", any(service::redirect_to_entry_point))
         .route("/api/v1/openapi.yaml", get(service::get_openapi_document))
+        .route(service::API_CATALOG_PATH, get(service::get_api_catalog))
         .route("/api/v1/reference", get(reference::get_page))
         .route("/api/v1/reference/scalar.js", get(reference::get_script))
         .route(

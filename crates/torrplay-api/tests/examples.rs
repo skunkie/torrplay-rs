@@ -27,6 +27,7 @@ fn through(schema: &str, example: &Value) -> Option<Result<Value, String>> {
         "AccessTokenCreation" => round_trip::<api::AccessTokenCreation>(example),
         "AccessTokenPage" => round_trip::<api::AccessTokenPage>(example),
         "AccessTokenScope" => round_trip::<api::AccessTokenScope>(example),
+        "ApiCatalog" => round_trip::<api::ApiCatalog>(example),
         "CacheStatistics" => round_trip::<api::CacheStatistics>(example),
         "Categories" => round_trip::<api::Categories>(example),
         "Category" => round_trip::<api::Category>(example),
