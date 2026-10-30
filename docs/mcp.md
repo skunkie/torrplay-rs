@@ -89,6 +89,9 @@ its field names.
 | `cancel_preload` | `deleteFilePreload` | idempotent |
 | `get_cache_statistics` | `getCacheStatistics` | read-only |
 | `list_up_next` | `listProfiles`, `listUpNext` | read-only |
+| `get_system` | `getSystem` | read-only |
+| `get_statistics` | `getStatistics` | read-only |
+| `list_log_records` | `listLogRecords` | read-only |
 
 - `list_torrents` takes `search`, `kind`, `genre`, `category`, and
   `retention`, with the native filters' meanings; `search` is fuzzy. It
@@ -124,6 +127,18 @@ its field names.
   file's preloads.
 - `list_up_next` takes a `profile_id`. Without one, it returns the
   profiles to choose from instead.
+- `get_system` returns the build, the platform, the run ID, the uptime,
+  and the memory use, as a bug report needs them. `get_statistics` returns
+  the measurements across every torrent and reader: torrents by observed
+  state, readers, peers, and the transfer totals and rates.
+- `list_log_records` takes `min_level`, `contains`, and `after_sequence`,
+  with [the listing's](observability.md#log-records) meanings, and
+  returns at most `limit` records, newest first, 50 by default and at
+  most 200, with a `cursor` for the next page. To read what was logged
+  since an earlier call, the assistant passes that result's
+  `latest_sequence` as `after_sequence`. Like the native operation, it
+  needs an `api` access token, and it is empty when the application could
+  not open its log files.
 
 A Problem Details failure is a tool result with `isError`: the problem's
 members, such as `title`, `detail`, and its invalid values, with its
@@ -147,13 +162,15 @@ covers them.
 | `torrplay://torrents/{torrent_id}` | As `get_torrent` returns it. |
 | `torrplay://cache` | The cache statistics. |
 | `torrplay://settings` | The settings, read-only. |
+| `torrplay://system` | As `get_system` returns it. |
+| `torrplay://statistics` | As `get_statistics` returns it. |
 
 Each is `application/json`. Resources are not subscribable.
 
 ## Prompts
 
-None. The tools' descriptions say how to find a playable file and how to
-judge a stream's health.
+None. The tools' descriptions say how to find a playable file, how to
+judge a stream's health, and how to look into a failure.
 
 ## Implementation
 

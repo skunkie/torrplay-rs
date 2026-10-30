@@ -214,6 +214,9 @@ of series stays bounded.
   `unmatched`. `method` is the request method for the methods any route
   serves, `SUBSCRIBE` and `UNSUBSCRIBE` included, and `other` for the rest.
 
-## Planned
+## MCP
 
-- **MCP.** Tools and resources for the system, statistics, and log records.
+[The MCP server](mcp.md) reads the system, the statistics, and the log
+records with `get_system`, `get_statistics`, and `list_log_records`, and
+offers the first two as the resources `torrplay://system` and
+`torrplay://statistics`.
