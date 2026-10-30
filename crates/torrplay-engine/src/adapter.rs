@@ -72,7 +72,7 @@ use crate::disk::{self, DiskFiles, DiskRefusal, DiskStorageFactory, bitfield};
 use crate::evictor::Evictor;
 use crate::inspect;
 use crate::playback::{
-    DEFAULT_IDLE_READERS_PER_TORRENT, DEFAULT_IDLE_READERS_TOTAL, DEFAULT_IDLE_TIMEOUT,
+    DEFAULT_IDLE_READER_LIMIT, DEFAULT_IDLE_READER_LIMIT_PER_TORRENT, DEFAULT_IDLE_READER_TIMEOUT,
     DEFAULT_READAHEAD_RAMP_BYTES, Playback, PlaybackConfig, Reaper,
 };
 use crate::preload::{PreloadTimer, Preloads};
@@ -182,11 +182,11 @@ pub struct EngineConfig {
     /// may hold requests without delivering.
     pub piece_wait: Duration,
     /// How long a reader stays idle after its stream ends.
-    pub idle_timeout: Duration,
+    pub idle_reader_timeout: Duration,
     /// The most idle readers one torrent keeps.
-    pub idle_readers_per_torrent: usize,
+    pub idle_reader_limit_per_torrent: usize,
     /// The most idle readers all torrents keep together.
-    pub idle_readers_total: usize,
+    pub idle_reader_limit: usize,
     /// The most chunk requests outstanding to one peer.
     pub request_window_blocks: usize,
     /// The most peers one torrent connects to at a time.
@@ -214,9 +214,9 @@ impl EngineConfig {
             readahead_bytes: DEFAULT_CACHE_CAPACITY_BYTES / 2,
             readahead_ramp_bytes: DEFAULT_READAHEAD_RAMP_BYTES,
             piece_wait: DEFAULT_PIECE_WAIT,
-            idle_timeout: DEFAULT_IDLE_TIMEOUT,
-            idle_readers_per_torrent: DEFAULT_IDLE_READERS_PER_TORRENT,
-            idle_readers_total: DEFAULT_IDLE_READERS_TOTAL,
+            idle_reader_timeout: DEFAULT_IDLE_READER_TIMEOUT,
+            idle_reader_limit_per_torrent: DEFAULT_IDLE_READER_LIMIT_PER_TORRENT,
+            idle_reader_limit: DEFAULT_IDLE_READER_LIMIT,
             request_window_blocks: DEFAULT_REQUEST_WINDOW_BLOCKS,
             peer_limit: DEFAULT_PEER_LIMIT,
             peer_keep_alive_interval: DEFAULT_PEER_KEEP_ALIVE_INTERVAL,
@@ -329,13 +329,13 @@ pub struct LibrqbitEngine {
 #[derive(Clone, Copy, Debug)]
 struct Tunables {
     piece_wait: Duration,
-    idle_timeout: Duration,
-    idle_readers_per_torrent: usize,
-    idle_readers_total: usize,
+    idle_reader_timeout: Duration,
+    idle_reader_limit_per_torrent: usize,
+    idle_reader_limit: usize,
     peer_limit: usize,
     cache_capacity_bytes: u64,
     readahead_bytes: u64,
-    background_downloads: bool,
+    background_downloads_enabled: bool,
 }
 
 /// Why a torrent did not join the session.
@@ -461,13 +461,13 @@ impl LibrqbitEngine {
             this: this.clone(),
             tunables: Mutex::new(Tunables {
                 piece_wait: config.piece_wait,
-                idle_timeout: config.idle_timeout,
-                idle_readers_per_torrent: config.idle_readers_per_torrent,
-                idle_readers_total: config.idle_readers_total,
+                idle_reader_timeout: config.idle_reader_timeout,
+                idle_reader_limit_per_torrent: config.idle_reader_limit_per_torrent,
+                idle_reader_limit: config.idle_reader_limit,
                 peer_limit: config.peer_limit,
                 cache_capacity_bytes: config.cache_capacity_bytes,
                 readahead_bytes: config.readahead_bytes,
-                background_downloads: true,
+                background_downloads_enabled: true,
             }),
             phase: Mutex::new(Phase::Starting),
             torrents: Mutex::new(HashMap::new()),
@@ -515,11 +515,11 @@ impl LibrqbitEngine {
         let playback = Playback::new(PlaybackConfig {
             readahead_bytes: tunables.readahead_bytes,
             readahead_ramp_bytes: self.config.readahead_ramp_bytes,
-            idle_timeout: tunables.idle_timeout,
-            idle_readers_per_torrent: tunables.idle_readers_per_torrent,
-            idle_readers_total: tunables.idle_readers_total,
+            idle_reader_timeout: tunables.idle_reader_timeout,
+            idle_reader_limit_per_torrent: tunables.idle_reader_limit_per_torrent,
+            idle_reader_limit: tunables.idle_reader_limit,
         });
-        playback.set_background_downloads(tunables.background_downloads);
+        playback.set_background_downloads(tunables.background_downloads_enabled);
         let preloads = Preloads::new(&playback, tunables.piece_wait);
         let (failures, failed) = mpsc::unbounded_channel();
         let running = Arc::new(Running {
@@ -1488,9 +1488,9 @@ impl Engine for LibrqbitEngine {
             }
             *current = Tunables {
                 piece_wait: settings.piece_wait,
-                idle_timeout: settings.idle_timeout,
-                idle_readers_per_torrent: settings.idle_readers_per_torrent,
-                idle_readers_total: settings.idle_readers_total,
+                idle_reader_timeout: settings.idle_reader_timeout,
+                idle_reader_limit_per_torrent: settings.idle_reader_limit_per_torrent,
+                idle_reader_limit: settings.idle_reader_limit,
                 peer_limit: settings.peer_limit,
                 cache_capacity_bytes: settings.cache_capacity_bytes,
                 readahead_bytes: if resized {
@@ -1498,7 +1498,7 @@ impl Engine for LibrqbitEngine {
                 } else {
                     current.readahead_bytes
                 },
-                background_downloads: settings.background_downloads,
+                background_downloads_enabled: settings.background_downloads_enabled,
             };
             (*current, running, resized)
         };
@@ -1506,9 +1506,9 @@ impl Engine for LibrqbitEngine {
         // tunables. Replanning takes scheduler locks, so it runs unlocked.
         if let Some(running) = running {
             running.playback.set_idle_limits(
-                tunables.idle_timeout,
-                tunables.idle_readers_per_torrent,
-                tunables.idle_readers_total,
+                tunables.idle_reader_timeout,
+                tunables.idle_reader_limit_per_torrent,
+                tunables.idle_reader_limit,
             );
             if resized {
                 running
@@ -1517,7 +1517,7 @@ impl Engine for LibrqbitEngine {
             }
             running
                 .playback
-                .set_background_downloads(tunables.background_downloads);
+                .set_background_downloads(tunables.background_downloads_enabled);
             running.preloads.set_piece_wait(tunables.piece_wait);
         }
         Ok(())

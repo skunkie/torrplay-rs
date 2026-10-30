@@ -572,7 +572,7 @@ async fn range_requests_continue_one_reader_until_it_expires() -> anyhow::Result
     let spec = catalog::single_small();
     let seeder = seeded(&spec).await?;
     let running = Running::start(vec![seeder.addr], ShutdownTimings::default(), |config| {
-        config.idle_timeout = Duration::from_millis(500);
+        config.idle_reader_timeout = Duration::from_millis(500);
     })
     .await?;
     let client = Client::new();

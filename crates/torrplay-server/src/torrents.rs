@@ -451,7 +451,7 @@ pub(crate) async fn create<E: Engine>(
                             .record_torrent_file(&existing, bytes.clone())
                         {
                             app.store()
-                                .set_torrent_file(&existing, bytes.clone())
+                                .set_metainfo(&existing, bytes.clone())
                                 .await
                                 .map_err(store_failed)?;
                         }
@@ -472,7 +472,7 @@ pub(crate) async fn create<E: Engine>(
             }
             Prepared::New(record) if retention == Retention::Temporary => {
                 // A concurrent creation may have taken the room made above.
-                if app.temporaries().len() >= app.effective_settings().temporary_torrents_max {
+                if app.temporaries().len() >= app.effective_settings().temporary_torrent_limit {
                     return Err(too_many_temporary(&app));
                 }
                 app.temporaries()
@@ -539,7 +539,7 @@ pub(crate) fn temporary_conflict(change: &str) -> Problem {
 /// are at their limit, or fails with too-many-temporary-torrents when every
 /// one is active.
 async fn make_room_for_temporary<E: Engine>(app: &App<E>) -> Result<(), Problem> {
-    let limit = app.effective_settings().temporary_torrents_max;
+    let limit = app.effective_settings().temporary_torrent_limit;
     while app.temporaries().len() >= limit {
         let Some(id) = app.temporaries().longest_idle() else {
             return Err(too_many_temporary(app));
@@ -557,7 +557,7 @@ async fn make_room_for_temporary<E: Engine>(app: &App<E>) -> Result<(), Problem>
 }
 
 fn too_many_temporary<E: Engine>(app: &App<E>) -> Problem {
-    let limit = app.effective_settings().temporary_torrents_max;
+    let limit = app.effective_settings().temporary_torrent_limit;
     Problem::new(
         ProblemType::TooManyTemporaryTorrents,
         format!(
@@ -569,7 +569,7 @@ fn too_many_temporary<E: Engine>(app: &App<E>) -> Problem {
 
 /// The record to store for a new torrent from `source`.
 fn stored(record: &TorrentRecord, source: &Source) -> StoredTorrent {
-    let (magnet_uri, torrent_file) = match source {
+    let (magnet_uri, metainfo) = match source {
         Source::TorrentFile(bytes) => (None, Some(bytes.clone())),
         Source::MagnetUri(uri) => (Some(uri.clone()), None),
     };
@@ -580,7 +580,7 @@ fn stored(record: &TorrentRecord, source: &Source) -> StoredTorrent {
         configuration: record.configuration.clone(),
         storage_mode: record.storage_mode,
         magnet_uri,
-        torrent_file,
+        metainfo,
         poster: None,
     }
 }

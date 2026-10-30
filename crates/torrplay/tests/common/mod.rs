@@ -62,16 +62,16 @@ fn settings_of(config: &EngineConfig) -> torrplay_core::settings::Explicit {
     let count = |count: usize| u64::try_from(count).ok();
     torrplay_core::settings::Explicit {
         piece_wait_seconds: seconds(config.piece_wait),
-        idle_timeout_seconds: seconds(config.idle_timeout),
-        idle_readers_per_torrent: count(config.idle_readers_per_torrent),
-        idle_readers_total: count(config.idle_readers_total),
+        idle_reader_timeout_seconds: seconds(config.idle_reader_timeout),
+        idle_reader_limit_per_torrent: count(config.idle_reader_limit_per_torrent),
+        idle_reader_limit: count(config.idle_reader_limit),
         drain_period_seconds: None,
         peer_limit: count(config.peer_limit),
         cache_capacity_bytes: Some(config.cache_capacity_bytes),
         temporary_idle_seconds: None,
-        temporary_torrents_max: None,
+        temporary_torrent_limit: None,
         temporary_progress_seconds: None,
-        background_downloads: None,
+        background_downloads_enabled: None,
         dlna_enabled: None,
         dlna_name: None,
         // An isolated network has no DHT, and serve applies the setting.

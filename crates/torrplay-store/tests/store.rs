@@ -28,6 +28,46 @@ use torrplay_store::{
     StoredTemporaryProgress, StoredTitleProgress, StoredTorrent,
 };
 
+/// Turns a database back into version 17, before names were aligned with the
+/// contract: info hashes of temporary progress as hexadecimal text, and the
+/// access tokens' constraint named as version 16 named it.
+const UNDO_VERSION_18: &str = "ALTER TABLE settings
+        RENAME COLUMN background_downloads_enabled TO background_downloads;
+    ALTER TABLE settings RENAME COLUMN temporary_torrent_limit TO temporary_torrents_max;
+    ALTER TABLE settings RENAME COLUMN idle_reader_limit TO idle_readers_total;
+    ALTER TABLE settings
+        RENAME COLUMN idle_reader_limit_per_torrent TO idle_readers_per_torrent;
+    ALTER TABLE settings RENAME COLUMN idle_reader_timeout_seconds TO idle_timeout_seconds;
+    ALTER TABLE torrent_metainfo RENAME TO torrent_files;
+    ALTER TABLE up_next_dismissals RENAME COLUMN up_next_entry_id TO entry_id;
+    CREATE TABLE temporary_progress_v17 (
+        profile_id TEXT NOT NULL REFERENCES profiles (id) ON DELETE CASCADE,
+        info_hash TEXT NOT NULL,
+        file_id TEXT NOT NULL,
+        position_ms INTEGER NOT NULL CHECK (position_ms >= 0),
+        duration_ms INTEGER NOT NULL CHECK (duration_ms > 0 AND position_ms <= duration_ms),
+        viewed_at_ns INTEGER CHECK (viewed_at_ns >= 0),
+        updated_at_ns INTEGER NOT NULL CHECK (updated_at_ns >= 0),
+        PRIMARY KEY (profile_id, info_hash, file_id)
+    ) STRICT;
+    INSERT INTO temporary_progress_v17 SELECT profile_id, lower(hex(info_hash)), file_id,
+        position_ms, duration_ms, viewed_at_ns, updated_at_ns FROM temporary_progress;
+    DROP TABLE temporary_progress;
+    ALTER TABLE temporary_progress_v17 RENAME TO temporary_progress;
+    CREATE TABLE access_tokens_v16 (
+        id TEXT PRIMARY KEY,
+        secret_digest BLOB NOT NULL CHECK (length(secret_digest) = 32),
+        name TEXT NOT NULL,
+        scope TEXT NOT NULL CHECK (scope IN ('api', 'playback', 'metrics')),
+        created_at_ns INTEGER NOT NULL CHECK (created_at_ns >= 0),
+        expires_at_ns INTEGER CHECK (expires_at_ns >= 0),
+        last_used_at_ns INTEGER CHECK (last_used_at_ns >= 0),
+        CONSTRAINT access_tokens_v16_secret_digest_key UNIQUE (secret_digest)
+    ) STRICT;
+    INSERT INTO access_tokens_v16 SELECT * FROM access_tokens;
+    DROP TABLE access_tokens;
+    ALTER TABLE access_tokens_v16 RENAME TO access_tokens;";
+
 /// Turns a database back into version 16, before IMDb IDs.
 const UNDO_VERSION_17: &str = "ALTER TABLE torrents DROP COLUMN imdb_id;";
 /// Turns a database back into version 15, before the metrics scope, keeping
@@ -123,7 +163,7 @@ fn torrent(n: u32, nanos: u64) -> StoredTorrent {
         ),
         storage_mode: StorageMode::Memory,
         magnet_uri: (!file).then(|| format!("magnet:?xt=urn:btih:{}", info_hash(n))),
-        torrent_file: file.then(|| vec![(n % 251) as u8; 1000 + n as usize]),
+        metainfo: file.then(|| vec![(n % 251) as u8; 1000 + n as usize]),
         poster: None,
     }
 }
@@ -173,20 +213,20 @@ async fn configurations_and_retrieved_torrent_files_are_stored() {
         store.insert(upload.clone()).await.unwrap();
         store.set_configuration(&magnet.id, &paused).await.unwrap();
         assert_eq!(
-            store.torrent_file(&magnet.id).await.unwrap(),
+            store.metainfo(&magnet.id).await.unwrap(),
             None,
             "no torrent file before metadata is retrieved"
         );
         store
-            .set_torrent_file(&magnet.id, b"retrieved".to_vec())
+            .set_metainfo(&magnet.id, b"retrieved".to_vec())
             .await
             .unwrap();
         store
-            .set_torrent_file(&magnet.id, b"retrieved again".to_vec())
+            .set_metainfo(&magnet.id, b"retrieved again".to_vec())
             .await
             .unwrap();
         store
-            .set_torrent_file(&upload.id, b"another".to_vec())
+            .set_metainfo(&upload.id, b"another".to_vec())
             .await
             .unwrap();
         assert!(matches!(
@@ -194,20 +234,20 @@ async fn configurations_and_retrieved_torrent_files_are_stored() {
             Err(StoreError::UnknownTorrent)
         ));
         assert!(matches!(
-            store.set_torrent_file(&id(9), b"x".to_vec()).await,
+            store.set_metainfo(&id(9), b"x".to_vec()).await,
             Err(StoreError::UnknownTorrent)
         ));
         assert_eq!(
-            store.torrent_file(&magnet.id).await.unwrap().as_deref(),
+            store.metainfo(&magnet.id).await.unwrap().as_deref(),
             Some(&b"retrieved"[..])
         );
         assert_eq!(
-            store.torrent_file(&upload.id).await.unwrap(),
-            upload.torrent_file,
+            store.metainfo(&upload.id).await.unwrap(),
+            upload.metainfo,
             "an upload's original bytes, not the later file"
         );
         assert!(matches!(
-            store.torrent_file(&id(9)).await,
+            store.metainfo(&id(9)).await,
             Err(StoreError::UnknownTorrent)
         ));
     }
@@ -219,7 +259,7 @@ async fn configurations_and_retrieved_torrent_files_are_stored() {
         "the entity tag survives"
     );
     assert_eq!(
-        stored[0].torrent_file.as_deref(),
+        stored[0].metainfo.as_deref(),
         Some(&b"retrieved"[..]),
         "the first torrent file is kept"
     );
@@ -247,7 +287,7 @@ async fn deletion_is_durable_and_frees_the_info_hash() {
     drop(store);
     let ids: Vec<&TorrentId> = stored.iter().map(|torrent| &torrent.id).collect();
     assert_eq!(ids, [&id(3), &id(7)]);
-    let orphans: i64 = rusqlite_count(&dir, "SELECT count(*) FROM torrent_files");
+    let orphans: i64 = rusqlite_count(&dir, "SELECT count(*) FROM torrent_metainfo");
     assert_eq!(orphans, 1, "the deleted torrent's file went with it");
 }
 
@@ -286,7 +326,7 @@ async fn a_newer_schema_is_refused() {
         Store::open(dir.path()),
         Err(StoreError::TooNew {
             found: 99,
-            supported: 17
+            supported: 18
         })
     ));
 }
@@ -345,9 +385,9 @@ async fn settings_keep_explicit_values_and_their_version() {
         );
         let stored = StoredSettings {
             explicit: Explicit {
-                idle_timeout_seconds: Some(0),
+                idle_reader_timeout_seconds: Some(0),
                 peer_limit: Some(80),
-                background_downloads: Some(false),
+                background_downloads_enabled: Some(false),
                 ..Explicit::default()
             },
             version: 4,
@@ -364,13 +404,13 @@ async fn settings_keep_explicit_values_and_their_version() {
     let (_store, contents) = Store::open(dir.path()).unwrap();
     assert_eq!(contents.settings.version, 5);
     assert_eq!(
-        contents.settings.explicit.idle_timeout_seconds,
+        contents.settings.explicit.idle_reader_timeout_seconds,
         Some(0),
         "zero stays set"
     );
     assert_eq!(contents.settings.explicit.peer_limit, Some(80));
     assert_eq!(
-        contents.settings.explicit.background_downloads,
+        contents.settings.explicit.background_downloads_enabled,
         Some(false),
         "false stays set"
     );
@@ -392,7 +432,7 @@ async fn a_version_1_database_is_copied_then_migrated() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_18} {UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  DROP TABLE settings;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
@@ -431,7 +471,7 @@ async fn a_version_1_database_is_copied_then_migrated() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_18} {UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  DROP TABLE settings;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
@@ -469,7 +509,7 @@ async fn settings_from_version_2_keep_their_values_and_lack_the_cache_capacity()
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_18} {UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  ALTER TABLE settings DROP COLUMN cache_capacity_bytes;
                  ALTER TABLE settings DROP COLUMN background_downloads;
@@ -523,7 +563,7 @@ async fn settings_from_version_5_lack_the_background_downloads_switch() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_18} {UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  ALTER TABLE settings DROP COLUMN background_downloads;
                  PRAGMA user_version = 5;",
@@ -554,7 +594,7 @@ async fn torrents_from_version_3_use_memory_storage() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_18} {UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  ALTER TABLE settings DROP COLUMN background_downloads;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
@@ -634,7 +674,7 @@ fn child() {
         let mut out = std::io::stdout();
         for n in (stored.len() as u32 * 2..).step_by(2) {
             let mut torrent = torrent(n, u64::from(n));
-            torrent.torrent_file = Some(vec![(n % 251) as u8; 64 * 1024]);
+            torrent.metainfo = Some(vec![(n % 251) as u8; 64 * 1024]);
             store.insert(torrent).await.unwrap();
             writeln!(out, "inserted {}", n / 2 + 1).unwrap();
             out.flush().unwrap();
@@ -683,7 +723,7 @@ fn inserts_killed_at_any_moment_leave_whole_torrents() {
         for torrent in &stored {
             let n = u32::from_be_bytes(torrent.info_hash.as_bytes()[..4].try_into().unwrap());
             let mut expected = self::torrent(n, u64::from(n));
-            expected.torrent_file = Some(vec![(n % 251) as u8; 64 * 1024]);
+            expected.metainfo = Some(vec![(n % 251) as u8; 64 * 1024]);
             assert_eq!(torrent, &expected, "round {round}: whole torrents only");
         }
         let count = stored.len() as u64;
@@ -809,7 +849,7 @@ async fn torrents_from_version_6_have_empty_library_members() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_18} {UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7} PRAGMA user_version = 6;"
             ))
             .unwrap();
@@ -833,7 +873,7 @@ async fn profiles_from_version_12_are_people_and_one_device_profile_is_kept() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} PRAGMA user_version = 12;"
+                "{UNDO_VERSION_18} {UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} PRAGMA user_version = 12;"
             ))
             .unwrap();
     }
@@ -881,7 +921,7 @@ async fn title_progress_is_stored_apart_from_torrents() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} PRAGMA user_version = 13;"
+                "{UNDO_VERSION_18} {UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} PRAGMA user_version = 13;"
             ))
             .unwrap();
     }
@@ -1138,7 +1178,7 @@ async fn a_version_7_database_gains_empty_profiles() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8} PRAGMA user_version = 7;"
+                "{UNDO_VERSION_18} {UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8} PRAGMA user_version = 7;"
             ))
             .unwrap();
     }
@@ -1215,7 +1255,7 @@ async fn a_version_15_database_keeps_its_tokens_and_takes_metrics_tokens() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_17} {UNDO_VERSION_16} PRAGMA user_version = 15;"
+                "{UNDO_VERSION_18} {UNDO_VERSION_17} {UNDO_VERSION_16} PRAGMA user_version = 15;"
             ))
             .unwrap();
         let refused = connection.execute(
@@ -1336,7 +1376,7 @@ async fn a_version_8_database_gains_credentials_without_a_password() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} PRAGMA user_version = 8;"
+                "{UNDO_VERSION_18} {UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} PRAGMA user_version = 8;"
             ))
             .unwrap();
     }
@@ -1377,7 +1417,7 @@ async fn a_version_9_database_gains_the_media_server_switch_unset() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} PRAGMA user_version = 9;"
+                "{UNDO_VERSION_18} {UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} PRAGMA user_version = 9;"
             ))
             .unwrap();
     }
@@ -1391,7 +1431,7 @@ async fn the_name_dht_and_log_settings_survive_a_restart() {
     let dir = TempDir::new().unwrap();
     let explicit = Explicit {
         temporary_idle_seconds: Some(60),
-        temporary_torrents_max: Some(1),
+        temporary_torrent_limit: Some(1),
         dlna_name: Some("Кино: living room".into()),
         dht_enabled: Some(false),
         log_level: Some(LogLevel::Trace),
@@ -1450,7 +1490,7 @@ async fn a_version_10_database_gains_the_new_settings_unset() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} PRAGMA user_version = 10;"
+                "{UNDO_VERSION_18} {UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} PRAGMA user_version = 10;"
             ))
             .unwrap();
     }
@@ -1467,4 +1507,112 @@ async fn a_version_10_database_gains_the_new_settings_unset() {
         (None, None, None)
     );
     assert_eq!(contents.settings.version, 4);
+}
+
+/// A version 17 database keeps its settings, torrent files, temporary
+/// progress, dismissals, and access tokens under the names version 18 gives
+/// them, and a temporary progress row whose info hash is not hexadecimal
+/// fails the migration instead of being dropped.
+#[tokio::test]
+async fn a_version_17_database_takes_the_contract_names() {
+    let dir = TempDir::new().unwrap();
+    let at = |secs| SystemTime::UNIX_EPOCH + Duration::from_secs(secs);
+    let alex = profile(1, "Alex");
+    let upload = torrent(2, 10);
+    let file = FileId::derive(&["Film.mkv"]);
+    let temporary = StoredTemporaryProgress {
+        profile: alex.id.clone(),
+        info_hash: InfoHashV1::from_bytes([0xab; 20]),
+        file: file.clone(),
+        progress: Progress {
+            position_ms: 30_000,
+            duration_ms: 100_000,
+            viewed_at: None,
+            updated_at: at(20),
+        },
+    };
+    let dismissal = StoredDismissal {
+        profile: alex.id.clone(),
+        entry: UpNextEntryId::of_file(&upload.id, &file),
+        torrent: upload.id.clone(),
+        at: at(30),
+    };
+    let settings = StoredSettings {
+        explicit: Explicit {
+            idle_reader_timeout_seconds: Some(7),
+            idle_reader_limit: Some(3),
+            idle_reader_limit_per_torrent: Some(2),
+            temporary_torrent_limit: Some(4),
+            background_downloads_enabled: Some(false),
+            ..Explicit::default()
+        },
+        version: 2,
+    };
+    let laptop = access_token(2, None);
+    {
+        let (store, _) = Store::open(dir.path()).unwrap();
+        store.insert(upload.clone()).await.unwrap();
+        store.insert_profile(&alex).await.unwrap();
+        store.set_temporary_progress(&temporary).await.unwrap();
+        store.set_dismissal(&dismissal).await.unwrap();
+        store.set_settings(settings.clone()).await.unwrap();
+        store.insert_access_token(&laptop, &[]).await.unwrap();
+    }
+    let path = dir.path().join(FILE_NAME);
+    {
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute_batch(&format!("{UNDO_VERSION_18} PRAGMA user_version = 17;"))
+            .unwrap();
+        let hex: String = connection
+            .query_row("SELECT info_hash FROM temporary_progress", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(hex, "ab".repeat(20), "version 17 stores hexadecimal text");
+    }
+    {
+        let (_store, contents) = Store::open(dir.path()).unwrap();
+        assert_eq!(contents.settings, settings);
+        assert_eq!(
+            contents.temporary_progress,
+            std::slice::from_ref(&temporary)
+        );
+        assert_eq!(contents.dismissals, [dismissal]);
+        assert_eq!(contents.torrents.len(), 1);
+        assert_eq!(contents.torrents[0].metainfo, upload.metainfo);
+        assert_eq!(contents.credentials.tokens.len(), 1);
+        assert_eq!(contents.credentials.tokens[0].id, laptop.id);
+    }
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    let (kind, tokens): (String, String) = connection
+        .query_row(
+            "SELECT (SELECT typeof(info_hash) FROM temporary_progress),
+                    (SELECT sql FROM sqlite_schema WHERE name = 'access_tokens')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(kind, "blob");
+    assert!(
+        tokens.contains("access_tokens_secret_digest_key") && !tokens.contains("_v16_"),
+        "{tokens}"
+    );
+
+    connection
+        .execute_batch(&format!(
+            "{UNDO_VERSION_18}
+             INSERT INTO temporary_progress VALUES
+                 ('{}', 'not hexadecimal', 'fil_x', 0, 1, NULL, 0);
+             PRAGMA user_version = 17;",
+            alex.id.as_str()
+        ))
+        .unwrap();
+    drop(connection);
+    assert!(Store::open(dir.path()).is_err(), "a damaged row fails it");
+    let version: u32 = rusqlite::Connection::open(&path)
+        .unwrap()
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 17, "the failed migration left version 17");
 }

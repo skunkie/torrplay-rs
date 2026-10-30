@@ -90,7 +90,7 @@ async fn idle_readers_expire_and_end_active_playback() -> anyhow::Result<()> {
     let spec = catalog::single_small();
     let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
     let started = start_with(vec![seeder.addr], |config| {
-        config.idle_timeout = Duration::from_millis(300);
+        config.idle_reader_timeout = Duration::from_millis(300);
     })
     .await?;
     let engine = &started.engine;
@@ -135,8 +135,8 @@ async fn idle_readers_expire_and_end_active_playback() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn idle_reader_limits_release_the_oldest_in_their_scope() -> anyhow::Result<()> {
     let started = start_with(Vec::new(), |config| {
-        config.idle_readers_per_torrent = 2;
-        config.idle_readers_total = 3;
+        config.idle_reader_limit_per_torrent = 2;
+        config.idle_reader_limit = 3;
     })
     .await?;
     let engine = &started.engine;
@@ -330,7 +330,7 @@ async fn a_full_cache_releases_idle_readers() -> anyhow::Result<()> {
     // timeouts no test waits for.
     let started = start_with(vec![held_seeder.addr, pressing_seeder.addr], |config| {
         *config = config.clone().with_cache_capacity(piece);
-        config.idle_timeout = Duration::from_secs(600);
+        config.idle_reader_timeout = Duration::from_secs(600);
         config.piece_wait = Duration::from_secs(600);
     })
     .await?;

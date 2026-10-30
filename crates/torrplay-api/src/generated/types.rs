@@ -1168,7 +1168,7 @@ pub struct SettingsPatch {
         default,
         deserialize_with = "tri_state_serde::deserialize"
     )]
-    pub background_downloads: Option<Option<bool>>,
+    pub background_downloads_enabled: Option<Option<bool>>,
     ///The new value, or null for the default, 268435456.
     ///Constraint: minimum=4194304, maximum=68719476736
     #[serde(
@@ -1207,14 +1207,6 @@ pub struct SettingsPatch {
         deserialize_with = "tri_state_serde::deserialize"
     )]
     pub drain_period_seconds: Option<Option<i32>>,
-    ///The new value, or null for the default, 4.
-    ///Constraint: minimum=0, maximum=64
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        default,
-        deserialize_with = "tri_state_serde::deserialize"
-    )]
-    pub idle_readers_per_torrent: Option<Option<i32>>,
     ///The new value, or null for the default, 16.
     ///Constraint: minimum=0, maximum=256
     #[serde(
@@ -1222,7 +1214,15 @@ pub struct SettingsPatch {
         default,
         deserialize_with = "tri_state_serde::deserialize"
     )]
-    pub idle_readers_total: Option<Option<i32>>,
+    pub idle_reader_limit: Option<Option<i32>>,
+    ///The new value, or null for the default, 4.
+    ///Constraint: minimum=0, maximum=64
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub idle_reader_limit_per_torrent: Option<Option<i32>>,
     ///The new value, or null for the default, 30.
     ///Constraint: minimum=0, maximum=3600
     #[serde(
@@ -1230,7 +1230,7 @@ pub struct SettingsPatch {
         default,
         deserialize_with = "tri_state_serde::deserialize"
     )]
-    pub idle_timeout_seconds: Option<Option<i32>>,
+    pub idle_reader_timeout_seconds: Option<Option<i32>>,
     ///The new value, or null for the default, info.
     #[serde(
         skip_serializing_if = "Option::is_none",
@@ -1277,7 +1277,7 @@ pub struct SettingsPatch {
         default,
         deserialize_with = "tri_state_serde::deserialize"
     )]
-    pub temporary_torrents_max: Option<Option<i32>>,
+    pub temporary_torrent_limit: Option<Option<i32>>,
 }
 ///The new value, or null for the default, info.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
@@ -1323,7 +1323,7 @@ impl AsRef<str> for SettingsPatchLogLevel {
 pub struct Settings {
     ///Whether started torrents in disk storage download the pieces they lack while no reader exists. Applies at once: turned off, torrents request only the pieces readers need, and requests already sent finish; turned on, background downloads resume unless playback is active.
     #[serde(default)]
-    pub background_downloads: bool,
+    pub background_downloads_enabled: bool,
     ///The capacity of the global piece cache that every torrent in memory storage mode shares; the readahead budget is half of it. It must be at least the piece length of every torrent with metadata. Applies at once. Growing it admits the pieces waiting for room. Shrinking it evicts verified, unpinned pieces down to the new capacity, releasing idle readers when nothing else can be evicted; until partial pieces complete and active readers leave their current pieces, cache usage may stay above the capacity, and no new piece is admitted.
     ///Constraint: minimum=4194304, maximum=68719476736
     #[serde(default)]
@@ -1342,18 +1342,18 @@ pub struct Settings {
     ///Constraint: minimum=0, maximum=25
     #[serde(default)]
     pub drain_period_seconds: i32,
-    ///The most idle readers one torrent keeps; at most idle_readers_total. Applies at once: the oldest idle readers over the limit are released.
-    ///Constraint: minimum=0, maximum=64
-    #[serde(default)]
-    pub idle_readers_per_torrent: i32,
     ///The most idle readers all torrents keep together. Applies at once: the oldest idle readers over the limit are released.
     ///Constraint: minimum=0, maximum=256
     #[serde(default)]
-    pub idle_readers_total: i32,
+    pub idle_reader_limit: i32,
+    ///The most idle readers one torrent keeps; at most idle_reader_limit. Applies at once: the oldest idle readers over the limit are released.
+    ///Constraint: minimum=0, maximum=64
+    #[serde(default)]
+    pub idle_reader_limit_per_torrent: i32,
     ///How long a reader stays idle after its stream ends, for the player's next range request to continue it; 0 releases it at once. Applies at once: idle readers idle for longer are released.
     ///Constraint: minimum=0, maximum=3600
     #[serde(default)]
-    pub idle_timeout_seconds: i32,
+    pub idle_reader_timeout_seconds: i32,
     ///Links from the settings.
     pub links: SettingsLinks,
     pub log_level: LogLevel,
@@ -1378,7 +1378,7 @@ pub struct Settings {
     ///The most temporary torrents the application holds. Adding one more deletes the one unwatched longest, or fails with too-many-temporary-torrents while every one is streaming. Applies to torrents added afterward.
     ///Constraint: minimum=1, maximum=64
     #[serde(default)]
-    pub temporary_torrents_max: i32,
+    pub temporary_torrent_limit: i32,
 }
 ///The settings that command-line options override in this run, each with the value in effect; empty when none are. The members above keep the stored values, which a PATCH still changes and which apply once the application runs without those options.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]

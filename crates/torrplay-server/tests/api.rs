@@ -3189,7 +3189,7 @@ mod scenario {
             .send(merge_patch(
                 "/api/v1/settings",
                 &etag(&settings),
-                &json!({ "temporary_torrents_max": 2 }),
+                &json!({ "temporary_torrent_limit": 2 }),
             ))
             .await;
         assert_eq!(limited.status, StatusCode::OK);
@@ -3390,16 +3390,16 @@ mod scenario {
             read.json(),
             json!({
                 "piece_wait_seconds": 60,
-                "idle_timeout_seconds": 30,
-                "idle_readers_per_torrent": 4,
-                "idle_readers_total": 16,
+                "idle_reader_timeout_seconds": 30,
+                "idle_reader_limit_per_torrent": 4,
+                "idle_reader_limit": 16,
                 "drain_period_seconds": 10,
                 "peer_limit": 50,
                 "cache_capacity_bytes": 268_435_456,
                 "temporary_idle_seconds": 600,
-                "temporary_torrents_max": 16,
+                "temporary_torrent_limit": 16,
                 "temporary_progress_seconds": 2592000,
-                "background_downloads": true,
+                "background_downloads_enabled": true,
                 "dlna_enabled": false,
                 "dlna_name": "TorrPlay",
                 "dht_enabled": true,
@@ -3478,8 +3478,8 @@ mod scenario {
                     "piece_wait_seconds": 0,
                     "peer_limit": "many",
                     "readahead_bytes": 1,
-                    "idle_readers_total": 2,
-                    "background_downloads": 1,
+                    "idle_reader_limit": 2,
+                    "background_downloads_enabled": 1,
                 }),
             ))
             .await;
@@ -3492,14 +3492,18 @@ mod scenario {
         pointers.sort();
         assert_eq!(
             pointers,
-            ["/background_downloads", "/peer_limit", "/readahead_bytes"],
+            [
+                "/background_downloads_enabled",
+                "/peer_limit",
+                "/readahead_bytes"
+            ],
             "member types are checked before bounds"
         );
         let invalid = server
             .send_unchecked(merge_patch(
                 path,
                 &tag,
-                &json!({ "piece_wait_seconds": 0, "idle_readers_total": 2 }),
+                &json!({ "piece_wait_seconds": 0, "idle_reader_limit": 2 }),
             ))
             .await;
         assert_problem(
@@ -3509,11 +3513,11 @@ mod scenario {
         );
         assert_eq!(errors(&invalid, "pointer"), ["/piece_wait_seconds"]);
         let related = server
-            .send(merge_patch(path, &tag, &json!({ "idle_readers_total": 2 })))
+            .send(merge_patch(path, &tag, &json!({ "idle_reader_limit": 2 })))
             .await;
         assert_eq!(
             errors(&related, "pointer"),
-            ["/idle_readers_per_torrent"],
+            ["/idle_reader_limit_per_torrent"],
             "the default per-torrent limit, 4, exceeds the new total"
         );
         assert_problem(
@@ -3568,19 +3572,19 @@ mod scenario {
                 path,
                 &tag,
                 &json!({
-                    "idle_timeout_seconds": 0,
+                    "idle_reader_timeout_seconds": 0,
                     "peer_limit": 60,
-                    "background_downloads": false,
+                    "background_downloads_enabled": false,
                 }),
             ))
             .await;
         assert_eq!(changed.status, StatusCode::OK);
-        assert_eq!(changed.json()["idle_timeout_seconds"], 0);
-        assert_eq!(changed.json()["background_downloads"], false);
-        assert!(!server.engine.settings().background_downloads);
+        assert_eq!(changed.json()["idle_reader_timeout_seconds"], 0);
+        assert_eq!(changed.json()["background_downloads_enabled"], false);
+        assert!(!server.engine.settings().background_downloads_enabled);
         let changed_tag = changed.header(header::ETAG).unwrap().to_owned();
         assert_ne!(changed_tag, tag);
-        assert_eq!(server.engine.settings().idle_timeout, Duration::ZERO);
+        assert_eq!(server.engine.settings().idle_reader_timeout, Duration::ZERO);
         assert_eq!(server.engine.settings().peer_limit, 60);
         let again = server
             .send(merge_patch(
@@ -3594,10 +3598,14 @@ mod scenario {
         let server = server.restart().await;
         let restored = server.get(path).await;
         assert_eq!(restored.header(header::ETAG), Some(changed_tag.as_str()));
-        assert_eq!(restored.json()["idle_timeout_seconds"], 0, "zero survives");
+        assert_eq!(
+            restored.json()["idle_reader_timeout_seconds"],
+            0,
+            "zero survives"
+        );
         assert_eq!(restored.json()["peer_limit"], 60);
         assert_eq!(
-            restored.json()["background_downloads"],
+            restored.json()["background_downloads_enabled"],
             false,
             "false survives"
         );
@@ -3606,12 +3614,12 @@ mod scenario {
             60,
             "applied at startup"
         );
-        assert!(!server.engine.settings().background_downloads);
+        assert!(!server.engine.settings().background_downloads_enabled);
         let reset = server
             .send(merge_patch(
                 path,
                 &changed_tag,
-                &json!({ "peer_limit": null, "background_downloads": null }),
+                &json!({ "peer_limit": null, "background_downloads_enabled": null }),
             ))
             .await;
         assert_eq!(
@@ -3619,9 +3627,9 @@ mod scenario {
             50,
             "null returns to the default"
         );
-        assert_eq!(reset.json()["background_downloads"], true);
-        assert!(server.engine.settings().background_downloads);
-        assert_eq!(reset.json()["idle_timeout_seconds"], 0);
+        assert_eq!(reset.json()["background_downloads_enabled"], true);
+        assert!(server.engine.settings().background_downloads_enabled);
+        assert_eq!(reset.json()["idle_reader_timeout_seconds"], 0);
         server.stop().await;
     }
 
@@ -3716,10 +3724,7 @@ mod scenario {
             settings["peer_limit"], 50,
             "out of bounds takes the default"
         );
-        assert_eq!(
-            settings["idle_readers_total"], 16,
-            "unset takes the default"
-        );
+        assert_eq!(settings["idle_reader_limit"], 16, "unset takes the default");
         assert_eq!(server.engine.settings().piece_wait, Duration::from_secs(5));
         server.stop().await;
     }
