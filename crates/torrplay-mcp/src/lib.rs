@@ -24,11 +24,11 @@ pub use client::Client;
 pub use server::Server;
 
 /// The application the server reaches without `--url` or `TORRPLAY_URL`.
-pub const URL_DEFAULT: &str = "http://127.0.0.1:8080";
+pub const URL_DEFAULT: &str = "http://127.0.0.1:8642";
 
 /// The Streamable HTTP listener's address without `--listen`.
 pub const LISTEN_DEFAULT: SocketAddr =
-    SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 8090);
+    SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 8643);
 
 /// The path the Streamable HTTP transport serves.
 pub const HTTP_PATH: &str = "/mcp";

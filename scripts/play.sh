@@ -10,7 +10,7 @@
 #   scripts/play.sh [options] <magnet URI | torrent file>
 #
 # Options:
-#   --api <URL>        TorrPlay's address (default http://127.0.0.1:8080)
+#   --api <URL>        TorrPlay's address (default http://127.0.0.1:8642)
 #   --file <TEXT>      play the first file whose path contains TEXT; by
 #                      default, the largest video file, or the largest file
 #   --player <COMMAND> the player to open the URL with (default mpv, else
@@ -24,7 +24,7 @@
 
 set -euo pipefail
 
-api=http://127.0.0.1:8080
+api=http://127.0.0.1:8642
 file_filter=
 player=
 list=0

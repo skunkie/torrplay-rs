@@ -14,7 +14,7 @@ info:
     name: MIT
     identifier: MIT
 servers:
-  - url: http://127.0.0.1:8080/api/v1
+  - url: http://127.0.0.1:8642/api/v1
     description: The local server.
 tags:
   - name: torrents

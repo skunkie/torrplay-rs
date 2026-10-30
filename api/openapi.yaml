@@ -28,7 +28,7 @@ servers:
     description: The application on its default loopback address.
     variables:
       port:
-        default: '8080'
+        default: '8642'
         description: The configured listen port.
 security:
   - {}

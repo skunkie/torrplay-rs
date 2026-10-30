@@ -190,7 +190,7 @@ mod tests {
         Directory {
             catalog,
             update_id: 7,
-            base: Base("http://10.0.0.2:8080"),
+            base: Base("http://10.0.0.2:8642"),
         }
     }
 

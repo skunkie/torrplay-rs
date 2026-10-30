@@ -113,7 +113,7 @@ mod tests {
         let task = tokio::spawn(supervise(
             watched,
             "4b1c0b2a-6f5e-4d3c-8b2a-1f0e9d8c7b6a".into(),
-            "127.0.0.1:8080".parse().unwrap(),
+            "127.0.0.1:8642".parse().unwrap(),
             stopped,
             || async {},
         ));

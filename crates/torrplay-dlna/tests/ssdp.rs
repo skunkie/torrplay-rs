@@ -26,7 +26,7 @@ fn config(announce_to: SocketAddr) -> Config {
         answer_delay_limit: Duration::from_millis(50),
         ..Config::new(
             UUID.into(),
-            "http://192.168.1.10:8080/dlna/description.xml".into(),
+            "http://192.168.1.10:8642/dlna/description.xml".into(),
             Ipv4Addr::LOCALHOST,
         )
     }
@@ -78,7 +78,7 @@ async fn the_announcer_announces_answers_and_says_goodbye() {
     assert!(
         all.iter()
             .all(|answer| answer.starts_with("HTTP/1.1 200 OK\r\n")
-                && answer.contains("LOCATION: http://192.168.1.10:8080/dlna/description.xml\r\n"))
+                && answer.contains("LOCATION: http://192.168.1.10:8642/dlna/description.xml\r\n"))
     );
 
     searcher

@@ -117,7 +117,7 @@ pub struct Browsed {
 pub struct NoSuchObject;
 
 /// Where resources live: the scheme and authority the request named, such
-/// as `http://192.168.1.10:8080`.
+/// as `http://192.168.1.10:8642`.
 #[derive(Clone, Copy, Debug)]
 pub struct Base<'a>(pub &'a str);
 
@@ -505,7 +505,7 @@ impl Object {
 mod tests {
     use super::*;
 
-    const BASE: Base<'static> = Base("http://192.168.1.10:8080");
+    const BASE: Base<'static> = Base("http://192.168.1.10:8642");
 
     fn file(id: &str, name: &str, media_type: &'static str) -> File {
         File {
@@ -655,7 +655,7 @@ mod tests {
                 .contains(r#"<container id="t:trr_a" parentID="all""#)
         );
         assert!(all.didl.contains(
-            "<upnp:albumArtURI>http://192.168.1.10:8080/dlna/posters/trr_a</upnp:albumArtURI>"
+            "<upnp:albumArtURI>http://192.168.1.10:8642/dlna/posters/trr_a</upnp:albumArtURI>"
         ));
         let movies = browse("movies", BrowseFlag::DirectChildren).unwrap();
         assert_eq!(movies.total, 1);
@@ -693,7 +693,7 @@ mod tests {
             r#"<item id="f:trr_a:fil_1" parentID="t:trr_a" restricted="1"><dc:title>Film &amp; Sons.mkv</dc:title><upnp:class>object.item.videoItem</upnp:class>"#
         ), "{}", torrent.didl);
         assert!(torrent.didl.contains(
-            r#"<res protocolInfo="http-get:*:video/x-matroska:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" size="1000">http://192.168.1.10:8080/dlna/media/trr_a/fil_1/Film%20%26%20Sons.mkv</res>"#
+            r#"<res protocolInfo="http-get:*:video/x-matroska:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" size="1000">http://192.168.1.10:8642/dlna/media/trr_a/fil_1/Film%20%26%20Sons.mkv</res>"#
         ), "{}", torrent.didl);
         assert!(torrent.didl.contains("object.item.audioItem.musicTrack"));
         let item = browse("f:trr_a:fil_2", BrowseFlag::Metadata).unwrap();

@@ -65,7 +65,7 @@ pub struct TorrPlay {
 }
 
 impl TorrPlay {
-    /// Talks to the API at `base`, such as `http://127.0.0.1:8080`.
+    /// Talks to the API at `base`, such as `http://127.0.0.1:8642`.
     pub fn new(client: Client, base: String) -> Self {
         Self { client, base }
     }

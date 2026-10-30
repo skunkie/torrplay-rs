@@ -109,15 +109,15 @@ mod tests {
     fn the_advertised_address_is_a_private_ipv4_one() {
         let at = |text: &str| advertised_address(text.parse().unwrap());
         assert_eq!(
-            at("192.168.1.10:8080").unwrap(),
+            at("192.168.1.10:8642").unwrap(),
             Ipv4Addr::new(192, 168, 1, 10)
         );
-        assert!(matches!(at("127.0.0.1:8080"), Err(AddressError::Loopback)));
-        assert!(matches!(at("[::1]:8080"), Err(AddressError::Loopback)));
+        assert!(matches!(at("127.0.0.1:8642"), Err(AddressError::Loopback)));
+        assert!(matches!(at("[::1]:8642"), Err(AddressError::Loopback)));
         assert!(matches!(
-            at("8.8.8.8:8080"),
+            at("8.8.8.8:8642"),
             Err(AddressError::NotPrivate(_))
         ));
-        assert!(matches!(at("[fd12::1]:8080"), Err(AddressError::NoIpv4)));
+        assert!(matches!(at("[fd12::1]:8642"), Err(AddressError::NoIpv4)));
     }
 }
