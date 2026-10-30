@@ -326,12 +326,11 @@ status is not.
   the credentials as the `accessToken` bearer scheme and the
   `playbackToken` query scheme.
 - Any operation that needs a credential may answer `401
-  authentication-required`, with `WWW-Authenticate`, `403
-  insufficient-scope`, and, while authentication is off, `403 forbidden`
-  to a client beyond the local networks; any operation may answer `421 misdirected-request`
-  for a `Host` that is not allowed. Like `405` and `406`, the contract
-  leaves these to the conventions rather than repeating them on each
-  operation.
+  authentication-required`, with `WWW-Authenticate`, `403 insufficient-scope`,
+  and, while authentication is off, `403 forbidden` to a client beyond the
+  local networks; any operation may answer `421 misdirected-request` for a
+  `Host` that is not allowed. Like `405` and `406`, the contract leaves these
+  to the conventions rather than repeating them on each operation.
 - Every response carries `X-Request-Id`, as
   [observability](observability.md#request-ids) describes. Like the
   statuses above, the contract leaves it to the conventions rather than

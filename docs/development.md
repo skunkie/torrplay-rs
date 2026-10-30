@@ -8,8 +8,8 @@ SPDX-License-Identifier: MIT
 
 Start with the [implementation plan](implementation-plan.md). The repository
 holds the milestone 1 contract and design documents, development
-infrastructure, and the Cargo workspace with the engine, contract tooling,
-and server crates. Update the contract and lifecycle semantics before implementing
+infrastructure, and the Cargo workspace with the engine, contract tooling, and
+server crates. Update the contract and lifecycle semantics before implementing
 public HTTP behavior.
 
 ## Checks available now
@@ -136,16 +136,16 @@ cargo run -p torrplay -- --help
 `torrplay` serves the API on `[::]:8080` by default, every interface,
 dual-stack; `--listen`, or `TORRPLAY_LISTEN` without it, names another
 address, such as `127.0.0.1:8080`. Until a password is set, only clients on
-local networks may use it. `/api/v1/reference` shows the API in a
-browser. `--allowed-host` adds a host name
-requests may give, such as a reverse proxy's. Its other options set the
-BitTorrent peer port (4240), and override settings for one run, as
-[the lifecycle](lifecycle.md#settings) describes: `--no-dht` turns the DHT
-off, and `--log-level` and `--log-filter` set the level of TorrPlay's own
-logs, which go to standard error; other crates log warnings and errors
-only. `--log-format text|json` chooses their format, JSON when standard
-error is not a terminal ([observability](observability.md#log-records)). The DLNA media server, its name, and the DHT are settings
-([the DLNA contract](dlna.md)).
+local networks may use it. `/api/v1/reference` shows the API in a browser.
+`--allowed-host` adds a host name requests may give, such as a reverse
+proxy's. Its other options set the BitTorrent peer port (4240), and override
+settings for one run, as [the lifecycle](lifecycle.md#settings) describes:
+`--no-dht` turns the DHT off, and `--log-level` and `--log-filter` set the
+level of TorrPlay's own logs, which go to standard error; other crates log
+warnings and errors only. `--log-format text|json` chooses their format, JSON
+when standard error is not a terminal
+([observability](observability.md#log-records)). The DLNA media server, its
+name, and the DHT are settings ([the DLNA contract](dlna.md)).
 
 Authentication is off until a password is set through the API or on the
 command line of the stopped application:
@@ -154,9 +154,9 @@ command line of the stopped application:
 printf '%s\n' 'a long passphrase' | cargo run -p torrplay -- password set
 ```
 
-`torrplay password remove` turns it off again and revokes every token. The engine
-uses ADR 2's network configuration, so a running instance reaches the public
-swarm through DHT and trackers.
+`torrplay password remove` turns it off again and revokes every token. The
+engine uses ADR 2's network configuration, so a running instance reaches the
+public swarm through DHT and trackers.
 
 Torrents persist in `torrplay.db`, a SQLite database in the data directory,
 which `--data-dir` sets. It defaults to the platform's data directory for
@@ -174,17 +174,17 @@ while reads continue, streams in progress get a 10-second drain period and
 are then canceled with the idle readers, the listener closes, and the engine
 stops. The process exits with an error if that takes longer than 30 seconds.
 
-`scripts/play.sh` plays a torrent through a running instance with curl and
-jq: it adds a magnet URI or torrent file, reusing a torrent TorrPlay already
-has, waits for metadata, picks the largest video file or the first whose
-path contains `--file`'s text, and opens its content URL in mpv or VLC,
-starting a new VLC instance on macOS, where VLC otherwise hands a second
-stream's URL to the window playing the first.
-`--list` lists the files instead, `--player none` only prints the URL, and
-`--api` names another address. While a magnet URI's metadata is retrieved,
-it reports progress every 5 seconds and gives up after `--timeout` seconds,
-180 by default, while TorrPlay keeps trying; a magnet URI without trackers
-finds peers through DHT alone, which can take minutes. With TorrPlay running in another terminal:
+`scripts/play.sh` plays a torrent through a running instance with curl and jq:
+it adds a magnet URI or torrent file, reusing a torrent TorrPlay already has,
+waits for metadata, picks the largest video file or the first whose path
+contains `--file`'s text, and opens its content URL in mpv or VLC, starting a
+new VLC instance on macOS, where VLC otherwise hands a second stream's URL to
+the window playing the first. `--list` lists the files instead, `--player
+none` only prints the URL, and `--api` names another address. While a magnet
+URI's metadata is retrieved, it reports progress every 5 seconds and gives up
+after `--timeout` seconds, 180 by default, while TorrPlay keeps trying; a
+magnet URI without trackers finds peers through DHT alone, which can take
+minutes. With TorrPlay running in another terminal:
 
 ```bash
 scripts/play.sh 'magnet:?xt=urn:btih:...'
@@ -218,17 +218,17 @@ target/release/torrplay-bench tracker --listen 127.0.0.1:6969 --peer 127.0.0.1:7
 target/release/torrplay-bench run --trace bench/traces/cold-start.jsonl --dir target/bench --torrplay target/release/torrplay --out cold-start-1.json --label commit=$(git rev-parse --short HEAD)
 ```
 
-`fixtures` writes about 4 GiB of generated content once; `seed` and
-`tracker` run until interrupted. Each `run` starts a fresh server without
-DHT, sets its `cache_capacity_bytes` setting to the trace's cache capacity,
-replays the trace once, stops the server with SIGTERM, and writes the run's
-requests, torrents, process and cache samples, and summary as JSON.
-Sampling reads `/proc`, so runs need Linux. Each run also records its environment as the protocol lists it,
-detected rather than given: the OS, kernel, CPU, memory, frequency governor,
-and virtualization; the workspace's Rust toolchain and librqbit revision;
-the Go toolchain and commit a Go TorrPlay binary embeds; the seeder count,
-asked of the tracker that `fixtures` recorded; and the namespace's queueing
-disciplines, which show the shaping.
+`fixtures` writes about 4 GiB of generated content once; `seed` and `tracker`
+run until interrupted. Each `run` starts a fresh server without DHT, sets its
+`cache_capacity_bytes` setting to the trace's cache capacity, replays the
+trace once, stops the server with SIGTERM, and writes the run's requests,
+torrents, process and cache samples, and summary as JSON. Sampling reads
+`/proc`, so runs need Linux. Each run also records its environment as the
+protocol lists it, detected rather than given: the OS, kernel, CPU, memory,
+frequency governor, and virtualization; the workspace's Rust toolchain and
+librqbit revision; the Go toolchain and commit a Go TorrPlay binary embeds;
+the seeder count, asked of the tracker that `fixtures` recorded; and the
+namespace's queueing disciplines, which show the shaping.
 
 The baseline runs the same way with `--go-torrplay` and a Go TorrPlay binary,
 built from its repository with `go build -o go-torrplay ./cmd/torrplay`. Each
@@ -281,12 +281,12 @@ sudo ip netns exec tpb-client runuser -u "$USER" -- target/release/torrplay-benc
 
 `scripts/bench-matrix.sh` runs a whole matrix this way: for each profile it
 builds the network, starts the three seeders and the tracker, runs the
-profile's part of the protocol's matrix round-robin, labels each run with the commit and profile,
-tears the network down, and summarizes the profile's runs. It writes
-`target/bench-results/<profile>/`, skips runs whose files exist so an
-interrupted matrix resumes, and keeps a failed run's log without its result.
-Benchmark commands run as the user who invoked sudo, or under `su` as the
-checkout's owner. `PROFILES`, `RUNS`, `TRACES`, `DIR`, `OUT`, `BENCH`,
+profile's part of the protocol's matrix round-robin, labels each run with the
+commit and profile, tears the network down, and summarizes the profile's runs.
+It writes `target/bench-results/<profile>/`, skips runs whose files exist so
+an interrupted matrix resumes, and keeps a failed run's log without its
+result. Benchmark commands run as the user who invoked sudo, or under `su` as
+the checkout's owner. `PROFILES`, `RUNS`, `TRACES`, `DIR`, `OUT`, `BENCH`,
 `BENCH_USER`, and `COMMIT` override its defaults, and `DRY_RUN=1` prints its
 commands without root. The Go baseline takes about three hours:
 

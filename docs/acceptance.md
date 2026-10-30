@@ -567,10 +567,10 @@ percentile, minimum, and maximum, and keep raw per-run data.
 The thresholds below come from Go TorrPlay `84412a1`'s baseline on the
 developer's arm64 machine and were written before any Rust result on it was
 evaluated. Three Go runs, the first after the seeders started in each matrix
-run, were captured again after the harness was found starting them before
-the seeders had checked their content; the new runs tightened the limits of
-`cold-start` slightly, and no other limit changed. Correctness scenarios and the cache
-capacity invariant are mandatory regardless of speed.
+run, were captured again after the harness was found starting them before the
+seeders had checked their content; the new runs tightened the limits of
+`cold-start` slightly, and no other limit changed. Correctness scenarios and
+the cache capacity invariant are mandatory regardless of speed.
 
 Every run of the Rust prototype must:
 

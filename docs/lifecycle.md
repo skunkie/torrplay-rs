@@ -447,11 +447,11 @@ forces exit if it has not finished after 30 seconds:
 ## Library
 
 A torrent's configuration also holds its library members: `title`, `kind`,
-`year`, `imdb_id`, `description`, `categories`, and `genres`. They are set at creation
-or by a merge patch, need no engine, and can change in any lifecycle state,
-including during metadata retrieval, a transition, or a failure. Each change
-gives the configuration a new ETag, and the torrent resource shows the new
-values with a new state ETag.
+`year`, `imdb_id`, `description`, `categories`, and `genres`. They are set
+at creation or by a merge patch, need no engine, and can change in any
+lifecycle state, including during metadata retrieval, a transition, or a
+failure. Each change gives the configuration a new ETag, and the torrent
+resource shows the new values with a new state ETag.
 
 - Text is normalized when it is written, and what the server stores and
   returns is the normalized text:
@@ -859,16 +859,16 @@ televisions, and other computers on the local network reach it:
 The application keeps a database in its data directory, which must be on a
 local filesystem, as [ADR 8](adr/0008-database.md) requires.
 
-- For each persisted torrent it stores the ID, the v1 info hash, the creation time to
-  the nanosecond, the configuration with the version its ETag derives from,
-  the storage mode in effect, and the source: an uploaded torrent file's
-  original bytes, or a magnet URI and, once metadata is recorded, the
-  torrent file built from it. The configuration includes the library
-  members, and a poster is stored with its bytes, media type, digest, and
-  upload time. Profiles, their avatars, progress, and dismissals are stored
-  too, and are read at startup, except avatar images. So are the password's
-  hash, the key that signs playback tokens, and the access tokens, by
-  their secrets' digests.
+- For each persisted torrent it stores the ID, the v1 info hash, the creation
+  time to the nanosecond, the configuration with the version its ETag derives
+  from, the storage mode in effect, and the source: an uploaded torrent file's
+  original bytes, or a magnet URI and, once metadata is recorded, the torrent
+  file built from it. The configuration includes the library members, and a
+  poster is stored with its bytes, media type, digest, and upload time.
+  Profiles, their avatars, progress, and dismissals are stored too, and are
+  read at startup, except avatar images. So are the password's hash, the key
+  that signs playback tokens, and the access tokens, by their secrets'
+  digests.
 - It records whether the application last shut down cleanly. A disk
   torrent's resume bitfield, the record of its verified pieces, lives in the
   download directory beside its files rather than in the database.

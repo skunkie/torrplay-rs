@@ -657,8 +657,8 @@ librqbit's reconnect backoff.
 
 ### Milestone 2 scenarios
 
-Every scenario `docs/acceptance.md` assigns to milestone 2, with the cache
-and eviction gate, and the test that checks it in `crates/torrplay-engine/tests`:
+Every scenario `docs/acceptance.md` assigns to milestone 2, with the cache and
+eviction gate, and the test that checks it in `crates/torrplay-engine/tests`:
 
 | Scenario | Result | Test |
 |---|---|---|
@@ -710,12 +710,12 @@ scheduler's unit tests already cover them.
 - **Readmission order.** Done in milestone 4: the cache readmits waiting
   reservations in piece priority order across torrents, then in waiting
   order, and new reservations queue behind waiting ones, completing CAC-05.
-- **Discarding stalled partial pieces.** Done in milestone 4 with P6. A
-  peer that keeps the connection alive, or keeps the torrent choked, while
-  it delivers none of its requested chunks would hold its partial pieces
-  indefinitely; librqbit's read timeout counts keep-alives. With P6's
-  request stall timeout set to the piece wait bound, the peer is
-  disconnected and its pieces return to the queue and leave the cache.
+- **Discarding stalled partial pieces.** Done in milestone 4 with P6. A peer
+  that keeps the connection alive, or keeps the torrent choked, while it
+  delivers none of its requested chunks would hold its partial pieces
+  indefinitely; librqbit's read timeout counts keep-alives. With P6's request
+  stall timeout set to the piece wait bound, the peer is disconnected and its
+  pieces return to the queue and leave the cache.
   `adversarial_peers::a_peer_that_never_delivers_is_dropped_after_the_stall_timeout`
   checks it, and fails without the timeout.
 - **Request window.** Seek latency depends on outstanding requests; the
