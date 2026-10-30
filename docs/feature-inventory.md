@@ -93,8 +93,11 @@ document that schedules it.
 | Torrent statistics | `GET /api/stats/torrents/{hash}` | Verified | `statistics` |
 | Cache statistics | `GET /api/stats/memory` | Verified | CAC scenarios, `statistics` |
 | Piece and reader maps of a torrent | `pieces`, `readers` in statistics | Deferred | With the client's piece grid |
-| System information, recent logs, and metrics | `/api/system/info`, `/logs`, `/metrics` | Deferred | After the client |
-| Prometheus metrics | `GET /metrics` | Deferred | After the client |
+| System information | `/api/system/info` | Verified | `/api/v1/system`, OBS-01 |
+| Global statistics | `/api/system/metrics` | Verified | `/api/v1/statistics`, OBS-02 |
+| Prometheus metrics | `GET /metrics` | Verified | OBS-03, OBS-05, AUT-12; [observability](observability.md#metrics) |
+| Structured logs and request IDs | Text logs | Verified | `--log-format json`, `X-Request-Id`, OBS-04, OBS-06 |
+| Recent logs | `/api/system/logs` | Planned | Log files and `/api/v1/log-records` next |
 | Update checks | Client and release feed | Deferred | With release automation |
 
 ## Access

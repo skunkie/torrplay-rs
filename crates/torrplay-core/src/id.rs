@@ -354,6 +354,34 @@ impl Borrow<str> for ViewingId {
     }
 }
 
+/// The ID a process draws when it starts: `run_` followed by 128 random
+/// bits in lowercase base32. Log records carry it, so one run's records can
+/// be told from another's.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct RunId(String);
+
+impl RunId {
+    /// The prefix of every run ID.
+    pub const PREFIX: &str = "run_";
+
+    /// Builds the ID that encodes `random`. Production IDs take these bytes
+    /// from [`random_torrent_id_bytes`].
+    pub fn from_random_bytes(random: [u8; TORRENT_ID_RANDOM_BYTES]) -> Self {
+        Self(format!("{}{}", Self::PREFIX, base32::encode(&random)))
+    }
+
+    /// Returns the ID's text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for RunId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// The identifier of a file within its torrent, derived from the file's raw
 /// path components: `fil_` followed by the first 128 bits of a SHA-256
 /// digest in lowercase base32.

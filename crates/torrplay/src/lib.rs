@@ -29,12 +29,14 @@ use tokio::sync::oneshot;
 pub use torrplay_core::credentials::AllowedHosts;
 use torrplay_dlna::description::Device;
 
+mod logging;
 mod media_server;
 use torrplay_core::id::TorrentId;
 use torrplay_core::lifecycle::StorageMode;
 pub use torrplay_core::settings::{LogLevel, LogOverride, Overrides};
 use torrplay_engine::{DEFAULT_PEER_PORT, EngineConfig, LibrqbitEngine, NetworkConfig};
 use torrplay_server::App;
+pub use torrplay_server::Run;
 use torrplay_store::{Contents, Store};
 
 /// The default API port, as the contract's server URL documents.
@@ -51,6 +53,10 @@ const FALLBACK_LISTEN: SocketAddr =
 /// The environment variable that names the API's address where `--listen`
 /// does not.
 pub const LISTEN_VARIABLE: &str = "TORRPLAY_LISTEN";
+
+/// The environment variable that chooses the log format where
+/// `--log-format` does not.
+pub const LOG_FORMAT_VARIABLE: &str = "TORRPLAY_LOG_FORMAT";
 
 /// How long the whole shutdown may take before the process exits anyway.
 pub const DEFAULT_SHUTDOWN_LIMIT: Duration = Duration::from_secs(30);
@@ -82,6 +88,8 @@ Options:
   --download-dir <DIR>       Where torrents in disk storage keep their files, a
                              directory for TorrPlay alone [default: downloads in
                              the data directory]
+  --log-format <FORMAT>      text or json, or TORRPLAY_LOG_FORMAT [default: text
+                             when standard error is a terminal, else json]
 
 These options override a setting for this run only, without storing it:
   --log-level <LEVEL>        error, warn, info, debug, or trace, instead of the
@@ -158,6 +166,9 @@ pub struct Config {
     /// replace the filter a level sets, so other crates can log too,
     /// overriding the `log_level` setting.
     pub log_filter: Option<String>,
+    /// The format of the records on standard error, or `None` to leave it
+    /// to [`log_format`].
+    pub log_format: Option<LogFormat>,
     /// Whether DHT may find peers; `false` overrides the `dht_enabled`
     /// setting.
     pub dht: bool,
@@ -177,6 +188,7 @@ impl Default for Config {
             peer_port: DEFAULT_PEER_PORT,
             log_level: None,
             log_filter: None,
+            log_format: None,
             dht: true,
             data_dir: None,
             download_dir: None,
@@ -251,6 +263,48 @@ pub enum PasswordChange {
     Set,
     /// Remove the password and revoke every token.
     Remove,
+}
+
+/// The format of the log records on standard error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LogFormat {
+    /// Lines for people, which may change between releases.
+    Text,
+    /// One JSON object per record, as `docs/observability.md` defines it.
+    Json,
+}
+
+impl LogFormat {
+    /// Reads a format's name.
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "text" => Some(Self::Text),
+            "json" => Some(Self::Json),
+            _ => None,
+        }
+    }
+}
+
+/// The log format: `chosen`, from `--log-format`, or else `variable`, the
+/// value of [`LOG_FORMAT_VARIABLE`], or else text when standard error is a
+/// `terminal` and JSON otherwise, so a container or a service gets JSON.
+pub fn log_format(
+    chosen: Option<LogFormat>,
+    variable: Option<String>,
+    terminal: bool,
+) -> Result<LogFormat, ArgsError> {
+    if let Some(format) = chosen {
+        return Ok(format);
+    }
+    match variable {
+        Some(value) => LogFormat::parse(&value).ok_or(ArgsError::InvalidValue {
+            option: LOG_FORMAT_VARIABLE.to_owned(),
+            value,
+            reason: "text or json",
+        }),
+        None if terminal => Ok(LogFormat::Text),
+        None => Ok(LogFormat::Json),
+    }
 }
 
 /// A command line the application cannot run with.
@@ -371,6 +425,13 @@ pub fn parse_args(
                     return Err(invalid(value, "a directory"));
                 }
                 config.download_dir = Some(PathBuf::from(value));
+            }
+            "--log-format" => {
+                let value = value()?;
+                config.log_format = Some(
+                    LogFormat::parse(&value)
+                        .ok_or_else(|| invalid(value.clone(), "text or json"))?,
+                );
             }
             "--log-filter" => {
                 let value = value()?;
@@ -499,11 +560,18 @@ fn level_filter(level: LogLevel) -> tracing_subscriber::filter::Targets {
     )
 }
 
-/// Records logs to standard error: TorrPlay's own at `level` and more
-/// severe, other crates' warnings and errors only, unless `filter`, already
-/// validated by [`parse_args`], sets every target's level instead. The
+/// Records logs to standard error in `format`: TorrPlay's own at `level`
+/// and more severe, other crates' warnings and errors only, unless
+/// `filter`, already validated by [`parse_args`], sets every target's level
+/// instead. Records carry `run`'s ID and are counted in its counts. The
 /// returned control changes the level later.
-pub fn init_logging(level: LogLevel, filter: Option<&str>) -> LogControl {
+pub fn init_logging(
+    level: LogLevel,
+    filter: Option<&str>,
+    format: LogFormat,
+    run: &Run,
+) -> LogControl {
+    use tracing_subscriber::Layer;
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::reload;
     use tracing_subscriber::util::SubscriberInitExt;
@@ -512,8 +580,15 @@ pub fn init_logging(level: LogLevel, filter: Option<&str>) -> LogControl {
         .and_then(|filter| filter.parse().ok())
         .unwrap_or_else(|| level_filter(level));
     let (filter, handle) = reload::Layer::new(filter);
+    let output = match format {
+        LogFormat::Text => tracing_subscriber::fmt::layer()
+            .with_writer(std::io::stderr)
+            .boxed(),
+        LogFormat::Json => logging::JsonLayer::new(run.id(), std::io::stderr).boxed(),
+    };
     tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+        .with(output)
+        .with(logging::CountingLayer(run.log_records()))
         .with(filter)
         .init();
     LogControl(Arc::new(move |level| {
@@ -553,6 +628,8 @@ pub struct ServeOptions {
     /// setting while no override sets it; `None` leaves logging alone, as
     /// tests do.
     pub log: Option<LogControl>,
+    /// The process run, whose ID the system resource and log records give.
+    pub run: Run,
 }
 
 /// Serves the API on `listener` over `engine`, which must not be started
@@ -618,6 +695,7 @@ pub async fn serve(
             .with_viewing(profiles, progress, titles, temporary_progress, dismissals)
             .with_credentials(credentials)
             .with_allowed_hosts(options.allowed_hosts)
+            .with_run(options.run)
             .with_media_server(Device {
                 uuid: media_server_udn.clone(),
                 version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -848,6 +926,32 @@ mod tests {
     }
 
     #[test]
+    fn the_log_format_follows_the_option_then_the_variable_then_the_terminal() {
+        let cases = [
+            (Some(LogFormat::Text), Some("json"), false, LogFormat::Text),
+            (None, Some("text"), false, LogFormat::Text),
+            (None, Some("json"), true, LogFormat::Json),
+            (None, None, true, LogFormat::Text),
+            (None, None, false, LogFormat::Json),
+        ];
+        for (chosen, variable, terminal, expected) in cases {
+            assert_eq!(
+                log_format(chosen, variable.map(str::to_owned), terminal),
+                Ok(expected),
+                "{chosen:?} {variable:?} {terminal}"
+            );
+        }
+        assert!(matches!(
+            log_format(None, Some("yaml".into()), true),
+            Err(ArgsError::InvalidValue { option, .. }) if option == LOG_FORMAT_VARIABLE
+        ));
+        assert!(matches!(
+            parse(&["--log-format", "yaml"]),
+            Err(ArgsError::InvalidValue { .. })
+        ));
+    }
+
+    #[test]
     fn options_take_separate_or_inline_values() {
         let Ok(Command::Run(config)) = parse(&[
             "--listen",
@@ -859,6 +963,7 @@ mod tests {
             "--data-dir=/srv/torrplay",
             "--download-dir",
             "/media/torrplay",
+            "--log-format=json",
             "--no-dht",
         ]) else {
             panic!("the options parse");
@@ -871,6 +976,7 @@ mod tests {
                 peer_port: 6881,
                 log_level: Some(LogLevel::Debug),
                 log_filter: Some("librqbit=debug,torrplay_engine=trace".into()),
+                log_format: Some(LogFormat::Json),
                 dht: false,
                 data_dir: Some("/srv/torrplay".into()),
                 download_dir: Some("/media/torrplay".into()),

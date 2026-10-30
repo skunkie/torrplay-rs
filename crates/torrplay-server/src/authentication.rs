@@ -55,9 +55,12 @@ enum Requirement {
     Nothing,
     /// An allowed host only.
     Host,
-    /// A credential of any scope, of the operation's torrent: the playback
-    /// operations.
+    /// An `api` or `playback` credential, of the operation's torrent: the
+    /// playback operations.
     Playback,
+    /// An `api` or `metrics` credential: reading the metrics, the system
+    /// resource, and statistics.
+    Metrics,
     /// An `api` credential.
     Api,
 }
@@ -85,6 +88,11 @@ fn requirement(route: Option<&str>, method: &Method) -> Requirement {
             if reads =>
         {
             Requirement::Playback
+        }
+        "/metrics" | "/api/v1/system" | "/api/v1/statistics" | "/api/v1/cache/statistics"
+            if reads =>
+        {
+            Requirement::Metrics
         }
         _ => Requirement::Api,
     }
@@ -173,16 +181,16 @@ pub(crate) async fn guard<E: Engine>(
         });
     }
     let allowed = match (&checked.grant, requirement) {
-        (Grant::Token { scope, .. }, _) if in_query && *scope == Scope::Api => {
+        (Grant::Token { scope, .. }, _) if in_query && *scope != Scope::Playback => {
             return unauthenticated(
                 Some("invalid_token"),
-                "Send an api token in the Authorization header, not in a URL.",
+                "Only a playback token may travel in a URL; send this one in the \
+                 Authorization header.",
             )
             .into_response();
         }
-        (Grant::Token { scope, .. }, Requirement::Api) => *scope == Scope::Api,
-        (Grant::Token { .. }, _) => true,
-        (Grant::Playback { .. }, Requirement::Api) => false,
+        (Grant::Token { scope, .. }, requirement) => allows(*scope, requirement),
+        (Grant::Playback { .. }, Requirement::Api | Requirement::Metrics) => false,
         (Grant::Playback { torrent: None }, _) => true,
         (
             Grant::Playback {
@@ -204,6 +212,17 @@ pub(crate) async fn guard<E: Engine>(
     }
     request.extensions_mut().insert(Caller(checked.grant));
     next.run(request).await
+}
+
+/// Whether an access token of `scope` allows an operation that needs
+/// `requirement`.
+fn allows(scope: Scope, requirement: Requirement) -> bool {
+    match requirement {
+        Requirement::Nothing | Requirement::Host => true,
+        Requirement::Playback => matches!(scope, Scope::Api | Scope::Playback),
+        Requirement::Metrics => matches!(scope, Scope::Api | Scope::Metrics),
+        Requirement::Api => scope == Scope::Api,
+    }
 }
 
 /// The request's credential, and whether it came from the query: the
@@ -324,10 +343,45 @@ mod tests {
                 Requirement::Api,
             ),
             (Some("/api/v1/torrents"), Method::GET, Requirement::Api),
+            (Some("/metrics"), Method::GET, Requirement::Metrics),
+            (Some("/api/v1/system"), Method::HEAD, Requirement::Metrics),
+            (
+                Some("/api/v1/statistics"),
+                Method::GET,
+                Requirement::Metrics,
+            ),
+            (
+                Some("/api/v1/cache/statistics"),
+                Method::GET,
+                Requirement::Metrics,
+            ),
+            (
+                Some("/api/v1/torrents/{torrent_id}/statistics"),
+                Method::GET,
+                Requirement::Api,
+            ),
             (None, Method::GET, Requirement::Host),
         ];
         for (route, method, expected) in cases {
             assert_eq!(requirement(route, &method), expected, "{method} {route:?}");
+        }
+    }
+
+    #[test]
+    fn each_scope_allows_only_its_operations() {
+        let cases = [
+            (Scope::Api, [true, true, true]),
+            (Scope::Playback, [true, false, false]),
+            (Scope::Metrics, [false, true, false]),
+        ];
+        for (scope, expected) in cases {
+            let allowed = [
+                Requirement::Playback,
+                Requirement::Metrics,
+                Requirement::Api,
+            ]
+            .map(|requirement| allows(scope, requirement));
+            assert_eq!(allowed, expected, "{}", scope.as_str());
         }
     }
 

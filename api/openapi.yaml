@@ -53,7 +53,9 @@ tags:
   - name: Authentication
     description: The password, access tokens, and playback tokens.
   - name: Statistics
-    description: Measurements of torrents and of the piece cache.
+    description: Measurements of torrents, of the piece cache, and of all together.
+  - name: System
+    description: The running process and its metrics.
   - name: Health
     description: Liveness and readiness checks outside the versioned API.
 
@@ -84,6 +86,9 @@ paths:
                       torrents: /api/v1/torrents
                       profiles: /api/v1/profiles
                       cache_statistics: /api/v1/cache/statistics
+                      statistics: /api/v1/statistics
+                      system: /api/v1/system
+                      metrics: /metrics
                       settings: /api/v1/settings
                       password: /api/v1/password
                       access_tokens: /api/v1/access-tokens
@@ -2507,7 +2512,9 @@ paths:
     get:
       operationId: getCacheStatistics
       summary: Read piece cache statistics
-      description: Returns the global piece cache's capacity and usage.
+      description: >-
+        Returns the global piece cache's capacity and usage. A metrics access
+        token may read it.
       tags: [Statistics]
       responses:
         '200':
@@ -2529,6 +2536,95 @@ paths:
                     eviction_count: 140
                     links:
                       self: /api/v1/cache/statistics
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/statistics:
+    get:
+      operationId: getStatistics
+      summary: Read the application's statistics
+      description: >-
+        Returns measurements across every torrent and reader: how many
+        torrents are in each observed state, how many readers serve or wait,
+        and the transfer totals and rates. A metrics access token may read
+        it.
+      tags: [Statistics]
+      responses:
+        '200':
+          description: The current measurements.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Statistics'
+              examples:
+                streaming:
+                  summary: One stream while a second torrent downloads
+                  value:
+                    torrent_count: 3
+                    torrent_counts_by_observed_state:
+                      retrieving_metadata: 0
+                      downloading: 2
+                      paused: 1
+                      failed: 0
+                    active_reader_count: 1
+                    idle_reader_count: 1
+                    waiting_reader_count: 0
+                    peer_count: 37
+                    downloaded_bytes: 1610612736
+                    uploaded_bytes: 0
+                    streamed_bytes: 1207959552
+                    download_rate_bytes_per_second: 6291456
+                    upload_rate_bytes_per_second: 0
+                    links:
+                      self: /api/v1/statistics
+                      system: /api/v1/system
+                      cache_statistics: /api/v1/cache/statistics
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
+  /api/v1/system:
+    get:
+      operationId: getSystem
+      summary: Read the running process's description
+      description: >-
+        Returns what a bug report or an about dialog needs: the build, the
+        platform, when the process started, and its memory use. A metrics
+        access token may read it.
+      tags: [System]
+      responses:
+        '200':
+          description: The running process's description.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/System'
+              examples:
+                linux:
+                  summary: A day after starting on Linux
+                  value:
+                    version: 0.1.0
+                    os: linux
+                    architecture: aarch64
+                    run_id: run_q4m2kzb6hxw3rjpt5yc4ula7nd
+                    started_at: '2026-10-29T12:00:00Z'
+                    uptime_seconds: 86400
+                    resident_memory_bytes: 402653184
+                    links:
+                      self: /api/v1/system
+                      statistics: /api/v1/statistics
+                      metrics: /metrics
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -3059,6 +3155,45 @@ paths:
         '503':
           $ref: '#/components/responses/EngineUnavailable'
 
+  /metrics:
+    get:
+      operationId: getMetrics
+      summary: Read the metrics for Prometheus
+      description: >-
+        Returns the application's metrics in the Prometheus text exposition
+        format, version 0.0.4, for a scraper, as text/plain; version=0.0.4;
+        charset=utf-8. docs/observability.md lists
+        each metric with its type and labels. Counters start at zero when the
+        process starts; process_start_time_seconds tells a reset apart. Rates
+        are not exported, since a scraper derives them from counters. A
+        metrics access token may read it, sent as a bearer token.
+      tags: [System]
+      responses:
+        '200':
+          description: The current metrics.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                excerpt:
+                  summary: An excerpt
+                  value: |
+                    # HELP torrplay_downloaded_bytes_total Piece data downloaded from peers since the process started.
+                    # TYPE torrplay_downloaded_bytes_total counter
+                    torrplay_downloaded_bytes_total 1610612736
+                    # HELP torrplay_readers Readers by state.
+                    # TYPE torrplay_readers gauge
+                    torrplay_readers{state="active"} 1
+                    torrplay_readers{state="idle"} 1
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /livez:
     get:
       operationId: getLiveness
@@ -3375,6 +3510,17 @@ components:
       example: '"sha1-0123456789abcdef0123456789abcdef01234567-0"'
 
   headers:
+    RequestId:
+      description: >-
+        The request's ID: the X-Request-Id the request carried, when it has 1
+        to 128 letters, digits, and the characters . _ : -, or else one the
+        application chose. Every response carries it, and the request's log
+        records name it.
+      required: true
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9._:-]{1,128}$'
+      example: req_hxw3rjpt5yc4ula7ndq4m2kzb6
     Location:
       description: The created resource's URI.
       required: true
@@ -3612,6 +3758,7 @@ components:
                 title: Not found
                 status: 404
                 detail: No torrent has the ID trr_wjrvmrmv2x4p77h4gzl5twylli.
+                request_id: req_hxw3rjpt5yc4ula7ndq4m2kzb6
     RequestTimeout:
       description: >-
         The request body did not arrive in time. The server closes the
@@ -4058,6 +4205,9 @@ components:
                 detail: Send If-Match with the configuration's current ETag.
     InternalError:
       description: An unexpected failure.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
       content:
         application/problem+json:
           schema:
@@ -4070,6 +4220,7 @@ components:
                 title: Internal error
                 status: 500
                 detail: The request failed unexpectedly.
+                request_id: req_hxw3rjpt5yc4ula7ndq4m2kzb6
     EngineUnavailable:
       description: >-
         The torrent engine cannot serve the request right now, or, after a
@@ -4106,7 +4257,7 @@ components:
         links:
           type: object
           description: Links to the top-level resources, the OpenAPI document, and the API reference.
-          required: [self, torrents, profiles, cache_statistics, settings, password, access_tokens, playback_tokens, service-desc, service-doc]
+          required: [self, torrents, profiles, cache_statistics, statistics, system, metrics, settings, password, access_tokens, playback_tokens, service-desc, service-doc]
           properties:
             self:
               type: string
@@ -4128,6 +4279,21 @@ components:
               format: uri-reference
               description: The piece cache's statistics.
               examples: [/api/v1/cache/statistics]
+            statistics:
+              type: string
+              format: uri-reference
+              description: The statistics across every torrent and reader.
+              examples: [/api/v1/statistics]
+            system:
+              type: string
+              format: uri-reference
+              description: The running process, with its build and memory use.
+              examples: [/api/v1/system]
+            metrics:
+              type: string
+              format: uri-reference
+              description: The metrics for Prometheus, outside the versioned API.
+              examples: [/metrics]
             settings:
               type: string
               format: uri-reference
@@ -5567,6 +5733,216 @@ components:
               description: The cache statistics.
               examples: [/api/v1/cache/statistics]
 
+    Statistics:
+      type: object
+      description: >-
+        Measurements across every torrent and reader. Totals count from when
+        the process started, the started_at of the system resource, and
+        restart at zero after a restart.
+      required:
+        - torrent_count
+        - torrent_counts_by_observed_state
+        - active_reader_count
+        - idle_reader_count
+        - waiting_reader_count
+        - peer_count
+        - downloaded_bytes
+        - uploaded_bytes
+        - streamed_bytes
+        - download_rate_bytes_per_second
+        - upload_rate_bytes_per_second
+        - links
+      properties:
+        torrent_count:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The number of torrents, persisted and temporary.
+          examples: [3]
+        torrent_counts_by_observed_state:
+          type: object
+          description: >-
+            The number of torrents in each observed state. Every state is
+            present, with 0 when no torrent is in it, and the counts add up to
+            torrent_count. Clients must handle states added later.
+          additionalProperties:
+            type: integer
+            format: int64
+            minimum: 0
+          examples:
+            - retrieving_metadata: 0
+              downloading: 2
+              paused: 1
+              failed: 0
+        active_reader_count:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The number of readers serving a stream in progress.
+          examples: [1]
+        idle_reader_count:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            The number of idle readers, kept after their stream ended for the
+            player's next range request. Active playback is on while this or
+            active_reader_count is above 0.
+          examples: [1]
+        waiting_reader_count:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            The number of active readers waiting for a missing piece now. A
+            player stalls while its reader waits, so this is the first sign
+            that peers cannot keep up.
+          examples: [0]
+        peer_count:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            The connected peers summed over torrents. A peer connected for two
+            torrents counts twice.
+          examples: [37]
+        downloaded_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            Piece data downloaded from peers since the process started,
+            without duplicates. Pieces downloaded again after eviction count
+            again.
+          examples: [1610612736]
+        uploaded_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Piece data uploaded to peers since the process started.
+          examples: [0]
+        streamed_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            File content sent in streams since the process started. Against
+            downloaded_bytes it shows how much was fetched but never played,
+            or fetched again after eviction.
+          examples: [1207959552]
+        download_rate_bytes_per_second:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            The download rate of every torrent together, averaged over about
+            the last 5 seconds.
+          examples: [6291456]
+        upload_rate_bytes_per_second:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            The upload rate of every torrent together, averaged over about the
+            last 5 seconds.
+          examples: [0]
+        links:
+          type: object
+          description: Links from the statistics.
+          required: [self, system, cache_statistics]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: These measurements.
+              examples: [/api/v1/statistics]
+            system:
+              type: string
+              format: uri-reference
+              description: The running process, with when the totals started.
+              examples: [/api/v1/system]
+            cache_statistics:
+              type: string
+              format: uri-reference
+              description: The piece cache capacity and usage behind these totals.
+              examples: [/api/v1/cache/statistics]
+
+    System:
+      type: object
+      description: The running process's build, platform, and resource use.
+      required: [version, os, architecture, run_id, started_at, uptime_seconds, resident_memory_bytes, links]
+      properties:
+        version:
+          type: string
+          description: The application's version, as its package declares it.
+          examples: [0.1.0]
+        os:
+          type: string
+          description: >-
+            The operating system the build targets, as Rust names it, such as
+            linux, macos, windows, or android.
+          examples: [linux]
+        architecture:
+          type: string
+          description: >-
+            The processor architecture the build targets, as Rust names it,
+            such as x86_64 or aarch64.
+          examples: [aarch64]
+        run_id:
+          $ref: '#/components/schemas/RunId'
+        started_at:
+          type: string
+          format: date-time
+          description: >-
+            When the process started, in UTC. A later value means a restart,
+            which resets the statistics' totals.
+          examples: ['2026-10-29T12:00:00Z']
+        uptime_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            How long the process has run, from a monotonic clock, so it is
+            right even when the system clock or the client's is not.
+          examples: [86400]
+        resident_memory_bytes:
+          type: [integer, 'null']
+          format: int64
+          minimum: 0
+          description: >-
+            The process's resident memory, or null where the platform does not
+            report it. It includes the piece cache's usage and every other
+            allocation, so it may exceed the cache capacity.
+          examples: [402653184]
+        links:
+          type: object
+          description: Links from the system resource.
+          required: [self, statistics, metrics]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: This resource.
+              examples: [/api/v1/system]
+            statistics:
+              type: string
+              format: uri-reference
+              description: The application's statistics.
+              examples: [/api/v1/statistics]
+            metrics:
+              type: string
+              format: uri-reference
+              description: The metrics for Prometheus.
+              examples: [/metrics]
+
+    RunId:
+      type: string
+      description: >-
+        The ID the process chose when it started, which tells its log records
+        apart from those of earlier runs.
+      pattern: '^run_[a-z2-7]{26}$'
+      examples: [run_q4m2kzb6hxw3rjpt5yc4ula7nd]
+
     Health:
       type: object
       description: The result of a passing health check.
@@ -5610,6 +5986,13 @@ components:
           format: uri-reference
           description: An identifier of this occurrence, omitted when there is none.
           examples: [/api/v1/torrents/trr_wjrvmrmv2x4p77h4gzl5twylli]
+        request_id:
+          type: string
+          description: >-
+            The request's ID, as the X-Request-Id response header gives it, so
+            a report of the problem leads to its log records.
+          maxLength: 128
+          examples: [req_hxw3rjpt5yc4ula7ndq4m2kzb6]
 
     ValidationProblem:
       description: A problem that lists the invalid parameters or body members.
@@ -6226,8 +6609,11 @@ components:
       description: >-
         What an access token allows. An api token allows every operation. A
         playback token allows only reading torrents' file content and
-        posters, and may travel in a URL's token query parameter.
-      enum: [api, playback]
+        posters, and may travel in a URL's token query parameter. A metrics
+        token allows only reading the metrics, the system resource, and the
+        application's and the piece cache's statistics, for a monitoring
+        scraper; it travels only as a bearer token.
+      enum: [api, playback, metrics]
       examples: [api]
 
     AccessToken:
@@ -6319,7 +6705,7 @@ components:
         scope:
           type: string
           description: What the token allows, as AccessTokenScope describes.
-          enum: [api, playback]
+          enum: [api, playback, metrics]
           default: api
           examples: [playback]
         expires_in_seconds:

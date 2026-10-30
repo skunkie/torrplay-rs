@@ -5,6 +5,7 @@
 //! A torrent's files and their content.
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use axum::body::Body;
 use axum::extract::{Path, State};
@@ -240,8 +241,13 @@ pub(crate) async fn content<E: Engine>(
             .await?;
         // A read failure after the headers ends the stream; it never
         // becomes a second response.
+        let streamed = app.telemetry().streamed();
         Body::from_stream(
-            ReaderStream::with_capacity(reader, STREAM_CHUNK_BYTES).map_err(StreamEnded::from),
+            ReaderStream::with_capacity(reader, STREAM_CHUNK_BYTES)
+                .inspect_ok(move |chunk| {
+                    streamed.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+                })
+                .map_err(StreamEnded::from),
         )
     } else {
         Body::empty()

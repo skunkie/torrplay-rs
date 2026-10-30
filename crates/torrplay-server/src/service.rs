@@ -31,6 +31,9 @@ pub(crate) async fn entry_point(headers: HeaderMap) -> Result<Response, Problem>
         &api::EntryPoint {
             links: api::EntryPointLinks {
                 cache_statistics: format!("{BASE}/cache/statistics"),
+                statistics: format!("{BASE}/statistics"),
+                system: format!("{BASE}/system"),
+                metrics: crate::system::METRICS_PATH.to_owned(),
                 self_field: BASE.to_owned(),
                 service_desc: format!("{BASE}/openapi.yaml"),
                 service_doc: format!("{BASE}/reference"),

@@ -25,7 +25,7 @@ use crate::images::{self, Images};
 use crate::{StoreError, StoredTorrent};
 
 /// The schema version this build creates and migrates to.
-pub(crate) const VERSION: u32 = 15;
+pub(crate) const VERSION: u32 = 16;
 
 /// The schema at each version, applied in order to reach the next one.
 const MIGRATIONS: [&str; VERSION as usize] = [
@@ -219,6 +219,22 @@ const MIGRATIONS: [&str; VERSION as usize] = [
         updated_at_ns INTEGER NOT NULL CHECK (updated_at_ns >= 0),
         PRIMARY KEY (profile_id, info_hash, file_id)
     ) STRICT;",
+    // Version 16: the metrics scope. SQLite cannot change a CHECK
+    // constraint, so the table is rebuilt; nothing references it.
+    "CREATE TABLE access_tokens_v16 (
+        id TEXT PRIMARY KEY,
+        secret_digest BLOB NOT NULL CHECK (length(secret_digest) = 32),
+        name TEXT NOT NULL,
+        scope TEXT NOT NULL CHECK (scope IN ('api', 'playback', 'metrics')),
+        created_at_ns INTEGER NOT NULL CHECK (created_at_ns >= 0),
+        expires_at_ns INTEGER CHECK (expires_at_ns >= 0),
+        last_used_at_ns INTEGER CHECK (last_used_at_ns >= 0),
+        CONSTRAINT access_tokens_v16_secret_digest_key UNIQUE (secret_digest)
+    ) STRICT;
+    INSERT INTO access_tokens_v16 SELECT id, secret_digest, name, scope, created_at_ns,
+        expires_at_ns, last_used_at_ns FROM access_tokens;
+    DROP TABLE access_tokens;
+    ALTER TABLE access_tokens_v16 RENAME TO access_tokens;",
 ];
 
 /// Opens the database at `path`, takes its lock, and migrates it.
