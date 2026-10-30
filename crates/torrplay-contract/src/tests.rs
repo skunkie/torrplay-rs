@@ -473,6 +473,34 @@ fn head_responses_carry_headers_without_a_body() {
 }
 
 #[test]
+fn head_responses_the_conventions_assign_carry_no_body() {
+    let contract = fresh();
+    let head = request(Method::HEAD, CONTENT);
+    contract
+        .check_response(
+            &head,
+            &content_response(406, "application/problem+json", b""),
+        )
+        .unwrap();
+    assert_eq!(
+        violations(contract.check_response(
+            &head,
+            &content_response(406, "application/problem+json", b"{}")
+        )),
+        [Violation::UnexpectedBody {
+            context: "406".into()
+        }]
+    );
+    assert_eq!(
+        violations(contract.check_response(&head, &content_response(406, "text/plain", b""))),
+        [Violation::UndocumentedMediaType {
+            context: "406".into(),
+            media_type: Some("text/plain".into()),
+        }]
+    );
+}
+
+#[test]
 fn malformed_header_values_are_reported() {
     let contract = fresh();
     let mut response = content_response(200, "video/mp4", b"abcd");

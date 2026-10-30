@@ -7373,6 +7373,227 @@ mod scenario {
         server.stop().await;
     }
 
+    /// API-25: every operation answers each global condition with a
+    /// response the contract documents for it, and no mutation succeeds
+    /// without its credential or with a malformed body.
+    pub async fn fault_matrix() {
+        let contract = torrplay_contract::contract().unwrap();
+        let mut findings = Vec::new();
+        for fault in Fault::ALL {
+            let mut server = TestServer::start().await;
+            let mut values = matrix_values(&server).await;
+            let mut secret = None;
+            match fault {
+                Fault::Restoring => {
+                    server = server
+                        .restart_with(torrplay_core::fake::FakeEngine::with_catalog(), false)
+                        .await;
+                }
+                Fault::EngineUnavailable => server
+                    .engine
+                    .set_readiness(Readiness::Unavailable { retry_after: None }),
+                Fault::ShuttingDown => server.app.begin_shutdown(),
+                Fault::NoCredential | Fault::WrongScope => {
+                    set_first_password(&server).await;
+                    let (id, token) = sign_in(&server, "Prometheus", "metrics").await;
+                    values.insert("access_token_id", id);
+                    secret = (fault == Fault::WrongScope).then_some(token);
+                }
+                Fault::UnacceptableMediaType | Fault::MalformedBody => {}
+            }
+            let mut requests = contract
+                .example_requests(|name| values.get(name).cloned())
+                .unwrap();
+            // Deletions go last, so the other operations find what they
+            // address, and nested resources go before their parents.
+            requests.sort_by_key(|torrplay_contract::ExampleRequest { request, .. }| {
+                let delete = request.method() == Method::DELETE;
+                let depth = request.uri().path().matches('/').count();
+                (delete, delete.then_some(std::cmp::Reverse(depth)))
+            });
+            for torrplay_contract::ExampleRequest {
+                operation_id: id,
+                mut request,
+                ..
+            } in requests
+            {
+                complete_example(&server, &mut request).await;
+                let headers = request.headers_mut();
+                if let Some(secret) = &secret {
+                    headers.insert(
+                        header::AUTHORIZATION,
+                        format!("Bearer {secret}").parse().unwrap(),
+                    );
+                }
+                let has_body = headers.contains_key(header::CONTENT_TYPE);
+                match fault {
+                    Fault::UnacceptableMediaType => {
+                        headers.insert(header::ACCEPT, "application/x-unknown".parse().unwrap());
+                    }
+                    Fault::MalformedBody if has_body => *request.body_mut() = b"{".to_vec(),
+                    _ => {}
+                }
+                let mutation = request.method() != Method::GET && request.method() != Method::HEAD;
+                let (exchange, violation) = server.send_reporting(request).await;
+                if let Some(violation) = violation {
+                    findings.push(format!("{fault:?} {id}: {violation}"));
+                }
+                let refused = match fault {
+                    // Signing in needs no credential.
+                    Fault::NoCredential | Fault::WrongScope => {
+                        mutation && id != "createAccessToken"
+                    }
+                    Fault::MalformedBody => has_body,
+                    _ => false,
+                };
+                if refused && exchange.status.is_success() {
+                    findings.push(format!("{fault:?} {id}: answered {}", exchange.status));
+                }
+            }
+            server.stop().await;
+        }
+        assert!(findings.is_empty(), "{}", findings.join("\n\n"));
+    }
+
+    /// A global condition every operation may meet.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Fault {
+        Restoring,
+        EngineUnavailable,
+        ShuttingDown,
+        NoCredential,
+        WrongScope,
+        UnacceptableMediaType,
+        MalformedBody,
+    }
+
+    impl Fault {
+        const ALL: [Self; 7] = [
+            Self::Restoring,
+            Self::EngineUnavailable,
+            Self::ShuttingDown,
+            Self::NoCredential,
+            Self::WrongScope,
+            Self::UnacceptableMediaType,
+            Self::MalformedBody,
+        ];
+    }
+
+    /// Resources for the matrix's requests to address, by path parameter;
+    /// the others take the contract's examples.
+    async fn matrix_values(server: &TestServer) -> std::collections::HashMap<&'static str, String> {
+        let created = server
+            .upload(&catalog::single_small().metainfo().bytes, None)
+            .await;
+        let torrent = created.json()["links"]["self"].as_str().unwrap().to_owned();
+        let file = files_of(server, &torrent).await[0]["links"]["self"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let preload = server
+            .send(json_request(
+                Method::POST,
+                &format!("{file}/preloads"),
+                &json!({}),
+            ))
+            .await;
+        let viewing = server
+            .send(empty(Method::POST, &format!("{file}/viewings")))
+            .await;
+        let profile = server
+            .send(json_request(
+                Method::POST,
+                "/api/v1/profiles",
+                &json!({ "name": "Alex" }),
+            ))
+            .await;
+        let last = |path: &str| path.rsplit('/').next().unwrap().to_owned();
+        let (torrent_id, file_id) = (last(&torrent), last(&file));
+        let profile_id = profile.json()["id"].as_str().unwrap().to_owned();
+        let profile = format!("/api/v1/profiles/{profile_id}");
+        let position =
+            json!({ "position_seconds": 60.0, "duration_seconds": 600.0, "viewed": false });
+        for (put, status) in [
+            (
+                put_poster(&format!("{torrent}/poster"), "image/png", PNG),
+                StatusCode::CREATED,
+            ),
+            (
+                put_poster(&format!("{profile}/avatar"), "image/png", PNG),
+                StatusCode::CREATED,
+            ),
+            (
+                json_request(
+                    Method::PUT,
+                    &format!("{profile}/torrents/{torrent_id}/progress/{file_id}"),
+                    &position,
+                ),
+                StatusCode::CREATED,
+            ),
+            (
+                json_request(
+                    Method::PUT,
+                    &format!("{profile}/title-progress/tmdb-movie-603"),
+                    &position,
+                ),
+                StatusCode::CREATED,
+            ),
+        ] {
+            let path = put.uri().to_string();
+            assert_eq!(server.send(put).await.status, status, "{path}");
+        }
+        [
+            ("torrent_id", torrent_id),
+            ("file_id", file_id),
+            (
+                "preload_id",
+                preload.json()["id"].as_str().unwrap().to_owned(),
+            ),
+            (
+                "viewing_id",
+                viewing.json()["id"].as_str().unwrap().to_owned(),
+            ),
+            ("profile_id", profile_id),
+            ("title_key", "tmdb-movie-603".to_owned()),
+        ]
+        .into_iter()
+        .collect()
+    }
+
+    /// Fills in what an example request cannot carry: the current ETag for
+    /// `If-Match`, and real bodies for images and forms.
+    async fn complete_example(server: &TestServer, request: &mut http::Request<Vec<u8>>) {
+        if request.headers().contains_key(header::IF_MATCH) {
+            let path = request.uri().path().to_owned();
+            let (current, _) = server.send_reporting(empty(Method::GET, &path)).await;
+            if let Some(tag) = current.headers.get(header::ETAG) {
+                request.headers_mut().insert(header::IF_MATCH, tag.clone());
+            }
+        }
+        let media_type = request
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .map(|value| value.to_str().unwrap().to_owned());
+        match media_type.as_deref() {
+            Some(image) if image.starts_with("image/") => {
+                request
+                    .headers_mut()
+                    .insert(header::CONTENT_TYPE, "image/png".parse().unwrap());
+                *request.body_mut() = PNG.to_vec();
+            }
+            Some("multipart/form-data") => {
+                let form = form_request(&catalog::single_small().metainfo().bytes, None);
+                let (parts, body) = form.into_parts();
+                request.headers_mut().insert(
+                    header::CONTENT_TYPE,
+                    parts.headers[header::CONTENT_TYPE].clone(),
+                );
+                *request.body_mut() = body;
+            }
+            _ => {}
+        }
+    }
+
     async fn listed_len(server: &TestServer) -> usize {
         server.get("/api/v1/torrents").await.json()["items"]
             .as_array()
@@ -7507,6 +7728,7 @@ scenarios!(
     authentication_unavailable,
     authentication_bodies,
     allowed_hosts,
+    fault_matrix,
 );
 
 /// Serves the application's router as if every client had `address`, and

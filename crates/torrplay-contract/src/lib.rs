@@ -175,6 +175,8 @@ struct Parameter {
     required: bool,
     // The resolved schema's pointer in the document.
     schema: String,
+    // The parameter's example, or its first named one.
+    example: Option<Value>,
 }
 
 #[derive(Debug)]
@@ -372,6 +374,7 @@ impl Contract {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             schema,
+            example: example_of(node),
         })
     }
 
@@ -781,7 +784,7 @@ impl Contract {
                 if status == 405 && !response.headers().contains_key(http::header::ALLOW) {
                     violations.push(Violation::MissingHeader("Allow".into()));
                 }
-                self.check_problem(status, response, &mut violations);
+                self.check_problem(request.method(), status, response, &mut violations);
             }
             (None, 401 | 403) if operation.is_some_and(|operation| operation.secured) => {
                 if status == 401
@@ -791,7 +794,7 @@ impl Contract {
                 {
                     violations.push(Violation::MissingHeader("WWW-Authenticate".into()));
                 }
-                self.check_problem(status, response, &mut violations);
+                self.check_problem(request.method(), status, response, &mut violations);
             }
             (None, _) => violations.push(Violation::UndocumentedStatus(status)),
         }
@@ -917,9 +920,11 @@ impl Contract {
     }
 
     /// Checks the body of a response the conventions assign to every
-    /// operation against the problem schema.
+    /// operation against the problem schema; a HEAD response has a GET's
+    /// media type and no body.
     fn check_problem<C: AsRef<[u8]>>(
         &self,
+        method: &Method,
         status: u16,
         response: &Response<C>,
         violations: &mut Vec<Violation>,
@@ -931,6 +936,12 @@ impl Contract {
                 context,
                 media_type,
             });
+            return;
+        }
+        if method == Method::HEAD {
+            if !response.body().as_ref().is_empty() {
+                violations.push(Violation::UnexpectedBody { context });
+            }
             return;
         }
         let schema = json!({
@@ -983,6 +994,103 @@ impl Contract {
             .filter(|(id, status)| !exempt.contains(&(id.as_str(), *status)))
             .collect()
     }
+
+    /// One request for every operation, with its ID, built from the
+    /// document: `path_value` names a path parameter's value, or `None` for
+    /// its example; required header and query parameters carry their
+    /// examples, and the body is
+    /// the first example of the first request media type, or empty when
+    /// that media type has none.
+    pub fn example_requests(
+        &self,
+        path_value: impl Fn(&str) -> Option<String>,
+    ) -> Result<Vec<ExampleRequest>, ContractError> {
+        self.operations
+            .iter()
+            .map(|operation| {
+                let mut path = operation.template.clone();
+                let mut query = Vec::new();
+                let mut builder = Request::builder().method(operation.method.clone());
+                for parameter in &operation.parameters {
+                    match parameter.location {
+                        Location::Path => {
+                            let value = path_value(&parameter.name)
+                                .or_else(|| parameter.example.clone()?.as_str().map(str::to_owned))
+                                .ok_or_else(|| {
+                                    malformed(&operation.pointer, "a path parameter has no example")
+                                })?;
+                            path = path.replace(&format!("{{{}}}", parameter.name), &value);
+                        }
+                        _ if !parameter.required => {}
+                        location => {
+                            let value = match &parameter.example {
+                                Some(Value::String(text)) => text.clone(),
+                                Some(other) => other.to_string(),
+                                None => continue,
+                            };
+                            if location == Location::Query {
+                                query.push(format!("{}={value}", parameter.name));
+                            } else {
+                                builder = builder.header(&parameter.name, value);
+                            }
+                        }
+                    }
+                }
+                if !query.is_empty() {
+                    path = format!("{path}?{}", query.join("&"));
+                }
+                let mut body = Vec::new();
+                let content = self
+                    .resolve(&format!("{}/requestBody", operation.pointer))
+                    .ok()
+                    .and_then(|(_, node)| node.get("content")?.as_object());
+                if let Some((media_type, media)) = content.and_then(|content| content.iter().next())
+                {
+                    builder = builder.header(http::header::CONTENT_TYPE, media_type);
+                    body = match example_of(media) {
+                        Some(Value::String(text)) if !media_type.contains("json") => {
+                            text.into_bytes()
+                        }
+                        Some(example) => example.to_string().into_bytes(),
+                        None => Vec::new(),
+                    };
+                }
+                let request = builder
+                    .uri(path)
+                    .body(body)
+                    .map_err(|error| malformed(&operation.pointer, error.to_string()))?;
+                Ok(ExampleRequest {
+                    operation_id: operation.id.clone(),
+                    secured: operation.secured,
+                    request,
+                })
+            })
+            .collect()
+    }
+}
+
+/// A request [`Contract::example_requests`] built for an operation.
+#[derive(Debug)]
+pub struct ExampleRequest {
+    /// The operation's ID.
+    pub operation_id: String,
+    /// Whether a security requirement names a scheme, so the operation needs
+    /// a credential once a password is set.
+    pub secured: bool,
+    /// The request.
+    pub request: Request<Vec<u8>>,
+}
+
+/// A node's `example`, or the value of the first of its `examples`.
+fn example_of(node: &Value) -> Option<Value> {
+    node.get("example").cloned().or_else(|| {
+        node.get("examples")?
+            .as_object()?
+            .values()
+            .next()?
+            .get("value")
+            .cloned()
+    })
 }
 
 fn check_problem_type(instance: &Value, violations: &mut Vec<Violation>) {

@@ -492,7 +492,26 @@ impl TestServer {
         self.exchange(request, RequestCheck::None).await
     }
 
+    /// Sends a request the contract may not allow and returns the response
+    /// with how it breaks the contract, if it does, rather than failing.
+    pub async fn send_reporting(&self, request: Request<Vec<u8>>) -> (Exchange, Option<String>) {
+        self.exchange_reporting(request, RequestCheck::Unchecked)
+            .await
+    }
+
     async fn exchange(&self, request: Request<Vec<u8>>, check: RequestCheck) -> Exchange {
+        let (exchange, violation) = self.exchange_reporting(request, check).await;
+        if let Some(violation) = violation {
+            panic!("{violation}");
+        }
+        exchange
+    }
+
+    async fn exchange_reporting(
+        &self,
+        request: Request<Vec<u8>>,
+        check: RequestCheck,
+    ) -> (Exchange, Option<String>) {
         let (parts, body) = request.into_parts();
         let url = format!("{}{}", self.base, parts.uri);
         let mut outgoing = self
@@ -519,19 +538,20 @@ impl TestServer {
             RequestCheck::Unchecked => contract.check_response(&request, &checked),
             RequestCheck::None => Ok(()),
         };
-        if let Err(violations) = result {
-            panic!(
+        let violation = result.err().map(|violations| {
+            format!(
                 "{} {} answered {status} against the contract: {violations}\n{}",
                 request.method(),
                 request.uri(),
                 String::from_utf8_lossy(&bytes)
-            );
-        }
-        Exchange {
+            )
+        });
+        let exchange = Exchange {
             status,
             headers,
             body: bytes,
-        }
+        };
+        (exchange, violation)
     }
 
     pub async fn get(&self, path: &str) -> Exchange {
