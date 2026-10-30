@@ -1196,7 +1196,9 @@ async fn a_version_15_database_keeps_its_tokens_and_takes_metrics_tokens() {
     {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
-            .execute_batch(&format!("{UNDO_VERSION_17} {UNDO_VERSION_16} PRAGMA user_version = 15;"))
+            .execute_batch(&format!(
+                "{UNDO_VERSION_17} {UNDO_VERSION_16} PRAGMA user_version = 15;"
+            ))
             .unwrap();
         let refused = connection.execute(
             "UPDATE access_tokens SET scope = 'metrics' WHERE id = ?1",
