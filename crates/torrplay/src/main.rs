@@ -111,6 +111,8 @@ async fn run(
     run: torrplay::Run,
     log_files: Option<torrplay::LogFiles>,
 ) -> anyhow::Result<()> {
+    // Before the listener binds, so the API never answers without them.
+    let terminated = termination();
     let data_dir = config.data_dir()?;
     let opening = data_dir.clone();
     let (store, contents) = tokio::task::spawn_blocking(move || Store::open(&opening))
@@ -147,7 +149,7 @@ async fn run(
             log_files,
         },
         ShutdownTimings::default(),
-        termination(),
+        terminated,
     )
     .await
 }
@@ -197,25 +199,51 @@ fn password(change: PasswordChange, config: &Config) -> ExitCode {
 
 /// Completes on the first termination signal: SIGTERM or SIGINT on Unix,
 /// Ctrl+C elsewhere.
-async fn termination() {
+/// Waits for SIGTERM or SIGINT, or Ctrl+C on Windows. The handlers are
+/// installed when this is called, not when the future is first polled, so
+/// a signal that arrives once the API listens shuts down gracefully instead
+/// of ending the process.
+fn termination() -> impl std::future::Future<Output = ()> {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
-        match signal(SignalKind::terminate()) {
-            Ok(mut terminate) => {
-                tokio::select! {
-                    _ = terminate.recv() => {}
-                    _ = tokio::signal::ctrl_c() => {}
+        let terminate = signal(SignalKind::terminate());
+        let interrupt = signal(SignalKind::interrupt());
+        async move {
+            match (terminate, interrupt) {
+                (Ok(mut terminate), Ok(mut interrupt)) => {
+                    tokio::select! {
+                        _ = terminate.recv() => {}
+                        _ = interrupt.recv() => {}
+                    }
                 }
-            }
-            Err(error) => {
-                tracing::warn!(%error, "SIGTERM cannot be handled; waiting for SIGINT");
-                let _ = tokio::signal::ctrl_c().await;
+                (terminate, interrupt) => {
+                    if let Err(error) = terminate.as_ref().and(interrupt.as_ref()) {
+                        tracing::warn!(%error, "a termination signal cannot be handled");
+                    }
+                    match (terminate, interrupt) {
+                        (Ok(mut signal), Err(_)) | (Err(_), Ok(mut signal)) => {
+                            signal.recv().await;
+                        }
+                        _ => std::future::pending().await,
+                    }
+                }
             }
         }
     }
     #[cfg(not(unix))]
     {
-        let _ = tokio::signal::ctrl_c().await;
+        let interrupt = tokio::signal::windows::ctrl_c();
+        async move {
+            match interrupt {
+                Ok(mut interrupt) => {
+                    interrupt.recv().await;
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "Ctrl+C cannot be handled");
+                    std::future::pending().await
+                }
+            }
+        }
     }
 }
