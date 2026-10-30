@@ -98,7 +98,7 @@ its field names.
   `files_truncated` when it has more, and its current statistics, in one
   result. Before metadata is available, `files` is `null`.
 - `add_torrent` takes `magnet_uri`, and optionally `title`, `kind`,
-  `year`, `description`, `categories`, `genres`, `retention`,
+  `year`, `imdb_id`, `description`, `categories`, `genres`, `retention`,
   `storage_mode`, and `desired_state`. Uploading torrent files is not
   offered.
 - `update_torrent` takes `torrent_id` and the configuration's writable

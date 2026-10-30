@@ -131,6 +131,9 @@ pub struct AddTorrent {
     pub kind: Option<String>,
     /// The release year.
     pub year: Option<i32>,
+    /// The title's IMDb ID, such as "tt0133093", which Stremio's Cinemeta
+    /// items name.
+    pub imdb_id: Option<String>,
     /// A description of the content.
     pub description: Option<String>,
     /// The user's categories.
@@ -159,6 +162,9 @@ pub struct UpdateTorrent {
     pub kind: Option<Option<String>>,
     #[serde(default, deserialize_with = "nullable")]
     pub year: Option<Option<i32>>,
+    /// The title's IMDb ID, such as "tt0133093".
+    #[serde(default, deserialize_with = "nullable")]
+    pub imdb_id: Option<Option<String>>,
     #[serde(default, deserialize_with = "nullable")]
     pub description: Option<Option<String>>,
     /// Replaces the categories.
@@ -286,6 +292,7 @@ impl Server {
                 creation.title = arguments.title.map(Some);
                 creation.kind = optional_member("kind", arguments.kind)?.map(Some);
                 creation.year = arguments.year.map(Some);
+                creation.imdb_id = arguments.imdb_id.map(Some);
                 creation.description = arguments.description.map(Some);
                 creation.categories = arguments.categories;
                 creation.genres = arguments.genres;
@@ -320,6 +327,7 @@ impl Server {
                     title: arguments.title,
                     kind,
                     year: arguments.year,
+                    imdb_id: arguments.imdb_id,
                     description: arguments.description,
                     categories: arguments.categories,
                     genres: arguments.genres,

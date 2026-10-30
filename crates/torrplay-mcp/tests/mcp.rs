@@ -339,12 +339,18 @@ async fn torrents_are_updated_and_deleted() {
     let updated = session
         .ok(
             "update_torrent",
-            json!({ "torrent_id": torrent_id, "kind": "movie", "year": 2010 }),
+            json!({
+                "torrent_id": torrent_id,
+                "kind": "movie",
+                "year": 2010,
+                "imdb_id": "tt1727587",
+            }),
         )
         .await;
     assert_eq!(updated["title"], "Sintel", "omitted members are kept");
     assert_eq!(updated["kind"], "movie");
     assert_eq!(updated["year"], 2010);
+    assert_eq!(updated["imdb_id"], "tt1727587");
     let cleared = session
         .ok(
             "update_torrent",
@@ -353,6 +359,7 @@ async fn torrents_are_updated_and_deleted() {
         .await;
     assert_eq!(cleared["year"], Value::Null);
     assert_eq!(cleared["kind"], "movie");
+    assert_eq!(cleared["imdb_id"], "tt1727587");
 
     let deleted = session
         .ok("delete_torrent", json!({ "torrent_id": torrent_id }))
