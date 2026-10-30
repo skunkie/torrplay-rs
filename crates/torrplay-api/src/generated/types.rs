@@ -1998,6 +1998,9 @@ pub struct EntryPoint {
 pub struct EntryPointLinks {
     ///The access tokens collection, where clients sign in.
     pub access_tokens: String,
+    ///The API catalog, under its RFC 9727 relation name.
+    #[serde(rename = "api-catalog")]
+    pub api_catalog: String,
     ///The piece cache's statistics.
     pub cache_statistics: String,
     ///The recent log records.
@@ -2124,6 +2127,34 @@ pub struct CacheStatisticsLinks {
     ///The cache statistics.
     #[serde(rename = "self")]
     pub self_field: String,
+}
+///The API catalog (RFC 9727): a linkset (RFC 9264) naming the APIs the host serves, with their descriptions.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ApiCatalog {
+    ///One link context for each API, this host serving one.
+    pub linkset: Vec<ApiCatalogEntry>,
+}
+///An API in the catalog, with the RFC 8631 links that describe it.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ApiCatalogEntry {
+    ///The entry point of the API the links describe.
+    pub anchor: String,
+    ///The API's OpenAPI document.
+    #[serde(rename = "service-desc")]
+    pub service_desc: Vec<LinkTarget>,
+    ///The API's reference page.
+    #[serde(rename = "service-doc")]
+    pub service_doc: Vec<LinkTarget>,
+    ///The API's readiness check.
+    pub status: Vec<LinkTarget>,
+}
+///A link's target in a linkset (RFC 9264), with its media type.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LinkTarget {
+    ///The target.
+    pub href: String,
+    ///The target's media type.
+    pub r#type: String,
 }
 ///A page of access tokens.
 #[derive(Debug, Clone, Deserialize, Serialize)]

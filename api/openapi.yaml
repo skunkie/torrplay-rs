@@ -31,7 +31,7 @@ security:
   - accessToken: []
 tags:
   - name: Service
-    description: The entry point, the OpenAPI document, and the API reference.
+    description: The entry point, the API catalog, the OpenAPI document, and the API reference.
   - name: Torrents
     description: Torrents the application tracks, with their configuration.
   - name: Posters
@@ -100,6 +100,63 @@ paths:
                       playback_tokens: /api/v1/playback-tokens
                       service-desc: /api/v1/openapi.yaml
                       service-doc: /api/v1/reference
+                      api-catalog: /.well-known/api-catalog
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /.well-known/api-catalog:
+    get:
+      operationId: getApiCatalog
+      summary: Read the API catalog
+      description: >-
+        Returns the API catalog (RFC 9727), which names this host's API, its
+        OpenAPI document, its reference page, and its readiness check, so
+        clients and crawlers find them from the host alone.
+      tags: [Service]
+      security:
+        - {}
+      responses:
+        '200':
+          description: The API catalog.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/linkset+json:
+              schema:
+                $ref: '#/components/schemas/ApiCatalog'
+              examples:
+                catalog:
+                  summary: The API catalog
+                  value:
+                    linkset:
+                      - anchor: /api/v1
+                        service-desc:
+                          - href: /api/v1/openapi.yaml
+                            type: application/yaml
+                        service-doc:
+                          - href: /api/v1/reference
+                            type: text/html
+                        status:
+                          - href: /readyz
+                            type: application/json
+        '500':
+          $ref: '#/components/responses/InternalError'
+    head:
+      operationId: headApiCatalog
+      summary: Read the API catalog's headers
+      description: >-
+        Returns the headers and status a GET would return, without the
+        catalog, as RFC 9727 asks.
+      tags: [Service]
+      security:
+        - {}
+      responses:
+        '200':
+          description: The API catalog's headers.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -4588,7 +4645,7 @@ components:
         links:
           type: object
           description: Links to the top-level resources, the OpenAPI document, and the API reference.
-          required: [self, torrents, torrent_previews, profiles, cache_statistics, statistics, system, log_records, metrics, settings, password, access_tokens, playback_tokens, service-desc, service-doc]
+          required: [self, torrents, torrent_previews, profiles, cache_statistics, statistics, system, log_records, metrics, settings, password, access_tokens, playback_tokens, service-desc, service-doc, api-catalog]
           properties:
             self:
               type: string
@@ -4665,6 +4722,86 @@ components:
               format: uri-reference
               description: The API reference page, under its RFC 8631 relation name.
               examples: [/api/v1/reference]
+            api-catalog:
+              type: string
+              format: uri-reference
+              description: The API catalog, under its RFC 9727 relation name.
+              examples: [/.well-known/api-catalog]
+
+    ApiCatalog:
+      type: object
+      description: >-
+        The API catalog (RFC 9727): a linkset (RFC 9264) naming the APIs the
+        host serves, with their descriptions.
+      required: [linkset]
+      properties:
+        linkset:
+          type: array
+          description: One link context for each API, this host serving one.
+          items:
+            $ref: '#/components/schemas/ApiCatalogEntry'
+          examples:
+            - - anchor: /api/v1
+                service-desc:
+                  - href: /api/v1/openapi.yaml
+                    type: application/yaml
+                service-doc:
+                  - href: /api/v1/reference
+                    type: text/html
+                status:
+                  - href: /readyz
+                    type: application/json
+
+    ApiCatalogEntry:
+      type: object
+      description: >-
+        An API in the catalog, with the RFC 8631 links that describe it.
+      required: [anchor, service-desc, service-doc, status]
+      properties:
+        anchor:
+          type: string
+          format: uri-reference
+          description: The entry point of the API the links describe.
+          examples: [/api/v1]
+        service-desc:
+          type: array
+          description: The API's OpenAPI document.
+          items:
+            $ref: '#/components/schemas/LinkTarget'
+          examples:
+            - - href: /api/v1/openapi.yaml
+                type: application/yaml
+        service-doc:
+          type: array
+          description: The API's reference page.
+          items:
+            $ref: '#/components/schemas/LinkTarget'
+          examples:
+            - - href: /api/v1/reference
+                type: text/html
+        status:
+          type: array
+          description: The API's readiness check.
+          items:
+            $ref: '#/components/schemas/LinkTarget'
+          examples:
+            - - href: /readyz
+                type: application/json
+
+    LinkTarget:
+      type: object
+      description: A link's target in a linkset (RFC 9264), with its media type.
+      required: [href, type]
+      properties:
+        href:
+          type: string
+          format: uri-reference
+          description: The target.
+          examples: [/api/v1/openapi.yaml]
+        type:
+          type: string
+          description: The target's media type.
+          examples: [application/yaml]
 
     DesiredState:
       type: string

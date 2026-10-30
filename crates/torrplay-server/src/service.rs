@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-//! The entry point, the OpenAPI document, and the health checks.
+//! The entry point, the API catalog, the OpenAPI document, and the health
+//! checks.
 
 use std::sync::Arc;
 
@@ -45,9 +46,43 @@ pub(crate) async fn get_entry_point(headers: HeaderMap) -> Result<Response, Prob
                 password: password_path(),
                 access_tokens: access_tokens_path(),
                 playback_tokens: playback_tokens_path(),
+                api_catalog: API_CATALOG_PATH.to_owned(),
             },
         },
     )?;
+    Ok(cached(response, NO_CACHE))
+}
+
+/// The API catalog's path (RFC 9727).
+pub(crate) const API_CATALOG_PATH: &str = "/.well-known/api-catalog";
+
+/// The API catalog's media type: a JSON linkset (RFC 9264) of the RFC 9727
+/// profile.
+const LINKSET: &str = "application/linkset+json";
+const API_CATALOG_TYPE: &str =
+    "application/linkset+json; profile=\"https://www.rfc-editor.org/info/rfc9727\"";
+
+/// The API catalog: this host's one API with the links that describe it.
+/// axum answers HEAD from this handler without the body, as RFC 9727 asks.
+pub(crate) async fn get_api_catalog(headers: HeaderMap) -> Result<Response, Problem> {
+    negotiate(&headers, LINKSET)?;
+    let link = |href: String, media_type: &str| api::LinkTarget {
+        href,
+        r#type: media_type.to_owned(),
+    };
+    let catalog = api::ApiCatalog {
+        linkset: vec![api::ApiCatalogEntry {
+            anchor: BASE.to_owned(),
+            service_desc: vec![link(format!("{BASE}/openapi.yaml"), YAML)],
+            service_doc: vec![link(format!("{BASE}/reference"), "text/html")],
+            status: vec![link("/readyz".to_owned(), JSON)],
+        }],
+    };
+    let mut response = json(StatusCode::OK, &catalog)?;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static(API_CATALOG_TYPE),
+    );
     Ok(cached(response, NO_CACHE))
 }
 
