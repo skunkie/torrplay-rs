@@ -95,7 +95,7 @@ its field names.
 
 - `list_torrents` takes `search`, `kind`, `genre`, `category`, and
   `retention`, with the native filters' meanings; `search` is fuzzy. It
-  returns at most `limit` torrents, 20 by default and at most 100, with a
+  returns at most `page_size` torrents, 20 by default and at most 100, with a
   `cursor` for the next page and the total count.
 - `get_torrent` returns the torrent, its first 200 files, with
   `files_truncated` when it has more, and its current statistics, in one
@@ -133,7 +133,7 @@ its field names.
   state, readers, peers, and the transfer totals and rates.
 - `list_log_records` takes `min_level`, `contains`, and `after_sequence`,
   with [the listing's](observability.md#log-records) meanings, and
-  returns at most `limit` records, newest first, 50 by default and at
+  returns at most `page_size` records, newest first, 50 by default and at
   most 200, with a `cursor` for the next page. To read what was logged
   since an earlier call, the assistant passes that result's
   `latest_sequence` as `after_sequence`. Like the native operation, it

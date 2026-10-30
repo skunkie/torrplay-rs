@@ -23,6 +23,14 @@
 //! application does not serve and, while a password is set, requests
 //! without a credential their operation allows.
 //!
+//! A native handler is named for its operation's verb, with the resource
+//! where its module serves several: `preloads::create` serves
+//! `createFilePreload`, and `credentials::create_access_token` serves
+//! `createAccessToken`. The DLNA and Stremio adapters' handlers take their
+//! protocols' service and resource names, such as `content_directory` and
+//! `manifest`, with a method verb where one resource answers several, as
+//! `stremio::get_play` and `head_play`.
+//!
 //! Binding the listener and the shutdown sequence belong to the caller.
 
 mod app;

@@ -505,7 +505,7 @@ pub(crate) async fn create<E: Engine>(
         {
             // The next start restores the torrent, and its engine refusal
             // with it, until it is deleted.
-            tracing::error!(%error, id = %record.id, "a refused torrent could not be unstored");
+            tracing::error!(%error, torrent_id = %record.id, "a refused torrent could not be unstored");
         }
         app.registry()?.remove(record.id.as_str());
         return Err(source_problem(error, &source));
@@ -542,7 +542,7 @@ async fn make_room_for_temporary<E: Engine>(app: &App<E>) -> Result<(), Problem>
             return Err(too_many_temporary(app));
         };
         match app.remove_torrent(&id).await {
-            Ok(()) => tracing::info!(%id, "a temporary torrent made room for another"),
+            Ok(()) => tracing::info!(torrent_id = %id, "a temporary torrent made room for another"),
             // Deleted meanwhile.
             Err(problem) if problem.problem_type() == ProblemType::NotFound => {
                 app.temporaries().remove(&id);

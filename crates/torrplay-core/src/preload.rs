@@ -20,7 +20,7 @@ pub const PRELOAD_MAX_BYTES: u64 = 32 << 20;
 pub const TAIL_BYTES: u64 = 4 << 20;
 
 /// How long a preload lasts when its request sets no expiry.
-pub const DEFAULT_EXPIRES_IN: Duration = Duration::from_secs(120);
+pub const EXPIRES_IN_DEFAULT: Duration = Duration::from_secs(120);
 
 /// The shortest expiry a request may set.
 pub const EXPIRES_IN_MIN: Duration = Duration::from_secs(10);
@@ -136,6 +136,6 @@ mod tests {
 
     #[test]
     fn the_default_expiry_lies_within_its_bounds() {
-        assert!((EXPIRES_IN_MIN..=EXPIRES_IN_MAX).contains(&DEFAULT_EXPIRES_IN));
+        assert!((EXPIRES_IN_MIN..=EXPIRES_IN_MAX).contains(&EXPIRES_IN_DEFAULT));
     }
 }

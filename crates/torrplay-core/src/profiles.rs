@@ -26,7 +26,7 @@ pub const PROFILE_LIMIT: usize = 32;
 pub const PROFILE_NAME_MAX_CHARS: usize = 64;
 
 /// The name of the person profile created when none is stored.
-pub const DEFAULT_PROFILE_NAME: &str = "Default";
+pub const PROFILE_NAME_DEFAULT: &str = "Default";
 
 /// The device profile's name, or the first of it with a number that no
 /// person profile has, since names are unique.

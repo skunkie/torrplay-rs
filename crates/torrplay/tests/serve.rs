@@ -30,7 +30,7 @@ async fn shutdown_drains_streams_then_closes_the_listener() -> anyhow::Result<()
     let drain = Duration::from_secs(1);
     let timings = ShutdownTimings {
         drain: Some(drain),
-        limit: Duration::from_secs(20),
+        timeout: Duration::from_secs(20),
     };
     let mut running = Running::start(Vec::new(), timings, patient).await?;
     let client = Client::new();
@@ -94,7 +94,7 @@ async fn shutdown_joins_every_task() -> anyhow::Result<()> {
     let before = alive_tasks();
     let timings = ShutdownTimings {
         drain: Some(Duration::from_millis(500)),
-        limit: Duration::from_secs(20),
+        timeout: Duration::from_secs(20),
     };
     let running = Running::start(Vec::new(), timings, patient).await?;
     let client = Client::new();
@@ -123,7 +123,7 @@ async fn shutdown_joins_every_task() -> anyhow::Result<()> {
 async fn shutdown_without_streams_skips_the_drain() -> anyhow::Result<()> {
     let timings = ShutdownTimings {
         drain: Some(Duration::from_secs(60)),
-        limit: Duration::from_secs(20),
+        timeout: Duration::from_secs(20),
     };
     let running = Running::start(Vec::new(), timings, |_| {}).await?;
     let begun = Instant::now();

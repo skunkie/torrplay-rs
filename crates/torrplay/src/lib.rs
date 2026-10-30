@@ -35,22 +35,22 @@ mod media_server;
 use torrplay_core::id::TorrentId;
 use torrplay_core::lifecycle::StorageMode;
 pub use torrplay_core::settings::{LogLevel, LogOverride, Overrides};
-use torrplay_engine::{DEFAULT_PEER_PORT, EngineConfig, LibrqbitEngine, NetworkConfig};
+use torrplay_engine::{EngineConfig, LibrqbitEngine, NetworkConfig, PEER_PORT_DEFAULT};
 use torrplay_server::App;
 pub use torrplay_server::Run;
 pub use torrplay_server::log_files::{LogFiles, LogWriter};
 use torrplay_store::{Contents, Store};
 
 /// The default API port, as the contract's server URL documents.
-pub const DEFAULT_PORT: u16 = 8080;
+pub const PORT_DEFAULT: u16 = 8080;
 
 /// The API's default address: every interface, dual-stack.
-pub const DEFAULT_LISTEN: SocketAddr =
-    SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), DEFAULT_PORT);
+pub const LISTEN_DEFAULT: SocketAddr =
+    SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), PORT_DEFAULT);
 
 /// The address the API falls back to where the system has no IPv6.
 const FALLBACK_LISTEN: SocketAddr =
-    SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), DEFAULT_PORT);
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), PORT_DEFAULT);
 
 /// The environment variable that names the API's address where `--listen`
 /// does not.
@@ -61,7 +61,7 @@ pub const LISTEN_VARIABLE: &str = "TORRPLAY_LISTEN";
 pub const LOG_FORMAT_VARIABLE: &str = "TORRPLAY_LOG_FORMAT";
 
 /// How long the whole shutdown may take before the process exits anyway.
-pub const DEFAULT_SHUTDOWN_LIMIT: Duration = Duration::from_secs(30);
+pub const SHUTDOWN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(30);
 
 /// How often the drain checks whether streams are still in progress.
 const DRAIN_POLL: Duration = Duration::from_millis(50);
@@ -113,13 +113,13 @@ The DLNA media server, its name, and the DHT are settings of the API.
   -V, --version              Print the version
 ";
 
-/// Binds the API's listener on `listen`, or on [`DEFAULT_LISTEN`] when it is
+/// Binds the API's listener on `listen`, or on [`LISTEN_DEFAULT`] when it is
 /// `None`, falling back to `0.0.0.0:8080` where the system has no IPv6. An
 /// unspecified IPv6 address is dual-stack on every system, which some leave
 /// IPv6-only by default, so IPv4 clients reach it as IPv4-mapped addresses.
 pub fn bind_api(listen: Option<SocketAddr>) -> io::Result<TcpListener> {
     let Some(address) = listen else {
-        return match bind(DEFAULT_LISTEN) {
+        return match bind(LISTEN_DEFAULT) {
             // Another process holding the port holds it on IPv4 too.
             Err(error)
                 if !matches!(
@@ -159,7 +159,7 @@ fn bind(address: SocketAddr) -> io::Result<TcpListener> {
 /// The application's configuration from its command line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
-    /// The API's listen address, or `None` for [`DEFAULT_LISTEN`]; see
+    /// The API's listen address, or `None` for [`LISTEN_DEFAULT`]; see
     /// [`bind_api`].
     pub listen: Option<SocketAddr>,
     /// The host names requests may give beyond those always allowed,
@@ -193,7 +193,7 @@ impl Default for Config {
         Self {
             listen: None,
             allowed_hosts: Vec::new(),
-            peer_port: DEFAULT_PEER_PORT,
+            peer_port: PEER_PORT_DEFAULT,
             log_level: None,
             log_filter: None,
             log_format: None,
@@ -358,7 +358,7 @@ fn parse_mcp(args: impl Iterator<Item = String>) -> Result<Command, ArgsError> {
         }
     }
     if http {
-        config.http = Some(listen.unwrap_or(torrplay_mcp::DEFAULT_LISTEN));
+        config.http = Some(listen.unwrap_or(torrplay_mcp::LISTEN_DEFAULT));
     } else if listen.is_some() {
         return Err(ArgsError::McpListen);
     }
@@ -756,14 +756,14 @@ pub struct ShutdownTimings {
     /// the drain period setting.
     pub drain: Option<Duration>,
     /// How long the whole sequence may take.
-    pub limit: Duration,
+    pub timeout: Duration,
 }
 
 impl Default for ShutdownTimings {
     fn default() -> Self {
         Self {
             drain: None,
-            limit: DEFAULT_SHUTDOWN_LIMIT,
+            timeout: SHUTDOWN_TIMEOUT_DEFAULT,
         }
     }
 }
@@ -793,7 +793,7 @@ pub struct ServeOptions {
 ///
 /// The stored settings apply at once. The listener serves before the engine
 /// starts, and the stored torrents are restored once it has. Fails if the engine cannot start, if restoring or
-/// the server fails, or if shutdown takes longer than `timings.limit`.
+/// the server fails, or if shutdown takes longer than `timings.timeout`.
 pub async fn serve(
     listener: TcpListener,
     engine: Arc<LibrqbitEngine>,
@@ -983,9 +983,9 @@ pub async fn serve(
         }
         app.close_store().await.context("closing the store")
     };
-    let stopped = tokio::time::timeout(timings.limit, sequence)
+    let stopped = tokio::time::timeout(timings.timeout, sequence)
         .await
-        .with_context(|| format!("shutdown did not finish within {:?}", timings.limit))
+        .with_context(|| format!("shutdown did not finish within {:?}", timings.timeout))
         .and_then(|stopped| stopped);
     if stopped.is_ok() {
         tracing::info!("stopped");
@@ -1091,7 +1091,7 @@ mod tests {
         let Ok(Command::Mcp(config)) = parse(&["mcp", "--transport", "http"]) else {
             panic!("an mcp command");
         };
-        assert_eq!(config.http, Some(torrplay_mcp::DEFAULT_LISTEN));
+        assert_eq!(config.http, Some(torrplay_mcp::LISTEN_DEFAULT));
     }
 
     #[test]
@@ -1114,7 +1114,7 @@ mod tests {
     fn no_arguments_run_with_the_defaults() {
         assert_eq!(parse(&[]), Ok(Command::Run(Config::default())));
         assert_eq!(Config::default().listen, None, "the default address");
-        assert_eq!(DEFAULT_LISTEN, "[::]:8080".parse::<SocketAddr>().unwrap());
+        assert_eq!(LISTEN_DEFAULT, "[::]:8080".parse::<SocketAddr>().unwrap());
         assert_eq!(
             Config::default().download_dir(Path::new("/srv/torrplay")),
             Path::new("/srv/torrplay/downloads"),

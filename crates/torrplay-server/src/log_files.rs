@@ -8,9 +8,9 @@
 //!
 //! The current file is `torrplay.jsonl`. When a record would take it past
 //! [`FILE_MAX_BYTES`], it becomes `torrplay.1.jsonl`, each older file moves
-//! up one number, and the oldest beyond [`FILES`] is deleted. Logging never
-//! waits for the disk: records go through a bounded queue, and those the
-//! queue or the disk cannot take are dropped and counted.
+//! up one number, and the oldest beyond [`KEPT_FILE_LIMIT`] is deleted.
+//! Logging never waits for the disk: records go through a bounded queue,
+//! and those the queue or the disk cannot take are dropped and counted.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
@@ -28,10 +28,10 @@ use serde::{Deserialize, Serialize};
 pub const FILE_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
 /// The number of files kept, the current one included.
-pub const FILES: usize = 4;
+pub const KEPT_FILE_LIMIT: usize = 4;
 
 /// The records waiting for the writer, beyond which records are dropped.
-const QUEUE_RECORDS: usize = 1024;
+const RECORD_CAPACITY: usize = 1024;
 
 /// The current file's name.
 const CURRENT: &str = "torrplay.jsonl";
@@ -109,7 +109,7 @@ impl LogFiles {
             latest: Arc::new(AtomicU64::new(last)),
             dropped: Arc::new(AtomicU64::new(0)),
         };
-        let (queue, received) = sync_channel(QUEUE_RECORDS);
+        let (queue, received) = sync_channel(RECORD_CAPACITY);
         let writer = Writer {
             directory: directory.to_owned(),
             file_max_bytes,
@@ -155,7 +155,7 @@ impl LogFiles {
         // Every file is opened before any is read, so a rotation meanwhile
         // moves files already open rather than hiding one.
         let mut opened = Vec::new();
-        for index in 0..FILES {
+        for index in 0..KEPT_FILE_LIMIT {
             match File::open(self.directory.join(file_name(index))) {
                 Ok(file) => opened.push(file),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -296,12 +296,12 @@ impl Writer {
     fn rotate(&self, current: &mut Current) -> io::Result<Current> {
         current.file.flush()?;
         let path = |index| self.directory.join(file_name(index));
-        match fs::remove_file(path(FILES - 1)) {
+        match fs::remove_file(path(KEPT_FILE_LIMIT - 1)) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
         }
-        for index in (0..FILES - 1).rev() {
+        for index in (0..KEPT_FILE_LIMIT - 1).rev() {
             match fs::rename(path(index), path(index + 1)) {
                 Ok(()) => {}
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -336,7 +336,7 @@ fn open_current(directory: &Path) -> io::Result<Current> {
 
 /// The sequence of the newest record the files hold, or 0 without one.
 fn last_sequence(directory: &Path) -> io::Result<u64> {
-    for index in 0..FILES {
+    for index in 0..KEPT_FILE_LIMIT {
         let file = match File::open(directory.join(file_name(index))) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
@@ -447,21 +447,21 @@ mod tests {
         let (files, writer) = LogFiles::open_bounded(directory.path(), bound).unwrap();
         // Each record takes about 1 KiB, so a file holds about 60.
         let message = "x".repeat(1024);
-        let total = 64 * (FILES as u64 + 2);
+        let total = 64 * (KEPT_FILE_LIMIT as u64 + 2);
         for _ in 0..total {
             log(&files, &writer, "info", &message);
         }
         writer.close().unwrap();
         assert_eq!(files.dropped(), 0);
-        let names: Vec<_> = (0..FILES + 1)
+        let names: Vec<_> = (0..KEPT_FILE_LIMIT + 1)
             .filter(|index| directory.path().join(file_name(*index)).exists())
             .collect();
         assert_eq!(
             names,
-            (0..FILES).collect::<Vec<_>>(),
+            (0..KEPT_FILE_LIMIT).collect::<Vec<_>>(),
             "the oldest is deleted"
         );
-        for index in 0..FILES {
+        for index in 0..KEPT_FILE_LIMIT {
             let length = fs::metadata(directory.path().join(file_name(index)))
                 .unwrap()
                 .len();

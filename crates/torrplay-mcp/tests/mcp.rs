@@ -326,7 +326,7 @@ async fn torrents_are_added_found_and_streamed() {
     assert_eq!(found["total_count"], 1, "a typo still finds it");
     assert_eq!(found["items"][0]["id"], torrent_id.as_str());
     let none = session
-        .ok("list_torrents", json!({ "kind": "series", "limit": 5 }))
+        .ok("list_torrents", json!({ "kind": "series", "page_size": 5 }))
         .await;
     assert_eq!(none["total_count"], 0);
 
@@ -452,7 +452,7 @@ async fn failures_are_reported() {
             "create_torrent",
             json!({ "magnet_uri": "magnet:?xt=x", "kind": "film" }),
         ),
-        ("list_torrents", json!({ "limit": 1000 })),
+        ("list_torrents", json!({ "page_size": 1000 })),
     ] {
         let refused = session
             .try_call(tool, arguments.clone())
@@ -633,7 +633,7 @@ async fn the_system_statistics_and_log_records_are_read() {
     let first = session
         .ok(
             "list_log_records",
-            json!({ "min_level": "warn", "contains": torrent_id, "limit": 1 }),
+            json!({ "min_level": "warn", "contains": torrent_id, "page_size": 1 }),
         )
         .await;
     assert_eq!(messages(&first), ["a piece failed"], "newest first");
@@ -656,7 +656,7 @@ async fn the_system_statistics_and_log_records_are_read() {
             json!({
                 "min_level": "warn",
                 "contains": torrent_id,
-                "limit": 1,
+                "page_size": 1,
                 "cursor": cursor,
             }),
         )

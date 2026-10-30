@@ -24,16 +24,16 @@ use crate::client::{Client, Failure};
 
 /// How many torrents a page of `list_torrents` holds by default, and at
 /// most.
-const DEFAULT_TORRENTS: u32 = 20;
-const TORRENT_LIMIT: u32 = 100;
+const TORRENT_PAGE_SIZE_DEFAULT: u32 = 20;
+const TORRENT_PAGE_SIZE_MAX: u32 = 100;
 
 /// How many files `get_torrent` reports.
-const FILE_LIMIT: u32 = 200;
+const FILE_PAGE_SIZE: u32 = 200;
 
 /// How many records a page of `list_log_records` holds by default, and at
 /// most, as the native listing's page size allows.
-const DEFAULT_LOG_RECORDS: u32 = 50;
-const LOG_RECORD_LIMIT: u32 = 200;
+const LOG_RECORD_PAGE_SIZE_DEFAULT: u32 = 50;
+const LOG_RECORD_PAGE_SIZE_MAX: u32 = 200;
 
 const TORRENTS_URI: &str = "torrplay://torrents";
 const TORRENT_URI_PREFIX: &str = "torrplay://torrents/";
@@ -76,7 +76,7 @@ impl Server {
             .client
             .get(
                 &format!("{path}/files"),
-                &[("page_size", FILE_LIMIT.to_string())],
+                &[("page_size", FILE_PAGE_SIZE.to_string())],
             )
             .await
         {
@@ -117,7 +117,7 @@ pub struct ListTorrents {
     /// persisted (the default), temporary, or any.
     pub retention: Option<String>,
     /// How many torrents to return, 1 to 100; 20 by default.
-    pub limit: Option<u32>,
+    pub page_size: Option<u32>,
     /// The cursor query parameter of a previous result's links.next, for
     /// the page after it.
     pub cursor: Option<String>,
@@ -237,7 +237,7 @@ pub struct ListLogRecords {
     /// latest_sequence, for what was logged since.
     pub after_sequence: Option<u64>,
     /// How many records to return, 1 to 200; 50 by default.
-    pub limit: Option<u32>,
+    pub page_size: Option<u32>,
     /// The cursor query parameter of a previous result's links.next, for
     /// the page after it.
     pub cursor: Option<String>,
@@ -263,13 +263,13 @@ impl Server {
     ) -> CallToolResult {
         answer(
             async {
-                let limit = arguments.limit.unwrap_or(DEFAULT_TORRENTS);
-                if !(1..=TORRENT_LIMIT).contains(&limit) {
+                let page_size = arguments.page_size.unwrap_or(TORRENT_PAGE_SIZE_DEFAULT);
+                if !(1..=TORRENT_PAGE_SIZE_MAX).contains(&page_size) {
                     return Err(Failure::Argument(format!(
-                        "limit must be 1 to {TORRENT_LIMIT}"
+                        "page_size must be 1 to {TORRENT_PAGE_SIZE_MAX}"
                     )));
                 }
-                let mut query = vec![("page_size", limit.to_string())];
+                let mut query = vec![("page_size", page_size.to_string())];
                 if let Some(search) = arguments.search {
                     query.extend([("search", search), ("fuzzy", "true".to_owned())]);
                 }
@@ -594,13 +594,13 @@ impl Server {
     ) -> CallToolResult {
         answer(
             async {
-                let limit = arguments.limit.unwrap_or(DEFAULT_LOG_RECORDS);
-                if !(1..=LOG_RECORD_LIMIT).contains(&limit) {
+                let page_size = arguments.page_size.unwrap_or(LOG_RECORD_PAGE_SIZE_DEFAULT);
+                if !(1..=LOG_RECORD_PAGE_SIZE_MAX).contains(&page_size) {
                     return Err(Failure::Argument(format!(
-                        "limit must be 1 to {LOG_RECORD_LIMIT}"
+                        "page_size must be 1 to {LOG_RECORD_PAGE_SIZE_MAX}"
                     )));
                 }
-                let mut query = vec![("page_size", limit.to_string())];
+                let mut query = vec![("page_size", page_size.to_string())];
                 if let Some(level) = arguments.min_level {
                     let _: api::LogLevel = member("min_level", level.clone())?;
                     query.push(("min_level", level));

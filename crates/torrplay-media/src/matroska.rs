@@ -36,7 +36,7 @@ const CLUSTER: u64 = 0x1F43_B675;
 const VIDEO_TRACK: u64 = 1;
 
 /// The timestamp scale without an `Info` that sets it, in nanoseconds.
-const DEFAULT_TIMESTAMP_SCALE: u64 = 1_000_000;
+const TIMESTAMP_SCALE_DEFAULT: u64 = 1_000_000;
 
 /// The most elements walked at the top level and in a segment before its
 /// first cluster: headers, chapters, tags, attachments, and padding.
@@ -62,7 +62,7 @@ pub(crate) async fn read_index<S: Source + Send>(
     };
     let segment = scan(reader, element).await?;
 
-    let mut scale = DEFAULT_TIMESTAMP_SCALE;
+    let mut scale = TIMESTAMP_SCALE_DEFAULT;
     let mut duration_units = None;
     if let Some(info) = body(reader, &segment, INFO).await? {
         if let Some(data) = ebml::child(&info, TIMESTAMP_SCALE)? {

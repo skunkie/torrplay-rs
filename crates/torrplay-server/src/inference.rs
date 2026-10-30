@@ -62,7 +62,7 @@ pub(crate) const INDEX_TIMEOUT: Duration = Duration::from_secs(60);
 pub(crate) const INDEX_LIMIT: usize = 64;
 
 /// The most streams a viewing remembers, the latest.
-const STREAMS_KEPT: usize = 8;
+const KEPT_STREAM_LIMIT: usize = 8;
 
 /// How long an application's viewing lasts after its last activity.
 pub(crate) const APP_VIEWING_EXPIRY: Duration = Duration::from_secs(24 * 3600);
@@ -273,7 +273,7 @@ impl Inference {
             ended_at: None,
             delivered: Arc::clone(&delivered),
         });
-        if streams.len() > STREAMS_KEPT {
+        if streams.len() > KEPT_STREAM_LIMIT {
             streams.pop_front();
         }
         if !state.indexes.entries.contains_key(&key) {
@@ -633,7 +633,7 @@ const SMALL_READ_BYTES: usize = 4 << 10;
 const BLOCK_BYTES: u64 = 64 << 10;
 
 /// The most blocks kept.
-const BLOCKS_KEPT: usize = 4;
+const KEPT_BLOCK_LIMIT: usize = 4;
 
 /// A file's bytes through engine readers, small reads served from a few
 /// cached blocks, so walking headers opens few readers.
@@ -698,7 +698,7 @@ impl<E: Engine> Source for EngineSource<'_, E> {
         self.fetch(offset, &mut block).await?;
         buffer.copy_from_slice(&block[..buffer.len()]);
         self.blocks.push_back((offset, block));
-        if self.blocks.len() > BLOCKS_KEPT {
+        if self.blocks.len() > KEPT_BLOCK_LIMIT {
             self.blocks.pop_front();
         }
         Ok(())

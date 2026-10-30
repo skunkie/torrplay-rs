@@ -183,7 +183,7 @@ fn parse_request(value: Value) -> Result<PreloadRequest, Problem> {
     let mut errors = Vec::new();
     let mut request = PreloadRequest {
         offset_bytes: None,
-        expires_in: preload::DEFAULT_EXPIRES_IN,
+        expires_in: preload::EXPIRES_IN_DEFAULT,
     };
     for (member, value) in &members {
         match member.as_str() {

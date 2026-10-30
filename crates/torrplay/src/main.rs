@@ -136,7 +136,7 @@ async fn run(
     let listener = torrplay::bind_api(config.listen).with_context(|| {
         format!(
             "binding the API listener on {}",
-            config.listen.unwrap_or(torrplay::DEFAULT_LISTEN)
+            config.listen.unwrap_or(torrplay::LISTEN_DEFAULT)
         )
     })?;
     tracing::info!(address = %listener.local_addr()?, "the API is listening");
@@ -225,14 +225,14 @@ fn mcp(config: McpConfig) -> ExitCode {
         Some(url) => url,
         None => {
             let value = std::env::var(torrplay::URL_VARIABLE)
-                .unwrap_or_else(|_| torrplay_mcp::DEFAULT_URL.to_owned());
+                .unwrap_or_else(|_| torrplay_mcp::URL_DEFAULT.to_owned());
             match torrplay::parse_origin(&value) {
                 Some(url) => url,
                 None => {
                     eprintln!(
                         "torrplay: {} must be an origin such as {}",
                         torrplay::URL_VARIABLE,
-                        torrplay_mcp::DEFAULT_URL
+                        torrplay_mcp::URL_DEFAULT
                     );
                     return ExitCode::from(2);
                 }

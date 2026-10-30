@@ -92,7 +92,7 @@ impl AsyncRead for RangeReader {
             if waited >= LOGGED_WAIT {
                 let reader = inner.get_ref();
                 tracing::debug!(
-                    file = reader.file(),
+                    file_index = reader.file(),
                     position = reader.position(),
                     waited_ms = waited.as_millis() as u64,
                     failed = outcome.is_err(),

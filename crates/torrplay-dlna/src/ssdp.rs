@@ -35,7 +35,7 @@ const MAX_AGE_SECONDS: u64 = 1800;
 
 /// The most search answers waiting for their delay at once; further
 /// searches wait for the next one.
-const PENDING_ANSWERS: usize = 64;
+const PENDING_ANSWER_LIMIT: usize = 64;
 
 /// The largest datagram read.
 const DATAGRAM_BYTES: usize = 2048;
@@ -258,7 +258,7 @@ async fn run(
                     tracing::debug!(%error, "an SSDP answer could not be sent");
                 }
             }
-            received = socket.recv_from(&mut buffer), if answers.len() < PENDING_ANSWERS => {
+            received = socket.recv_from(&mut buffer), if answers.len() < PENDING_ANSWER_LIMIT => {
                 let (length, from) = match received {
                     Ok(received) => received,
                     Err(error) => {

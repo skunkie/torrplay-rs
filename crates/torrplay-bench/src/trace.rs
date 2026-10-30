@@ -16,7 +16,7 @@ use std::time::Duration;
 use serde::Deserialize;
 
 /// The default cache capacity of a trace, as the benchmark protocol fixes it.
-pub const DEFAULT_CACHE_CAPACITY_BYTES: u64 = 256 * 1024 * 1024;
+pub const CACHE_CAPACITY_BYTES_DEFAULT: u64 = 256 * 1024 * 1024;
 
 /// How a fixture becomes a torrent.
 #[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize, PartialEq, Eq)]
@@ -125,7 +125,7 @@ pub enum TraceError {
 /// Parses a trace from its JSON Lines text. Blank lines are skipped.
 pub fn parse(text: &str) -> Result<Trace, TraceError> {
     let mut trace = Trace {
-        cache_capacity_bytes: DEFAULT_CACHE_CAPACITY_BYTES,
+        cache_capacity_bytes: CACHE_CAPACITY_BYTES_DEFAULT,
         fixtures: BTreeMap::new(),
         readers: BTreeMap::new(),
     };
@@ -233,7 +233,7 @@ mod tests {
     #[test]
     fn the_acceptance_example_parses() {
         let trace = parse(EXAMPLE).unwrap();
-        assert_eq!(trace.cache_capacity_bytes, DEFAULT_CACHE_CAPACITY_BYTES);
+        assert_eq!(trace.cache_capacity_bytes, CACHE_CAPACITY_BYTES_DEFAULT);
         assert_eq!(trace.fixtures["bench-video"], Source::Magnet);
         let events = &trace.readers["r1"];
         assert_eq!(events.len(), 3);
