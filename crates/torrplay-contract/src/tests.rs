@@ -61,12 +61,16 @@ fn json(
     builder.body(serde_json::to_vec(body).unwrap()).unwrap()
 }
 
+/// Tags in the formats the contract's ETag headers declare.
+const TORRENT_TAG: &str = "\"st-5f1c0a9e2b7d4c3a8e6f1b2d\"";
+const CONTENT_TAG: &str = "\"sha1-0123456789abcdef0123456789abcdef01234567-0\"";
+
 fn torrent_response(body: &Value) -> Response<Vec<u8>> {
     json(
         200,
         "application/json",
         body,
-        &[(ETAG, "\"v1\""), (CACHE_CONTROL, "no-cache")],
+        &[(ETAG, TORRENT_TAG), (CACHE_CONTROL, "no-cache")],
     )
 }
 
@@ -395,7 +399,7 @@ fn a_body_where_none_is_documented_is_reported() {
     let contract = fresh();
     let response = Response::builder()
         .status(304)
-        .header(ETAG, "\"v1\"")
+        .header(ETAG, TORRENT_TAG)
         .body(b"{}".to_vec())
         .unwrap();
     assert_eq!(
@@ -413,7 +417,7 @@ fn content_response(status: u16, media_type: &str, body: &[u8]) -> Response<Vec<
         .header("Accept-Ranges", "bytes")
         .header("Content-Length", body.len().to_string())
         .header("Content-Disposition", "inline")
-        .header(ETAG, "\"c1\"")
+        .header(ETAG, CONTENT_TAG)
         .header("X-Content-Type-Options", "nosniff")
         .header("Content-Security-Policy", "sandbox");
     if status == 206 {

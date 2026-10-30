@@ -2275,9 +2275,9 @@ mod scenario {
             sequence: server.log_files.next_sequence(),
             logged_at: "2026-10-30T09:15:02.481Z".into(),
             level: level.into(),
-            run_id: "run_q4m2kzb6hxw3rjpt5yc4ula7nd".into(),
+            run_id: "run_q4m2kzb6hxw3rjpt5yc4ula7na".into(),
             // A response's record names its request.
-            request_id: (message == "response").then(|| "req_hxw3rjpt5yc4ula7ndq4m2kzb6".into()),
+            request_id: (message == "response").then(|| "req_hxw3rjpt5yc4ula7ndq4m2kzb4".into()),
             target: "torrplay_server".into(),
             message: message.into(),
             fields: torrent
@@ -7603,4 +7603,53 @@ async fn without_a_password_only_local_networks_use_the_application() {
         assert!(task.await.unwrap_err().is_cancelled());
     }
     server.stop().await;
+}
+
+/// The cursors the contract's next-link examples carry are ones the server
+/// issues: each decodes as its collection's sort key, without filters.
+#[test]
+fn cursor_examples_are_real_cursors() {
+    use torrplay_core::pagination::{
+        AccessTokenSortKey, FileSortKey, FilterFingerprint, LogRecordSortKey, PageRequest,
+        PageSize, ProfileSortKey, SortKey, TitleProgressSortKey, TorrentSortKey, UpNextSortKey,
+    };
+    fn decodes<K: SortKey>(cursor: &str) -> bool {
+        let size = PageSize::new(50).unwrap();
+        PageRequest::<K>::new(size, Some(cursor), FilterFingerprint::none()).is_ok()
+    }
+    let mut checked = 0;
+    for line in torrplay_contract::DOCUMENT.lines() {
+        let Some((url, cursor)) = line
+            .split("examples: ['")
+            .nth(1)
+            .and_then(|rest| rest.split('\'').next())
+            .and_then(|url| url.split_once("?cursor="))
+        else {
+            continue;
+        };
+        let path = url.trim_start_matches("/api/v1");
+        let valid = if path == "/torrents" {
+            decodes::<TorrentSortKey>(cursor)
+        } else if path.ends_with("/files") || path.ends_with("/progress") {
+            decodes::<FileSortKey>(cursor)
+        } else if path == "/log-records" {
+            decodes::<LogRecordSortKey>(cursor)
+        } else if path == "/profiles" {
+            decodes::<ProfileSortKey>(cursor)
+        } else if path.ends_with("/title-progress") {
+            decodes::<TitleProgressSortKey>(cursor)
+        } else if path.ends_with("/up-next") {
+            decodes::<UpNextSortKey>(cursor)
+        } else if path == "/access-tokens" {
+            decodes::<AccessTokenSortKey>(cursor)
+        } else {
+            panic!("{url}: add its collection's sort key");
+        };
+        assert!(
+            valid,
+            "{url}?cursor={cursor} is not a cursor the server issues"
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, 8, "every next-link example is checked");
 }

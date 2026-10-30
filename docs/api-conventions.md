@@ -168,6 +168,12 @@ URLs.
 ## Conditional requests and concurrency
 
 - Resources that clients cache send an `ETag`. GET honors `If-None-Match`.
+- An ETag is opaque to clients, but each `ETag` header in the contract
+  declares its format as a `pattern`, such as a prefix naming the resource
+  and a digest, so contract tests check every tag the server sends and the
+  examples show real ones. Each `If-Match` parameter shows its own
+  resource's tag; the parameters declare no pattern, since any stale value
+  is a `412`.
 - A writable resource has a strong ETag that changes only when its writable
   members change. PATCH must carry `If-Match`: a request without it receives
   `428 Precondition Required`

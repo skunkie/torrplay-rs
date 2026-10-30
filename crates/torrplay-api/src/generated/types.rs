@@ -2320,7 +2320,7 @@ pub struct PlaybackToken {
     ///When the token expires, in UTC, to the second.
     pub expires_at: chrono::DateTime<chrono::Utc>,
     ///The token to send as the token query parameter.
-    ///Constraint: pattern=`^tpp_[a-z2-7]+$`
+    ///Constraint: pattern=`^tpp_([a-z2-7]{66}|[a-z2-7]{92})$`
     pub token: String,
     ///The torrent the token allows, or null for every torrent.
     pub torrent_id: Option<String>,
