@@ -189,6 +189,18 @@ impl<K: SortKey> PageRequest<K> {
     pub fn page_size(&self) -> PageSize {
         self.page_size
     }
+
+    /// Returns the key of the last item the cursor's page held, if the
+    /// request has a cursor, for collections too large to [`paginate`] in
+    /// memory.
+    pub fn after(&self) -> Option<&K> {
+        self.after.as_ref()
+    }
+
+    /// Returns the cursor of the page after the one that ends with `last`.
+    pub fn cursor_after(&self, last: &K) -> String {
+        encode_cursor(last, self.filters)
+    }
 }
 
 /// One page of a collection.
@@ -674,6 +686,34 @@ impl SortKey for FileSortKey {
     }
 }
 
+/// The sort key of the log records collection: newest first by sequence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LogRecordSortKey(pub u64);
+
+impl Ord for LogRecordSortKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other.0.cmp(&self.0)
+    }
+}
+
+impl PartialOrd for LogRecordSortKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl SortKey for LogRecordSortKey {
+    const KIND: u8 = 8;
+
+    fn encode(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.0.to_be_bytes());
+    }
+
+    fn decode(bytes: &[u8]) -> Option<Self> {
+        Some(Self(u64::from_be_bytes(bytes.try_into().ok()?)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -689,6 +729,29 @@ mod tests {
         filters: FilterFingerprint,
     ) -> Result<PageRequest<K>, PageError> {
         PageRequest::new(PageSize::new(page_size)?, cursor, filters)
+    }
+
+    #[test]
+    fn log_record_cursors_continue_after_the_last_sequence() {
+        let filters = FilterFingerprint::of([("min_level", "warn")]);
+        let first: PageRequest<LogRecordSortKey> = request(2, None, filters).unwrap();
+        assert_eq!(first.after(), None);
+        let cursor = first.cursor_after(&LogRecordSortKey(41));
+        let next: PageRequest<LogRecordSortKey> = request(2, Some(&cursor), filters).unwrap();
+        assert_eq!(next.after(), Some(&LogRecordSortKey(41)));
+        assert!(
+            LogRecordSortKey(40) > LogRecordSortKey(41),
+            "older records follow newer ones"
+        );
+        assert_eq!(
+            request::<LogRecordSortKey>(2, Some(&cursor), FilterFingerprint::none()),
+            Err(PageError::CursorFilterMismatch)
+        );
+        assert_eq!(
+            request::<ProfileSortKey>(2, Some(&cursor), filters),
+            Err(PageError::MalformedCursor),
+            "another collection's cursor"
+        );
     }
 
     #[test]

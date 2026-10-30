@@ -33,6 +33,7 @@ pub(crate) async fn entry_point(headers: HeaderMap) -> Result<Response, Problem>
                 cache_statistics: format!("{BASE}/cache/statistics"),
                 statistics: format!("{BASE}/statistics"),
                 system: format!("{BASE}/system"),
+                log_records: format!("{BASE}/log-records"),
                 metrics: crate::system::METRICS_PATH.to_owned(),
                 self_field: BASE.to_owned(),
                 service_desc: format!("{BASE}/openapi.yaml"),

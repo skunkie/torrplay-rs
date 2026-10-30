@@ -36,6 +36,7 @@ mod headers;
 mod images;
 mod inference;
 mod library;
+pub mod log_files;
 mod posters;
 mod preloads;
 mod problem;
@@ -133,6 +134,7 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
         )
         .route("/api/v1/statistics", get(system::statistics::<E>))
         .route("/api/v1/system", get(system::system::<E>))
+        .route("/api/v1/log-records", get(system::log_records::<E>))
         .route(
             "/api/v1/settings",
             get(settings::get::<E>).patch(settings::update::<E>),

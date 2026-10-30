@@ -1830,6 +1830,158 @@ mod scenario {
         server.stop().await;
     }
 
+    /// OBS-08: the log records the log files hold, newest first, filtered,
+    /// paged, across a restart, and a failed read.
+    pub async fn log_records() {
+        let server = TestServer::start().await;
+        let empty = server.get("/api/v1/log-records").await.json();
+        assert_eq!(
+            empty,
+            json!({
+                "items": [],
+                "oldest_sequence": null,
+                "latest_sequence": null,
+                "links": { "self": "/api/v1/log-records" },
+            })
+        );
+        for (level, message, torrent) in [
+            ("info", "added", Some("trr_7ndq4m2kzb6hxw3rjpt5yc4ula")),
+            ("warn", "a peer stalled", None),
+            ("error", "a piece could not be written", None),
+            ("debug", "read waited for data", None),
+            ("info", "response", None),
+        ] {
+            write_log_record(&server, level, message, torrent);
+        }
+        assert!(server.log_writer.flush(Duration::from_secs(5)));
+        let (all, page) = record_sequences(&server, "/api/v1/log-records").await;
+        assert_eq!(all, [5, 4, 3, 2, 1]);
+        assert_eq!(
+            (&page["oldest_sequence"], &page["latest_sequence"]),
+            (&json!(1), &json!(5))
+        );
+        assert_eq!(
+            page["items"][4]["fields"]["torrent_id"],
+            "trr_7ndq4m2kzb6hxw3rjpt5yc4ula"
+        );
+        assert_eq!(
+            record_sequences(&server, "/api/v1/log-records?min_level=warn")
+                .await
+                .0,
+            [3, 2]
+        );
+        assert_eq!(
+            record_sequences(&server, "/api/v1/log-records?contains=TRR_7NDQ")
+                .await
+                .0,
+            [1],
+            "fields match without regard to case"
+        );
+        assert_eq!(
+            record_sequences(&server, "/api/v1/log-records?contains=req_hxw3")
+                .await
+                .0,
+            [5],
+            "so does the request ID"
+        );
+        assert_eq!(
+            record_sequences(&server, "/api/v1/log-records?after_sequence=3")
+                .await
+                .0,
+            [5, 4]
+        );
+
+        // Pages follow next links to the oldest record.
+        let mut path = "/api/v1/log-records?min_level=debug&page_size=2".to_owned();
+        let mut pages = Vec::new();
+        loop {
+            let (items, page) = record_sequences(&server, &path).await;
+            pages.push(items);
+            match page["links"]["next"].as_str() {
+                Some(next) => path = next.to_owned(),
+                None => break,
+            }
+        }
+        assert_eq!(pages, [vec![5, 4], vec![3, 2], vec![1]]);
+        let (_, first) = record_sequences(&server, "/api/v1/log-records?page_size=2").await;
+        let next = first["links"]["next"].as_str().unwrap();
+        let cursor = next.split("cursor=").nth(1).unwrap();
+        for invalid in [
+            format!("/api/v1/log-records?min_level=warn&cursor={cursor}"),
+            "/api/v1/log-records?min_level=loud".to_owned(),
+            format!("/api/v1/log-records?contains={}", "x".repeat(257)),
+            "/api/v1/log-records?after_sequence=-1".to_owned(),
+            "/api/v1/log-records?level=warn".to_owned(),
+        ] {
+            assert_problem(
+                &server
+                    .send_unchecked(request(Method::GET, &invalid).body(Vec::new()).unwrap())
+                    .await,
+                StatusCode::BAD_REQUEST,
+                "malformed-request",
+            );
+        }
+        let metrics = String::from_utf8(server.get("/metrics").await.body).unwrap();
+        assert!(
+            metrics
+                .lines()
+                .any(|line| line == "torrplay_log_records_dropped_total 0"),
+            "{metrics}"
+        );
+
+        // A restart keeps the records and continues their sequence.
+        let server = server.restart().await;
+        write_log_record(&server, "info", "started", None);
+        assert!(server.log_writer.flush(Duration::from_secs(5)));
+        let (after, page) = record_sequences(&server, "/api/v1/log-records").await;
+        assert_eq!(after, [6, 5, 4, 3, 2, 1]);
+        assert_eq!(page["latest_sequence"], 6);
+
+        // A file that cannot be read fails the read.
+        let current = server.data_dir().join("logs").join("torrplay.jsonl");
+        std::fs::remove_file(&current).unwrap();
+        std::fs::create_dir(&current).unwrap();
+        assert_problem(
+            &server.get("/api/v1/log-records").await,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal-error",
+        );
+        std::fs::remove_dir(&current).unwrap();
+        server.stop().await;
+    }
+
+    /// The sequences of the page at `path`, and the page.
+    async fn record_sequences(server: &TestServer, path: &str) -> (Vec<u64>, Value) {
+        let page = server.get(path).await.json();
+        let items = page["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["sequence"].as_u64().unwrap())
+            .collect();
+        (items, page)
+    }
+
+    fn write_log_record(server: &TestServer, level: &str, message: &str, torrent: Option<&str>) {
+        let record = torrplay_server::log_files::LogRecord {
+            sequence: server.log_files.next_sequence(),
+            time: "2026-10-30T09:15:02.481Z".into(),
+            level: level.into(),
+            run_id: "run_q4m2kzb6hxw3rjpt5yc4ula7nd".into(),
+            // A response's record names its request.
+            request_id: (message == "response").then(|| "req_hxw3rjpt5yc4ula7ndq4m2kzb6".into()),
+            target: "torrplay_server".into(),
+            message: message.into(),
+            fields: torrent
+                .map(|torrent| ("torrent_id".to_owned(), torrent.to_owned()))
+                .into_iter()
+                .collect(),
+        };
+        server
+            .log_writer
+            .write(serde_json::to_string(&record).unwrap());
+    }
+
     /// Failures: content of a failed or paused torrent is a conflict.
     pub async fn failures() {
         let server = TestServer::start().await;
@@ -6961,6 +7113,7 @@ scenarios!(
     deletion,
     statistics,
     observability,
+    log_records,
     failures,
     passkey_redaction,
     bodies_refused_while_streaming,

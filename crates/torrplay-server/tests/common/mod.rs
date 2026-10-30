@@ -23,6 +23,7 @@ use torrplay_core::id::{TORRENT_ID_RANDOM_BYTES, TorrentId};
 use torrplay_core::registry::Registry;
 use torrplay_core::settings::Overrides;
 use torrplay_fixtures::{FileSpec, FixtureSpec, Layout};
+use torrplay_server::log_files::{LogFiles, LogWriter};
 use torrplay_server::{App, SeekIndexes, router};
 use torrplay_store::{Store, StoredTorrent};
 
@@ -45,6 +46,10 @@ pub struct TestServer {
     client: reqwest::Client,
     shutdown: oneshot::Sender<()>,
     task: JoinHandle<std::io::Result<()>>,
+    /// The log files in the data directory, which tests write records to
+    /// through `log_writer`, as the logging layer does.
+    pub log_files: LogFiles,
+    pub log_writer: LogWriter,
 }
 
 /// A response with its body.
@@ -281,7 +286,9 @@ impl TestServer {
         if let Some(indexes) = seek_indexes {
             app = app.with_seek_indexes(indexes);
         }
-        let app = Arc::new(app);
+        let (log_files, log_writer) =
+            LogFiles::open(&data.path().join("logs")).expect("the log files open");
+        let app = Arc::new(app.with_log_files(Some(log_files.clone())));
         app.apply_dht()
             .await
             .expect("the fake engine takes the DHT switch");
@@ -326,10 +333,17 @@ impl TestServer {
             client,
             shutdown,
             task,
+            log_files,
+            log_writer,
         }
     }
 
     /// Stops the server and waits for its task, checking its result.
+    /// The data directory, which outlives restarts.
+    pub fn data_dir(&self) -> &std::path::Path {
+        self.data.path()
+    }
+
     pub async fn stop(self) {
         drop(self.client);
         let _ = self.shutdown.send(());
@@ -341,6 +355,9 @@ impl TestServer {
             .close_store()
             .await
             .expect("the store closes cleanly");
+        self.log_writer
+            .close()
+            .expect("the log writer stops cleanly");
     }
 
     /// Writes a request with `headers` and then `body` to a new connection,

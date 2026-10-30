@@ -50,12 +50,29 @@ fn main() -> ExitCode {
             }
         };
     let process_run = torrplay::Run::draw();
+    // The log files live in the data directory; without one, records go to
+    // standard error alone, and the failure is logged once logging starts.
+    let files = config
+        .data_dir()
+        .and_then(|data_dir| Ok(torrplay::LogFiles::open(&data_dir.join("logs"))?));
+    let (files, files_failed) = match files {
+        Ok(files) => (Some(files), None),
+        Err(error) => (None, Some(error)),
+    };
+    let log_files = files.as_ref().map(|(files, _)| files.clone());
     let log = torrplay::init_logging(
         config.log_level.unwrap_or_default(),
         config.log_filter.as_deref(),
         format,
         &process_run,
+        files,
     );
+    if let Some(error) = files_failed {
+        tracing::warn!(
+            error = %format!("{error:#}"),
+            "the log files could not be opened; logs go to standard error only"
+        );
+    }
     match torrplay_engine::raise_open_file_limit() {
         Ok(limit) => tracing::info!(limit, "open file limit"),
         Err(error) => tracing::warn!(
@@ -73,20 +90,27 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let result = runtime.block_on(run(&config, log, process_run));
+    let result = runtime.block_on(run(&config, log.clone(), process_run, log_files));
     // Shutdown has stopped the engine; blocking work still running must not
     // hold the process.
     runtime.shutdown_timeout(RUNTIME_SHUTDOWN);
-    match result {
+    let code = match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             tracing::error!(error = %format!("{error:#}"), "torrplay failed");
             ExitCode::FAILURE
         }
-    }
+    };
+    log.flush();
+    code
 }
 
-async fn run(config: &Config, log: torrplay::LogControl, run: torrplay::Run) -> anyhow::Result<()> {
+async fn run(
+    config: &Config,
+    log: torrplay::LogControl,
+    run: torrplay::Run,
+    log_files: Option<torrplay::LogFiles>,
+) -> anyhow::Result<()> {
     let data_dir = config.data_dir()?;
     let opening = data_dir.clone();
     let (store, contents) = tokio::task::spawn_blocking(move || Store::open(&opening))
@@ -120,6 +144,7 @@ async fn run(config: &Config, log: torrplay::LogControl, run: torrplay::Run) -> 
             overrides: config.overrides(),
             log: Some(log),
             run,
+            log_files,
         },
         ShutdownTimings::default(),
         termination(),
