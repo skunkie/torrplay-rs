@@ -135,7 +135,7 @@ mod tests {
     }
 
     #[test]
-    fn the_default_ttl_lies_within_its_bounds() {
+    fn the_default_expiry_lies_within_its_bounds() {
         assert!((EXPIRES_IN_MIN..=EXPIRES_IN_MAX).contains(&DEFAULT_EXPIRES_IN));
     }
 }

@@ -79,9 +79,9 @@ pub use crate::telemetry::Run;
 pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
     let torrent = "/api/v1/torrents/{torrent_id}";
     Router::new()
-        .route("/api/v1", get(service::entry_point))
-        .route("/api/v1/", any(service::entry_point_with_slash))
-        .route("/api/v1/openapi.yaml", get(service::document))
+        .route("/api/v1", get(service::get_entry_point))
+        .route("/api/v1/", any(service::redirect_to_entry_point))
+        .route("/api/v1/openapi.yaml", get(service::get_openapi_document))
         .route("/api/v1/reference", get(reference::get_page))
         .route("/api/v1/reference/scalar.js", get(reference::get_script))
         .route(
@@ -135,15 +135,15 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
         )
         .route(
             &format!("{torrent}/statistics"),
-            get(torrents::statistics::<E>),
+            get(torrents::get_statistics::<E>),
         )
         .route(
             "/api/v1/cache/statistics",
-            get(torrents::cache_statistics::<E>),
+            get(torrents::get_cache_statistics::<E>),
         )
-        .route("/api/v1/statistics", get(system::statistics::<E>))
-        .route("/api/v1/system", get(system::system::<E>))
-        .route("/api/v1/log-records", get(system::log_records::<E>))
+        .route("/api/v1/statistics", get(system::get_statistics::<E>))
+        .route("/api/v1/system", get(system::get_system::<E>))
+        .route("/api/v1/log-records", get(system::list_log_records::<E>))
         .route(
             "/api/v1/settings",
             get(settings::get::<E>).patch(settings::update::<E>),
@@ -278,9 +278,9 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
             "/dlna/posters/{torrent_id}",
             get(dlna::get_poster::<E>).head(dlna::head_poster::<E>),
         )
-        .route("/metrics", get(system::metrics::<E>))
-        .route("/livez", get(service::liveness))
-        .route("/readyz", get(service::readiness::<E>))
+        .route("/metrics", get(system::get_metrics::<E>))
+        .route("/livez", get(service::get_liveness))
+        .route("/readyz", get(service::get_readiness::<E>))
         .fallback(unknown_resource)
         .layer(axum::middleware::from_fn_with_state(
             Arc::clone(&app),

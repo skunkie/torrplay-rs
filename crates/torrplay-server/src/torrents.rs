@@ -1256,7 +1256,7 @@ fn configuration_patch(value: Value) -> Result<ConfigurationPatch, Problem> {
     }
 }
 
-pub(crate) async fn statistics<E: Engine>(
+pub(crate) async fn get_statistics<E: Engine>(
     State(app): State<Arc<App<E>>>,
     Path(id): Path<String>,
     headers: HeaderMap,
@@ -1273,7 +1273,7 @@ pub(crate) async fn statistics<E: Engine>(
     Ok(response)
 }
 
-pub(crate) async fn cache_statistics<E: Engine>(
+pub(crate) async fn get_cache_statistics<E: Engine>(
     State(app): State<Arc<App<E>>>,
     headers: HeaderMap,
 ) -> Result<Response, Problem> {

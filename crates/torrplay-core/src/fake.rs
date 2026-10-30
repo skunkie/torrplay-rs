@@ -964,7 +964,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn recognizes_catalog_torrent_files_and_magnets() {
+    async fn recognizes_catalog_metainfo_and_magnets() {
         let engine = FakeEngine::with_catalog();
         let spec = catalog::multi_boundary();
         let expected = InfoHashV1::from_bytes(spec.metainfo().info_hash);

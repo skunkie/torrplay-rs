@@ -99,8 +99,8 @@ impl LogFiles {
     }
 
     /// Opens the files as [`open`](Self::open) does, rotating at
-    /// `max_file_bytes`.
-    fn open_bounded(directory: &Path, max_file_bytes: u64) -> io::Result<(Self, LogWriter)> {
+    /// `file_max_bytes`.
+    fn open_bounded(directory: &Path, file_max_bytes: u64) -> io::Result<(Self, LogWriter)> {
         fs::create_dir_all(directory)?;
         let last = last_sequence(directory)?;
         let current = open_current(directory)?;
@@ -112,7 +112,7 @@ impl LogFiles {
         let (queue, received) = sync_channel(QUEUE_RECORDS);
         let writer = Writer {
             directory: directory.to_owned(),
-            max_file_bytes,
+            file_max_bytes,
             dropped: Arc::clone(&files.dropped),
         };
         let thread = std::thread::Builder::new()
@@ -234,7 +234,7 @@ impl LogWriter {
 
 struct Writer {
     directory: PathBuf,
-    max_file_bytes: u64,
+    file_max_bytes: u64,
     dropped: Arc<AtomicU64>,
 }
 
@@ -262,7 +262,7 @@ impl Writer {
         match message {
             Message::Line(line) => {
                 let length = line.len() as u64 + 1;
-                if current.bytes > 0 && current.bytes + length > self.max_file_bytes {
+                if current.bytes > 0 && current.bytes + length > self.file_max_bytes {
                     match self.rotate(current) {
                         Ok(rotated) => *current = rotated,
                         Err(_) => {
