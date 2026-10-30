@@ -2928,6 +2928,10 @@ mod scenario {
             server.get(&format!("{profile}/up-next")).await,
             server.get(&entry).await,
             server.send(empty(Method::DELETE, &entry)).await,
+            server.get(&format!("{profile}/title-progress")).await,
+            server
+                .get(&format!("{profile}/title-progress/tmdb-movie-603"))
+                .await,
         ] {
             assert_problem(
                 &exchange,
