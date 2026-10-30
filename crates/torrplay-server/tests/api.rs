@@ -858,6 +858,120 @@ mod scenario {
         server.stop().await;
     }
 
+    /// API-23: a torrent's torrent file, which re-creates it after deletion
+    /// with the same info hash and file IDs.
+    pub async fn metainfo() {
+        let server = TestServer::start().await;
+        let spec = catalog::single_small();
+        let uploaded = server.upload(&spec.metainfo().bytes, None).await.json();
+        let path = uploaded["links"]["self"].as_str().unwrap().to_owned();
+        let metainfo = format!("{path}/metainfo");
+        assert_eq!(uploaded["links"]["metainfo"], metainfo.as_str());
+
+        let file = server.get(&metainfo).await;
+        assert_eq!(file.status, StatusCode::OK);
+        assert_eq!(file.body, spec.metainfo().bytes, "the upload's own bytes");
+        assert_eq!(
+            file.header(header::CONTENT_TYPE),
+            Some("application/x-bittorrent")
+        );
+        assert_eq!(
+            file.header(header::CONTENT_DISPOSITION),
+            Some("attachment; filename=\"single-small.bin.torrent\"")
+        );
+        assert_eq!(file.header(header::CACHE_CONTROL), Some("no-store"));
+        let tag = file.header(header::ETAG).unwrap().to_owned();
+        assert!(tag.starts_with("\"mti-"), "{tag}");
+        let unchanged = server
+            .send(with_header(
+                Method::GET,
+                &metainfo,
+                header::IF_NONE_MATCH,
+                &tag,
+            ))
+            .await;
+        assert_eq!(unchanged.status, StatusCode::NOT_MODIFIED);
+        assert!(unchanged.body.is_empty());
+        let unchanged_head = server
+            .send(with_header(
+                Method::HEAD,
+                &metainfo,
+                header::IF_NONE_MATCH,
+                &tag,
+            ))
+            .await;
+        assert_eq!(unchanged_head.status, StatusCode::NOT_MODIFIED);
+        let head = server.send(empty(Method::HEAD, &metainfo)).await;
+        assert_eq!(head.status, StatusCode::OK);
+        assert!(head.body.is_empty());
+        assert_eq!(
+            head.header(header::CONTENT_LENGTH),
+            Some(spec.metainfo().bytes.len().to_string().as_str())
+        );
+
+        // A magnet URI's torrent file exists once its metadata is retrieved.
+        let other = catalog::multi_boundary();
+        let created = server.create_magnet(&magnet(&other)).await.json();
+        let other_path = created["links"]["self"].as_str().unwrap().to_owned();
+        let other_metainfo = format!("{other_path}/metainfo");
+        assert_problem(
+            &server.get(&other_metainfo).await,
+            StatusCode::CONFLICT,
+            "lifecycle-conflict",
+        );
+        let head = server.send(empty(Method::HEAD, &other_metainfo)).await;
+        assert_eq!(head.status, StatusCode::CONFLICT);
+        server.engine.set_metadata_retrievable(
+            torrplay_core::id::InfoHashV1::from_bytes(other.metainfo().info_hash),
+            true,
+        );
+        assert_eq!(
+            server.get(&other_path).await.json()["observed_state"],
+            "downloading"
+        );
+        let built = server.get(&other_metainfo).await;
+        assert_eq!(built.status, StatusCode::OK);
+
+        // Deleted, the torrent comes back from its file, with its info hash
+        // and file IDs and without retrieving metadata.
+        let ids = file_ids(&server, &other_path).await;
+        assert_eq!(
+            server.send(empty(Method::DELETE, &other_path)).await.status,
+            StatusCode::NO_CONTENT
+        );
+        assert_problem(
+            &server.get(&other_metainfo).await,
+            StatusCode::NOT_FOUND,
+            "not-found",
+        );
+        let head = server.send(empty(Method::HEAD, &other_metainfo)).await;
+        assert_eq!(head.status, StatusCode::NOT_FOUND);
+        let again = server.upload(&built.body, None).await;
+        assert_eq!(again.status, StatusCode::CREATED);
+        let again = again.json();
+        assert_ne!(again["id"], created["id"], "a new torrent ID");
+        assert_eq!(again["info_hashes"], created["info_hashes"]);
+        assert_eq!(again["observed_state"], "downloading");
+        let again_path = again["links"]["self"].as_str().unwrap();
+        assert_eq!(file_ids(&server, again_path).await, ids);
+
+        // A temporary torrent's file is kept in memory.
+        let temporary = catalog::many_files();
+        server.engine.set_metadata_retrievable(
+            torrplay_core::id::InfoHashV1::from_bytes(temporary.metainfo().info_hash),
+            true,
+        );
+        let temporary_path = create_temporary(&server, &temporary).await.json()["links"]["self"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        server.get(&temporary_path).await;
+        let kept = server.get(&format!("{temporary_path}/metainfo")).await;
+        assert_eq!(kept.status, StatusCode::OK);
+        assert_eq!(kept.body, temporary.metainfo().bytes);
+        server.stop().await;
+    }
+
     /// API-06.
     pub async fn rejected_sources() {
         let server = TestServer::start().await;
@@ -1560,9 +1674,11 @@ mod scenario {
             );
             assert_eq!(exchange.header(header::RETRY_AFTER), Some("5"));
         }
+        let metainfo = format!("{path}/metainfo");
         for served in [
             "/api/v1/torrents",
             path.as_str(),
+            metainfo.as_str(),
             "/api/v1/cache/statistics",
             "/livez",
         ] {
@@ -2532,6 +2648,14 @@ mod scenario {
         let head = server
             .send(empty(Method::HEAD, &format!("{file}/content")))
             .await;
+        assert_eq!(head.status, StatusCode::SERVICE_UNAVAILABLE);
+        let metainfo = format!("{path}/metainfo");
+        assert_problem(
+            &server.get(&metainfo).await,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "engine-unavailable",
+        );
+        let head = server.send(empty(Method::HEAD, &metainfo)).await;
         assert_eq!(head.status, StatusCode::SERVICE_UNAVAILABLE);
         let poster = format!("{path}/poster");
         for exchange in [
@@ -7057,6 +7181,8 @@ const EXEMPT: &[(&str, u16)] = &[
     // which answers from the registry without the store.
     ("getTorrentPoster", 500),
     ("headTorrentPoster", 500),
+    ("getTorrentMetainfo", 500),
+    ("headTorrentMetainfo", 500),
     // These answer from the application's own records, as the entry point
     // does, or read an avatar from the store, which tests cannot fail.
     ("listProfiles", 500),
@@ -7106,6 +7232,7 @@ scenarios!(
     magnet_creation,
     upload_creation,
     duplicates,
+    metainfo,
     rejected_sources,
     invalid_creation_bodies,
     torrent_pages,

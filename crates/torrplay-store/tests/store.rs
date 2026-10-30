@@ -172,6 +172,11 @@ async fn configurations_and_retrieved_torrent_files_are_stored() {
         store.insert(magnet.clone()).await.unwrap();
         store.insert(upload.clone()).await.unwrap();
         store.set_configuration(&magnet.id, &paused).await.unwrap();
+        assert_eq!(
+            store.torrent_file(&magnet.id).await.unwrap(),
+            None,
+            "no torrent file before metadata is retrieved"
+        );
         store
             .set_torrent_file(&magnet.id, b"retrieved".to_vec())
             .await
@@ -190,6 +195,19 @@ async fn configurations_and_retrieved_torrent_files_are_stored() {
         ));
         assert!(matches!(
             store.set_torrent_file(&id(9), b"x".to_vec()).await,
+            Err(StoreError::UnknownTorrent)
+        ));
+        assert_eq!(
+            store.torrent_file(&magnet.id).await.unwrap().as_deref(),
+            Some(&b"retrieved"[..])
+        );
+        assert_eq!(
+            store.torrent_file(&upload.id).await.unwrap(),
+            upload.torrent_file,
+            "an upload's original bytes, not the later file"
+        );
+        assert!(matches!(
+            store.torrent_file(&id(9)).await,
             Err(StoreError::UnknownTorrent)
         ));
     }

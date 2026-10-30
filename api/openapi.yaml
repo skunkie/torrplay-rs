@@ -276,6 +276,7 @@ paths:
                           files: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files
                           statistics: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/statistics
                           poster: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/poster
+                          metainfo: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/metainfo
                     total: 1
                     facets:
                       total: 1
@@ -400,6 +401,7 @@ paths:
                       files: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files
                       statistics: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/statistics
                       poster: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/poster
+                      metainfo: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/metainfo
         '400':
           $ref: '#/components/responses/MalformedRequest'
         '408':
@@ -479,6 +481,7 @@ paths:
                       files: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files
                       statistics: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/statistics
                       poster: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/poster
+                      metainfo: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/metainfo
         '304':
           $ref: '#/components/responses/NotModified'
         '404':
@@ -829,6 +832,88 @@ paths:
           description: The poster was removed.
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+
+  /api/v1/torrents/{torrent_id}/metainfo:
+    parameters:
+      - $ref: '#/components/parameters/TorrentId'
+    get:
+      operationId: getTorrentMetainfo
+      summary: Read a torrent's torrent file
+      description: >-
+        Returns the torrent's torrent file, which createTorrent accepts as an
+        upload: an uploaded torrent's original bytes, or for a magnet URI the
+        file built from the retrieved metadata and the magnet URI's trackers.
+        Uploading it re-creates a deleted torrent with the same info hash and
+        file IDs and needs no metadata from peers, as docs/lifecycle.md
+        describes. The request is lifecycle-conflict until metadata is
+        available. Tracker URLs may carry private credentials, so a playback
+        token cannot read it and responses are not stored by caches. A Range
+        header is ignored.
+      tags: [Torrents]
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The torrent file.
+          headers:
+            Content-Length:
+              $ref: '#/components/headers/ContentLength'
+            Content-Disposition:
+              $ref: '#/components/headers/MetainfoDisposition'
+            ETag:
+              $ref: '#/components/headers/MetainfoETag'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptions'
+          content:
+            application/x-bittorrent:
+              schema:
+                type: string
+                contentMediaType: application/x-bittorrent
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/LifecycleConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+    head:
+      operationId: headTorrentMetainfo
+      summary: Read a torrent's torrent file headers
+      description: >-
+        Returns the headers and status a GET would return, without the
+        torrent file, such as its size before downloading it.
+      tags: [Torrents]
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The torrent file's headers.
+          headers:
+            Content-Length:
+              $ref: '#/components/headers/ContentLength'
+            Content-Disposition:
+              $ref: '#/components/headers/MetainfoDisposition'
+            ETag:
+              $ref: '#/components/headers/MetainfoETag'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptions'
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/LifecycleConflict'
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
@@ -2482,6 +2567,7 @@ paths:
                         files: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files
                         statistics: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/statistics
                         poster: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/poster
+                        metainfo: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/metainfo
                     file:
                       id: fil_xfuperelxpqq4qhvgmtq62qwv4
                       path: [Example Show, Example.Show.S01E02.mkv]
@@ -3676,6 +3762,22 @@ components:
       schema:
         type: string
       example: '"pst-5f1c0a9e2b7d4c3a8e6f1b2d"'
+    MetainfoETag:
+      description: >-
+        A strong validator that identifies the torrent file's bytes, which
+        never change for the torrent.
+      required: true
+      schema:
+        type: string
+      example: '"mti-0123456789abcdef01234567"'
+    MetainfoDisposition:
+      description: >-
+        An attachment named after the torrent with a .torrent extension, encoded
+        as RFC 6266 specifies.
+      required: true
+      schema:
+        type: string
+      example: attachment; filename="Example Collection.torrent"
     ContentETag:
       description: A strong validator that identifies the file's bytes.
       required: true
@@ -4843,7 +4945,7 @@ components:
           type: object
           readOnly: true
           description: Links from a torrent to its related resources.
-          required: [self, configuration, files, statistics, poster]
+          required: [self, configuration, files, statistics, poster, metainfo]
           properties:
             self:
               type: string
@@ -4874,6 +4976,13 @@ components:
                 The torrent's poster, which is not-found while the torrent has
                 none.
               examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/poster]
+            metainfo:
+              type: string
+              format: uri-reference
+              description: >-
+                The torrent's torrent file, which returns lifecycle-conflict
+                until metadata is available.
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/metainfo]
 
     InfoHash:
       type: object

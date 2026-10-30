@@ -37,11 +37,8 @@ use crate::body::{JSON_LIMIT_BYTES, read_limited};
 use crate::headers::{MediaType, negotiate};
 use crate::problem::{InvalidValue, Problem, ProblemType};
 use crate::query::{Paging, Query, page_error, reject};
-use crate::representation::{BASE, JSON, NO_CACHE, json};
+use crate::representation::{BASE, JSON, NO_CACHE, NO_STORE, json};
 use crate::torrents::{object, parse_json, pointer, unknown_member};
-
-/// `Cache-Control` of responses that hold a secret.
-const NO_STORE: HeaderValue = HeaderValue::from_static("no-store");
 
 pub(crate) fn password_path() -> String {
     format!("{BASE}/password")

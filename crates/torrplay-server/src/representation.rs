@@ -31,6 +31,9 @@ pub(crate) const BASE: &str = "/api/v1";
 /// `Cache-Control` of state-bearing responses.
 pub(crate) const NO_CACHE: HeaderValue = HeaderValue::from_static("no-cache");
 
+/// `Cache-Control` of responses that hold a secret.
+pub(crate) const NO_STORE: HeaderValue = HeaderValue::from_static("no-store");
+
 pub(crate) fn torrents_path() -> String {
     format!("{BASE}/torrents")
 }
@@ -157,6 +160,7 @@ pub(crate) fn torrent(view: &TorrentView) -> api::Torrent {
             files: format!("{path}/files"),
             statistics: format!("{path}/statistics"),
             poster: format!("{path}/poster"),
+            metainfo: format!("{path}/metainfo"),
             self_field: path,
         },
         name: metadata.map(|metadata| metadata.display_name()),

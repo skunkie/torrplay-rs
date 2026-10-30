@@ -227,6 +227,7 @@ enum Command {
     SetPoster(TorrentId, ImageInfo, Vec<u8>, Reply<()>),
     DeletePoster(TorrentId, Reply<()>),
     Poster(TorrentId, Reply<Option<(ImageInfo, Vec<u8>)>>),
+    TorrentFile(TorrentId, Reply<Option<Vec<u8>>>),
     InsertProfile(Profile, Reply<()>),
     RenameProfile(ProfileId, String, Reply<()>),
     DeleteProfile(ProfileId, Reply<()>),
@@ -401,6 +402,13 @@ impl Store {
     pub async fn poster(&self, id: &TorrentId) -> Result<Option<(ImageInfo, Vec<u8>)>, StoreError> {
         let id = id.clone();
         self.send(|reply| Command::Poster(id, reply)).await
+    }
+
+    /// Reads a stored torrent's torrent file, in a read-only transaction, or
+    /// `None` if it has none yet.
+    pub async fn torrent_file(&self, id: &TorrentId) -> Result<Option<Vec<u8>>, StoreError> {
+        let id = id.clone();
+        self.send(|reply| Command::TorrentFile(id, reply)).await
     }
 
     /// Stores a new profile. Its ID and name must be free.

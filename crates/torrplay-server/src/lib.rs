@@ -37,6 +37,7 @@ mod images;
 mod inference;
 mod library;
 pub mod log_files;
+mod metainfo;
 mod posters;
 mod preloads;
 mod problem;
@@ -93,6 +94,10 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
         .route(
             &format!("{torrent}/configuration"),
             get(torrents::get_configuration::<E>).patch(torrents::update_configuration::<E>),
+        )
+        .route(
+            &format!("{torrent}/metainfo"),
+            get(metainfo::get::<E>).head(metainfo::head::<E>),
         )
         .route(
             &format!("{torrent}/poster"),
