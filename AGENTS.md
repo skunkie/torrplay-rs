@@ -105,6 +105,7 @@ These requirements apply when reusing or adding the client; they do not expand t
 
 - Use American English and explain current behavior, constraints, and invariants. Put bug history and per-run validation results in commit messages or CI logs. Keep documentation commands and API names current.
 - Use the terms defined in `docs/glossary.md` in the contract, code, and documentation. Prefer established terms from RFC 9110, the BitTorrent specifications, and common cache and torrent-client usage over invented ones, and update the glossary before introducing or redefining a domain term.
+- Name fields, columns, constants, handlers, MCP tools, and log fields as `docs/naming.md` describes, so one concept has one name in every layer.
 - Wrap ordinary prose near 80 columns where practical; keep paragraphs and bullets in this file on single lines so each rule remains a reviewable unit. Explain non-obvious reasons in source comments without narrating obvious code.
 - Apply SPDX copyright and MIT license headers to new handwritten files. Preserve existing and third-party notices. Keep license texts in `LICENSES/`; add explicit REUSE annotations for generated files, binaries, and formats without comments when those files are introduced.
 - Run `reuse lint`; do not label third-party assets MIT unless their actual license permits that attribution.
