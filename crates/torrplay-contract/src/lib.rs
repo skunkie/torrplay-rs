@@ -175,6 +175,8 @@ struct Parameter {
     required: bool,
     // The resolved schema's pointer in the document.
     schema: String,
+    // The parameter's example, or its first named one.
+    example: Option<Value>,
 }
 
 #[derive(Debug)]
@@ -372,6 +374,7 @@ impl Contract {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             schema,
+            example: example_of(node),
         })
     }
 
@@ -781,7 +784,7 @@ impl Contract {
                 if status == 405 && !response.headers().contains_key(http::header::ALLOW) {
                     violations.push(Violation::MissingHeader("Allow".into()));
                 }
-                self.check_problem(status, response, &mut violations);
+                self.check_problem(request.method(), status, response, &mut violations);
             }
             (None, 401 | 403) if operation.is_some_and(|operation| operation.secured) => {
                 if status == 401
@@ -791,7 +794,7 @@ impl Contract {
                 {
                     violations.push(Violation::MissingHeader("WWW-Authenticate".into()));
                 }
-                self.check_problem(status, response, &mut violations);
+                self.check_problem(request.method(), status, response, &mut violations);
             }
             (None, _) => violations.push(Violation::UndocumentedStatus(status)),
         }
@@ -917,9 +920,11 @@ impl Contract {
     }
 
     /// Checks the body of a response the conventions assign to every
-    /// operation against the problem schema.
+    /// operation against the problem schema; a HEAD response has a GET's
+    /// media type and no body.
     fn check_problem<C: AsRef<[u8]>>(
         &self,
+        method: &Method,
         status: u16,
         response: &Response<C>,
         violations: &mut Vec<Violation>,
@@ -931,6 +936,12 @@ impl Contract {
                 context,
                 media_type,
             });
+            return;
+        }
+        if method == Method::HEAD {
+            if !response.body().as_ref().is_empty() {
+                violations.push(Violation::UnexpectedBody { context });
+            }
             return;
         }
         let schema = json!({
@@ -983,6 +994,147 @@ impl Contract {
             .filter(|(id, status)| !exempt.contains(&(id.as_str(), *status)))
             .collect()
     }
+
+    /// Requests for every operation, built from the document: `path_value`
+    /// names a path parameter's value, or `None` for its example, and
+    /// required header and query parameters carry their examples. An
+    /// operation with a request body has one request for each example of
+    /// each request media type, or an empty body for a media type without
+    /// examples; a body names the values `path_value` gives where its
+    /// example names a path parameter's example.
+    pub fn example_requests(
+        &self,
+        path_value: impl Fn(&str) -> Option<String>,
+    ) -> Result<Vec<ExampleRequest>, ContractError> {
+        // Bodies refer to resources by the IDs path parameters show.
+        let mut substitutions = BTreeMap::new();
+        for parameter in self
+            .operations
+            .iter()
+            .flat_map(|operation| &operation.parameters)
+        {
+            if parameter.location == Location::Path
+                && let Some(Value::String(example)) = &parameter.example
+                && let Some(value) = path_value(&parameter.name)
+            {
+                substitutions.insert(example.clone(), value);
+            }
+        }
+        let mut requests = Vec::new();
+        for operation in &self.operations {
+            let mut path = operation.template.clone();
+            let mut query = Vec::new();
+            let mut headers = Vec::new();
+            for parameter in &operation.parameters {
+                match parameter.location {
+                    Location::Path => {
+                        let value = path_value(&parameter.name)
+                            .or_else(|| parameter.example.clone()?.as_str().map(str::to_owned))
+                            .ok_or_else(|| {
+                                malformed(&operation.pointer, "a path parameter has no example")
+                            })?;
+                        path = path.replace(&format!("{{{}}}", parameter.name), &value);
+                    }
+                    _ if !parameter.required => {}
+                    location => {
+                        let value = match &parameter.example {
+                            Some(Value::String(text)) => text.clone(),
+                            Some(other) => other.to_string(),
+                            None => continue,
+                        };
+                        if location == Location::Query {
+                            query.push(format!("{}={value}", parameter.name));
+                        } else {
+                            headers.push((parameter.name.clone(), value));
+                        }
+                    }
+                }
+            }
+            if !query.is_empty() {
+                path = format!("{path}?{}", query.join("&"));
+            }
+            let content = self
+                .resolve(&format!("{}/requestBody", operation.pointer))
+                .ok()
+                .and_then(|(_, node)| node.get("content")?.as_object());
+            // No body, or each media type with each of its examples.
+            let mut bodies = Vec::new();
+            match content {
+                None => bodies.push((None, None, Vec::new())),
+                Some(content) => {
+                    for (media_type, media) in content {
+                        let examples = examples_of(media);
+                        if examples.is_empty() {
+                            bodies.push((Some(media_type), None, Vec::new()));
+                        }
+                        for (name, example) in examples {
+                            let mut body = match example {
+                                Value::String(text) if !media_type.contains("json") => text,
+                                example => example.to_string(),
+                            };
+                            for (example, value) in &substitutions {
+                                body = body.replace(example, value);
+                            }
+                            bodies.push((Some(media_type), Some(name), body.into_bytes()));
+                        }
+                    }
+                }
+            }
+            for (media_type, example, body) in bodies {
+                let mut builder = Request::builder()
+                    .method(operation.method.clone())
+                    .uri(&path);
+                for (name, value) in &headers {
+                    builder = builder.header(name, value);
+                }
+                if let Some(media_type) = media_type {
+                    builder = builder.header(http::header::CONTENT_TYPE, media_type);
+                }
+                let request = builder
+                    .body(body)
+                    .map_err(|error| malformed(&operation.pointer, error.to_string()))?;
+                requests.push(ExampleRequest {
+                    operation_id: operation.id.clone(),
+                    example,
+                    secured: operation.secured,
+                    request,
+                });
+            }
+        }
+        Ok(requests)
+    }
+}
+
+/// A request [`Contract::example_requests`] built for an operation.
+#[derive(Debug)]
+pub struct ExampleRequest {
+    /// The operation's ID.
+    pub operation_id: String,
+    /// The name of the body's example, if it has one.
+    pub example: Option<String>,
+    /// Whether a security requirement names a scheme, so the operation needs
+    /// a credential once a password is set.
+    pub secured: bool,
+    /// The request.
+    pub request: Request<Vec<u8>>,
+}
+
+/// A node's `example`, or each of its named `examples` with its value.
+fn examples_of(node: &Value) -> Vec<(String, Value)> {
+    if let Some(example) = node.get("example") {
+        return vec![("example".to_owned(), example.clone())];
+    }
+    node.get("examples")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter_map(|(name, example)| Some((name.clone(), example.get("value")?.clone())))
+        .collect()
+}
+
+/// A node's `example`, or the value of the first of its `examples`.
+fn example_of(node: &Value) -> Option<Value> {
+    examples_of(node).into_iter().next().map(|(_, value)| value)
 }
 
 fn check_problem_type(instance: &Value, violations: &mut Vec<Violation>) {
