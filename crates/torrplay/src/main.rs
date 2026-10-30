@@ -202,9 +202,25 @@ fn password(change: PasswordChange, config: &Config) -> ExitCode {
 }
 
 /// Serves the MCP server, logging to standard error only: on stdio,
-/// standard output carries nothing but protocol messages.
+/// standard output carries nothing but protocol messages. It writes no log
+/// files, which belong to the application's data directory.
 fn mcp(config: McpConfig) -> ExitCode {
-    torrplay::init_logging(config.log_level.unwrap_or_default(), None);
+    let variable = std::env::var_os(torrplay::LOG_FORMAT_VARIABLE)
+        .map(|value| value.to_string_lossy().into_owned());
+    let format = match torrplay::log_format(None, variable, std::io::stderr().is_terminal()) {
+        Ok(format) => format,
+        Err(error) => {
+            eprintln!("torrplay: {error}\n\n{USAGE}");
+            return ExitCode::from(2);
+        }
+    };
+    torrplay::init_logging(
+        config.log_level.unwrap_or_default(),
+        None,
+        format,
+        &torrplay::Run::draw(),
+        None,
+    );
     let url = match config.url {
         Some(url) => url,
         None => {

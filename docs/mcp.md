@@ -56,7 +56,10 @@ torrplay mcp [--url <URL>] [--transport stdio|http] [--listen <address>]
   as the MCP client starts the server as a child process. Standard output
   carries only protocol messages. Logs and diagnostics go to standard
   error, at `info` by default, and `--log-level` changes the level; the
-  token is never logged.
+  token is never logged. `TORRPLAY_LOG_FORMAT` chooses their format, JSON
+  unless standard error is a terminal, as
+  [the application's](observability.md#log-records) does; the MCP server
+  writes no log files.
 - **Streamable HTTP**, with `--transport http`: the protocol's HTTP
   transport, with its SSE streams, at `/mcp` on `--listen`, which defaults
   to `127.0.0.1:8090`. The address must be a loopback address; any other
