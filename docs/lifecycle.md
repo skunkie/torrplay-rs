@@ -406,7 +406,7 @@ forces exit if it has not finished after 30 seconds:
 ## Library
 
 A torrent's configuration also holds its library members: `title`, `kind`,
-`year`, `description`, `categories`, and `genres`. They are set at creation
+`year`, `imdb_id`, `description`, `categories`, and `genres`. They are set at creation
 or by a merge patch, need no engine, and can change in any lifecycle state,
 including during metadata retrieval, a transition, or a failure. Each change
 gives the configuration a new ETag, and the torrent resource shows the new
@@ -431,6 +431,10 @@ values with a new state ETag.
   normalized text exactly, case included; a slash is an ordinary character
   and makes no hierarchy.
 - `year` is an integer from 1800 to 2200, or `null`.
+- `imdb_id` is an IMDb title ID, `tt` and 7 to 10 digits, such as
+  `tt0133093`, or `null`. It links the torrent to that title where catalogs
+  key titles by it, as the [Stremio addon](stremio.md) does with Cinemeta.
+  Several torrents may have the same one.
 - A configured `kind` is `movie`, `series`, or `other`. While it is `null`
   the torrent resource reports the kind inferred from the metadata's files,
   and `null` until metadata is available:

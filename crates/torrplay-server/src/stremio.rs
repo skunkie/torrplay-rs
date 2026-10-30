@@ -59,6 +59,7 @@ async fn library<E: Engine>(app: &App<E>) -> Result<Library, Problem> {
                 title: torrent.title,
                 name: torrent.name,
                 kind,
+                imdb_id: torrent.imdb_id,
                 genres: torrent.genres,
                 has_poster: torrent.has_poster,
                 files,

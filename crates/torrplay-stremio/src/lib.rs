@@ -15,11 +15,15 @@ pub mod protocol;
 use torrplay_core::search::Query;
 
 use protocol::{
-    Catalog, ExtraProperty, Manifest, Meta, MetaHints, MetaPreview, Stream, StreamHints, Video,
+    Catalog, ExtraProperty, Manifest, Meta, MetaHints, MetaPreview, Resource, Stream, StreamHints,
+    Video,
 };
 
-/// The prefix of every item and video ID.
+/// The prefix of every item and video ID of the addon's own.
 pub const ID_PREFIX: &str = "torrplay:";
+
+/// The prefix of IMDb IDs, which Cinemeta's items and episodes have.
+pub const IMDB_PREFIX: &str = "tt";
 
 /// The most items a catalog page holds.
 pub const PAGE_SIZE: usize = 100;
@@ -44,6 +48,8 @@ pub struct Torrent {
     pub name: String,
     /// The catalog it belongs to.
     pub kind: Kind,
+    /// Its library IMDb ID, which it is listed and streamed by.
+    pub imdb_id: Option<String>,
     /// Its normalized genres.
     pub genres: Vec<String>,
     /// Whether it has a poster.
@@ -177,9 +183,22 @@ pub fn manifest(version: &str, genres: Vec<String>) -> Manifest {
         version: version.to_owned(),
         name: "TorrPlay",
         description: "Movies and series from your TorrPlay library",
-        resources: ["catalog", "meta", "stream"],
+        resources: vec![
+            Resource::All("catalog"),
+            // Cinemeta serves the metadata of IMDb titles.
+            Resource::Some {
+                name: "meta",
+                types: ["movie", "series"],
+                id_prefixes: vec![ID_PREFIX],
+            },
+            Resource::Some {
+                name: "stream",
+                types: ["movie", "series"],
+                id_prefixes: vec![ID_PREFIX, IMDB_PREFIX],
+            },
+        ],
         types: ["movie", "series"],
-        id_prefixes: [ID_PREFIX],
+        id_prefixes: [ID_PREFIX, IMDB_PREFIX],
         catalogs: vec![
             catalog(Kind::Movie, "TorrPlay movies"),
             catalog(Kind::Series, "TorrPlay series"),
@@ -273,8 +292,16 @@ impl Library {
             .collect();
         // Ranks put better matches first; positions keep newest first.
         matches.sort_by_key(|(rank, position, _)| (*rank, *position));
+        // An IMDb title is listed once, by its best or newest torrent.
+        let mut titles = std::collections::HashSet::new();
         matches
             .into_iter()
+            .filter(|(_, _, torrent)| {
+                torrent
+                    .imdb_id
+                    .as_deref()
+                    .is_none_or(|imdb_id| titles.insert(imdb_id))
+            })
             .skip(extra.skip)
             .take(PAGE_SIZE)
             .map(|(_, _, torrent)| preview(torrent, base))
@@ -312,8 +339,12 @@ impl Library {
     }
 
     /// The streams of the video or item with the ID: one for a video, one
-    /// for each of an item's video files, none for an unknown ID.
+    /// for each of an item's video files, those of the torrents linked to an
+    /// IMDb title or episode, and none for an unknown ID.
     pub fn streams(&self, id: &str, base: Base<'_>) -> Vec<Stream> {
+        if id.starts_with(IMDB_PREFIX) {
+            return self.imdb_streams(id, base);
+        }
         let Some(rest) = id.strip_prefix(ID_PREFIX) else {
             return Vec::new();
         };
@@ -328,17 +359,56 @@ impl Library {
             .files
             .iter()
             .filter(|candidate| file.is_none_or(|file| candidate.id == file))
-            .map(|file| Stream {
-                url: base.play(torrent, file),
-                name: "TorrPlay",
-                title: file.name.clone(),
-                behavior_hints: StreamHints {
-                    filename: file.name.clone(),
-                    binge_group: format!("torrplay-{}", torrent.id),
-                    not_web_ready: !matches!(file.media_type, "video/mp4" | "video/webm"),
-                },
+            .map(|file| stream(torrent, file, file.name.clone(), base))
+            .collect()
+    }
+
+    /// The streams of an IMDb title, `tt…`, from its movie torrents, or of
+    /// an episode, `tt…:season:episode`, from its series torrents' files
+    /// with that episode.
+    fn imdb_streams(&self, id: &str, base: Base<'_>) -> Vec<Stream> {
+        let mut parts = id.split(':');
+        let title = parts.next().unwrap_or_default();
+        let episode = match (parts.next(), parts.next(), parts.next()) {
+            (None, ..) => None,
+            (Some(season), Some(episode), None) => match (season.parse(), episode.parse()) {
+                (Ok(season), Ok(episode)) => Some((season, episode)),
+                _ => return Vec::new(),
+            },
+            _ => return Vec::new(),
+        };
+        let kind = if episode.is_some() {
+            Kind::Series
+        } else {
+            Kind::Movie
+        };
+        self.torrents
+            .iter()
+            .filter(|torrent| torrent.kind == kind && torrent.imdb_id.as_deref() == Some(title))
+            .flat_map(|torrent| {
+                torrent
+                    .files
+                    .iter()
+                    .filter(move |file| episode.is_none() || file.episode == episode)
+                    .map(move |file| {
+                        let title = format!("{}\n{}", torrent.display_name(), file.name);
+                        stream(torrent, file, title, base)
+                    })
             })
             .collect()
+    }
+}
+
+fn stream(torrent: &Torrent, file: &File, title: String, base: Base<'_>) -> Stream {
+    Stream {
+        url: base.play(torrent, file),
+        name: "TorrPlay",
+        title,
+        behavior_hints: StreamHints {
+            filename: file.name.clone(),
+            binge_group: format!("torrplay-{}", torrent.id),
+            not_web_ready: !matches!(file.media_type, "video/mp4" | "video/webm"),
+        },
     }
 }
 
@@ -348,7 +418,10 @@ fn video_id(torrent: &Torrent, file: &File) -> String {
 
 fn preview(torrent: &Torrent, base: Base<'_>) -> MetaPreview {
     MetaPreview {
-        id: format!("{ID_PREFIX}{}", torrent.id),
+        id: torrent
+            .imdb_id
+            .clone()
+            .unwrap_or_else(|| format!("{ID_PREFIX}{}", torrent.id)),
         kind: torrent.kind.as_str(),
         name: torrent.display_name().to_owned(),
         genres: torrent.genres.clone(),

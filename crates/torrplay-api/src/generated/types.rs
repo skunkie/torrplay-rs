@@ -235,6 +235,12 @@ pub struct TorrentFileUpload {
         default,
         deserialize_with = "tri_state_serde::deserialize"
     )]
+    pub imdb_id: Option<Option<ImdbId>>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
     pub kind: Option<Option<ConfiguredKind>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retention: Option<CreationRetention>,
@@ -349,6 +355,12 @@ pub struct TorrentCreation {
         default,
         deserialize_with = "tri_state_serde::deserialize"
     )]
+    pub imdb_id: Option<Option<ImdbId>>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
     pub kind: Option<Option<ConfiguredKind>>,
     ///A magnet URI with a BitTorrent v1 or hybrid info hash, at most 8192 characters.
     ///Constraint: maxLength=8192
@@ -379,6 +391,7 @@ impl TorrentCreation {
             description: None,
             desired_state: None,
             genres: None,
+            imdb_id: None,
             kind: None,
             retention: None,
             storage_mode: None,
@@ -442,6 +455,28 @@ impl TorrentCreationBuilder {
     #[must_use]
     pub fn genres(mut self, genres: Genres) -> Self {
         self.value.genres = Some(genres);
+        self
+    }
+    #[doc = concat!(
+        "Set the optional nullable `", "imdb_id", "` request field to a value."
+    )]
+    #[must_use]
+    pub fn imdb_id(mut self, imdb_id: ImdbId) -> Self {
+        self.value.imdb_id = Some(Some(imdb_id));
+        self
+    }
+    #[doc = concat!(
+        "Set the optional nullable `", "imdb_id", "` request field to JSON null."
+    )]
+    #[must_use]
+    pub fn imdb_id_null(mut self) -> Self {
+        self.value.imdb_id = Some(None);
+        self
+    }
+    #[doc = concat!("Omit the optional nullable `", "imdb_id", "` request field.")]
+    #[must_use]
+    pub fn imdb_id_absent(mut self) -> Self {
+        self.value.imdb_id = None;
         self
     }
     #[doc = concat!(
@@ -640,6 +675,12 @@ pub struct TorrentConfigurationPatch {
         default,
         deserialize_with = "tri_state_serde::deserialize"
     )]
+    pub imdb_id: Option<Option<ImdbId>>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
     pub kind: Option<Option<ConfiguredKind>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retention: Option<Retention>,
@@ -665,6 +706,7 @@ pub struct TorrentConfiguration {
     pub description: Option<Description>,
     pub desired_state: DesiredState,
     pub genres: Genres,
+    pub imdb_id: Option<ImdbId>,
     pub kind: Option<ConfiguredKind>,
     ///Links from a configuration.
     pub links: TorrentConfigurationLinks,
@@ -726,6 +768,7 @@ pub struct Torrent {
     pub genres: Genres,
     ///The torrent's opaque, stable ID.
     pub id: String,
+    pub imdb_id: Option<ImdbId>,
     ///The torrent's protocol identifiers.
     ///Constraint: minItems=1
     pub info_hashes: Vec<InfoHash>,
@@ -914,6 +957,8 @@ impl AsRef<str> for ObservedState {
         self.as_str()
     }
 }
+///The title's IMDb ID, tt and 7 to 10 digits, which links the torrent to that title in catalogs keyed by it, such as Stremio's Cinemeta, or null if unknown. It defaults to null.
+pub type ImdbId = String;
 ///A plain-text synopsis, or null. Normalized on write to 1 to 4096 characters, keeping line feeds and tabs and no other control characters. It defaults to null.
 pub type Description = String;
 ///A page of a profile's title progress.

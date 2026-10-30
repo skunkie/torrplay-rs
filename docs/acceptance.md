@@ -359,6 +359,9 @@ These scenarios accept the [Stremio addon](stremio.md).
 | STM-06 | Stream a play URL with ranges and `HEAD`, and with a wrong file name | The native content behavior; `404` |
 | STM-07 | Request with an `api` token in the path, a playback token for one torrent, and from a public address without a password | `401`, `403 insufficient-scope`, and `403 forbidden` |
 | STM-08 | Read any resource, and send `POST` to one | `Access-Control-Allow-Origin: *`; `405` |
+| STM-09 | Link a movie and a season pack to IMDb IDs, list the catalogs, and read the manifest | The linked torrents are listed by their `tt` IDs; the manifest's `idPrefixes` are `torrplay:` and `tt`, with `meta` for `torrplay:` only |
+| STM-10 | Read the streams of the movie's `tt` ID, an episode's `tt:season:episode`, an episode the pack lacks, and an unlinked `tt` ID | Each of the movie's video files; the pack's file for that episode; none; none |
+| STM-11 | Set `imdb_id` at creation and by merge patch, clear it with `null`, and send `tt123` and `nm0000001` | Stored and shown in the torrent and its configuration, then cleared; `422 validation-failed` naming `/imdb_id` |
 
 ### DLNA
 

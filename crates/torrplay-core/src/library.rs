@@ -65,12 +65,22 @@ pub struct Library {
     pub kind: Option<Kind>,
     /// The release year, within [`YEARS`].
     pub year: Option<u16>,
+    /// The title's IMDb ID; see [`is_imdb_id`].
+    pub imdb_id: Option<String>,
     /// A plain-text synopsis.
     pub description: Option<String>,
     /// The categories, distinct and in the order given.
     pub categories: Vec<String>,
     /// The genres, distinct and in the order given.
     pub genres: Vec<String>,
+}
+
+/// Returns whether `text` is an IMDb title ID: `tt` and 7 to 10 ASCII
+/// digits.
+pub fn is_imdb_id(text: &str) -> bool {
+    text.strip_prefix("tt").is_some_and(|digits| {
+        (7..=10).contains(&digits.len()) && digits.bytes().all(|byte| byte.is_ascii_digit())
+    })
 }
 
 /// Why text cannot be a library member.

@@ -43,6 +43,7 @@ fn through(schema: &str, example: &Value) -> Option<Result<Value, String>> {
         "Genres" => round_trip::<api::Genres>(example),
         "Health" => round_trip::<api::Health>(example),
         "ImageMediaType" => round_trip::<api::ImageMediaType>(example),
+        "ImdbId" => round_trip::<Option<api::ImdbId>>(example),
         "LogLevel" => round_trip::<api::LogLevel>(example),
         "LogRecord" => round_trip::<api::LogRecord>(example),
         "LogRecordPage" => round_trip::<api::LogRecordPage>(example),

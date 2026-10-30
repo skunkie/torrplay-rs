@@ -28,6 +28,8 @@ use torrplay_store::{
     StoredTemporaryProgress, StoredTitleProgress, StoredTorrent,
 };
 
+/// Turns a database back into version 16, before IMDb IDs.
+const UNDO_VERSION_17: &str = "ALTER TABLE torrents DROP COLUMN imdb_id;";
 /// Turns a database back into version 15, before the metrics scope, keeping
 /// the access tokens.
 const UNDO_VERSION_16: &str = "CREATE TABLE access_tokens_v15 (
@@ -266,7 +268,7 @@ async fn a_newer_schema_is_refused() {
         Store::open(dir.path()),
         Err(StoreError::TooNew {
             found: 99,
-            supported: 16
+            supported: 17
         })
     ));
 }
@@ -372,7 +374,7 @@ async fn a_version_1_database_is_copied_then_migrated() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  DROP TABLE settings;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
@@ -411,7 +413,7 @@ async fn a_version_1_database_is_copied_then_migrated() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  DROP TABLE settings;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
@@ -449,7 +451,7 @@ async fn settings_from_version_2_keep_their_values_and_lack_the_cache_capacity()
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  ALTER TABLE settings DROP COLUMN cache_capacity_bytes;
                  ALTER TABLE settings DROP COLUMN background_downloads;
@@ -503,7 +505,7 @@ async fn settings_from_version_5_lack_the_background_downloads_switch() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  ALTER TABLE settings DROP COLUMN background_downloads;
                  PRAGMA user_version = 5;",
@@ -534,7 +536,7 @@ async fn torrents_from_version_3_use_memory_storage() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7}
                  ALTER TABLE settings DROP COLUMN background_downloads;
                  ALTER TABLE torrents DROP COLUMN desired_storage_mode;
@@ -681,6 +683,7 @@ fn library() -> Library {
         title: Some("Example Film".into()),
         kind: Some(Kind::Movie),
         year: Some(2026),
+        imdb_id: Some("tt0133093".into()),
         description: Some("Line one.\n\tLine two.".into()),
         categories: vec!["Movies".into(), "Kids".into()],
         genres: vec!["Comedy".into(), "Animation".into()],
@@ -788,7 +791,7 @@ async fn torrents_from_version_6_have_empty_library_members() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
+                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8}
                  {UNDO_VERSION_7} PRAGMA user_version = 6;"
             ))
             .unwrap();
@@ -812,7 +815,7 @@ async fn profiles_from_version_12_are_people_and_one_device_profile_is_kept() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} PRAGMA user_version = 12;"
+                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} PRAGMA user_version = 12;"
             ))
             .unwrap();
     }
@@ -860,7 +863,7 @@ async fn title_progress_is_stored_apart_from_torrents() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} PRAGMA user_version = 13;"
+                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} PRAGMA user_version = 13;"
             ))
             .unwrap();
     }
@@ -1117,7 +1120,7 @@ async fn a_version_7_database_gains_empty_profiles() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8} PRAGMA user_version = 7;"
+                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} {UNDO_VERSION_8} PRAGMA user_version = 7;"
             ))
             .unwrap();
     }
@@ -1193,7 +1196,9 @@ async fn a_version_15_database_keeps_its_tokens_and_takes_metrics_tokens() {
     {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
-            .execute_batch(&format!("{UNDO_VERSION_16} PRAGMA user_version = 15;"))
+            .execute_batch(&format!(
+                "{UNDO_VERSION_17} {UNDO_VERSION_16} PRAGMA user_version = 15;"
+            ))
             .unwrap();
         let refused = connection.execute(
             "UPDATE access_tokens SET scope = 'metrics' WHERE id = ?1",
@@ -1313,7 +1318,7 @@ async fn a_version_8_database_gains_credentials_without_a_password() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} PRAGMA user_version = 8;"
+                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} {UNDO_VERSION_9} PRAGMA user_version = 8;"
             ))
             .unwrap();
     }
@@ -1354,7 +1359,7 @@ async fn a_version_9_database_gains_the_media_server_switch_unset() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} PRAGMA user_version = 9;"
+                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} {UNDO_VERSION_10} PRAGMA user_version = 9;"
             ))
             .unwrap();
     }
@@ -1427,7 +1432,7 @@ async fn a_version_10_database_gains_the_new_settings_unset() {
         let connection = rusqlite::Connection::open(dir.path().join(FILE_NAME)).unwrap();
         connection
             .execute_batch(&format!(
-                "{UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} PRAGMA user_version = 10;"
+                "{UNDO_VERSION_17} {UNDO_VERSION_16} {UNDO_VERSION_15} {UNDO_VERSION_14} {UNDO_VERSION_13} {UNDO_VERSION_12} {UNDO_VERSION_11} PRAGMA user_version = 10;"
             ))
             .unwrap();
     }

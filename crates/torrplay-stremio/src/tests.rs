@@ -28,6 +28,7 @@ fn torrent(id: &str, name: &str, kind: Kind, genres: &[&str], files: Vec<File>) 
         title: None,
         name: name.into(),
         kind,
+        imdb_id: None,
         genres: genres.iter().map(|&genre| genre.to_owned()).collect(),
         has_poster: false,
         files,
@@ -263,7 +264,18 @@ fn streams_carry_the_token_the_file_name_and_their_hints() {
 #[test]
 fn the_manifest_serializes_in_stremios_names() {
     let manifest = serde_json::to_value(manifest("1.2.3", vec!["Drama".into()])).unwrap();
-    assert_eq!(manifest["idPrefixes"], serde_json::json!(["torrplay:"]));
+    assert_eq!(
+        manifest["idPrefixes"],
+        serde_json::json!(["torrplay:", "tt"])
+    );
+    assert_eq!(
+        manifest["resources"],
+        serde_json::json!([
+            "catalog",
+            { "name": "meta", "types": ["movie", "series"], "idPrefixes": ["torrplay:"] },
+            { "name": "stream", "types": ["movie", "series"], "idPrefixes": ["torrplay:", "tt"] },
+        ])
+    );
     assert_eq!(manifest["catalogs"][0]["type"], "movie");
     assert_eq!(manifest["catalogs"][1]["id"], "torrplay-series");
     assert_eq!(
@@ -280,4 +292,99 @@ fn the_manifest_serializes_in_stremios_names() {
         stream["behaviorHints"],
         serde_json::json!({ "filename": "part1.webm", "bingeGroup": "torrplay-trr_c" })
     );
+}
+
+/// A library with two torrents of one IMDb movie and a season pack of an
+/// IMDb series.
+fn linked() -> Library {
+    let mut library = library();
+    let mut copy = torrent(
+        "trr_m2",
+        "Big.Buck.Bunny.720p",
+        Kind::Movie,
+        &[],
+        vec![file("fil_1", "bbb.mp4", "video/mp4", None)],
+    );
+    copy.imdb_id = Some("tt1254207".into());
+    library.torrents.insert(0, copy);
+    for torrent in &mut library.torrents {
+        match torrent.id.as_str() {
+            "trr_c" => torrent.imdb_id = Some("tt1254207".into()),
+            "trr_a" => torrent.imdb_id = Some("tt0944947".into()),
+            _ => {}
+        }
+    }
+    library
+}
+
+#[test]
+fn linked_torrents_are_listed_once_by_their_imdb_id() {
+    let library = linked();
+    let movies = library.catalog(Kind::Movie, &Extra::default(), BASE);
+    assert_eq!(
+        ids(&movies),
+        ["tt1254207", "torrplay:trr_b"],
+        "the newest torrent of a title stands for it"
+    );
+    assert_eq!(movies[0].name, "Big.Buck.Bunny.720p");
+    let series = library.catalog(Kind::Series, &Extra::default(), BASE);
+    assert_eq!(ids(&series), ["tt0944947", "torrplay:trr_d"]);
+    assert!(
+        library.meta("torrplay:trr_a", BASE).is_some(),
+        "its own ID still answers"
+    );
+    assert_eq!(
+        library.meta("tt0944947", BASE),
+        None,
+        "Cinemeta's to answer"
+    );
+}
+
+#[test]
+fn imdb_ids_stream_the_linked_files() {
+    let library = linked();
+    let titles = |id: &str| {
+        library
+            .streams(id, BASE)
+            .into_iter()
+            .map(|stream| stream.title)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        titles("tt1254207"),
+        [
+            "Big.Buck.Bunny.720p\nbbb.mp4",
+            "Big Buck Bunny\npart1.webm",
+            "Big Buck Bunny\npart2.webm"
+        ],
+        "every movie torrent's files, newest torrent first"
+    );
+    assert_eq!(titles("tt0944947:1:2"), ["Show.S01\nShow.S01E02.mp4"]);
+    assert!(
+        titles("tt0944947:1:9").is_empty(),
+        "an episode the pack lacks"
+    );
+    assert!(
+        titles("tt0944947").is_empty(),
+        "a series has no movie streams"
+    );
+    assert!(
+        titles("tt1254207:1:1").is_empty(),
+        "a movie has no episodes"
+    );
+    for malformed in [
+        "tt0944947:1",
+        "tt0944947:a:2",
+        "tt0944947:1:2:3",
+        "tt9999999",
+    ] {
+        assert!(titles(malformed).is_empty(), "{malformed}");
+    }
+    let stream = &library.streams("tt0944947:1:1", BASE)[0];
+    assert!(
+        stream
+            .url
+            .ends_with("/stremio/play/trr_a/fil_e1/Show.S01E01.mp4")
+    );
+    assert_eq!(stream.behavior_hints.binge_group, "torrplay-trr_a");
 }
