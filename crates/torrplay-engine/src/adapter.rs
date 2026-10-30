@@ -1559,11 +1559,13 @@ impl Engine for LibrqbitEngine {
                 Ok(Inspection {
                     info_hash: inspected.info_hash,
                     metadata: Some(Arc::new(inspected.metadata)),
+                    trackers: inspected.trackers,
                 })
             }
             Source::MagnetUri(uri) => Ok(Inspection {
                 info_hash: inspect::magnet_uri(uri)?,
                 metadata: None,
+                trackers: inspect::magnet_trackers(uri),
             }),
         }
     }

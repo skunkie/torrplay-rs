@@ -49,7 +49,8 @@ document that schedules it.
 | Listing versions and conditional listing requests | `facets.version`, `ETag` | Verified | SRC-06, SRC-07 |
 | Title, categories, genres, kind, year, and description | `title`, `category` | Verified | LIB-01 to LIB-05, LIB-09, LIB-10 |
 | Posters uploaded and served by the server | `poster` URL or data URI | Verified | LIB-07 to LIB-10 |
-| Resolve a torrent from a URL without storing it | `POST /api/v1/torrent-resolutions` | Deferred | Fetching client-supplied URLs needs an outbound request policy first |
+| Preview a torrent file without adding it | `POST /api/v1/torrent-resolutions` | Verified | API-24, `torrent_previews`; at `POST /api/v1/torrent-previews` |
+| Preview a torrent from a URL or a magnet URI | `POST /api/v1/torrent-resolutions` | Deferred | A URL needs an outbound request policy first; a magnet URI's metadata comes from peers |
 | Back up and restore torrents and posters | `/api/v1/torrents/backup`, `/restore` | Deferred | After library organization |
 | Posters and metadata from TheTVDB | `internal/metadata` | Deferred | Needs credentials and a provider decision |
 

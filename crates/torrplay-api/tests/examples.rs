@@ -87,6 +87,8 @@ fn through(schema: &str, example: &Value) -> Option<Result<Value, String>> {
         "TorrentFile" => round_trip::<api::TorrentFile>(example),
         "TorrentFilePage" => round_trip::<api::TorrentFilePage>(example),
         "TorrentFileUpload" => round_trip::<api::TorrentFileUpload>(example),
+        "TorrentPreviewUpload" => round_trip::<api::TorrentPreviewUpload>(example),
+        "TorrentPreview" => round_trip::<api::TorrentPreview>(example),
         "TorrentKind" => round_trip::<api::TorrentKind>(example),
         "TorrentPage" => round_trip::<api::TorrentPage>(example),
         "TorrentStatistics" => round_trip::<api::TorrentStatistics>(example),

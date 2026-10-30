@@ -56,6 +56,9 @@ pub struct Inspection {
     pub info_hash: InfoHashV1,
     /// The metadata of a torrent file; `None` for a magnet URI.
     pub metadata: Option<Arc<ReportedMetadata>>,
+    /// The trackers' announce URLs, in the source's order and without
+    /// duplicates. They may carry a private tracker's passkey.
+    pub trackers: Vec<String>,
 }
 
 /// A source the engine cannot use.

@@ -20,7 +20,7 @@ use torrplay_core::engine::{Engine, EngineError, Source, SourceRejection};
 use torrplay_core::id::InfoHashV1;
 use torrplay_core::library::{self as core_library, Kind, Library, TextError};
 use torrplay_core::lifecycle::{DesiredState, EntityTag, ObservedState, Retention, StorageMode};
-use torrplay_core::metadata::Metadata;
+use torrplay_core::metadata::{Metadata, ReportedMetadata};
 use torrplay_core::pagination::{
     CURSOR_PARAMETER, Matched, PAGE_SIZE_PARAMETER, PageRequest, SearchSortKey, TorrentFilter,
     TorrentSortKey, paginate,
@@ -387,21 +387,8 @@ pub(crate) async fn create<E: Engine>(
             creation_from_json(&bytes)?
         }
         Some(FORM_DATA) => {
-            let boundary = media_type
-                .as_ref()
-                .and_then(|media| media.parameter("boundary"))
-                .ok_or_else(|| {
-                    Problem::new(ProblemType::MalformedRequest, "The form has no boundary.")
-                })?
-                .to_owned();
-            let bytes = read_limited(
-                &headers,
-                body,
-                FORM_LIMIT_BYTES,
-                TORRENT_FILE_LIMIT_BYTES as u64,
-                app.body_timeout(),
-            )
-            .await?;
+            let boundary = form_boundary(media_type.as_ref())?;
+            let bytes = read_form(&app, &headers, body).await?;
             creation_from_form(&bytes, &boundary)?
         }
         _ => {
@@ -424,16 +411,7 @@ pub(crate) async fn create<E: Engine>(
         .map_err(|error| source_problem(error, &source))?;
     let metadata = inspection
         .metadata
-        .map(|reported| {
-            Metadata::identify(&reported)
-                .map(Arc::new)
-                .map_err(|error| {
-                    Problem::invalid_body(vec![InvalidValue::pointer(
-                        source.pointer(),
-                        error.to_string(),
-                    )])
-                })
-        })
+        .map(|reported| identify(&reported, &source).map(Arc::new))
         .transpose()?;
     // Room is made before the lane is taken, since deleting takes it too; a
     // duplicate needs none.
@@ -609,7 +587,53 @@ fn stored(record: &TorrentRecord, source: &Source) -> StoredTorrent {
 
 /// Maps an engine failure about a source, naming the request member that
 /// carried an invalid one.
-fn source_problem(error: EngineError, source: &Source) -> Problem {
+/// The boundary of a multipart form's media type.
+pub(crate) fn form_boundary(media_type: Option<&MediaType>) -> Result<String, Problem> {
+    media_type
+        .and_then(|media| media.parameter("boundary"))
+        .map(str::to_owned)
+        .ok_or_else(|| Problem::new(ProblemType::MalformedRequest, "The form has no boundary."))
+}
+
+/// Reads a multipart form that carries a torrent file, within its limits.
+pub(crate) async fn read_form<E: Engine>(
+    app: &App<E>,
+    headers: &HeaderMap,
+    body: Body,
+) -> Result<Bytes, Problem> {
+    read_limited(
+        headers,
+        body,
+        FORM_LIMIT_BYTES,
+        TORRENT_FILE_LIMIT_BYTES as u64,
+        app.body_timeout(),
+    )
+    .await
+}
+
+/// A torrent file part, refused when it exceeds the limit.
+pub(crate) fn torrent_file_part(data: Bytes) -> Result<Bytes, Problem> {
+    if data.len() > TORRENT_FILE_LIMIT_BYTES {
+        return Err(Problem::new(
+            ProblemType::ContentTooLarge,
+            format!("The torrent file exceeds {TORRENT_FILE_LIMIT_BYTES} bytes."),
+        ));
+    }
+    Ok(data)
+}
+
+/// Identifies a source's metadata, refusing metadata the server cannot serve
+/// as an invalid source.
+pub(crate) fn identify(reported: &ReportedMetadata, source: &Source) -> Result<Metadata, Problem> {
+    Metadata::identify(reported).map_err(|error| {
+        Problem::invalid_body(vec![InvalidValue::pointer(
+            source.pointer(),
+            error.to_string(),
+        )])
+    })
+}
+
+pub(crate) fn source_problem(error: EngineError, source: &Source) -> Problem {
     match error {
         EngineError::Rejected(SourceRejection::Invalid { detail }) => {
             Problem::invalid_body(vec![InvalidValue::pointer(source.pointer(), detail)])
@@ -809,13 +833,7 @@ fn creation_from_form(bytes: &Bytes, boundary: &str) -> Result<Creation, Problem
         seen.push(part.name.clone());
         match part.name.as_str() {
             "torrent_file" => {
-                if part.data.len() > TORRENT_FILE_LIMIT_BYTES {
-                    return Err(Problem::new(
-                        ProblemType::ContentTooLarge,
-                        format!("The torrent file exceeds {TORRENT_FILE_LIMIT_BYTES} bytes."),
-                    ));
-                }
-                torrent_file = Some(part.data);
+                torrent_file = Some(torrent_file_part(part.data)?);
             }
             "desired_state" => {
                 let value = Value::String(String::from_utf8_lossy(&part.data).into_owned());

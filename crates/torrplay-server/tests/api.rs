@@ -285,6 +285,22 @@ fn series() -> FixtureSpec {
     }
 }
 
+/// A preview request with the given form parts.
+fn preview(parts: &[(&str, Option<&str>, Vec<u8>)]) -> http::Request<Vec<u8>> {
+    let mut request = form(parts);
+    *request.uri_mut() = "/api/v1/torrent-previews".parse().unwrap();
+    request
+}
+
+/// A preview request of `torrent_file`.
+fn preview_of(torrent_file: &[u8]) -> http::Request<Vec<u8>> {
+    preview(&[(
+        "torrent_file",
+        Some("application/x-bittorrent"),
+        torrent_file.to_vec(),
+    )])
+}
+
 /// The IDs of a torrent's files by name.
 async fn file_ids(server: &TestServer, torrent: &str) -> std::collections::HashMap<String, String> {
     files_of(server, torrent)
@@ -969,6 +985,177 @@ mod scenario {
         let kept = server.get(&format!("{temporary_path}/metainfo")).await;
         assert_eq!(kept.status, StatusCode::OK);
         assert_eq!(kept.body, temporary.metainfo().bytes);
+        server.stop().await;
+    }
+
+    /// API-24: a preview reports what adding a torrent file would create,
+    /// and adds nothing.
+    pub async fn torrent_previews() {
+        let server = TestServer::start().await;
+        let spec = catalog::multi_boundary();
+        let previewed = server.send(preview_of(&spec.metainfo().bytes)).await;
+        assert_eq!(previewed.status, StatusCode::OK);
+        assert_eq!(previewed.header(header::CACHE_CONTROL), Some("no-store"));
+        let body = previewed.json();
+        assert_eq!(
+            body["info_hashes"][0]["value"],
+            hex(&spec.metainfo().info_hash)
+        );
+        assert_eq!(body["name"], "multi-boundary");
+        assert_eq!(body["file_count"], 5);
+        assert_eq!(body["files_truncated"], false);
+        assert_eq!(body["trackers"], json!([]));
+        assert_eq!(body["links"], json!({}), "the library lacks it");
+        assert!(
+            listed_ids(&server, "/api/v1/torrents").await.is_empty(),
+            "nothing is added"
+        );
+
+        // Adding it gives its files the previewed IDs, and a preview then
+        // links the torrent.
+        let created = server.upload(&spec.metainfo().bytes, None).await.json();
+        let path = created["links"]["self"].as_str().unwrap();
+        let listed: Vec<Value> = files_of(&server, path)
+            .await
+            .iter()
+            .map(|file| {
+                json!([
+                    file["id"],
+                    file["path"],
+                    file["size_bytes"],
+                    file["media_type"]
+                ])
+            })
+            .collect();
+        let previewed: Vec<Value> = body["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|file| {
+                json!([
+                    file["id"],
+                    file["path"],
+                    file["size_bytes"],
+                    file["media_type"]
+                ])
+            })
+            .collect();
+        assert_eq!(previewed, listed);
+        let again = server.send(preview_of(&spec.metainfo().bytes)).await.json();
+        assert_eq!(again["links"]["torrent"], path);
+
+        // Trackers keep their scheme, host, and port only.
+        let announcing = catalog::single_small();
+        let announce = "http://tracker.test:8080/announce?passkey=secret";
+        server.engine.add_announcing(&announcing, announce);
+        let previewed = server
+            .send(preview_of(&announcing.metainfo_announcing(announce).bytes))
+            .await;
+        assert_eq!(
+            previewed.json()["trackers"],
+            json!(["http://tracker.test:8080"])
+        );
+        assert!(
+            !String::from_utf8_lossy(&previewed.body).contains("secret"),
+            "the passkey stays out"
+        );
+
+        // A torrent with more files than a preview lists.
+        let many = FixtureSpec {
+            id: "previewed-many".into(),
+            torrent_name: "Many".into(),
+            seed: 77,
+            piece_length: 16 * 1024,
+            layout: torrplay_fixtures::Layout::MultiFile {
+                files: (0..1001)
+                    .map(|n| torrplay_fixtures::FileSpec {
+                        path: vec![format!("{n:04}.txt")],
+                        size_bytes: 1,
+                    })
+                    .collect(),
+            },
+        };
+        server.engine.add_fixture(&many);
+        let truncated = server.send(preview_of(&many.metainfo().bytes)).await.json();
+        assert_eq!(truncated["file_count"], 1001);
+        assert_eq!(truncated["files"].as_array().unwrap().len(), 1000);
+        assert_eq!(truncated["files_truncated"], true);
+
+        // Refusals.
+        let invalid = server.send(preview_of(b"not a torrent file")).await;
+        assert_problem(
+            &invalid,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation-failed",
+        );
+        assert_eq!(invalid.json()["errors"][0]["pointer"], "/torrent_file");
+        let unsupported = server
+            .send(preview_of(&catalog::v2_only().v2_only_metainfo()))
+            .await;
+        assert_problem(
+            &unsupported,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "unsupported-torrent",
+        );
+        let extra = server
+            .send_unchecked(preview(&[
+                (
+                    "torrent_file",
+                    Some("application/x-bittorrent"),
+                    spec.metainfo().bytes.clone(),
+                ),
+                ("desired_state", None, b"paused".to_vec()),
+            ]))
+            .await;
+        assert_problem(
+            &extra,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation-failed",
+        );
+        let missing = server.send_unchecked(preview(&[])).await;
+        assert_problem(
+            &missing,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation-failed",
+        );
+        let json_body = server
+            .send_unchecked(json_request(
+                Method::POST,
+                "/api/v1/torrent-previews",
+                &json!({ "magnet_uri": magnet(&spec) }),
+            ))
+            .await;
+        assert_problem(
+            &json_body,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported-media-type",
+        );
+        let mut malformed = preview_of(&spec.metainfo().bytes);
+        malformed.headers_mut().insert(
+            header::CONTENT_TYPE,
+            http::HeaderValue::from_static("multipart/form-data"),
+        );
+        assert_problem(
+            &server.send_unchecked(malformed).await,
+            StatusCode::BAD_REQUEST,
+            "malformed-request",
+        );
+        server
+            .engine
+            .set_readiness(Readiness::Unavailable { retry_after: None });
+        assert_problem(
+            &server.send(preview_of(&spec.metainfo().bytes)).await,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "engine-unavailable",
+        );
+        server.engine.set_readiness(Readiness::Ready);
+        server.engine.inject_fault(Some("the engine failed"));
+        assert_problem(
+            &server.send(preview_of(&spec.metainfo().bytes)).await,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal-error",
+        );
+        server.engine.inject_fault(None);
         server.stop().await;
     }
 
@@ -2328,6 +2515,24 @@ mod scenario {
             )
             .await;
         assert_problem(&upload, StatusCode::PAYLOAD_TOO_LARGE, "content-too-large");
+        let mut form = format!(
+            "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"torrent_file\"\r\n\r\n"
+        )
+        .into_bytes();
+        form.resize(form.len() + 11 * 1024 * 1024, b'd');
+        let previewed = server
+            .send_before_body_ends(
+                Method::POST,
+                "/api/v1/torrent-previews",
+                &[("Content-Type", &form_type), chunked],
+                chunk(form),
+            )
+            .await;
+        assert_problem(
+            &previewed,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "content-too-large",
+        );
         // A declared length over the limit is refused before any body.
         let declared = server
             .send_before_body_ends(
@@ -2389,7 +2594,14 @@ mod scenario {
         );
         let partial = br#"{"desired_state":"#.to_vec();
         let length = (partial.len() + 10).to_string();
+        let form_type = format!("multipart/form-data; boundary={BOUNDARY}");
         let requests = [
+            (
+                Method::POST,
+                "/api/v1/torrent-previews".to_owned(),
+                form_type.as_str(),
+                None,
+            ),
             (
                 Method::POST,
                 "/api/v1/torrents".to_owned(),
@@ -7233,6 +7445,7 @@ scenarios!(
     upload_creation,
     duplicates,
     metainfo,
+    torrent_previews,
     rejected_sources,
     invalid_creation_bodies,
     torrent_pages,
