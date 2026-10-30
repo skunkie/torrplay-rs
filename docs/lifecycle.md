@@ -843,8 +843,8 @@ televisions, and other computers on the local network reach it:
   take the application over. A local network is loopback, RFC 1918 and
   link-local IPv4, unique-local and link-local IPv6, and the shared address
   space `100.64.0.0/10`, which carrier-grade NAT and overlay networks such
-  as Tailscale use. The entry point, the OpenAPI document, the API
-  reference, and the health checks answer everyone. Once a password is set,
+  as Tailscale use. The entry point, the API catalog, the OpenAPI
+  document, the API reference, and the health checks answer everyone. Once a password is set,
   every client may connect and every request needs its credential.
 - Behind a reverse proxy, the client's address is the proxy's, so a proxy
   on this computer makes every client local: set a password before

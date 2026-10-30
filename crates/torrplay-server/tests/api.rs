@@ -7304,7 +7304,7 @@ mod scenario {
         server.stop().await;
     }
 
-    /// AUT-10: failed writes change no credential.
+    /// AUT-13: failed writes change no credential.
     pub async fn authentication_store_failures() {
         let server = TestServer::start().await;
         server.app.store().fail_writes(true);

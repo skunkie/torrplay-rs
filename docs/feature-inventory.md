@@ -112,7 +112,7 @@ document that schedules it.
 | Scoped access tokens | `POST /api/v1/tokens` | Verified | `api` and `playback` access tokens; AUT-05 |
 | A playback token for external players | `playback_token` | Verified | `POST /api/v1/playback-tokens`; AUT-06 |
 | HTTP Basic authentication | `basicAuth` | Excluded | Bearer tokens only, so browsers never cache the password |
-| Disabling authentication through the environment | `TORRPLAY_DISABLE_AUTH` | Excluded | `torrplay password remove` on the stopped application instead; AUT-11 |
+| Disabling authentication through the environment | `TORRPLAY_DISABLE_AUTH` | Excluded | `torrplay password remove` on the stopped application instead; AUT-14 |
 
 ## Integrations
 
