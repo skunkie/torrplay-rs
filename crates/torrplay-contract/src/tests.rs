@@ -625,3 +625,107 @@ fn an_unknown_path_is_reported() {
         }]
     );
 }
+
+/// The problem types the API conventions define, with their statuses.
+fn problem_statuses() -> Vec<(String, u16)> {
+    include_str!("../../../docs/api-conventions.md")
+        .lines()
+        .filter_map(|line| {
+            let mut cells = line.split('|').map(str::trim).skip(1);
+            let name = cells.next()?.strip_prefix('`')?.strip_suffix('`')?;
+            let status = cells.next()?.parse().ok()?;
+            Some((name.to_owned(), status))
+        })
+        .collect()
+}
+
+/// The statuses an operation's prose names: its summary and description, its
+/// parameters', and its request body's, as `receives` or `answers` a status
+/// or as a problem type.
+fn statuses_named(contract: &Contract, operation: &Operation) -> BTreeSet<u16> {
+    let item_pointer = operation
+        .pointer
+        .rsplit_once('/')
+        .map(|(item, _)| item)
+        .unwrap_or_default();
+    let mut texts = Vec::new();
+    let node = contract.document.pointer(&operation.pointer).unwrap();
+    for key in ["summary", "description"] {
+        texts.extend(node.get(key).and_then(Value::as_str));
+    }
+    for list in [
+        format!("{item_pointer}/parameters"),
+        format!("{}/parameters", operation.pointer),
+    ] {
+        let count = contract
+            .document
+            .pointer(&list)
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        for index in 0..count {
+            let (_, parameter) = contract.resolve(&format!("{list}/{index}")).unwrap();
+            texts.extend(parameter.get("description").and_then(Value::as_str));
+        }
+    }
+    if let Ok((_, body)) = contract.resolve(&format!("{}/requestBody", operation.pointer)) {
+        texts.extend(body.get("description").and_then(Value::as_str));
+    }
+    let problems = problem_statuses();
+    let mut named = BTreeSet::new();
+    for text in texts {
+        let words: Vec<&str> = text
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+            .filter(|word| !word.is_empty())
+            .collect();
+        for pair in words.windows(2) {
+            if ["receives", "receive", "answers", "answer"].contains(&pair[0])
+                && let Ok(status) = pair[1].parse()
+            {
+                named.insert(status);
+            }
+        }
+        for (name, status) in &problems {
+            if words.contains(&name.as_str()) {
+                named.insert(*status);
+            }
+        }
+    }
+    named
+}
+
+/// API-26.
+#[test]
+fn prose_names_only_documented_responses() {
+    let contract = fresh();
+    let documented = contract.documented_responses();
+    let conventional = |operation: &Operation, status: u16| {
+        [405, 406, 421].contains(&status) || (operation.secured && [401, 403].contains(&status))
+    };
+    let named = |id: &str| {
+        let operation = contract
+            .operations
+            .iter()
+            .find(|operation| operation.id == id)
+            .unwrap();
+        statuses_named(&contract, operation)
+    };
+    assert!(
+        named("createTorrent").is_superset(&BTreeSet::from([408, 413])),
+        "a body's limits name their problem types"
+    );
+    assert!(
+        named("updateSettings").is_superset(&BTreeSet::from([412, 428])),
+        "If-Match names the statuses a request without it or with a stale one receives"
+    );
+    let mut undocumented = Vec::new();
+    for operation in &contract.operations {
+        for status in statuses_named(&contract, operation) {
+            if !documented.contains(&(operation.id.clone(), status))
+                && !conventional(operation, status)
+            {
+                undocumented.push(format!("{} names {status}", operation.id));
+            }
+        }
+    }
+    assert!(undocumented.is_empty(), "{undocumented:#?}");
+}

@@ -7373,105 +7373,192 @@ mod scenario {
         server.stop().await;
     }
 
-    /// API-25: every operation answers each global condition with a
-    /// response the contract documents for it, and no mutation succeeds
-    /// without its credential or with a malformed body.
+    /// API-25: every operation answers each server state, alone and with
+    /// each request fault, with a response the contract documents for it;
+    /// the contract's example bodies are accepted, and credentials, media
+    /// types, and bodies are refused where they must be.
     pub async fn fault_matrix() {
         let contract = torrplay_contract::contract().unwrap();
         let mut findings = Vec::new();
-        for fault in Fault::ALL {
-            let mut server = TestServer::start().await;
-            let mut values = matrix_values(&server).await;
-            let mut secret = None;
-            match fault {
-                Fault::Restoring => {
-                    server = server
-                        .restart_with(torrplay_core::fake::FakeEngine::with_catalog(), false)
-                        .await;
-                }
-                Fault::EngineUnavailable => server
-                    .engine
-                    .set_readiness(Readiness::Unavailable { retry_after: None }),
-                Fault::ShuttingDown => server.app.begin_shutdown(),
-                Fault::NoCredential | Fault::WrongScope => {
+        for state in ServerState::ALL {
+            for fault in RequestFault::ALL {
+                let condition = format!("{state:?}, {fault:?}");
+                let mut server = TestServer::start().await;
+                let mut values = matrix_values(&server).await;
+                let mut secret = None;
+                if matches!(fault, RequestFault::NoCredential | RequestFault::WrongScope) {
                     set_first_password(&server).await;
                     let (id, token) = sign_in(&server, "Prometheus", "metrics").await;
                     values.insert("access_token_id", id);
-                    secret = (fault == Fault::WrongScope).then_some(token);
+                    secret = (fault == RequestFault::WrongScope).then_some(token);
                 }
-                Fault::UnacceptableMediaType | Fault::MalformedBody => {}
-            }
-            let mut requests = contract
-                .example_requests(|name| values.get(name).cloned())
-                .unwrap();
-            // Deletions go last, so the other operations find what they
-            // address, and nested resources go before their parents.
-            requests.sort_by_key(|torrplay_contract::ExampleRequest { request, .. }| {
-                let delete = request.method() == Method::DELETE;
-                let depth = request.uri().path().matches('/').count();
-                (delete, delete.then_some(std::cmp::Reverse(depth)))
-            });
-            for torrplay_contract::ExampleRequest {
-                operation_id: id,
-                mut request,
-                ..
-            } in requests
-            {
-                complete_example(&server, &mut request).await;
-                let headers = request.headers_mut();
-                if let Some(secret) = &secret {
-                    headers.insert(
-                        header::AUTHORIZATION,
-                        format!("Bearer {secret}").parse().unwrap(),
+                match state {
+                    ServerState::Running => {}
+                    ServerState::Restoring => {
+                        server = server
+                            .restart_with(torrplay_core::fake::FakeEngine::with_catalog(), false)
+                            .await;
+                    }
+                    ServerState::EngineUnavailable => server
+                        .engine
+                        .set_readiness(Readiness::Unavailable { retry_after: None }),
+                    ServerState::ShuttingDown => server.app.begin_shutdown(),
+                }
+                let mut requests = contract
+                    .example_requests(|name| values.get(name).cloned())
+                    .unwrap();
+                requests.sort_by_key(|torrplay_contract::ExampleRequest { request, .. }| {
+                    matrix_order(request)
+                });
+                for example in requests {
+                    findings.extend(
+                        send_in_matrix(&server, example, fault, secret.as_deref())
+                            .await
+                            .into_iter()
+                            .map(|finding| format!("{condition}: {finding}")),
                     );
                 }
-                let has_body = headers.contains_key(header::CONTENT_TYPE);
-                match fault {
-                    Fault::UnacceptableMediaType => {
-                        headers.insert(header::ACCEPT, "application/x-unknown".parse().unwrap());
-                    }
-                    Fault::MalformedBody if has_body => *request.body_mut() = b"{".to_vec(),
-                    _ => {}
-                }
-                let mutation = request.method() != Method::GET && request.method() != Method::HEAD;
-                let (exchange, violation) = server.send_reporting(request).await;
-                if let Some(violation) = violation {
-                    findings.push(format!("{fault:?} {id}: {violation}"));
-                }
-                let refused = match fault {
-                    // Signing in needs no credential.
-                    Fault::NoCredential | Fault::WrongScope => {
-                        mutation && id != "createAccessToken"
-                    }
-                    Fault::MalformedBody => has_body,
-                    _ => false,
-                };
-                if refused && exchange.status.is_success() {
-                    findings.push(format!("{fault:?} {id}: answered {}", exchange.status));
-                }
+                server.stop().await;
             }
-            server.stop().await;
         }
         assert!(findings.is_empty(), "{}", findings.join("\n\n"));
     }
 
-    /// A global condition every operation may meet.
+    /// The order the matrix sends requests in: the password and access
+    /// tokens last, so a password set by an example leaves the others
+    /// unchanged, and deletions before them, nested resources before their
+    /// parents, so the other operations find what they address.
+    fn matrix_order(request: &http::Request<Vec<u8>>) -> (bool, bool, std::cmp::Reverse<usize>) {
+        let path = request.uri().path();
+        let credentials =
+            path.starts_with("/api/v1/password") || path.starts_with("/api/v1/access-tokens");
+        let delete = request.method() == Method::DELETE;
+        let depth = if delete { path.matches('/').count() } else { 0 };
+        (credentials, delete, std::cmp::Reverse(depth))
+    }
+
+    /// Sends one example request with `fault` applied, and returns how its
+    /// response falls short.
+    async fn send_in_matrix(
+        server: &TestServer,
+        example: torrplay_contract::ExampleRequest,
+        fault: RequestFault,
+        secret: Option<&str>,
+    ) -> Vec<String> {
+        let torrplay_contract::ExampleRequest {
+            operation_id: id,
+            example: name,
+            secured,
+            mut request,
+        } = example;
+        let media_type = request
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .map(|value| value.to_str().unwrap().to_owned());
+        // The server reads an image's type from its bytes, which the PNG
+        // fixture gives for one type only.
+        if media_type
+            .as_deref()
+            .is_some_and(|media_type| media_type.starts_with("image/") && media_type != "image/png")
+        {
+            return Vec::new();
+        }
+        complete_example(server, &mut request).await;
+        let has_body = media_type.is_some();
+        let headers = request.headers_mut();
+        if let Some(secret) = secret {
+            headers.insert(
+                header::AUTHORIZATION,
+                format!("Bearer {secret}").parse().unwrap(),
+            );
+        }
+        match fault {
+            RequestFault::UnacceptableMediaType => {
+                headers.insert(header::ACCEPT, "application/x-unknown".parse().unwrap());
+            }
+            RequestFault::MalformedBody if has_body => *request.body_mut() = b"{".to_vec(),
+            _ => {}
+        }
+        let head = request.method() == Method::HEAD;
+        let label = match &name {
+            Some(name) => format!("{id} ({name})"),
+            None => id.clone(),
+        };
+        let (exchange, violation) = server.send_reporting(request).await;
+        let mut findings: Vec<String> = violation
+            .into_iter()
+            .map(|violation| format!("{label}: {violation}"))
+            .collect();
+        let status = exchange.status;
+        let expected = match fault {
+            // Changing a password needs one set, which this run has not.
+            RequestFault::None if id == "setPassword" && name.as_deref() == Some("change") => {
+                !status.is_success()
+            }
+            RequestFault::None => {
+                !(name.is_some()
+                    && [
+                        StatusCode::BAD_REQUEST,
+                        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                    ]
+                    .contains(&status))
+            }
+            RequestFault::NoCredential => !secured || status == StatusCode::UNAUTHORIZED,
+            RequestFault::WrongScope => {
+                !secured || METRICS_SCOPE.contains(&id.as_str()) || status == StatusCode::FORBIDDEN
+            }
+            // Only a response without a representation may ignore Accept.
+            RequestFault::UnacceptableMediaType => {
+                !status.is_success() || (!head && exchange.body.is_empty())
+            }
+            RequestFault::MalformedBody => !has_body || !status.is_success(),
+        };
+        if !expected {
+            findings.push(format!("{label}: answered {status}"));
+        }
+        findings
+    }
+
+    /// The operations a metrics access token may use.
+    const METRICS_SCOPE: &[&str] = &[
+        "getMetrics",
+        "getSystem",
+        "getStatistics",
+        "getCacheStatistics",
+    ];
+
+    /// The state of the server a request meets.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum Fault {
+    enum ServerState {
+        Running,
         Restoring,
         EngineUnavailable,
         ShuttingDown,
+    }
+
+    impl ServerState {
+        const ALL: [Self; 4] = [
+            Self::Running,
+            Self::Restoring,
+            Self::EngineUnavailable,
+            Self::ShuttingDown,
+        ];
+    }
+
+    /// What is wrong with a request, if anything.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum RequestFault {
+        None,
         NoCredential,
         WrongScope,
         UnacceptableMediaType,
         MalformedBody,
     }
 
-    impl Fault {
-        const ALL: [Self; 7] = [
-            Self::Restoring,
-            Self::EngineUnavailable,
-            Self::ShuttingDown,
+    impl RequestFault {
+        const ALL: [Self; 5] = [
+            Self::None,
             Self::NoCredential,
             Self::WrongScope,
             Self::UnacceptableMediaType,
@@ -7483,10 +7570,14 @@ mod scenario {
     /// the others take the contract's examples.
     async fn matrix_values(server: &TestServer) -> std::collections::HashMap<&'static str, String> {
         let created = server
-            .upload(&catalog::single_small().metainfo().bytes, None)
+            .upload(&catalog::media_names().metainfo().bytes, None)
             .await;
         let torrent = created.json()["links"]["self"].as_str().unwrap().to_owned();
-        let file = files_of(server, &torrent).await[0]["links"]["self"]
+        let file = files_of(server, &torrent)
+            .await
+            .into_iter()
+            .find(|file| file["path"].as_array().unwrap().last().unwrap() == "video.mp4")
+            .unwrap()["links"]["self"]
             .as_str()
             .unwrap()
             .to_owned();
@@ -7542,7 +7633,11 @@ mod scenario {
             let path = put.uri().to_string();
             assert_eq!(server.send(put).await.status, status, "{path}");
         }
+        // The file's progress makes it an up next entry.
+        let up_next = server.get(&format!("{profile}/up-next")).await.json();
+        let up_next_entry_id = up_next["items"][0]["id"].as_str().unwrap().to_owned();
         [
+            ("up_next_entry_id", up_next_entry_id),
             ("torrent_id", torrent_id),
             ("file_id", file_id),
             (
@@ -7561,7 +7656,7 @@ mod scenario {
     }
 
     /// Fills in what an example request cannot carry: the current ETag for
-    /// `If-Match`, and real bodies for images and forms.
+    /// `If-Match`, and real bodies for PNG images and forms.
     async fn complete_example(server: &TestServer, request: &mut http::Request<Vec<u8>>) {
         if request.headers().contains_key(header::IF_MATCH) {
             let path = request.uri().path().to_owned();
@@ -7575,12 +7670,7 @@ mod scenario {
             .get(header::CONTENT_TYPE)
             .map(|value| value.to_str().unwrap().to_owned());
         match media_type.as_deref() {
-            Some(image) if image.starts_with("image/") => {
-                request
-                    .headers_mut()
-                    .insert(header::CONTENT_TYPE, "image/png".parse().unwrap());
-                *request.body_mut() = PNG.to_vec();
-            }
+            Some("image/png") => *request.body_mut() = PNG.to_vec(),
             Some("multipart/form-data") => {
                 let form = form_request(&catalog::single_small().metainfo().bytes, None);
                 let (parts, body) = form.into_parts();
