@@ -349,42 +349,39 @@ fn multipart_forms_are_checked_part_by_part() {
     let torrent: &[u8] = b"d4:info\xff\xfee";
     contract
         .check_request(&upload(&[
-            ("torrent_file", Some("application/x-bittorrent"), torrent),
+            ("metainfo", Some("application/x-bittorrent"), torrent),
             ("desired_state", None, b"paused"),
         ]))
         .unwrap();
     let found = violations(contract.check_request(&upload(&[
-        ("torrent_file", Some("application/x-bittorrent"), torrent),
+        ("metainfo", Some("application/x-bittorrent"), torrent),
         ("comment", None, b"hello"),
     ])));
     assert!(
         has_invalid_body(&found, "comment"),
         "an unknown part: {found:?}"
     );
-    let found = violations(contract.check_request(&upload(&[(
-        "torrent_file",
-        Some("text/plain"),
-        torrent,
-    )])));
+    let found =
+        violations(contract.check_request(&upload(&[("metainfo", Some("text/plain"), torrent)])));
     assert!(
         has_invalid_body(&found, "text/plain"),
         "a part of the wrong type: {found:?}"
     );
     let found = violations(contract.check_request(&upload(&[("desired_state", None, b"paused")])));
     assert!(
-        has_invalid_body(&found, "torrent_file"),
+        has_invalid_body(&found, "metainfo"),
         "a missing part: {found:?}"
     );
     contract
         .check_request(&upload(&[
-            ("torrent_file", Some("application/x-bittorrent"), torrent),
+            ("metainfo", Some("application/x-bittorrent"), torrent),
             ("categories", None, b"Movies"),
             ("categories", None, b"Kids"),
             ("year", None, b"2026"),
         ]))
         .expect("an array property's parts are its items, and an integer is text");
     let found = violations(contract.check_request(&upload(&[
-        ("torrent_file", Some("application/x-bittorrent"), torrent),
+        ("metainfo", Some("application/x-bittorrent"), torrent),
         ("year", None, b"twenty"),
     ])));
     assert!(

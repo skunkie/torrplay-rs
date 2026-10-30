@@ -263,7 +263,7 @@ impl Running {
 pub fn upload_form(torrent_file: &[u8]) -> (String, Vec<u8>) {
     const BOUNDARY: &str = "torrplay-boundary";
     let mut body = format!(
-        "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"torrent_file\"; \
+        "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"metainfo\"; \
          filename=\"upload.torrent\"\r\nContent-Type: application/x-bittorrent\r\n\r\n"
     )
     .into_bytes();

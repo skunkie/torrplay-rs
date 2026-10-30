@@ -96,18 +96,18 @@ fn torrent_file(bytes: &Bytes, boundary: &str) -> Result<Bytes, Problem> {
     let mut torrent_file = None;
     for part in parts {
         match part.name.as_str() {
-            "torrent_file" if torrent_file.is_some() => {
+            "metainfo" if torrent_file.is_some() => {
                 errors.push(InvalidValue::pointer(
                     pointer(&part.name),
                     "Must appear once.",
                 ));
             }
-            "torrent_file" => torrent_file = Some(torrent_file_part(part.data)?),
+            "metainfo" => torrent_file = Some(torrent_file_part(part.data)?),
             other => errors.push(unknown_member(other)),
         }
     }
     if torrent_file.is_none() {
-        errors.push(InvalidValue::pointer("/torrent_file", "Is required."));
+        errors.push(InvalidValue::pointer("/metainfo", "Is required."));
     }
     match torrent_file {
         Some(file) if errors.is_empty() => Ok(file),

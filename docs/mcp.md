@@ -119,7 +119,7 @@ its field names.
   the server reaches the application by, so a player elsewhere may need
   another host name.
 - `preload_file` takes `torrent_id`, `file_id`, and optionally
-  `offset_bytes` and `ttl_seconds`, with the preload's meanings. It
+  `offset_bytes` and `expires_in_seconds`, with the preload's meanings. It
   returns the file's preload that is queued, downloading, or ready with
   the same offset, or else creates one, so calling it again reports
   progress.

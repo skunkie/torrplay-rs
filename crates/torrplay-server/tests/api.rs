@@ -295,7 +295,7 @@ fn preview(parts: &[(&str, Option<&str>, Vec<u8>)]) -> http::Request<Vec<u8>> {
 /// A preview request of `torrent_file`.
 fn preview_of(torrent_file: &[u8]) -> http::Request<Vec<u8>> {
     preview(&[(
-        "torrent_file",
+        "metainfo",
         Some("application/x-bittorrent"),
         torrent_file.to_vec(),
     )])
@@ -651,7 +651,7 @@ mod scenario {
         let created = server
             .send(form(&[
                 (
-                    "torrent_file",
+                    "metainfo",
                     Some("application/x-bittorrent"),
                     spec.metainfo().bytes,
                 ),
@@ -690,7 +690,7 @@ mod scenario {
         let full = server
             .send(form(&[
                 (
-                    "torrent_file",
+                    "metainfo",
                     Some("application/x-bittorrent"),
                     catalog::multi_boundary().metainfo().bytes,
                 ),
@@ -1088,7 +1088,7 @@ mod scenario {
             StatusCode::UNPROCESSABLE_ENTITY,
             "validation-failed",
         );
-        assert_eq!(invalid.json()["errors"][0]["pointer"], "/torrent_file");
+        assert_eq!(invalid.json()["errors"][0]["pointer"], "/metainfo");
         let unsupported = server
             .send(preview_of(&catalog::v2_only().v2_only_metainfo()))
             .await;
@@ -1100,7 +1100,7 @@ mod scenario {
         let extra = server
             .send_unchecked(preview(&[
                 (
-                    "torrent_file",
+                    "metainfo",
                     Some("application/x-bittorrent"),
                     spec.metainfo().bytes.clone(),
                 ),
@@ -1168,7 +1168,7 @@ mod scenario {
             StatusCode::UNPROCESSABLE_ENTITY,
             "validation-failed",
         );
-        assert_eq!(errors(&invalid, "pointer"), ["/torrent_file"]);
+        assert_eq!(errors(&invalid, "pointer"), ["/metainfo"]);
         let magnet = server.create_magnet("magnet:?xt=urn:btih:zz").await;
         assert_problem(
             &magnet,
@@ -1225,7 +1225,7 @@ mod scenario {
         let form_member = server
             .send_unchecked(form(&[
                 (
-                    "torrent_file",
+                    "metainfo",
                     Some("application/x-bittorrent"),
                     catalog::single_small().metainfo().bytes,
                 ),
@@ -2273,7 +2273,7 @@ mod scenario {
     fn write_log_record(server: &TestServer, level: &str, message: &str, torrent: Option<&str>) {
         let record = torrplay_server::log_files::LogRecord {
             sequence: server.log_files.next_sequence(),
-            time: "2026-10-30T09:15:02.481Z".into(),
+            logged_at: "2026-10-30T09:15:02.481Z".into(),
             level: level.into(),
             run_id: "run_q4m2kzb6hxw3rjpt5yc4ula7nd".into(),
             // A response's record names its request.
@@ -2501,10 +2501,9 @@ mod scenario {
             .await;
         assert_problem(&json, StatusCode::PAYLOAD_TOO_LARGE, "content-too-large");
         let form_type = format!("multipart/form-data; boundary={BOUNDARY}");
-        let mut form = format!(
-            "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"torrent_file\"\r\n\r\n"
-        )
-        .into_bytes();
+        let mut form =
+            format!("--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"metainfo\"\r\n\r\n")
+                .into_bytes();
         form.resize(form.len() + 11 * 1024 * 1024, b'd');
         let upload = server
             .send_before_body_ends(
@@ -2515,10 +2514,9 @@ mod scenario {
             )
             .await;
         assert_problem(&upload, StatusCode::PAYLOAD_TOO_LARGE, "content-too-large");
-        let mut form = format!(
-            "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"torrent_file\"\r\n\r\n"
-        )
-        .into_bytes();
+        let mut form =
+            format!("--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"metainfo\"\r\n\r\n")
+                .into_bytes();
         form.resize(form.len() + 11 * 1024 * 1024, b'd');
         let previewed = server
             .send_before_body_ends(
@@ -3073,8 +3071,8 @@ mod scenario {
             .to_owned();
         for (query, total) in [("", 1), ("?retention=temporary", 1), ("?retention=any", 2)] {
             let page = server.get(&format!("{torrents}{query}")).await.json();
-            assert_eq!(page["total"], total, "{query}");
-            assert_eq!(page["facets"]["total"], total, "{query}");
+            assert_eq!(page["total_count"], total, "{query}");
+            assert_eq!(page["facets"]["total_count"], total, "{query}");
         }
         assert_eq!(
             server.get(torrents).await.json()["items"][0]["retention"],
@@ -3724,6 +3722,7 @@ mod scenario {
             "a file that fits is covered whole"
         );
         assert_eq!(body["links"]["file"], file["links"]["self"]);
+        assert_eq!(body["links"]["torrent"], file["links"]["torrent"]);
         let read = server.get(&location).await;
         assert_eq!(read.status, StatusCode::OK);
         assert_eq!(read.header(header::CACHE_CONTROL), Some("no-cache"));
@@ -3741,7 +3740,7 @@ mod scenario {
             .send_unchecked(json_request(
                 Method::POST,
                 &preloads,
-                &json!({ "offset_bytes": -1, "ttl_seconds": 5, "extra": true }),
+                &json!({ "offset_bytes": -1, "expires_in_seconds": 5, "extra": true }),
             ))
             .await;
         assert_problem(
@@ -3751,7 +3750,7 @@ mod scenario {
         );
         let mut pointers = errors(&invalid, "pointer");
         pointers.sort();
-        assert_eq!(pointers, ["/extra", "/offset_bytes", "/ttl_seconds"]);
+        assert_eq!(pointers, ["/expires_in_seconds", "/extra", "/offset_bytes"]);
         let past_end = server
             .send(json_request(
                 Method::POST,
@@ -3807,7 +3806,7 @@ mod scenario {
                 .send(json_request(
                     Method::POST,
                     &preloads,
-                    &json!({ "ttl_seconds": ttl, "offset_bytes": 0 }),
+                    &json!({ "expires_in_seconds": ttl, "offset_bytes": 0 }),
                 ))
                 .await;
             assert_eq!(created.status, StatusCode::CREATED);
@@ -4284,7 +4283,7 @@ mod scenario {
         let small = catalog::single_small();
         let file = |name, value: &str| (name, None, value.as_bytes().to_vec());
         let torrent_file = (
-            "torrent_file",
+            "metainfo",
             Some("application/x-bittorrent"),
             small.metainfo().bytes,
         );
@@ -4530,7 +4529,7 @@ mod scenario {
         let docs = server
             .send(form(&[
                 (
-                    "torrent_file",
+                    "metainfo",
                     Some("application/x-bittorrent"),
                     small.metainfo().bytes,
                 ),
@@ -4972,7 +4971,7 @@ mod scenario {
             .get("/api/v1/torrents?search=sintel&page_size=1")
             .await
             .json();
-        assert_eq!(first["total"], 3);
+        assert_eq!(first["total_count"], 3);
         let next = first["links"]["next"].as_str().unwrap();
         assert!(next.contains("search=sintel"), "{next}");
         let cursor = next.split("cursor=").nth(1).unwrap();
@@ -5032,11 +5031,11 @@ mod scenario {
             async move { server.get(&path).await.json() }
         };
         let all = page("").await;
-        assert_eq!(all["total"], 4);
+        assert_eq!(all["total_count"], 4);
         assert_eq!(
             all["facets"],
             json!({
-                "total": 4,
+                "total_count": 4,
                 "uncategorized": 1,
                 "categories": [
                     { "name": "Kids", "count": 2 },
@@ -5054,13 +5053,13 @@ mod scenario {
         );
         let version = all["facets"]["version"].as_str().unwrap().to_owned();
         let narrowed = page("category=Movies&genre=Drama&uncategorized=true&search=zzz").await;
-        assert_eq!(narrowed["total"], 0);
+        assert_eq!(narrowed["total_count"], 0);
         assert_eq!(
             narrowed["facets"], all["facets"],
             "menu filters and search leave facets"
         );
         let movies = page("kind=movie").await;
-        assert_eq!(movies["facets"]["total"], 1);
+        assert_eq!(movies["facets"]["total_count"], 1);
         assert_eq!(
             movies["facets"]["categories"],
             json!([{ "name": "Kids", "count": 1 }, { "name": "Movies", "count": 1 }])
@@ -6036,6 +6035,11 @@ mod scenario {
         let server = TestServer::start().await;
         let profile = default_profile(&server).await;
         let titles = format!("{profile}/title-progress");
+        assert_eq!(
+            server.get(&profile).await.json()["links"]["title_progress"],
+            titles.as_str(),
+            "a profile links its title progress"
+        );
         let at = |key: &str| format!("{titles}/{key}");
         let media = catalog::media_names();
         let torrent = server.upload(&media.metainfo().bytes, None).await.json();

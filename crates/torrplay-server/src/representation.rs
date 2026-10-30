@@ -357,6 +357,7 @@ pub(crate) fn profile(value: &Profile) -> api::Profile {
         links: api::ProfileLinks {
             avatar: format!("{path}/avatar"),
             up_next: format!("{path}/up-next"),
+            title_progress: format!("{path}/title-progress"),
             self_field: path,
         },
     }

@@ -87,6 +87,7 @@ fn representation(torrent: &TorrentId, file_id: &str, status: &PreloadStatus) ->
             self_field: format!("{file}/preloads/{}", status.id),
             content: format!("{file}/content"),
             file,
+            torrent: representation::torrent_path(torrent),
         },
     }
 }
@@ -176,7 +177,7 @@ pub(crate) async fn create<E: Engine>(
 }
 
 /// Reads a preload's creation request: an object with an optional
-/// `offset_bytes` and `ttl_seconds`.
+/// `offset_bytes` and `expires_in_seconds`.
 fn parse_request(value: Value) -> Result<PreloadRequest, Problem> {
     let members = object(value)?;
     let mut errors = Vec::new();
@@ -193,7 +194,7 @@ fn parse_request(value: Value) -> Result<PreloadRequest, Problem> {
                     "Must be a non-negative integer below the file's size.",
                 )),
             },
-            "ttl_seconds" => {
+            "expires_in_seconds" => {
                 let ttl = value
                     .as_u64()
                     .map(Duration::from_secs)

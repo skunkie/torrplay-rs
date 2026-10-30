@@ -41,8 +41,10 @@ const CURRENT: &str = "torrplay.jsonl";
 pub struct LogRecord {
     /// Its position among every record the files have held.
     pub sequence: u64,
-    /// When it was logged, in RFC 3339 to the millisecond.
-    pub time: String,
+    /// When it was logged, in RFC 3339 to the millisecond. Files written
+    /// before 2026-10-30 name it `time`.
+    #[serde(alias = "time")]
+    pub logged_at: String,
     /// `error`, `warn`, `info`, `debug`, or `trace`.
     pub level: String,
     /// The run that logged it.
@@ -360,7 +362,7 @@ mod tests {
     fn record(sequence: u64, level: &str, message: &str) -> LogRecord {
         LogRecord {
             sequence,
-            time: "2026-10-30T09:15:02.481Z".into(),
+            logged_at: "2026-10-30T09:15:02.481Z".into(),
             level: level.into(),
             run_id: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
             request_id: None,
@@ -377,6 +379,18 @@ mod tests {
 
     fn sequences(records: &[LogRecord]) -> Vec<u64> {
         records.iter().map(|record| record.sequence).collect()
+    }
+
+    #[test]
+    fn records_written_before_the_rename_still_read() {
+        let line = r#"{"sequence":7,"time":"2026-10-29T08:00:00.000Z","level":"warn","run_id":"run_aaaaaaaaaaaaaaaaaaaaaaaaaa","request_id":null,"target":"torrplay","message":"old","fields":{}}"#;
+        let record: LogRecord = serde_json::from_str(line).unwrap();
+        assert_eq!(record.logged_at, "2026-10-29T08:00:00.000Z");
+        let written = serde_json::to_string(&record).unwrap();
+        assert!(
+            written.contains(r#""logged_at":"#),
+            "new records use the new name"
+        );
     }
 
     #[test]

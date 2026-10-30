@@ -278,9 +278,9 @@ paths:
                           statistics: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/statistics
                           poster: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/poster
                           metainfo: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/metainfo
-                    total: 1
+                    total_count: 1
                     facets:
-                      total: 1
+                      total_count: 1
                       uncategorized: 0
                       categories:
                         - name: Kids
@@ -350,15 +350,15 @@ paths:
                   categories: [Movies]
           multipart/form-data:
             schema:
-              $ref: '#/components/schemas/TorrentFileUpload'
+              $ref: '#/components/schemas/TorrentCreationUpload'
             encoding:
-              torrent_file:
+              metainfo:
                 contentType: application/x-bittorrent
             examples:
               upload:
                 summary: An uploaded torrent file
                 value:
-                  torrent_file: d8:announce20:http://tracker.test/4:infod6:lengthi1024e4:name8:file.bin12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaaee
+                  metainfo: d8:announce20:http://tracker.test/4:infod6:lengthi1024e4:name8:file.bin12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaaee
                   desired_state: paused
       responses:
         '201':
@@ -446,13 +446,13 @@ paths:
             schema:
               $ref: '#/components/schemas/TorrentPreviewUpload'
             encoding:
-              torrent_file:
+              metainfo:
                 contentType: application/x-bittorrent
             examples:
               upload:
                 summary: An uploaded torrent file
                 value:
-                  torrent_file: d8:announce20:http://tracker.test/4:infod6:lengthi1024e4:name8:file.bin12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaaee
+                  metainfo: d8:announce20:http://tracker.test/4:infod6:lengthi1024e4:name8:file.bin12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaaee
       responses:
         '200':
           description: What adding the torrent file would create.
@@ -852,7 +852,7 @@ paths:
         '503':
           $ref: '#/components/responses/EngineUnavailable'
     put:
-      operationId: putTorrentPoster
+      operationId: setTorrentPoster
       summary: Upload a torrent's poster
       description: >-
         Stores the image as the torrent's poster, replacing any poster it
@@ -1323,6 +1323,7 @@ paths:
                         self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads/prl_4qhvgmtq62qwv4xfuperelxpq
                         file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
                         content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+                        torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
                     links:
                       self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads
         '404':
@@ -1363,7 +1364,7 @@ paths:
                 summary: A window where playback resumes, for 10 minutes
                 value:
                   offset_bytes: 536870912
-                  ttl_seconds: 600
+                  expires_in_seconds: 600
       responses:
         '201':
           description: The preload was created.
@@ -1396,6 +1397,7 @@ paths:
                       self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads/prl_4qhvgmtq62qwv4xfuperelxpq
                       file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
                       content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+                      torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
         '400':
           $ref: '#/components/responses/MalformedRequest'
         '404':
@@ -1460,6 +1462,7 @@ paths:
                       self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads/prl_4qhvgmtq62qwv4xfuperelxpq
                       file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
                       content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+                      torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
                 failed:
                   summary: A preload whose torrent was paused
                   value:
@@ -1482,6 +1485,7 @@ paths:
                       self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads/prl_4qhvgmtq62qwv4xfuperelxpq
                       file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
                       content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+                      torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -1716,6 +1720,7 @@ paths:
                           self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula
                           avatar: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/avatar
                           up_next: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next
+                          title_progress: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/title-progress
                       - id: prf_5hdq2m7kzb6hxw3rjpt4yc2ula
                         name: Devices
                         kind: device
@@ -1725,6 +1730,7 @@ paths:
                           self: /api/v1/profiles/prf_5hdq2m7kzb6hxw3rjpt4yc2ula
                           avatar: /api/v1/profiles/prf_5hdq2m7kzb6hxw3rjpt4yc2ula/avatar
                           up_next: /api/v1/profiles/prf_5hdq2m7kzb6hxw3rjpt4yc2ula/up-next
+                          title_progress: /api/v1/profiles/prf_5hdq2m7kzb6hxw3rjpt4yc2ula/title-progress
                     links:
                       self: /api/v1/profiles
         '400':
@@ -1781,6 +1787,7 @@ paths:
                       self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula
                       avatar: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/avatar
                       up_next: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next
+                      title_progress: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/title-progress
         '400':
           $ref: '#/components/responses/MalformedRequest'
         '408':
@@ -1832,6 +1839,7 @@ paths:
                       self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula
                       avatar: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/avatar
                       up_next: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next
+                      title_progress: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/title-progress
         '304':
           $ref: '#/components/responses/NotModified'
         '404':
@@ -1889,6 +1897,7 @@ paths:
                       self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula
                       avatar: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/avatar
                       up_next: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next
+                      title_progress: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/title-progress
         '400':
           $ref: '#/components/responses/MalformedRequest'
         '404':
@@ -2016,7 +2025,7 @@ paths:
         '503':
           $ref: '#/components/responses/EngineUnavailable'
     put:
-      operationId: putProfileAvatar
+      operationId: setProfileAvatar
       summary: Upload a profile's avatar
       description: >-
         Stores the image as the profile's avatar, replacing any it had, under the rules
@@ -2201,7 +2210,7 @@ paths:
         '503':
           $ref: '#/components/responses/EngineUnavailable'
     put:
-      operationId: putFileProgress
+      operationId: setFileProgress
       summary: Save a file's progress
       description: >-
         Replaces the profile's progress of the file. Players save it as they
@@ -2439,11 +2448,11 @@ paths:
         '503':
           $ref: '#/components/responses/EngineUnavailable'
     put:
-      operationId: putTitleProgress
+      operationId: setTitleProgress
       summary: Save a title's progress
       description: >-
         Replaces the profile's progress of the title or episode, under the
-        rules putFileProgress follows: the last write wins, and a position at
+        rules setFileProgress follows: the last write wins, and a position at
         or past 90% of the duration marks it viewed and resets the position
         to 0. It outlives any torrent, so a catalog card can show it after
         the torrent played is gone and a later torrent of the title can
@@ -2613,7 +2622,7 @@ paths:
         '503':
           $ref: '#/components/responses/EngineUnavailable'
 
-  /api/v1/profiles/{profile_id}/up-next/{entry_id}:
+  /api/v1/profiles/{profile_id}/up-next/{up_next_entry_id}:
     parameters:
       - $ref: '#/components/parameters/ProfileId'
       - $ref: '#/components/parameters/UpNextEntryId'
@@ -2638,7 +2647,7 @@ paths:
                   value:
                     id: upn_5hdq2m7kzb6hxw3rjpt4yc2ula
                     reason: next_episode
-                    activity_at: '2026-10-19T20:15:00Z'
+                    last_active_at: '2026-10-19T20:15:00Z'
                     torrent:
                       id: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
                       name: Example Show
@@ -2866,7 +2875,7 @@ paths:
                   value:
                     items:
                       - sequence: 4182
-                        time: '2026-10-30T09:15:02.481Z'
+                        logged_at: '2026-10-30T09:15:02.481Z'
                         level: warn
                         run_id: run_q4m2kzb6hxw3rjpt5yc4ula7nd
                         request_id: req_hxw3rjpt5yc4ula7ndq4m2kzb6
@@ -3368,7 +3377,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PlaybackTokenRequest'
+              $ref: '#/components/schemas/PlaybackTokenCreation'
             examples:
               torrent:
                 summary: A day's playback of one torrent
@@ -3541,7 +3550,7 @@ components:
         maxLength: 64
       example: tmdb-tv-1399-
     UpNextEntryId:
-      name: entry_id
+      name: up_next_entry_id
       in: path
       required: true
       description: The up next entry's ID.
@@ -4255,7 +4264,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           examples:
-            torrent_file:
+            metainfo:
               summary: An oversized torrent file
               value:
                 type: tag:skunkie.github.io,2026:torrplay/problems/content-too-large
@@ -4341,7 +4350,7 @@ components:
                 detail: The body is invalid.
                 errors:
                   - detail: Not valid torrent metainfo.
-                    pointer: /torrent_file
+                    pointer: /metainfo
             v2_only:
               summary: A v2-only torrent
               value:
@@ -4682,9 +4691,9 @@ components:
       type: object
       description: The multipart form that previews a torrent file.
       additionalProperties: false
-      required: [torrent_file]
+      required: [metainfo]
       properties:
-        torrent_file:
+        metainfo:
           type: string
           contentMediaType: application/x-bittorrent
           description: The torrent file to preview, at most 10485760 bytes.
@@ -4791,16 +4800,16 @@ components:
           description: The media type the file's content would be served with.
           examples: [video/x-matroska]
 
-    TorrentFileUpload:
+    TorrentCreationUpload:
       type: object
       description: >-
         The multipart form that creates a torrent from a torrent file. Each
         member is one part, except categories and genres, which take one part
         per value; year is a decimal integer.
       additionalProperties: false
-      required: [torrent_file]
+      required: [metainfo]
       properties:
-        torrent_file:
+        metainfo:
           type: string
           contentMediaType: application/x-bittorrent
           description: The torrent file, at most 10485760 bytes.
@@ -5212,7 +5221,7 @@ components:
     TorrentPage:
       type: object
       description: A page of torrents.
-      required: [items, total, facets, links]
+      required: [items, total_count, facets, links]
       properties:
         items:
           type: array
@@ -5220,7 +5229,7 @@ components:
           items:
             $ref: '#/components/schemas/Torrent'
           examples: [[]]
-        total:
+        total_count:
           type: integer
           format: int64
           minimum: 0
@@ -5253,9 +5262,9 @@ components:
         kind, and info_hash filters, before its search and its category,
         uncategorized, and genre filters, so a client's menus list every
         choice while one is selected.
-      required: [total, uncategorized, categories, genres, version]
+      required: [total_count, uncategorized, categories, genres, version]
       properties:
-        total:
+        total_count:
           type: integer
           format: int64
           minimum: 0
@@ -5272,7 +5281,7 @@ components:
           description: >-
             The categories of those torrents with how many have each, ordered
             by name in Unicode code point order. A torrent counts once in each
-            of its categories, so the counts need not add up to total.
+            of its categories, so the counts need not add up to total_count.
           items:
             $ref: '#/components/schemas/LabelCount'
           examples: [[{name: Movies, count: 1}]]
@@ -5568,7 +5577,7 @@ components:
           examples: [true]
         log_level:
           type: string
-          enum: [error, warn, info, debug, trace]
+          $ref: '#/components/schemas/LogLevel'
           default: info
           description: >-
             The least severe level of TorrPlay's own log messages; other
@@ -5827,7 +5836,7 @@ components:
             an eighth of its length before this offset. Omitted, it covers
             the file's head and tail.
           examples: [536870912]
-        ttl_seconds:
+        expires_in_seconds:
           type: integer
           format: int32
           minimum: 10
@@ -5916,7 +5925,7 @@ components:
         links:
           type: object
           description: Links from a preload.
-          required: [self, file, content]
+          required: [self, file, content, torrent]
           properties:
             self:
               type: string
@@ -5933,6 +5942,11 @@ components:
               format: uri-reference
               description: The preloaded file's content.
               examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content]
+            torrent:
+              type: string
+              format: uri-reference
+              description: The torrent of the preloaded file.
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula]
 
     Viewing:
       type: object
@@ -6406,7 +6420,7 @@ components:
         One message the application logged. Standard error in the JSON log
         format and the log files hold the same members. Credentials and
         private tracker parameters are redacted before a record is written.
-      required: [sequence, time, level, run_id, request_id, target, message, fields]
+      required: [sequence, logged_at, level, run_id, request_id, target, message, fields]
       properties:
         sequence:
           type: integer
@@ -6418,7 +6432,7 @@ components:
             orders records whose times are equal and shows where records were
             removed or dropped.
           examples: [4182]
-        time:
+        logged_at:
           type: string
           format: date-time
           description: When the record was logged, in UTC, to the millisecond.
@@ -6646,7 +6660,7 @@ components:
           type: object
           readOnly: true
           description: Links from a profile.
-          required: [self, avatar, up_next]
+          required: [self, avatar, up_next, title_progress]
           properties:
             self:
               type: string
@@ -6663,6 +6677,11 @@ components:
               format: uri-reference
               description: What the profile can resume or watch next.
               examples: [/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next]
+            title_progress:
+              type: string
+              format: uri-reference
+              description: The profile's progress of titles in external catalogs.
+              examples: [/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/title-progress]
 
     ProfileCreation:
       type: object
@@ -7005,7 +7024,7 @@ components:
     UpNextEntry:
       type: object
       description: Something a profile can resume or watch next.
-      required: [id, reason, activity_at, torrent, file, progress, links]
+      required: [id, reason, last_active_at, torrent, file, progress, links]
       properties:
         id:
           type: string
@@ -7022,7 +7041,7 @@ components:
             handle values added later.
           enum: [resume, next_episode]
           examples: [resume]
-        activity_at:
+        last_active_at:
           type: string
           format: date-time
           description: When progress that put the entry here was last saved.
@@ -7307,7 +7326,7 @@ components:
               description: The next page of access tokens, omitted on the last page.
               examples: ['/api/v1/access-tokens?cursor=aebagbaf']
 
-    PlaybackTokenRequest:
+    PlaybackTokenCreation:
       type: object
       description: The scope and lifetime of a playback token to issue.
       additionalProperties: false

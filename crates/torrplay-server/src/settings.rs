@@ -48,13 +48,13 @@ fn settings_etag(stored: &Stored, overrides: &Overrides) -> EntityTag {
     EntityTag::new(tag)
 }
 
-fn log_level(level: LogLevel) -> api::SettingsLogLevel {
+fn log_level(level: LogLevel) -> api::LogLevel {
     match level {
-        LogLevel::Error => api::SettingsLogLevel::Error,
-        LogLevel::Warn => api::SettingsLogLevel::Warn,
-        LogLevel::Info => api::SettingsLogLevel::Info,
-        LogLevel::Debug => api::SettingsLogLevel::Debug,
-        LogLevel::Trace => api::SettingsLogLevel::Trace,
+        LogLevel::Error => api::LogLevel::Error,
+        LogLevel::Warn => api::LogLevel::Warn,
+        LogLevel::Info => api::LogLevel::Info,
+        LogLevel::Debug => api::LogLevel::Debug,
+        LogLevel::Trace => api::LogLevel::Trace,
     }
 }
 

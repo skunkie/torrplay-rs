@@ -47,8 +47,8 @@ follow their own specifications instead.
 | Tag | title-case noun *(linted)* | `Torrents` |
 
 - Operation IDs start with `list`, `get`, `create`, `update`, or `delete`
-  for the standard methods on a resource, and with `head` for an explicit
-  HEAD operation.
+  for the standard methods on a resource, with `set` for a `PUT` that
+  creates or replaces it, and with `head` for an explicit HEAD operation.
 - A request body that differs from the resource's representation is named
   after the resource with a purpose suffix: `TorrentCreation` for creation
   input, `TorrentConfigurationPatch` for a merge patch.
@@ -227,7 +227,7 @@ Errors use Problem Details with `application/problem+json`.
   have a `detail` and either a `parameter` name or, for a body member, a
   `pointer`, an [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901.html) JSON
   Pointer. A multipart body is addressed through the object schema OpenAPI
-  describes it with, so a form field is a pointer such as `/torrent_file`.
+  describes it with, so a form field is a pointer such as `/metainfo`.
 - An uploaded file that is not valid torrent metainfo, or a magnet URI that
   cannot be parsed, is a `validation-failed` whose `pointer` names the field.
   `unsupported-torrent` is reserved for valid torrents the engine cannot

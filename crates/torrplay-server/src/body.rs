@@ -212,13 +212,13 @@ mod tests {
     #[test]
     fn forms_split_into_named_parts() {
         let body = form(
-            "--b\r\nContent-Disposition: form-data; name=\"torrent_file\"; filename=\"a.torrent\"\r\n\
+            "--b\r\nContent-Disposition: form-data; name=\"metainfo\"; filename=\"a.torrent\"\r\n\
 Content-Type: application/x-bittorrent\r\n\r\nd4:info\r\n--x\r\n--b\r\n\
 Content-Disposition: form-data; name=desired_state\r\n\r\npaused\r\n--b--\r\n",
         );
         let parts = parse_form(&body, "b").unwrap();
         assert_eq!(parts.len(), 2);
-        assert_eq!(parts[0].name, "torrent_file");
+        assert_eq!(parts[0].name, "metainfo");
         assert_eq!(
             &parts[0].data[..],
             b"d4:info\r\n--x",

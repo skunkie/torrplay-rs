@@ -317,7 +317,7 @@ fn matches_record(record: &LogRecord, min_level: Option<LogLevel>, contains: Opt
 fn log_record(record: &LogRecord) -> Option<api::LogRecord> {
     Some(api::LogRecord {
         sequence: i64::try_from(record.sequence).ok()?,
-        time: chrono::DateTime::parse_from_rfc3339(&record.time)
+        logged_at: chrono::DateTime::parse_from_rfc3339(&record.logged_at)
             .ok()?
             .with_timezone(&chrono::Utc),
         level: match LogLevel::parse(&record.level)? {

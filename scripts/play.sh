@@ -83,7 +83,7 @@ if [[ $source == magnet:* ]]; then
         --data "$(jq -n --arg uri "$source" '{magnet_uri: $uri}')")
 elif [[ -f $source ]]; then
     response=$(request -X POST "$api/api/v1/torrents" \
-        -F "torrent_file=@$source;type=application/x-bittorrent")
+        -F "metainfo=@$source;type=application/x-bittorrent")
 else
     echo "$source is neither a magnet URI nor a file" >&2
     exit 1

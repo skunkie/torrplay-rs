@@ -43,7 +43,7 @@ impl Source {
     /// source, for the `errors` entry of a `validation-failed` problem.
     pub fn pointer(&self) -> &'static str {
         match self {
-            Self::TorrentFile(_) => "/torrent_file",
+            Self::TorrentFile(_) => "/metainfo",
             Self::MagnetUri(_) => "/magnet_uri",
         }
     }
@@ -562,7 +562,7 @@ mod tests {
 
     #[test]
     fn sources_name_their_request_member() {
-        assert_eq!(Source::TorrentFile(Vec::new()).pointer(), "/torrent_file");
+        assert_eq!(Source::TorrentFile(Vec::new()).pointer(), "/metainfo");
         assert_eq!(Source::MagnetUri(String::new()).pointer(), "/magnet_uri");
     }
 }

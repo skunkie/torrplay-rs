@@ -113,11 +113,11 @@ pub struct UpNextPageLinks {
 ///Something a profile can resume or watch next.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UpNextEntry {
-    ///When progress that put the entry here was last saved.
-    pub activity_at: chrono::DateTime<chrono::Utc>,
     pub file: TorrentFile,
     ///The entry's opaque ID, the same for a series, or for a file of any other torrent, while the entry is listed again.
     pub id: String,
+    ///When progress that put the entry here was last saved.
+    pub last_active_at: chrono::DateTime<chrono::Utc>,
     ///Links from an entry.
     pub links: UpNextEntryLinks,
     ///The file's progress, or null for a next episode not yet started.
@@ -248,7 +248,7 @@ pub struct TorrentPage {
     pub links: TorrentPageLinks,
     ///The number of torrents that match every filter and the search, across all pages.
     ///Constraint: minimum=0
-    pub total: i64,
+    pub total_count: i64,
 }
 ///Links from a page of torrents.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -259,52 +259,6 @@ pub struct TorrentPageLinks {
     ///This page of torrents.
     #[serde(rename = "self")]
     pub self_field: String,
-}
-///The multipart form that creates a torrent from a torrent file. Each member is one part, except categories and genres, which take one part per value; year is a decimal integer.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct TorrentFileUpload {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub categories: Option<Categories>,
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        default,
-        deserialize_with = "tri_state_serde::deserialize"
-    )]
-    pub description: Option<Option<Description>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub desired_state: Option<CreationDesiredState>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub genres: Option<Genres>,
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        default,
-        deserialize_with = "tri_state_serde::deserialize"
-    )]
-    pub imdb_id: Option<Option<ImdbId>>,
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        default,
-        deserialize_with = "tri_state_serde::deserialize"
-    )]
-    pub kind: Option<Option<ConfiguredKind>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub retention: Option<CreationRetention>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub storage_mode: Option<CreationStorageMode>,
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        default,
-        deserialize_with = "tri_state_serde::deserialize"
-    )]
-    pub title: Option<Option<Title>>,
-    ///The torrent file, at most 10485760 bytes.
-    pub torrent_file: String,
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        default,
-        deserialize_with = "tri_state_serde::deserialize"
-    )]
-    pub year: Option<Option<Year>>,
 }
 ///A page of a torrent's files.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -358,13 +312,13 @@ pub struct TorrentFileLinks {
 ///A summary of the torrents that match the request's observed_state, kind, and info_hash filters, before its search and its category, uncategorized, and genre filters, so a client's menus list every choice while one is selected.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TorrentFacets {
-    ///The categories of those torrents with how many have each, ordered by name in Unicode code point order. A torrent counts once in each of its categories, so the counts need not add up to total.
+    ///The categories of those torrents with how many have each, ordered by name in Unicode code point order. A torrent counts once in each of its categories, so the counts need not add up to total_count.
     pub categories: Vec<LabelCount>,
     ///The genres of those torrents, counted and ordered as categories are.
     pub genres: Vec<LabelCount>,
     ///The number of those torrents.
     ///Constraint: minimum=0
-    pub total: i64,
+    pub total_count: i64,
     ///The number of those torrents without categories.
     ///Constraint: minimum=0
     pub uncategorized: i64,
@@ -379,6 +333,52 @@ pub struct LabelCount {
     pub count: i64,
     ///The category or genre.
     pub name: String,
+}
+///The multipart form that creates a torrent from a torrent file. Each member is one part, except categories and genres, which take one part per value; year is a decimal integer.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TorrentCreationUpload {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub categories: Option<Categories>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub description: Option<Option<Description>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub desired_state: Option<CreationDesiredState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub genres: Option<Genres>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub imdb_id: Option<Option<ImdbId>>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub kind: Option<Option<ConfiguredKind>>,
+    ///The torrent file, at most 10485760 bytes.
+    pub metainfo: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retention: Option<CreationRetention>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub storage_mode: Option<CreationStorageMode>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub title: Option<Option<Title>>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "tri_state_serde::deserialize"
+    )]
+    pub year: Option<Option<Year>>,
 }
 ///The input that creates a torrent from a magnet URI.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1356,9 +1356,7 @@ pub struct Settings {
     pub idle_timeout_seconds: i32,
     ///Links from the settings.
     pub links: SettingsLinks,
-    ///The least severe level of TorrPlay's own log messages; other components log only warnings and errors. Applies at once. The --log-level and --log-filter options override it.
-    #[serde(default)]
-    pub log_level: SettingsLogLevel,
+    pub log_level: LogLevel,
     ///The settings that command-line options override in this run, each with the value in effect; empty when none are. The members above keep the stored values, which a PATCH still changes and which apply once the application runs without those options.
     pub overrides: SettingsOverrides,
     ///The most peers one torrent connects to at a time, connecting ones included. Applies to torrents as they start: when created, started, or restored after a restart.
@@ -1427,42 +1425,6 @@ impl ::std::fmt::Display for SettingsOverridesLogLevel {
     }
 }
 impl AsRef<str> for SettingsOverridesLogLevel {
-    fn as_ref(&self) -> &str {
-        self.as_str()
-    }
-}
-///The least severe level of TorrPlay's own log messages; other components log only warnings and errors. Applies at once. The --log-level and --log-filter options override it.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
-pub enum SettingsLogLevel {
-    #[serde(rename = "error")]
-    Error,
-    #[serde(rename = "warn")]
-    Warn,
-    #[default]
-    #[serde(rename = "info")]
-    Info,
-    #[serde(rename = "debug")]
-    Debug,
-    #[serde(rename = "trace")]
-    Trace,
-}
-impl SettingsLogLevel {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Error => "error",
-            Self::Warn => "warn",
-            Self::Info => "info",
-            Self::Debug => "debug",
-            Self::Trace => "trace",
-        }
-    }
-}
-impl ::std::fmt::Display for SettingsLogLevel {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-impl AsRef<str> for SettingsLogLevel {
     fn as_ref(&self) -> &str {
         self.as_str()
     }
@@ -1607,6 +1569,8 @@ pub struct ProfileLinks {
     ///This profile.
     #[serde(rename = "self")]
     pub self_field: String,
+    ///The profile's progress of titles in external catalogs.
+    pub title_progress: String,
     ///What the profile can resume or watch next.
     pub up_next: String,
 }
@@ -1784,6 +1748,8 @@ pub struct PreloadLinks {
     ///This preload.
     #[serde(rename = "self")]
     pub self_field: String,
+    ///The torrent of the preloaded file.
+    pub torrent: String,
 }
 ///Why the preload failed, or null unless its state is failed: its torrent paused or failed, its pieces stopped arriving for the piece wait bound, or the piece cache needed its pins.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1894,6 +1860,8 @@ pub struct LogRecord {
     ///The record's structured fields, each value formatted as text and cut as the message is, to 1024 bytes. Fields of the spans the record was logged in are included; a record's own field wins over a span's with the same name.
     pub fields: LogRecordFields,
     pub level: LogLevel,
+    ///When the record was logged, in UTC, to the millisecond.
+    pub logged_at: chrono::DateTime<chrono::Utc>,
     ///The message, cut to 4096 bytes at a character boundary, with an ellipsis added when it is cut.
     pub message: String,
     ///The ID of the HTTP request the record was logged for, as its X-Request-Id response header gave it, or null for a record logged outside a request.
@@ -1905,8 +1873,6 @@ pub struct LogRecord {
     pub sequence: i64,
     ///The module that logged the record, such as torrplay_engine::storage. Other components' records name their own modules.
     pub target: String,
-    ///When the record was logged, in UTC, to the millisecond.
-    pub time: chrono::DateTime<chrono::Utc>,
 }
 ///The ID the process chose when it started, which tells its log records apart from those of earlier runs.
 pub type RunId = String;
@@ -2361,7 +2327,7 @@ pub struct PlaybackToken {
 }
 ///The scope and lifetime of a playback token to issue.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
-pub struct PlaybackTokenRequest {
+pub struct PlaybackTokenCreation {
     ///How long the token lasts, from a minute to 30 days.
     ///Constraint: minimum=60, maximum=2592000
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2377,14 +2343,14 @@ pub struct PlaybackTokenRequest {
 ///What a new preload covers, and for how long.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct PreloadCreation {
+    ///How long after its creation the preload expires.
+    ///Constraint: minimum=10, maximum=3600
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_in_seconds: Option<i32>,
     ///Where playback resumes in the file, below its size: the preload covers the file's first and last pieces and a window that starts an eighth of its length before this offset. Omitted, it covers the file's head and tail.
     ///Constraint: minimum=0
     #[serde(skip_serializing_if = "Option::is_none")]
     pub offset_bytes: Option<i64>,
-    ///How long after its creation the preload expires.
-    ///Constraint: minimum=10, maximum=3600
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ttl_seconds: Option<i32>,
 }
 ///A file's progress as a player saves it, replacing the saved progress. The position must not exceed the duration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -2470,5 +2436,5 @@ impl TitleProgressUpdateBuilder {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TorrentPreviewUpload {
     ///The torrent file to preview, at most 10485760 bytes.
-    pub torrent_file: String,
+    pub metainfo: String,
 }

@@ -203,7 +203,7 @@ pub(crate) async fn list<E: Engine>(
     let path = torrents_path();
     let body = api::TorrentPage {
         items: items.into_iter().cloned().collect(),
-        total: representation::count(total as u64),
+        total_count: representation::count(total as u64),
         facets,
         links: api::TorrentPageLinks {
             next: next_cursor
@@ -278,7 +278,7 @@ fn facets(
     };
     let torrents: Vec<&api::Torrent> = represented.iter().collect();
     Ok(api::TorrentFacets {
-        total: representation::count(base.len() as u64),
+        total_count: representation::count(base.len() as u64),
         uncategorized: representation::count(uncategorized),
         categories: counts(categories),
         genres: counts(genres),
@@ -832,7 +832,7 @@ fn creation_from_form(bytes: &Bytes, boundary: &str) -> Result<Creation, Problem
         }
         seen.push(part.name.clone());
         match part.name.as_str() {
-            "torrent_file" => {
+            "metainfo" => {
                 torrent_file = Some(torrent_file_part(part.data)?);
             }
             "desired_state" => {
@@ -866,8 +866,8 @@ fn creation_from_form(bytes: &Bytes, boundary: &str) -> Result<Creation, Problem
     for (member, value) in &library_members {
         library.read(member, value, &mut errors);
     }
-    if !seen.iter().any(|name| name == "torrent_file") {
-        errors.push(InvalidValue::pointer("/torrent_file", "Is required."));
+    if !seen.iter().any(|name| name == "metainfo") {
+        errors.push(InvalidValue::pointer("/metainfo", "Is required."));
     }
     let retention = retention.unwrap_or(Retention::Persisted);
     let storage_mode = storage_mode.unwrap_or(StorageMode::Memory);
@@ -1419,15 +1419,15 @@ mod tests {
             "b",
         )
         .unwrap_err();
-        assert_eq!(pointers(problem), ["/x", "/torrent_file"]);
+        assert_eq!(pointers(problem), ["/x", "/metainfo"]);
         let problem = creation_from_form(
             &form(
-                "--b\r\nContent-Disposition: form-data; name=\"torrent_file\"\r\n\r\n1\r\n\
---b\r\nContent-Disposition: form-data; name=\"torrent_file\"\r\n\r\n2\r\n--b--",
+                "--b\r\nContent-Disposition: form-data; name=\"metainfo\"\r\n\r\n1\r\n\
+--b\r\nContent-Disposition: form-data; name=\"metainfo\"\r\n\r\n2\r\n--b--",
             ),
             "b",
         )
         .unwrap_err();
-        assert_eq!(pointers(problem), ["/torrent_file"]);
+        assert_eq!(pointers(problem), ["/metainfo"]);
     }
 }
