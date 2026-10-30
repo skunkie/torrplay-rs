@@ -19,7 +19,7 @@ use torrplay_core::metadata::{FileIndex, Metadata};
 use torrplay_core::preload::{self, PreloadRequest, PreloadStatus};
 
 use crate::app::App;
-use crate::body::{JSON_LIMIT_BYTES, read_limited};
+use crate::body::{JSON_MAX_BYTES, read_limited};
 use crate::headers::{MediaType, negotiate};
 use crate::problem::{InvalidValue, Problem, ProblemType};
 use crate::representation::{self, JSON, NO_CACHE, json};
@@ -149,8 +149,8 @@ pub(crate) async fn create<E: Engine>(
     let bytes = read_limited(
         &headers,
         body,
-        JSON_LIMIT_BYTES,
-        JSON_LIMIT_BYTES as u64,
+        JSON_MAX_BYTES,
+        JSON_MAX_BYTES as u64,
         app.body_timeout(),
     )
     .await?;

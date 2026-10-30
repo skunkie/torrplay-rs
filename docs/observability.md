@@ -207,8 +207,8 @@ of series stays bounded.
   0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, and 120 seconds.
 - **Response heads.** A stream's total duration measures the player, not the
   server, so the histogram ends when the headers are sent: for content, once
-  the first piece is ready. The buckets are 0.005, 0.01, 0.025, 0.05, 0.1,
-  0.25, 0.5, 1, 2.5, 5, and 10 seconds.
+  its reader is open, without waiting for piece data. The buckets are
+  0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, and 10 seconds.
 - **Routes.** `route` is the matched route's template, such as
   `/api/v1/torrents/{torrent_id}`, including the DLNA and Stremio routes, or
   `unmatched`. `method` is the request method for the methods any route

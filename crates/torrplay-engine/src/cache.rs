@@ -1057,6 +1057,7 @@ mod tests {
             .collect()
     }
 
+    /// CAC-08, and CAC-07's partial pieces, which stay resident.
     #[test]
     fn eviction_takes_paused_torrents_first_then_the_least_recently_used() {
         let cache = PieceCache::new(100);
@@ -1228,6 +1229,7 @@ mod tests {
         ));
     }
 
+    /// CAC-07: a piece being written counts as a pending allocation.
     #[test]
     fn a_reservation_counts_until_released_and_waits_when_full() {
         let cache = PieceCache::new(100);

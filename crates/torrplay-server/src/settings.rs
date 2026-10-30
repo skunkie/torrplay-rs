@@ -18,7 +18,7 @@ use torrplay_core::lifecycle::EntityTag;
 use torrplay_core::settings::{self, Explicit, LogLevel, LogOverride, Overrides, Stored};
 
 use crate::app::{App, store_failed};
-use crate::body::{JSON_LIMIT_BYTES, read_limited};
+use crate::body::{JSON_MAX_BYTES, read_limited};
 use crate::headers::{EntityTags, MediaType, negotiate};
 use crate::problem::{InvalidValue, Problem, ProblemType};
 use crate::representation::{BASE, JSON, NO_CACHE, json};
@@ -156,8 +156,8 @@ pub(crate) async fn update<E: Engine>(
     let bytes = read_limited(
         &headers,
         body,
-        JSON_LIMIT_BYTES,
-        JSON_LIMIT_BYTES as u64,
+        JSON_MAX_BYTES,
+        JSON_MAX_BYTES as u64,
         app.body_timeout(),
     )
     .await?;

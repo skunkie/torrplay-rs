@@ -15,6 +15,7 @@ use torrplay_core::search::{Query, search};
 
 const CASES: &str = include_str!("../../../fixtures/search-cases.json");
 
+/// SRC-01.
 #[test]
 fn the_shared_cases_match_and_rank_as_listed() {
     let cases: Value = serde_json::from_str(CASES).expect("the cases parse");

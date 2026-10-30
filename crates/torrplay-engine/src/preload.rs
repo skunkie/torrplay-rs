@@ -524,7 +524,7 @@ impl Preloads {
             state.entries.retain(|entry| {
                 entry
                     .ended
-                    .is_none_or(|ended| now.duration_since(ended) < preload::RETENTION)
+                    .is_none_or(|ended| now.duration_since(ended) < preload::ENDED_LIFETIME)
             });
             self.admit(&mut state, now);
             next_due(&state, now)
@@ -633,7 +633,7 @@ fn overlap(start: u64, end: u64, range: &ByteRange) -> u64 {
 /// the next retention.
 fn next_due(state: &State, now: Instant) -> Option<Instant> {
     let timers = state.entries.iter().map(|entry| match entry.ended {
-        Some(ended) => ended + preload::RETENTION,
+        Some(ended) => ended + preload::ENDED_LIFETIME,
         None => entry.expires,
     });
     let soon = state

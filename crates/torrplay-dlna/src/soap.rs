@@ -13,7 +13,7 @@ use quick_xml::events::Event;
 use crate::didl::escape;
 
 /// The most bytes a SOAP request body may have.
-pub const BODY_LIMIT_BYTES: usize = 64 * 1024;
+pub const BODY_MAX_BYTES: usize = 64 * 1024;
 
 /// The media type of SOAP and description documents.
 pub const XML: &str = r#"text/xml; charset="utf-8""#;

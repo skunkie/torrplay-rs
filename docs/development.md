@@ -138,7 +138,9 @@ dual-stack; `--listen`, or `TORRPLAY_LISTEN` without it, names another
 address, such as `127.0.0.1:8080`. Until a password is set, only clients on
 local networks may use it. `/api/v1/reference` shows the API in a browser.
 `--allowed-host` adds a host name requests may give, such as a reverse
-proxy's. Its other options set the BitTorrent peer port (4240), and override
+proxy's. `--peer-port` sets the BitTorrent peer port, 4240 by default, and
+`--download-dir` the download directory of torrents in disk storage,
+`downloads` in the data directory by default. Other options override
 settings for one run, as [the lifecycle](lifecycle.md#settings) describes:
 `--no-dht` turns the DHT off, and `--log-level` and `--log-filter` set the
 level of TorrPlay's own logs, which go to standard error; other crates log

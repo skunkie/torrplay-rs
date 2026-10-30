@@ -298,6 +298,7 @@ fn rusqlite_count(dir: &TempDir, sql: &str) -> i64 {
     connection.query_row(sql, [], |row| row.get(0)).unwrap()
 }
 
+/// LIF-18: a second application cannot open the database in use.
 #[tokio::test]
 async fn a_second_store_cannot_open_the_same_database() {
     let dir = TempDir::new().unwrap();
@@ -706,6 +707,7 @@ fn wait_for_insert(child: &mut Child) -> u64 {
     }
 }
 
+/// LIF-17: a process killed between commits leaves whole torrents.
 #[test]
 fn inserts_killed_at_any_moment_leave_whole_torrents() {
     let dir = TempDir::new().unwrap();

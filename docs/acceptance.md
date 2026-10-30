@@ -378,7 +378,7 @@ These scenarios accept [the DLNA contract](dlna.md) (M7).
 |---|---|---|
 | DLNA-01 | Request the description with the media server off, then on, from a private and from a public address | `404`; the description with the stored UUID; `403` for the public address |
 | DLNA-02 | `M-SEARCH` for `ssdp:all`, the device type, and an unknown type; stop the server | One response per announced target with `LOCATION`; none for the unknown type; `ssdp:byebye` for each target |
-| DLNA-03 | Browse the root's metadata and children, then `all`, a torrent, and a file, with a starting index and count | The root's six containers with child counts; newest torrents first; the torrent's playable files; the file's resource URL and protocol info |
+| DLNA-03 | Browse the root's metadata and children, then `all`, a torrent, and a file, with a starting index and count | The root's seven containers with child counts; newest torrents first; the torrent's playable files; the file's resource URL and protocol info |
 | DLNA-04 | Browse a category whose name holds `/` and `:`, its non-canonical encoding, and unknown IDs | The category's torrents; `701` for the rest |
 | DLNA-05 | Browse a series and a paused torrent | Episodes in episode order; the paused torrent is not listed |
 | DLNA-06 | Request media with `getcontentFeatures.dlna.org: 1`, with each transfer mode, with an unknown mode, with a range, and with a wrong file name | The content features and `Streaming`; the mode echoed; `406`; `206`; `404` |

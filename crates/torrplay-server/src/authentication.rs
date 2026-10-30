@@ -191,8 +191,8 @@ pub(crate) async fn guard<E: Engine>(
         (Grant::Token { scope, .. }, _) if in_query && *scope != Scope::Playback => {
             return unauthenticated(
                 Some("invalid_token"),
-                "Only a playback token may travel in a URL; send this one in the \
-                 Authorization header.",
+                "Only a playback token or a playback access token may travel in a URL; \
+                 send this one in the Authorization header.",
             )
             .into_response();
         }

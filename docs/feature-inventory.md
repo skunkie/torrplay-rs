@@ -51,7 +51,7 @@ document that schedules it.
 | Posters uploaded and served by the server | `poster` URL or data URI | Verified | LIB-07 to LIB-10 |
 | Preview a torrent file without adding it | `POST /api/v1/torrent-previews` | Verified | API-24, `torrent_previews` |
 | Preview a torrent from a URL or a magnet URI | `POST /api/v1/torrent-resolutions` | Deferred | A URL needs an outbound request policy first; a magnet URI's metadata comes from peers |
-| Back up and restore torrents and posters | `/api/v1/torrents/backup`, `/restore` | Deferred | After library organization |
+| Back up and restore torrents and posters | `/api/v1/torrents/backup`, `/restore` | Deferred | Designed next, once every layer is consistent |
 | Posters and metadata from TheTVDB | `internal/metadata` | Deferred | Needs credentials and a provider decision |
 
 ## Files and streaming
@@ -64,7 +64,7 @@ document that schedules it.
 | Readers that continue across range requests | Stream pool | Verified | RDR-01 to RDR-06 |
 | Memory cache with eviction and pinning | Piece storage | Verified | CAC-01 to CAC-11 ([ADR 5](adr/0005-storage.md)) |
 | Preload a file's head and tail, or at a byte offset | `PUT /api/v1/torrents/{hash}/preload` | Verified | PRL-01 to PRL-09 |
-| Preload at a playback position in seconds | `playback_position_seconds` | Deferred | Needs container seek index parsing; additive to the preload contract |
+| Preload at a playback position in seconds | `playback_position_seconds` | Deferred | Additive to the preload contract, through the seek index that [ADR 10](adr/0010-media-seek-index.md) reads |
 | Background downloads of disk torrents | `internal/downloader` | Verified | BGD-01 to BGD-04 |
 | Mark files viewed, with the time | `viewed`, `viewed_at` | Verified | PRG-02 |
 | Playback positions, per profile | Client local storage | Verified | PRG-01 to PRG-06 |
@@ -73,7 +73,7 @@ document that schedules it.
 | DLNA "Recently viewed" | Recently viewed container `3` | Verified | `recently-viewed`, filled by inferred progress; DLNA-17 |
 | DLNA resume positions | Not present | Verified | `upnp:lastPlaybackPosition` and Samsung's `sec:dcmInfo` bookmark on files in progress; DLNA-20; which televisions read them is untested |
 | Up next: resume and next episode | Not present | Verified | UPN-01 to UPN-05 |
-| Progress estimates for players without progress reports | Not present | Verified | Application viewings; the launching application saves the progress; VWG-01 to VWG-08 |
+| Progress estimates for players without progress reports | Not present | Verified | Application viewings; the launching application saves the progress; VWG-01 to VWG-09 |
 | Progress by TMDB or IMDb title, for catalog cards | Not present | Verified | Title progress, kept when torrents are deleted; PRG-08 to PRG-11 |
 | Playlists for external players | `GET /api/v1/playlist` | Deferred | No consumer: Stremio, DLNA, and the client's up next play episodes in order |
 

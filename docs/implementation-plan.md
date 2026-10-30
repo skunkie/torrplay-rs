@@ -361,8 +361,9 @@ remains prioritized, and failure paths preserve consistent persisted state.
 - Design remaining REST resources before implementing them: library
   organization, search, viewing progress, authentication, and scoped playback
   access.
-- Reuse the existing React player and presentation components through an API
-  adapter or generated client. Update all consumers and demo fixtures for the
+- Reuse the existing player, keeping Vidstack and Mediabunny, and the
+  presentation components through an API adapter or generated client, with
+  a lighter framework than React. Update all consumers and demo fixtures for the
   new contract.
 - Add Stremio, DLNA, and MCP through their own protocol adapters. Keep native
   naming conventions separate from externally mandated protocols. MCP should
