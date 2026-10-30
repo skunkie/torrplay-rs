@@ -263,6 +263,15 @@ pub struct PeerConnections {
     pub socks: ConnectionOutcomes,
 }
 
+/// Hash checks of downloaded pieces since the engine started.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HashChecks {
+    /// Pieces whose hash matched.
+    pub passed: u64,
+    /// Pieces whose hash did not match: bad data from a peer.
+    pub failed: u64,
+}
+
 /// Measurements across every torrent and reader of the engine, the parts of
 /// the contract's `Statistics` the engine knows.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -284,6 +293,8 @@ pub struct EngineStatistics {
     pub upload_rate_bytes_per_second: u64,
     /// Connection attempts to peers.
     pub peer_connections: PeerConnections,
+    /// Hash checks of downloaded pieces.
+    pub hash_checks: HashChecks,
     /// Readers' waits for missing pieces.
     pub piece_waits: PieceWaits,
 }

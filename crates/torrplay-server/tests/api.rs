@@ -25,7 +25,7 @@ use common::{
 use http::{Method, StatusCode, header};
 use serde_json::{Value, json};
 use torrplay_core::engine::{
-    CacheStatistics, ConnectionOutcomes, EngineStatistics, PeerConnections, Ratio,
+    CacheStatistics, ConnectionOutcomes, EngineStatistics, HashChecks, PeerConnections, Ratio,
     TorrentStatistics,
 };
 use torrplay_core::id::FileId;
@@ -1695,6 +1695,10 @@ mod scenario {
                 },
                 ..PeerConnections::default()
             },
+            hash_checks: HashChecks {
+                passed: 40,
+                failed: 2,
+            },
             ..EngineStatistics::default()
         };
         totals.piece_waits.waiting_reader_count = 1;
@@ -1753,6 +1757,7 @@ mod scenario {
             "torrplay_torrents{observed_state=\"paused\"} 1".to_owned(),
             "torrplay_readers{state=\"idle\"} 2".to_owned(),
             "torrplay_waiting_readers 1".to_owned(),
+            "torrplay_piece_hash_checks_total{result=\"failed\"} 2".to_owned(),
             "torrplay_peer_connections_total{transport=\"tcp\",outcome=\"failed\"} 3".to_owned(),
             "torrplay_downloaded_bytes_total 1073741824".to_owned(),
             "torrplay_piece_wait_seconds_count{outcome=\"ready\"} 0".to_owned(),

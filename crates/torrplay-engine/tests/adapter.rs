@@ -15,7 +15,7 @@ use support::{
     start, start_with, upload,
 };
 use tokio::io::AsyncReadExt;
-use torrplay_core::engine::{ByteRange, Engine, EngineError, Source, SourceRejection};
+use torrplay_core::engine::{ByteRange, Engine, EngineError, HashChecks, Source, SourceRejection};
 use torrplay_core::lifecycle::{DesiredState, Readiness, StorageMode};
 use torrplay_core::metadata::FileIndex;
 use torrplay_core::settings::Settings;
@@ -903,6 +903,13 @@ async fn removing_releases_the_torrent_and_its_cache_usage() -> anyhow::Result<(
     assert!(totals.downloaded_bytes >= size, "{totals:?}");
     assert_eq!(totals.uploaded_bytes, 0);
     assert!(totals.peer_connections.tcp.succeeded >= 1, "{totals:?}");
+    assert_eq!(
+        totals.hash_checks,
+        HashChecks {
+            passed: size.div_ceil(u64::from(spec.piece_length)),
+            failed: 0,
+        }
+    );
     assert_eq!(totals.piece_waits.waiting_reader_count, 0);
 
     engine.remove(&id(1)).await?;

@@ -125,6 +125,7 @@ of series stays bounded.
 | `torrplay_waiting_readers` | gauge | | Active readers waiting for a missing piece. |
 | `torrplay_peers` | gauge | | Connected peers summed over torrents. |
 | `torrplay_peer_connections_total` | counter | `transport`: `tcp`, `utp`, `socks`; `outcome`: `succeeded`, `failed` | Finished attempts to connect to a peer. |
+| `torrplay_piece_hash_checks_total` | counter | `result`: `passed`, `failed` | Downloaded pieces checked against their hash. A failure is bad peer data; a check that could not run counts in neither. |
 | `torrplay_downloaded_bytes_total` | counter | | Piece data downloaded from peers, without duplicates. |
 | `torrplay_uploaded_bytes_total` | counter | | Piece data uploaded to peers. |
 | `torrplay_streamed_bytes_total` | counter | | File content sent in streams. |
@@ -160,7 +161,4 @@ of series stays bounded.
   records across restarts, and `/api/v1/log-records` will list them, so the
   records before a crash or a failed start stay readable, including on
   desktop and Android builds whose standard error nobody sees.
-- **Hash checks.** A `torrplay_piece_hash_checks_total` counter of pieces
-  passing and failing their hash check needs a hook the engine does not
-  offer yet.
 - **MCP.** Tools and resources for the system, statistics, and log records.
