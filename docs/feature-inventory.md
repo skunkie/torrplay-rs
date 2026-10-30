@@ -97,7 +97,7 @@ document that schedules it.
 | Global statistics | `/api/system/metrics` | Verified | `/api/v1/statistics`, OBS-02 |
 | Prometheus metrics | `GET /metrics` | Verified | OBS-03, OBS-05, AUT-12; [observability](observability.md#metrics) |
 | Structured logs and request IDs | Text logs | Verified | `--log-format json`, `X-Request-Id`, OBS-04, OBS-06 |
-| Recent logs | `/api/system/logs` | Planned | Log files and `/api/v1/log-records` next |
+| Recent logs | `/api/system/logs` | Verified | Rotating log files and `/api/v1/log-records`, OBS-08, OBS-09 |
 | Update checks | Client and release feed | Deferred | With release automation |
 
 ## Access

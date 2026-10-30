@@ -2,25 +2,28 @@
 //
 // SPDX-License-Identifier: MIT
 
-//! The JSON log format and the count of log records by level, as
-//! `docs/observability.md` describes them.
+//! The JSON log format, the log files, and the count of log records by
+//! level, as `docs/observability.md` describes them.
 //!
 //! [`JsonLayer`] writes one JSON object per record, with the record's
 //! sequence, time, level, run ID, request ID, target, message, and fields,
-//! the fields of its spans included. Messages and values are bounded and
-//! redacted again before they are written.
+//! the fields of its spans included, to standard error in the JSON format
+//! and to the log files. Messages and values are bounded and redacted again
+//! before they are written.
 
 use std::fmt;
 use std::io::Write;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use std::collections::BTreeMap;
+
 use chrono::{SecondsFormat, Utc};
-use serde_json::{Map, Value};
 use torrplay_core::id::RunId;
 use torrplay_core::redact::redact;
 use torrplay_core::settings::LogLevel;
 use torrplay_core::telemetry::LogRecordCounts;
+use torrplay_server::log_files::{LogFiles, LogRecord, LogWriter};
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Event, Level, Subscriber};
@@ -61,19 +64,35 @@ impl<S: Subscriber> Layer<S> for CountingLayer {
     }
 }
 
-/// Writes each record as one line of JSON to the writer `W` makes.
+/// Writes each record as one line of JSON to the writer `W` makes, if any,
+/// and to the log files, if they are open.
 pub(crate) struct JsonLayer<W> {
     run_id: String,
+    /// Numbers records when no log files do.
     sequence: AtomicU64,
-    writer: W,
+    writer: Option<W>,
+    files: Option<(LogFiles, Arc<LogWriter>)>,
 }
 
 impl<W> JsonLayer<W> {
-    pub(crate) fn new(run_id: &RunId, writer: W) -> Self {
+    pub(crate) fn new(
+        run_id: &RunId,
+        writer: Option<W>,
+        files: Option<(LogFiles, Arc<LogWriter>)>,
+    ) -> Self {
         Self {
             run_id: run_id.to_string(),
             sequence: AtomicU64::new(0),
             writer,
+            files,
+        }
+    }
+
+    /// Assigns the next record's sequence, which continues the log files'.
+    fn next_sequence(&self) -> u64 {
+        match &self.files {
+            Some((files, _)) => files.next_sequence(),
+            None => self.sequence.fetch_add(1, Ordering::Relaxed) + 1,
         }
     }
 }
@@ -161,40 +180,44 @@ where
             fields,
             Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
         );
-        let mut line = record.to_string();
-        line.push('\n');
-        // A record that cannot be written is lost; logging must not fail
-        // the code that logs.
-        let _ = self.writer.make_writer().write_all(line.as_bytes());
+        let Ok(line) = serde_json::to_string(&record) else {
+            return;
+        };
+        if let Some(writer) = &self.writer {
+            // A record that cannot be written is lost; logging must not fail
+            // the code that logs.
+            let _ = writer
+                .make_writer()
+                .write_all(format!("{line}\n").as_bytes());
+        }
+        if let Some((_, files)) = &self.files {
+            files.write(line);
+        }
     }
 }
 
 impl<W> JsonLayer<W> {
-    fn record(&self, level: LogLevel, target: &str, fields: Fields, time: String) -> Value {
+    fn record(&self, level: LogLevel, target: &str, fields: Fields, time: String) -> LogRecord {
         let Fields { message, values } = fields;
-        let mut request_id = Value::Null;
-        let mut members = Map::new();
+        let mut request_id = None;
+        let mut members = BTreeMap::new();
         for (name, value) in values {
             if name == REQUEST_ID_FIELD {
-                request_id = Value::String(bounded(&value, VALUE_MAX_BYTES));
+                request_id = Some(bounded(&value, VALUE_MAX_BYTES));
             } else if members.len() < FIELDS_MAX {
-                members.insert(
-                    name.to_owned(),
-                    Value::String(bounded(&value, VALUE_MAX_BYTES)),
-                );
+                members.insert(name.to_owned(), bounded(&value, VALUE_MAX_BYTES));
             }
         }
-        let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
-        serde_json::json!({
-            "sequence": sequence,
-            "time": time,
-            "level": level.as_str(),
-            "run_id": self.run_id,
-            "request_id": request_id,
-            "target": target,
-            "message": bounded(&message.unwrap_or_default(), MESSAGE_MAX_BYTES),
-            "fields": members,
-        })
+        LogRecord {
+            sequence: self.next_sequence(),
+            time,
+            level: level.as_str().to_owned(),
+            run_id: self.run_id.clone(),
+            request_id,
+            target: target.to_owned(),
+            message: bounded(&message.unwrap_or_default(), MESSAGE_MAX_BYTES),
+            fields: members,
+        }
     }
 }
 
@@ -217,6 +240,7 @@ fn bounded(text: &str, max_bytes: usize) -> String {
 mod tests {
     use std::sync::Mutex;
 
+    use serde_json::Value;
     use tracing_subscriber::layer::SubscriberExt;
 
     use super::*;
@@ -249,7 +273,7 @@ mod tests {
         let counts = Arc::new(LogRecordCounts::default());
         let run = RunId::from_random_bytes([7; 16]);
         let subscriber = tracing_subscriber::registry()
-            .with(JsonLayer::new(&run, lines.clone()))
+            .with(JsonLayer::new(&run, Some(lines.clone()), None))
             .with(CountingLayer(Arc::clone(&counts)));
         tracing::subscriber::with_default(subscriber, log);
         let text = String::from_utf8(lines.0.lock().unwrap().clone()).unwrap();

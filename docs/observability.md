@@ -6,17 +6,19 @@ SPDX-License-Identifier: MIT
 
 # Observability
 
-TorrPlay describes itself through three resources, log records on standard
-error, and a request ID on every response. Each resource answers a question
-one kind of reader asks; a field that answers none of them is left out.
+TorrPlay describes itself through four resources, log records on standard
+error and in rotating files, and a request ID on every response. Each
+resource answers a question one kind of reader asks; a field that answers
+none of them is left out.
 
 | Resource | Reader | Question |
 | --- | --- | --- |
 | `GET /api/v1/system` | a bug report, an about dialog | What is running, where, since when, and how big is it? |
 | `GET /api/v1/statistics` | a person or an agent watching playback | Is it streaming, waiting, or downloading, and how fast? |
+| `GET /api/v1/log-records` | a client's log view, an agent | What went wrong recently, and before the last restart? |
 | `GET /metrics` | Prometheus | Every number above, over time. |
 
-`api/openapi.yaml` defines the two JSON resources; this document adds the
+`api/openapi.yaml` defines the three JSON resources; this document adds the
 reasons behind them and the metric catalog, which the contract does not
 spell out, and the format of log records.
 
@@ -27,6 +29,9 @@ the application's and the piece cache's statistics, and nothing else. A
 scraper's token kept in a monitoring system's configuration then cannot
 change torrents, read the library, or issue playback tokens. It travels only
 as a bearer token, never in a URL.
+
+Log records need an `api` token. They name torrents, files, profiles, and
+client addresses, which is more than a monitoring system needs.
 
 While no password is set, these resources follow every other operation: they
 need no credential, and they are refused beyond the local networks.
@@ -62,8 +67,12 @@ need no credential, and they are refused beyond the local networks.
 
 ## Log records
 
-TorrPlay writes each log record to standard error, after the `log_level`
-setting and `--log-filter`.
+TorrPlay writes each log record to standard error and to rotating log
+files. Both receive what the `log_level` setting and `--log-filter` let
+through, and both carry the same members, so a collector, a person reading
+a file, and a client of the API see the same record.
+
+### Standard error
 
 `--log-format text|json`, or the `TORRPLAY_LOG_FORMAT` environment variable,
 chooses the format. Without either, it is `text` when standard error is a
@@ -74,7 +83,7 @@ and journald's JSON export read as it is, with these members:
 
 | Member | Type | Meaning |
 | --- | --- | --- |
-| `sequence` | integer | The record's position since the process started, 1 for the first; it orders records logged in the same millisecond and shows gaps. |
+| `sequence` | integer | The record's position among every record the log files have held, 1 for the first, continued across restarts; it orders records logged in the same millisecond and shows gaps. Without log files, it counts from the process's start. |
 | `time` | string | When the record was logged, in UTC, as RFC 3339 to the millisecond. |
 | `level` | string | `error`, `warn`, `info`, `debug`, or `trace`. |
 | `run_id` | string | The process's run ID, also in the system resource, which tells one run's records from another's. |
@@ -87,12 +96,61 @@ and journald's JSON export read as it is, with these members:
   at a character boundary, with an ellipsis. A record keeps at most 32
   fields.
 - **Fields.** Values are text: strings as they are, and other values as
-  the text format formats them, so `fields` stays one map of strings. Fields of the spans a record was logged
-  in are included; the record's own field wins over a span's of the same
-  name.
+  the text format formats them, so `fields` stays one map of strings.
+  Fields of the spans a record was logged in are included; the record's
+  own field wins over a span's of the same name.
 - **Redaction.** Credentials and private tracker parameters are redacted
   where they are logged. URLs and magnet URIs in messages and values are
-  redacted again before a record is written.
+  redacted again before a record is written anywhere.
+
+### Log files
+
+The files are JSON lines in the data directory's `logs/` folder:
+`torrplay.jsonl`, renamed to `torrplay.1.jsonl` when the next record would
+take it past 8 MiB, each older file moving up one number, with at most 4
+files kept, so they hold at most 32 MiB. They survive restarts, so the
+records before a crash or a failed start are still there, and they are what
+a desktop or Android build, whose standard error nobody sees, can attach to
+a bug report. The text format on standard error does not change them.
+
+- **Never blocking.** A background thread writes the files, through a queue
+  of 1024 records. When the queue is full or the disk fails, records are
+  dropped rather than delaying the code that logs them, and
+  `torrplay_log_records_dropped_total` counts them.
+- **Crashes.** A panic is logged as an `error` record and flushed to the
+  files before the process ends, and exiting flushes what is queued, each
+  waiting at most 2 seconds. A line a crash cut short is ended when the
+  files are next opened, so it never joins the next record.
+- **Without files.** When the data directory or its `logs/` folder cannot
+  be opened, a warning says so, records go to standard error only, and
+  `/api/v1/log-records` lists none.
+- **Ownership.** The files belong to the data directory, like the database,
+  and hold what the library holds: torrent names, file names, and client
+  addresses.
+
+### Reading records
+
+`/api/v1/log-records` reads the files, newest first, on a blocking worker,
+so a request scans at most the 32 MiB they hold.
+
+- **Runs and requests.** `run_id` tells one process's records from an
+  earlier run's. `request_id` names the HTTP request a record was logged
+  for, as the `X-Request-Id` response header and the `request_id` member of
+  a problem give it, so a reported error leads to its records.
+- **Following.** A client that follows the log passes the highest sequence
+  it has seen as `after_sequence` and follows `next` links until none
+  remains. If `oldest_sequence` is more than one past that sequence,
+  rotation removed records the client never read. `latest_sequence` counts
+  records still queued for the files.
+- **Filters.** `min_level` keeps a level and the more severe ones, the
+  question a person asks ("warnings and worse"), rather than one exact
+  level. `contains` is a case-insensitive substring of the message, the
+  target, the request ID, or a field's name or value, such as a torrent ID.
+  It is not the library search, whose typo tolerance would match unrelated
+  records.
+- **Following live.** Server-Sent Events may come later. The
+  `after_sequence` cursor serves the client and MCP without them, and a
+  browser's `EventSource` cannot send an `Authorization` header.
 
 ## Request IDs
 
@@ -136,6 +194,7 @@ of series stays bounded.
 | `torrplay_http_requests_total` | counter | `method`, `route`, `status` | Responses, counted when their headers are sent. |
 | `torrplay_http_response_head_seconds` | histogram | `method`, `route` | Time from a request's arrival until its response headers are sent. |
 | `torrplay_log_records_total` | counter | `level` | Records logged, by level, for alerting on a rise in errors. |
+| `torrplay_log_records_dropped_total` | counter | | Records the log files did not receive; absent without log files. |
 
 - **Process metrics.** They follow the Prometheus client libraries' standard
   names, so existing dashboards read them. The process metrics other than
@@ -156,10 +215,6 @@ of series stays bounded.
 
 ## Planned
 
-- **Log files.** Rotating JSON-lines files in the data directory will keep
-  records across restarts, and `/api/v1/log-records` will list them, so the
-  records before a crash or a failed start stay readable, including on
-  desktop and Android builds whose standard error nobody sees.
 - **Hash checks.** A `torrplay_piece_hash_checks_total` counter of pieces
   passing and failing their hash check needs a hook the engine does not
   offer yet.

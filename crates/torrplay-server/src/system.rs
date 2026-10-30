@@ -10,18 +10,24 @@ use std::fmt::Write;
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use torrplay_api as api;
 use torrplay_core::engine::{
     CacheStatistics, ConnectionOutcomes, Engine, EngineError, EngineStatistics,
 };
 use torrplay_core::lifecycle::ObservedState;
+use torrplay_core::pagination::{
+    CURSOR_PARAMETER, FilterFingerprint, LogRecordSortKey, PAGE_SIZE_PARAMETER, PageRequest,
+};
+use torrplay_core::settings::LogLevel;
 use torrplay_core::telemetry::HistogramSnapshot;
 
 use crate::app::App;
 use crate::headers::negotiate;
-use crate::problem::Problem;
+use crate::log_files::LogRecord;
+use crate::problem::{InvalidValue, Problem};
+use crate::query::{Paging, Query, page_error, reject};
 use crate::representation::{BASE, JSON, NO_CACHE, count, json};
 use crate::telemetry::Process;
 
@@ -37,6 +43,10 @@ fn system_path() -> String {
 
 fn statistics_path() -> String {
     format!("{BASE}/statistics")
+}
+
+fn log_records_path() -> String {
+    format!("{BASE}/log-records")
 }
 
 /// The metrics' path, outside the versioned API.
@@ -60,6 +70,7 @@ pub(crate) async fn system<E: Engine>(
         links: api::SystemLinks {
             self_field: system_path(),
             statistics: statistics_path(),
+            log_records: log_records_path(),
             metrics: METRICS_PATH.to_owned(),
         },
     };
@@ -138,6 +149,14 @@ pub(crate) async fn metrics<E: Engine>(
     exposition.cache(&cache);
     exposition.responses(&app);
     exposition.log_records(&app);
+    if let Some(files) = app.log_files() {
+        exposition.single(
+            "torrplay_log_records_dropped_total",
+            "counter",
+            "Log records the log files did not receive.",
+            files.dropped(),
+        );
+    }
     let mut response = (
         [(header::CONTENT_TYPE, HeaderValue::from_static(EXPOSITION))],
         exposition.text,
@@ -147,6 +166,175 @@ pub(crate) async fn metrics<E: Engine>(
         .headers_mut()
         .insert(header::CACHE_CONTROL, NO_CACHE);
     Ok(response)
+}
+
+/// The query parameters of the log records.
+const MIN_LEVEL: &str = "min_level";
+const CONTAINS: &str = "contains";
+const AFTER_SEQUENCE: &str = "after_sequence";
+
+/// The longest `contains` text.
+const CONTAINS_MAX_CHARS: usize = 256;
+
+pub(crate) async fn log_records<E: Engine>(
+    State(app): State<Arc<App<E>>>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Result<Response, Problem> {
+    negotiate(&headers, JSON)?;
+    let query = Query::parse(uri.query());
+    let mut errors = query.unexpected(
+        &[
+            MIN_LEVEL,
+            CONTAINS,
+            AFTER_SEQUENCE,
+            PAGE_SIZE_PARAMETER,
+            CURSOR_PARAMETER,
+        ],
+        &[
+            MIN_LEVEL,
+            CONTAINS,
+            AFTER_SEQUENCE,
+            PAGE_SIZE_PARAMETER,
+            CURSOR_PARAMETER,
+        ],
+    );
+    let paging = Paging::parse(&query, &mut errors);
+    let min_level = query.first(MIN_LEVEL).and_then(|value| {
+        let level = LogLevel::parse(value);
+        if level.is_none() {
+            errors.push(InvalidValue::parameter(
+                MIN_LEVEL,
+                "Must be error, warn, info, debug, or trace.",
+            ));
+        }
+        level
+    });
+    let contains = query.first(CONTAINS).and_then(|value| {
+        let length = value.chars().count();
+        if (1..=CONTAINS_MAX_CHARS).contains(&length) {
+            Some(value.to_lowercase())
+        } else {
+            errors.push(InvalidValue::parameter(
+                CONTAINS,
+                "Must be 1 to 256 characters.",
+            ));
+            None
+        }
+    });
+    let after_sequence = query.first(AFTER_SEQUENCE).and_then(|value| {
+        let sequence = value
+            .parse::<u64>()
+            .ok()
+            .filter(|sequence| i64::try_from(*sequence).is_ok());
+        if sequence.is_none() {
+            errors.push(InvalidValue::parameter(
+                AFTER_SEQUENCE,
+                "Must be an integer of 0 or more.",
+            ));
+        }
+        sequence
+    });
+    let filters: Vec<(&str, &str)> = [MIN_LEVEL, CONTAINS, AFTER_SEQUENCE]
+        .into_iter()
+        .filter_map(|name| query.first(name).map(|value| (name, value)))
+        .collect();
+    let request = PageRequest::<LogRecordSortKey>::new(
+        paging.page_size,
+        paging.cursor,
+        FilterFingerprint::of(filters.iter().copied()),
+    )
+    .map_err(|error| {
+        errors.push(page_error(error));
+    })
+    .ok();
+    reject(errors)?;
+    let request = request.ok_or_else(Problem::internal)?;
+
+    let limit = request.page_size().get();
+    let (records, oldest, latest) = match app.log_files() {
+        Some(files) => {
+            let files = files.clone();
+            let before = request.after().map(|key| key.0);
+            let latest = files.latest_sequence();
+            let read = tokio::task::spawn_blocking(move || {
+                files.read(before, after_sequence, limit + 1, |record| {
+                    matches_record(record, min_level, contains.as_deref())
+                })
+            })
+            .await
+            .map_err(|_| Problem::internal())?;
+            let (records, oldest) = read.map_err(|error| {
+                tracing::error!(%error, "the log files could not be read");
+                Problem::internal()
+            })?;
+            (records, oldest, latest)
+        }
+        None => (Vec::new(), None, None),
+    };
+    let more = records.len() > limit;
+    let records: Vec<LogRecord> = records.into_iter().take(limit).collect();
+    let next = more
+        .then(|| records.last())
+        .flatten()
+        .map(|last| request.cursor_after(&LogRecordSortKey(last.sequence)));
+    let path = log_records_path();
+    let page = api::LogRecordPage {
+        items: records.iter().filter_map(log_record).collect(),
+        oldest_sequence: oldest.map(count),
+        latest_sequence: latest.map(count),
+        links: api::LogRecordPageLinks {
+            self_field: paging.link(&path, &filters, paging.cursor),
+            next: next.map(|cursor| paging.link(&path, &filters, Some(&cursor))),
+        },
+    };
+    uncached(json(StatusCode::OK, &page)?)
+}
+
+/// Whether `record` is at `min_level` or more severe and contains
+/// `contains`, already lowercase, in its message, target, request ID, or a
+/// field.
+fn matches_record(record: &LogRecord, min_level: Option<LogLevel>, contains: Option<&str>) -> bool {
+    let severity = |level: LogLevel| LogLevel::ALL.iter().position(|each| *each == level);
+    let severe_enough = min_level.is_none_or(|min_level| {
+        LogLevel::parse(&record.level).is_some_and(|level| severity(level) <= severity(min_level))
+    });
+    let found = contains.is_none_or(|text| {
+        let has = |value: &str| value.to_lowercase().contains(text);
+        has(&record.message)
+            || has(&record.target)
+            || record.request_id.as_deref().is_some_and(has)
+            || record
+                .fields
+                .iter()
+                .any(|(name, value)| has(name) || has(value))
+    });
+    severe_enough && found
+}
+
+/// A record as the contract represents it; a record the files hold that
+/// the contract cannot represent is left out.
+fn log_record(record: &LogRecord) -> Option<api::LogRecord> {
+    Some(api::LogRecord {
+        sequence: i64::try_from(record.sequence).ok()?,
+        time: chrono::DateTime::parse_from_rfc3339(&record.time)
+            .ok()?
+            .with_timezone(&chrono::Utc),
+        level: match LogLevel::parse(&record.level)? {
+            LogLevel::Error => api::LogLevel::Error,
+            LogLevel::Warn => api::LogLevel::Warn,
+            LogLevel::Info => api::LogLevel::Info,
+            LogLevel::Debug => api::LogLevel::Debug,
+            LogLevel::Trace => api::LogLevel::Trace,
+        },
+        run_id: record.run_id.clone(),
+        request_id: record.request_id.clone(),
+        target: record.target.clone(),
+        message: record.message.clone(),
+        fields: api::LogRecordFields {
+            additional_properties: record.fields.clone(),
+        },
+    })
 }
 
 fn uncached(mut response: Response) -> Result<Response, Problem> {

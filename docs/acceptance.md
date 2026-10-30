@@ -383,6 +383,8 @@ These scenarios accept [the DLNA contract](dlna.md) (M7).
 | OBS-05 | Read the statistics and metrics while the engine is unavailable, then while it fails | `503`, and metrics with the process but no engine families; `500 internal-error` for both |
 | OBS-06 | Run `torrplay --log-format json` and read the system resource | Every line of standard error is a JSON record of the system resource's run, with sequences from 1; the response's record names its request ID |
 | OBS-07 | A reader waits for a piece no peer has, then a torrent downloads from a local seeder | One timed-out wait of at least the bound and no reader waiting; engine totals count the download and the connection |
+| OBS-08 | List log records with `min_level`, `contains` naming a field and a request ID, `after_sequence`, and pages of 2; then bad parameters, a restart, and an unreadable file | Newest first, filtered and bounded; next links reach the oldest; `400 malformed-request` for each bad parameter and a cursor of other filters; the sequence continues after the restart; `500 internal-error` |
+| OBS-09 | Request the system resource, stop `torrplay`, start it again on the same data directory, and list records containing the request ID | The earlier run's response record, with its run ID, which differs from the new run's |
 
 ### Peers
 

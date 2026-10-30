@@ -94,6 +94,8 @@ pub struct App<E> {
     run: crate::telemetry::Run,
     /// The server's measurements of its responses and streams.
     telemetry: crate::telemetry::Telemetry,
+    /// The log files the log records are read from, if they are written.
+    log_files: Option<crate::log_files::LogFiles>,
 }
 
 /// The settings the DLNA media server's announcer follows.
@@ -188,7 +190,19 @@ impl<E: Engine> App<E> {
             seek_indexes: None,
             run: crate::telemetry::Run::default(),
             telemetry: crate::telemetry::Telemetry::default(),
+            log_files: None,
         }
+    }
+
+    /// Lists the log records `files` hold. Without them, the log records
+    /// are an empty collection.
+    pub fn with_log_files(mut self, files: Option<crate::log_files::LogFiles>) -> Self {
+        self.log_files = files;
+        self
+    }
+
+    pub(crate) fn log_files(&self) -> Option<&crate::log_files::LogFiles> {
+        self.log_files.as_ref()
     }
 
     /// Belongs to `run`, whose ID log records carry. Without it, the server
