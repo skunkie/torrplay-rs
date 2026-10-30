@@ -27,6 +27,7 @@ use crate::lifecycle::{DesiredState, Failure, Readiness, StorageMode};
 use crate::metadata::{FileIndex, ReportedMetadata};
 use crate::preload::{PreloadRequest, PreloadStatus};
 use crate::settings::Settings;
+use crate::telemetry::PieceWaits;
 
 /// The input a torrent is created from.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -240,6 +241,62 @@ pub struct CacheStatistics {
     pub pinned_bytes: u64,
     /// The number of pieces evicted since the process started.
     pub eviction_count: u64,
+}
+
+/// Peer connection attempts that ended, by outcome.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ConnectionOutcomes {
+    /// Attempts that connected.
+    pub succeeded: u64,
+    /// Attempts that failed.
+    pub failed: u64,
+}
+
+/// Peer connection attempts since the engine started, by transport.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PeerConnections {
+    /// Over TCP.
+    pub tcp: ConnectionOutcomes,
+    /// Over uTP.
+    pub utp: ConnectionOutcomes,
+    /// Through a SOCKS proxy.
+    pub socks: ConnectionOutcomes,
+}
+
+/// Hash checks of downloaded pieces since the engine started.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HashChecks {
+    /// Pieces whose hash matched.
+    pub passed: u64,
+    /// Pieces whose hash did not match: bad data from a peer.
+    pub failed: u64,
+}
+
+/// Measurements across every torrent and reader of the engine, the parts of
+/// the contract's `Statistics` the engine knows.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EngineStatistics {
+    /// Readers serving a stream in progress.
+    pub active_reader_count: u64,
+    /// Idle readers.
+    pub idle_reader_count: u64,
+    /// Connected peers summed over torrents.
+    pub peer_count: u64,
+    /// Piece data downloaded from peers since the engine started, without
+    /// duplicates.
+    pub downloaded_bytes: u64,
+    /// Piece data uploaded to peers since the engine started.
+    pub uploaded_bytes: u64,
+    /// The download rate of every torrent together.
+    pub download_rate_bytes_per_second: u64,
+    /// The upload rate of every torrent together.
+    pub upload_rate_bytes_per_second: u64,
+    /// Connection attempts to peers.
+    pub peer_connections: PeerConnections,
+    /// Hash checks of downloaded pieces.
+    pub hash_checks: HashChecks,
+    /// Readers' waits for missing pieces.
+    pub piece_waits: PieceWaits,
 }
 
 /// The torrent engine facade.
@@ -470,6 +527,11 @@ pub trait Engine: Send + Sync + 'static {
     /// Returns the piece cache's statistics.
     fn cache_statistics(&self)
     -> impl Future<Output = Result<CacheStatistics, EngineError>> + Send;
+
+    /// Returns the measurements across every torrent and reader.
+    fn engine_statistics(
+        &self,
+    ) -> impl Future<Output = Result<EngineStatistics, EngineError>> + Send;
 }
 
 #[cfg(test)]

@@ -143,7 +143,8 @@ BitTorrent peer port (4240), and override settings for one run, as
 [the lifecycle](lifecycle.md#settings) describes: `--no-dht` turns the DHT
 off, and `--log-level` and `--log-filter` set the level of TorrPlay's own
 logs, which go to standard error; other crates log warnings and errors
-only. The DLNA media server, its name, and the DHT are settings
+only. `--log-format text|json` chooses their format, JSON when standard
+error is not a terminal ([observability](observability.md#log-records)). The DLNA media server, its name, and the DHT are settings
 ([the DLNA contract](dlna.md)).
 
 Authentication is off until a password is set through the API or on the

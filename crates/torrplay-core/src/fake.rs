@@ -23,8 +23,8 @@ use tokio::io::{AsyncRead, ReadBuf};
 use torrplay_fixtures::{FixtureSpec, Layout, catalog, generator};
 
 use crate::engine::{
-    ByteRange, CacheStatistics, Engine, EngineError, Inspection, Source, SourceRejection,
-    TorrentStatistics, TorrentStatus,
+    ByteRange, CacheStatistics, Engine, EngineError, EngineStatistics, Inspection, Source,
+    SourceRejection, TorrentStatistics, TorrentStatus,
 };
 use crate::id::{InfoHashV1, PreloadId, TorrentId};
 use crate::lifecycle::{DesiredState, Failure, Readiness, StorageMode};
@@ -68,6 +68,7 @@ struct State {
     /// Holds transitions until notified, while set.
     transition_gate: Option<Arc<tokio::sync::Notify>>,
     cache_statistics: CacheStatistics,
+    engine_statistics: EngineStatistics,
 }
 
 struct Fixture {
@@ -119,6 +120,7 @@ impl FakeEngine {
                 transition_failure: None,
                 transition_gate: None,
                 cache_statistics: CacheStatistics::default(),
+                engine_statistics: EngineStatistics::default(),
             }),
         }
     }
@@ -364,6 +366,11 @@ impl FakeEngine {
     /// Sets the statistics the piece cache reports.
     pub fn set_cache_statistics(&self, statistics: CacheStatistics) {
         self.lock().cache_statistics = statistics;
+    }
+
+    /// Sets the measurements across torrents and readers the engine reports.
+    pub fn set_engine_statistics(&self, statistics: EngineStatistics) {
+        self.lock().engine_statistics = statistics;
     }
 
     /// Returns the desired state the engine last accepted for a torrent, or
@@ -778,6 +785,10 @@ impl Engine for FakeEngine {
 
     async fn cache_statistics(&self) -> Result<CacheStatistics, EngineError> {
         Ok(self.ready()?.cache_statistics)
+    }
+
+    async fn engine_statistics(&self) -> Result<EngineStatistics, EngineError> {
+        Ok(self.ready()?.engine_statistics.clone())
     }
 }
 
@@ -1294,6 +1305,7 @@ mod tests {
             engine.torrent_statistics(&id(1)).await.map(drop)
         ));
         assert!(unavailable(engine.cache_statistics().await.map(drop)));
+        assert!(unavailable(engine.engine_statistics().await.map(drop)));
         assert!(unavailable(
             engine
                 .open_reader(&id(1), FileIndex(0), ByteRange::new(0, 1).unwrap())
@@ -1328,6 +1340,7 @@ mod tests {
         assert!(internal(engine.inspect(&file(&spec)).await.map(drop)));
         assert!(internal(engine.status(&id(1)).await.map(drop)));
         assert!(internal(engine.cache_statistics().await.map(drop)));
+        assert!(internal(engine.engine_statistics().await.map(drop)));
         assert!(internal(
             engine
                 .open_reader(&id(1), FileIndex(0), ByteRange::new(0, 1).unwrap())
@@ -1373,6 +1386,14 @@ mod tests {
         };
         engine.set_cache_statistics(cache);
         assert_eq!(engine.cache_statistics().await.unwrap(), cache);
+
+        let totals = EngineStatistics {
+            active_reader_count: 1,
+            downloaded_bytes: 1024,
+            ..EngineStatistics::default()
+        };
+        engine.set_engine_statistics(totals.clone());
+        assert_eq!(engine.engine_statistics().await.unwrap(), totals);
         assert!(matches!(
             engine.set_torrent_statistics(&id(2), statistics),
             Err(EngineError::UnknownTorrent)

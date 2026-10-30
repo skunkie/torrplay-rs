@@ -26,6 +26,7 @@
 //! - [`settings`]: the application's settings, their bounds and defaults,
 //!   and merging explicit values with the defaults.
 //! - [`redact`]: redaction of URLs and magnet URIs in text bound for logs.
+//! - [`telemetry`]: histograms and log record counts for the metrics.
 //! - [`engine`]: the [`Engine`](engine::Engine) trait, the torrent engine
 //!   facade, with its inputs, observations, and statistics.
 //! - `fake`, behind the `fake` feature: a scripted engine over the
@@ -50,5 +51,6 @@ pub mod redact;
 pub mod registry;
 pub mod search;
 pub mod settings;
+pub mod telemetry;
 
 mod base32;

@@ -15,7 +15,7 @@ use support::{
     start, start_with, upload,
 };
 use tokio::io::AsyncReadExt;
-use torrplay_core::engine::{ByteRange, Engine, EngineError, Source, SourceRejection};
+use torrplay_core::engine::{ByteRange, Engine, EngineError, HashChecks, Source, SourceRejection};
 use torrplay_core::lifecycle::{DesiredState, Readiness, StorageMode};
 use torrplay_core::metadata::FileIndex;
 use torrplay_core::settings::Settings;
@@ -825,7 +825,8 @@ async fn turning_background_downloads_off_stops_them_until_turned_on() -> anyhow
 }
 
 /// A paused torrent opens no reader, and a reader whose piece never comes
-/// fails after the piece wait bound.
+/// fails after the piece wait bound, which the engine counts as a wait that
+/// timed out (OBS-07).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn readers_need_a_started_torrent_and_wait_a_bounded_time() -> anyhow::Result<()> {
     let spec = catalog::single_small();
@@ -861,13 +862,21 @@ async fn readers_need_a_started_torrent_and_wait_a_bounded_time() -> anyhow::Res
     .await?
     .expect_err("no peer can supply the piece");
     assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    let statistics = engine.engine_statistics().await?;
+    let waits = &statistics.piece_waits;
+    assert_eq!(waits.waiting_reader_count, 0, "the wait has ended");
+    assert_eq!(waits.timed_out.count, 1);
+    assert!(waits.timed_out.sum >= Duration::from_secs(1), "{waits:?}");
+    assert_eq!((waits.ready.count, waits.canceled.count), (0, 0));
 
     engine.shutdown().await?;
     Ok(())
 }
 
 /// Removing a torrent releases its cache usage before returning, and the
-/// engine no longer knows it; statistics count what was downloaded.
+/// engine no longer knows it; statistics count what was downloaded, for the
+/// torrent and across the engine, and the connection to the seeder
+/// (OBS-07).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn removing_releases_the_torrent_and_its_cache_usage() -> anyhow::Result<()> {
     let spec = catalog::single_small();
@@ -890,6 +899,18 @@ async fn removing_releases_the_torrent_and_its_cache_usage() -> anyhow::Result<(
     );
     let cache = engine.cache_statistics().await?;
     assert!(cache.usage_bytes > 0 && cache.usage_bytes <= cache.capacity_bytes);
+    let totals = engine.engine_statistics().await?;
+    assert!(totals.downloaded_bytes >= size, "{totals:?}");
+    assert_eq!(totals.uploaded_bytes, 0);
+    assert!(totals.peer_connections.tcp.succeeded >= 1, "{totals:?}");
+    assert_eq!(
+        totals.hash_checks,
+        HashChecks {
+            passed: size.div_ceil(u64::from(spec.piece_length)),
+            failed: 0,
+        }
+    );
+    assert_eq!(totals.piece_waits.waiting_reader_count, 0);
 
     engine.remove(&id(1)).await?;
     let stats = engine.cache().expect("a started cache").audit()?;
