@@ -564,6 +564,32 @@ mod tests {
     }
 
     #[test]
+    fn contract_examples_use_ids_the_server_can_issue() {
+        // An ID is its prefix and 128 bits in base32, so its last character
+        // carries no stray bits, and it decodes.
+        let contract = include_str!("../../../api/openapi.yaml");
+        let prefixes = [
+            "trr_", "fil_", "prf_", "prl_", "vwg_", "atk_", "upn_", "run_", "req_",
+        ];
+        let mut checked = 0;
+        for word in contract.split(|c: char| !c.is_ascii_alphanumeric() && c != '_') {
+            let Some(prefix) = prefixes.iter().find(|prefix| word.starts_with(**prefix)) else {
+                continue;
+            };
+            // Prose names fields such as run_id.
+            if word.ends_with("_id") || word.len() == prefix.len() {
+                continue;
+            }
+            assert!(
+                random_bytes(word, prefix).is_some(),
+                "{word} is not an ID the server can issue"
+            );
+            checked += 1;
+        }
+        assert!(checked > 100, "the contract's IDs are found");
+    }
+
+    #[test]
     fn file_ids_match_fixed_vectors() {
         // Computed independently with Python's hashlib and base64; the first
         // is also the contract's example file ID.

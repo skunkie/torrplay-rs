@@ -6,7 +6,7 @@
 //! level, as `docs/observability.md` describes them.
 //!
 //! [`JsonLayer`] writes one JSON object per record, with the record's
-//! sequence, time, level, run ID, request ID, target, message, and fields,
+//! sequence, time logged, level, run ID, request ID, target, message, and fields,
 //! the fields of its spans included, to standard error in the JSON format
 //! and to the log files. Messages and values are bounded and redacted again
 //! before they are written.
@@ -197,7 +197,13 @@ where
 }
 
 impl<W> JsonLayer<W> {
-    fn record(&self, level: LogLevel, target: &str, fields: Fields, time: String) -> LogRecord {
+    fn record(
+        &self,
+        level: LogLevel,
+        target: &str,
+        fields: Fields,
+        logged_at: String,
+    ) -> LogRecord {
         let Fields { message, values } = fields;
         let mut request_id = None;
         let mut members = BTreeMap::new();
@@ -210,7 +216,7 @@ impl<W> JsonLayer<W> {
         }
         LogRecord {
             sequence: self.next_sequence(),
-            time,
+            logged_at,
             level: level.as_str().to_owned(),
             run_id: self.run_id.clone(),
             request_id,
@@ -303,7 +309,7 @@ mod tests {
             serde_json::json!({ "torrent": "trr_x", "piece": "12" }),
             "the record's field wins over the span's"
         );
-        assert!(record["time"].as_str().unwrap().ends_with('Z'));
+        assert!(record["logged_at"].as_str().unwrap().ends_with('Z'));
         assert!(record["target"].as_str().unwrap().starts_with("torrplay"));
     }
 

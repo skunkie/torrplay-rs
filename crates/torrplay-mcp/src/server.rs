@@ -212,7 +212,7 @@ pub struct PreloadFile {
     /// Where playback resumes, in bytes; omitted, the file's head and tail.
     pub offset_bytes: Option<i64>,
     /// How long the preload lasts, 10 to 3600 seconds; 120 by default.
-    pub ttl_seconds: Option<i32>,
+    pub expires_in_seconds: Option<i32>,
 }
 
 /// A file of a torrent.
@@ -254,7 +254,7 @@ pub struct UpNext {
 impl Server {
     #[tool(
         description = "List torrents, newest first or best match first, with \
-            optional filters. total counts every match.",
+            optional filters. total_count counts every match.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn list_torrents(
@@ -418,7 +418,7 @@ impl Server {
                     .as_str()
                     .ok_or_else(|| Failure::Unusable("the file has no content link".to_owned()))?;
                 let mut url = self.client.resolve(content)?;
-                let request = api::PlaybackTokenRequest {
+                let request = api::PlaybackTokenCreation {
                     torrent_id: Some(Some(torrent_id.to_owned())),
                     expires_in_seconds: arguments.expires_in_seconds,
                 };
@@ -480,7 +480,7 @@ impl Server {
                 }
                 let creation = api::PreloadCreation {
                     offset_bytes: arguments.offset_bytes,
-                    ttl_seconds: arguments.ttl_seconds,
+                    expires_in_seconds: arguments.expires_in_seconds,
                 };
                 Ok(self.client.post(&path, &creation).await?.body)
             }

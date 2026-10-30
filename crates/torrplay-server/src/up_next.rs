@@ -102,7 +102,7 @@ async fn entries<E: Engine>(
                     Reason::Resume => api::UpNextEntryReason::Resume,
                     Reason::NextEpisode => api::UpNextEntryReason::NextEpisode,
                 },
-                activity_at: entry.activity_at.into(),
+                last_active_at: entry.activity_at.into(),
                 torrent: representation::torrent(view),
                 file: representation::file(&entry.torrent, file),
                 progress: saved.map(|saved| {

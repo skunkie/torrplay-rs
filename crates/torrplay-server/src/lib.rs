@@ -190,7 +190,7 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
             get(up_next::list::<E>),
         )
         .route(
-            "/api/v1/profiles/{profile_id}/up-next/{entry_id}",
+            "/api/v1/profiles/{profile_id}/up-next/{up_next_entry_id}",
             get(up_next::get::<E>).delete(up_next::delete::<E>),
         )
         .route(

@@ -102,9 +102,9 @@ impl Application {
     fn log(&self, level: &str, message: &str, torrent_id: &str) {
         let record = LogRecord {
             sequence: self.log_files.next_sequence(),
-            time: "2026-10-30T09:15:02.481Z".into(),
+            logged_at: "2026-10-30T09:15:02.481Z".into(),
             level: level.into(),
-            run_id: "run_q4m2kzb6hxw3rjpt5yc4ula7nd".into(),
+            run_id: "run_q4m2kzb6hxw3rjpt5yc4ula7na".into(),
             request_id: None,
             target: "torrplay_server".into(),
             message: message.into(),
@@ -323,12 +323,12 @@ async fn torrents_are_added_found_and_streamed() {
     let found = session
         .ok("list_torrents", json!({ "search": "sintl" }))
         .await;
-    assert_eq!(found["total"], 1, "a typo still finds it");
+    assert_eq!(found["total_count"], 1, "a typo still finds it");
     assert_eq!(found["items"][0]["id"], torrent_id.as_str());
     let none = session
         .ok("list_torrents", json!({ "kind": "series", "limit": 5 }))
         .await;
-    assert_eq!(none["total"], 0);
+    assert_eq!(none["total_count"], 0);
 
     let file = &torrent["files"][0];
     let stream = session
@@ -360,7 +360,7 @@ async fn torrents_are_added_found_and_streamed() {
         .await;
     assert_eq!(resource["torrent"]["id"], torrent_id.as_str());
     let listed = session.read("torrplay://torrents").await;
-    assert_eq!(listed["total"], 1);
+    assert_eq!(listed["total_count"], 1);
     session.close().await;
     application.stop().await;
 }
@@ -484,7 +484,7 @@ async fn the_token_authenticates_and_failures_name_the_application() {
     let signed_in = Session::open(application.origin.clone(), Some(secret)).await;
     let (torrent_id, torrent) = signed_in.add(&catalog::single_small(), "Sintel").await;
     let listed = signed_in.ok("list_torrents", json!({})).await;
-    assert_eq!(listed["total"], 1);
+    assert_eq!(listed["total_count"], 1);
     let stream = signed_in
         .ok(
             "get_stream_url",

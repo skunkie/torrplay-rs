@@ -279,10 +279,10 @@ only until the application restarts.
   its ranges; readers share what preload pins leave of the readahead
   budget. In disk storage, a preload pins nothing; its pieces stay in the
   torrent's files.
-- A preload expires at its `expires_at`, `ttl_seconds` after its creation:
-  120 seconds by default, from 10 to 3600. Expiry is the end of a preload
-  that nothing else ends, whether or not its file was read; to keep its
-  pieces longer, a client creates another preload.
+- A preload expires at its `expires_at`, `expires_in_seconds` after its
+  creation: 120 seconds by default, from 10 to 3600. Expiry is the end of a
+  preload that nothing else ends, whether or not its file was read; to keep
+  its pieces longer, a client creates another preload.
 - A preload fails, with a `failure` that says why, when its torrent is
   paused or fails, when no piece of its ranges arrives within the piece
   wait bound while it is downloading, or when the piece cache's bounded
@@ -527,8 +527,8 @@ included, must pass.
   order, newest first with the ID as the tie-breaker, so pages are
   deterministic. A cursor holds the rank, so it works only with its search;
   a torrent whose title changes between pages may repeat or be skipped.
-- `total` counts the torrents matching every filter and the search, across
-  pages.
+- `total_count` counts the torrents matching every filter and the search,
+  across pages.
 
 Every page of the collection carries facets for global navigation:
 

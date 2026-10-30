@@ -27,7 +27,7 @@ use crate::headers::{EntityTags, negotiate};
 use crate::inference::{Owner, WatchedBody};
 use crate::problem::{Problem, ProblemType};
 use crate::query::{Paging, Query, page_error, reject};
-use crate::representation::{self, JSON, torrent_path};
+use crate::representation::{self, JSON, NO_CACHE, cached, torrent_path};
 use crate::retention::ActiveBody;
 use crate::torrents::{self, not_modified};
 
@@ -114,7 +114,10 @@ pub(crate) async fn list<E: Engine>(
             self_field: paging.link(&path, &[], paging.cursor),
         },
     };
-    representation::json(StatusCode::OK, &body)
+    Ok(cached(
+        representation::json(StatusCode::OK, &body)?,
+        NO_CACHE,
+    ))
 }
 
 pub(crate) async fn get<E: Engine>(
@@ -125,7 +128,10 @@ pub(crate) async fn get<E: Engine>(
     negotiate(&headers, JSON)?;
     let (view, metadata) = with_metadata(&app, &id).await?;
     let (_, file) = metadata.file(&file_id).ok_or_else(unknown_file)?;
-    representation::json(StatusCode::OK, &representation::file(&view.record.id, file))
+    Ok(cached(
+        representation::json(StatusCode::OK, &representation::file(&view.record.id, file))?,
+        NO_CACHE,
+    ))
 }
 
 pub(crate) async fn get_content<E: Engine>(

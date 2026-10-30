@@ -132,7 +132,7 @@ impl Running {
     /// and listeners.
     pub async fn crash_and_restart(
         self,
-        tune: impl FnOnce(&mut EngineConfig),
+        tune: impl Fn(&mut EngineConfig),
         between: impl AsyncFnOnce() -> anyhow::Result<()>,
     ) -> anyhow::Result<Self> {
         let (data, peers, timings) = (Arc::clone(&self.data), self.peers.clone(), self.timings);
@@ -140,7 +140,24 @@ impl Running {
         let _ = self.task.await;
         self.engine.shutdown().await?;
         between().await?;
-        let running = Self::spawn_in(data, peers, timings, tune).await?;
+        // A crashed process loses its database lock at once, but the aborted
+        // application's server and connection tasks hold its store until
+        // they wind down.
+        let running = eventually("the old store's release", async || {
+            match Self::spawn_in(Arc::clone(&data), peers.clone(), timings, &tune).await {
+                Ok(running) => Ok(Some(running)),
+                Err(error)
+                    if matches!(
+                        error.downcast_ref(),
+                        Some(torrplay_store::StoreError::InUse { .. })
+                    ) =>
+                {
+                    Ok(None)
+                }
+                Err(error) => Err(error),
+            }
+        })
+        .await?;
         running.ready(&Client::new()).await?;
         Ok(running)
     }
@@ -263,7 +280,7 @@ impl Running {
 pub fn upload_form(torrent_file: &[u8]) -> (String, Vec<u8>) {
     const BOUNDARY: &str = "torrplay-boundary";
     let mut body = format!(
-        "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"torrent_file\"; \
+        "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"metainfo\"; \
          filename=\"upload.torrent\"\r\nContent-Type: application/x-bittorrent\r\n\r\n"
     )
     .into_bytes();

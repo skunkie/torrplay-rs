@@ -75,7 +75,8 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
   (BEP 9). The torrent resource exists before retrieval completes.
 
 **File**
-: One file listed in a torrent's metadata.
+: One file listed in a torrent's metadata. The contract's `TorrentFile`
+  schema is a file in this sense.
 
 **File ID**
 : The identifier of a file within its torrent. It is stable across restarts
@@ -93,9 +94,12 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 **Retention**
 : Whether the application keeps a torrent: `persisted` or `temporary`.
 
-**Torrent file**
-: A metainfo file ([BEP 3](https://www.bittorrent.org/beps/bep_0003.html)):
-  the bencoded dictionary of a torrent's metadata and trackers. A persisted
+**Metainfo**
+: A metainfo file ([BEP 3](https://www.bittorrent.org/beps/bep_0003.html)),
+  commonly called a torrent file or a .torrent: the bencoded dictionary of
+  a torrent's metadata and trackers. The contract calls it metainfo, as the
+  `metainfo` upload part and resource, since `TorrentFile` names a file in
+  a torrent; prose may say torrent file. A persisted
   torrent keeps an uploaded torrent file's original bytes, or, for a magnet
   link, the torrent file the engine builds from the retrieved metadata and
   the link's trackers.

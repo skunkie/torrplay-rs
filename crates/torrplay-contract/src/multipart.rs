@@ -76,7 +76,8 @@ mod tests {
 
     #[test]
     fn reads_named_parts_with_their_types() {
-        let body = b"--b\r\nContent-Disposition: form-data; name=\"torrent_file\"; filename=\"a.torrent\"\r\n\
+        let body =
+            b"--b\r\nContent-Disposition: form-data; name=\"metainfo\"; filename=\"a.torrent\"\r\n\
 Content-Type: application/x-bittorrent\r\n\r\nd4:infoe\r\n--b\r\n\
 Content-Disposition: form-data; name=\"desired_state\"\r\n\r\npaused\r\n--b--\r\n";
         let parts = parse(body, "b").unwrap();
@@ -84,7 +85,7 @@ Content-Disposition: form-data; name=\"desired_state\"\r\n\r\npaused\r\n--b--\r\
             parts,
             [
                 Part {
-                    name: "torrent_file".into(),
+                    name: "metainfo".into(),
                     content_type: Some("application/x-bittorrent".into()),
                     data: b"d4:infoe".to_vec(),
                 },

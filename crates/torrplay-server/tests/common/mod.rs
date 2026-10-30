@@ -629,7 +629,7 @@ pub const BOUNDARY: &str = "torrplay-test-boundary";
 /// A creation request with a multipart form.
 pub fn form_request(torrent_file: &[u8], desired_state: Option<&str>) -> Request<Vec<u8>> {
     let mut parts = vec![(
-        "torrent_file",
+        "metainfo",
         Some("application/x-bittorrent"),
         torrent_file.to_vec(),
     )];

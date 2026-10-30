@@ -73,6 +73,9 @@ paths:
       responses:
         '200':
           description: The entry point's links.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
           content:
             application/json:
               schema:
@@ -111,6 +114,9 @@ paths:
       responses:
         '200':
           description: The OpenAPI document as YAML.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
           content:
             application/yaml:
               schema:
@@ -278,9 +284,9 @@ paths:
                           statistics: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/statistics
                           poster: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/poster
                           metainfo: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/metainfo
-                    total: 1
+                    total_count: 1
                     facets:
-                      total: 1
+                      total_count: 1
                       uncategorized: 0
                       categories:
                         - name: Kids
@@ -350,15 +356,15 @@ paths:
                   categories: [Movies]
           multipart/form-data:
             schema:
-              $ref: '#/components/schemas/TorrentFileUpload'
+              $ref: '#/components/schemas/TorrentCreationUpload'
             encoding:
-              torrent_file:
+              metainfo:
                 contentType: application/x-bittorrent
             examples:
               upload:
                 summary: An uploaded torrent file
                 value:
-                  torrent_file: d8:announce20:http://tracker.test/4:infod6:lengthi1024e4:name8:file.bin12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaaee
+                  metainfo: d8:announce20:http://tracker.test/4:infod6:lengthi1024e4:name8:file.bin12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaaee
                   desired_state: paused
       responses:
         '201':
@@ -446,13 +452,13 @@ paths:
             schema:
               $ref: '#/components/schemas/TorrentPreviewUpload'
             encoding:
-              torrent_file:
+              metainfo:
                 contentType: application/x-bittorrent
             examples:
               upload:
                 summary: An uploaded torrent file
                 value:
-                  torrent_file: d8:announce20:http://tracker.test/4:infod6:lengthi1024e4:name8:file.bin12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaaee
+                  metainfo: d8:announce20:http://tracker.test/4:infod6:lengthi1024e4:name8:file.bin12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaaee
       responses:
         '200':
           description: What adding the torrent file would create.
@@ -675,7 +681,7 @@ paths:
         representation; docs/lifecycle.md describes how they are normalized.
       tags: [Torrents]
       parameters:
-        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/ConfigurationIfMatch'
       requestBody:
         description: >-
           The configuration members to change, in a body of at most 16384
@@ -852,7 +858,7 @@ paths:
         '503':
           $ref: '#/components/responses/EngineUnavailable'
     put:
-      operationId: putTorrentPoster
+      operationId: setTorrentPoster
       summary: Upload a torrent's poster
       description: >-
         Stores the image as the torrent's poster, replacing any poster it
@@ -1033,6 +1039,9 @@ paths:
       responses:
         '200':
           description: A page of files.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
           content:
             application/json:
               schema:
@@ -1077,6 +1086,9 @@ paths:
       responses:
         '200':
           description: The file.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
           content:
             application/json:
               schema:
@@ -1305,7 +1317,7 @@ paths:
                   summary: One downloading preload
                   value:
                     items:
-                    - id: prl_4qhvgmtq62qwv4xfuperelxpq
+                    - id: prl_4qhvgmtq62qwv4xfuperelxpqa
                       state: downloading
                       offset_bytes: null
                       ranges:
@@ -1320,9 +1332,10 @@ paths:
                       ended_at: null
                       failure: null
                       links:
-                        self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads/prl_4qhvgmtq62qwv4xfuperelxpq
+                        self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads/prl_4qhvgmtq62qwv4xfuperelxpqa
                         file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
                         content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+                        torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
                     links:
                       self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads
         '404':
@@ -1363,7 +1376,7 @@ paths:
                 summary: A window where playback resumes, for 10 minutes
                 value:
                   offset_bytes: 536870912
-                  ttl_seconds: 600
+                  expires_in_seconds: 600
       responses:
         '201':
           description: The preload was created.
@@ -1378,7 +1391,7 @@ paths:
                 created:
                   summary: A preload of a file's head and tail
                   value:
-                    id: prl_4qhvgmtq62qwv4xfuperelxpq
+                    id: prl_4qhvgmtq62qwv4xfuperelxpqa
                     state: queued
                     offset_bytes: null
                     ranges:
@@ -1393,9 +1406,10 @@ paths:
                     ended_at: null
                     failure: null
                     links:
-                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads/prl_4qhvgmtq62qwv4xfuperelxpq
+                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads/prl_4qhvgmtq62qwv4xfuperelxpqa
                       file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
                       content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+                      torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
         '400':
           $ref: '#/components/responses/MalformedRequest'
         '404':
@@ -1442,7 +1456,7 @@ paths:
                 downloading:
                   summary: A preload that is downloading
                   value:
-                    id: prl_4qhvgmtq62qwv4xfuperelxpq
+                    id: prl_4qhvgmtq62qwv4xfuperelxpqa
                     state: downloading
                     offset_bytes: null
                     ranges:
@@ -1457,13 +1471,14 @@ paths:
                     ended_at: null
                     failure: null
                     links:
-                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads/prl_4qhvgmtq62qwv4xfuperelxpq
+                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads/prl_4qhvgmtq62qwv4xfuperelxpqa
                       file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
                       content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+                      torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
                 failed:
                   summary: A preload whose torrent was paused
                   value:
-                    id: prl_4qhvgmtq62qwv4xfuperelxpq
+                    id: prl_4qhvgmtq62qwv4xfuperelxpqa
                     state: failed
                     offset_bytes: null
                     ranges:
@@ -1479,9 +1494,10 @@ paths:
                     failure:
                       detail: The torrent was paused.
                     links:
-                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads/prl_4qhvgmtq62qwv4xfuperelxpq
+                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads/prl_4qhvgmtq62qwv4xfuperelxpqa
                       file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
                       content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+                      torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -1540,7 +1556,7 @@ paths:
                 created:
                   summary: A viewing nothing has streamed yet
                   value:
-                    id: vwg_q62qwv4xfuperelxpq4qhvgmt
+                    id: vwg_q62qwv4xfuperelxpq4qhvgmta
                     position_seconds: null
                     duration_seconds: null
                     streaming: false
@@ -1548,10 +1564,10 @@ paths:
                     last_active_at: null
                     expires_at: '2026-10-20T20:00:00Z'
                     links:
-                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/viewings/vwg_q62qwv4xfuperelxpq4qhvgmt
+                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/viewings/vwg_q62qwv4xfuperelxpq4qhvgmta
                       file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
                       torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
-                      content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content?viewing_id=vwg_q62qwv4xfuperelxpq4qhvgmt
+                      content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content?viewing_id=vwg_q62qwv4xfuperelxpq4qhvgmta
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -1588,7 +1604,7 @@ paths:
                 streaming:
                   summary: A viewing whose player is streaming
                   value:
-                    id: vwg_q62qwv4xfuperelxpq4qhvgmt
+                    id: vwg_q62qwv4xfuperelxpq4qhvgmta
                     position_seconds: 1325.5
                     duration_seconds: 5400.0
                     streaming: true
@@ -1596,14 +1612,14 @@ paths:
                     last_active_at: '2026-10-19T20:22:05Z'
                     expires_at: '2026-10-20T20:22:05Z'
                     links:
-                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/viewings/vwg_q62qwv4xfuperelxpq4qhvgmt
+                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/viewings/vwg_q62qwv4xfuperelxpq4qhvgmta
                       file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
                       torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
-                      content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content?viewing_id=vwg_q62qwv4xfuperelxpq4qhvgmt
+                      content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content?viewing_id=vwg_q62qwv4xfuperelxpq4qhvgmta
                 ended:
                   summary: A viewing whose player exited
                   value:
-                    id: vwg_q62qwv4xfuperelxpq4qhvgmt
+                    id: vwg_q62qwv4xfuperelxpq4qhvgmta
                     position_seconds: 1410.0
                     duration_seconds: 5400.0
                     streaming: false
@@ -1611,10 +1627,10 @@ paths:
                     last_active_at: '2026-10-19T20:23:30Z'
                     expires_at: '2026-10-20T20:23:30Z'
                     links:
-                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/viewings/vwg_q62qwv4xfuperelxpq4qhvgmt
+                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/viewings/vwg_q62qwv4xfuperelxpq4qhvgmta
                       file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
                       torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
-                      content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content?viewing_id=vwg_q62qwv4xfuperelxpq4qhvgmt
+                      content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content?viewing_id=vwg_q62qwv4xfuperelxpq4qhvgmta
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -1716,6 +1732,7 @@ paths:
                           self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula
                           avatar: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/avatar
                           up_next: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next
+                          title_progress: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/title-progress
                       - id: prf_5hdq2m7kzb6hxw3rjpt4yc2ula
                         name: Devices
                         kind: device
@@ -1725,6 +1742,7 @@ paths:
                           self: /api/v1/profiles/prf_5hdq2m7kzb6hxw3rjpt4yc2ula
                           avatar: /api/v1/profiles/prf_5hdq2m7kzb6hxw3rjpt4yc2ula/avatar
                           up_next: /api/v1/profiles/prf_5hdq2m7kzb6hxw3rjpt4yc2ula/up-next
+                          title_progress: /api/v1/profiles/prf_5hdq2m7kzb6hxw3rjpt4yc2ula/title-progress
                     links:
                       self: /api/v1/profiles
         '400':
@@ -1781,6 +1799,7 @@ paths:
                       self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula
                       avatar: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/avatar
                       up_next: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next
+                      title_progress: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/title-progress
         '400':
           $ref: '#/components/responses/MalformedRequest'
         '408':
@@ -1832,6 +1851,7 @@ paths:
                       self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula
                       avatar: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/avatar
                       up_next: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next
+                      title_progress: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/title-progress
         '304':
           $ref: '#/components/responses/NotModified'
         '404':
@@ -1850,7 +1870,7 @@ paths:
         so renaming it is lifecycle-conflict.
       tags: [Profiles]
       parameters:
-        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/ProfileIfMatch'
       requestBody:
         description: >-
           The members to change, in a body of at most 16384 bytes. Larger
@@ -1889,6 +1909,7 @@ paths:
                       self: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula
                       avatar: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/avatar
                       up_next: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next
+                      title_progress: /api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/title-progress
         '400':
           $ref: '#/components/responses/MalformedRequest'
         '404':
@@ -2016,7 +2037,7 @@ paths:
         '503':
           $ref: '#/components/responses/EngineUnavailable'
     put:
-      operationId: putProfileAvatar
+      operationId: setProfileAvatar
       summary: Upload a profile's avatar
       description: >-
         Stores the image as the profile's avatar, replacing any it had, under the rules
@@ -2201,7 +2222,7 @@ paths:
         '503':
           $ref: '#/components/responses/EngineUnavailable'
     put:
-      operationId: putFileProgress
+      operationId: setFileProgress
       summary: Save a file's progress
       description: >-
         Replaces the profile's progress of the file. Players save it as they
@@ -2439,11 +2460,11 @@ paths:
         '503':
           $ref: '#/components/responses/EngineUnavailable'
     put:
-      operationId: putTitleProgress
+      operationId: setTitleProgress
       summary: Save a title's progress
       description: >-
         Replaces the profile's progress of the title or episode, under the
-        rules putFileProgress follows: the last write wins, and a position at
+        rules setFileProgress follows: the last write wins, and a position at
         or past 90% of the duration marks it viewed and resets the position
         to 0. It outlives any torrent, so a catalog card can show it after
         the torrent played is gone and a later torrent of the title can
@@ -2613,7 +2634,7 @@ paths:
         '503':
           $ref: '#/components/responses/EngineUnavailable'
 
-  /api/v1/profiles/{profile_id}/up-next/{entry_id}:
+  /api/v1/profiles/{profile_id}/up-next/{up_next_entry_id}:
     parameters:
       - $ref: '#/components/parameters/ProfileId'
       - $ref: '#/components/parameters/UpNextEntryId'
@@ -2638,7 +2659,7 @@ paths:
                   value:
                     id: upn_5hdq2m7kzb6hxw3rjpt4yc2ula
                     reason: next_episode
-                    activity_at: '2026-10-19T20:15:00Z'
+                    last_active_at: '2026-10-19T20:15:00Z'
                     torrent:
                       id: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
                       name: Example Show
@@ -2753,8 +2774,6 @@ paths:
           headers:
             Cache-Control:
               $ref: '#/components/headers/CacheControl'
-            X-Request-Id:
-              $ref: '#/components/headers/RequestId'
           content:
             application/json:
               schema:
@@ -2802,8 +2821,6 @@ paths:
           headers:
             Cache-Control:
               $ref: '#/components/headers/CacheControl'
-            X-Request-Id:
-              $ref: '#/components/headers/RequestId'
           content:
             application/json:
               schema:
@@ -2815,7 +2832,7 @@ paths:
                     version: 0.1.0
                     os: linux
                     architecture: aarch64
-                    run_id: run_q4m2kzb6hxw3rjpt5yc4ula7nd
+                    run_id: run_q4m2kzb6hxw3rjpt5yc4ula7na
                     started_at: '2026-10-29T12:00:00Z'
                     uptime_seconds: 86400
                     resident_memory_bytes: 402653184
@@ -2854,8 +2871,6 @@ paths:
           headers:
             Cache-Control:
               $ref: '#/components/headers/CacheControl'
-            X-Request-Id:
-              $ref: '#/components/headers/RequestId'
           content:
             application/json:
               schema:
@@ -2866,10 +2881,10 @@ paths:
                   value:
                     items:
                       - sequence: 4182
-                        time: '2026-10-30T09:15:02.481Z'
+                        logged_at: '2026-10-30T09:15:02.481Z'
                         level: warn
-                        run_id: run_q4m2kzb6hxw3rjpt5yc4ula7nd
-                        request_id: req_hxw3rjpt5yc4ula7ndq4m2kzb6
+                        run_id: run_q4m2kzb6hxw3rjpt5yc4ula7na
+                        request_id: req_hxw3rjpt5yc4ula7ndq4m2kzb4
                         target: torrplay_engine::storage
                         message: a reader waited for a piece past its bound
                         fields:
@@ -2971,7 +2986,7 @@ paths:
         a change takes effect.
       tags: [Settings]
       parameters:
-        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/SettingsIfMatch'
       requestBody:
         description: >-
           The settings to change, in a body of at most 16384 bytes. Larger
@@ -3195,14 +3210,14 @@ paths:
                   summary: One access token
                   value:
                     items:
-                      - id: atk_5mzb6hnd4rjpt5yc4ula3kq7xw
+                      - id: atk_5mzb6hnd4rjpt5yc4ula3kq7xu
                         name: Laptop
                         scope: api
                         created_at: '2026-10-24T12:00:00Z'
                         expires_at: null
                         last_used_at: '2026-10-24T12:30:00Z'
                         links:
-                          self: /api/v1/access-tokens/atk_5mzb6hnd4rjpt5yc4ula3kq7xw
+                          self: /api/v1/access-tokens/atk_5mzb6hnd4rjpt5yc4ula3kq7xu
                     links:
                       self: /api/v1/access-tokens
         '400':
@@ -3263,7 +3278,7 @@ paths:
                 laptop:
                   summary: A new access token with its secret
                   value:
-                    id: atk_5mzb6hnd4rjpt5yc4ula3kq7xw
+                    id: atk_5mzb6hnd4rjpt5yc4ula3kq7xu
                     name: Laptop
                     scope: api
                     created_at: '2026-10-24T12:00:00Z'
@@ -3271,7 +3286,7 @@ paths:
                     last_used_at: null
                     secret: tpa_q7xw2mzb6hnd4rjpt5yc4ula3kq7xw2mzb6hnd4rjpt5yc4ulaxw
                     links:
-                      self: /api/v1/access-tokens/atk_5mzb6hnd4rjpt5yc4ula3kq7xw
+                      self: /api/v1/access-tokens/atk_5mzb6hnd4rjpt5yc4ula3kq7xu
         '400':
           $ref: '#/components/responses/MalformedRequest'
         '403':
@@ -3317,14 +3332,14 @@ paths:
                 television:
                   summary: A playback token for a television
                   value:
-                    id: atk_hnd4rjpt5yc4ula3kq7xw2mzb6
+                    id: atk_hnd4rjpt5yc4ula3kq7xw2mzb4
                     name: Living room TV
                     scope: playback
                     created_at: '2026-10-24T12:00:00Z'
                     expires_at: '2027-10-24T12:00:00Z'
                     last_used_at: null
                     links:
-                      self: /api/v1/access-tokens/atk_hnd4rjpt5yc4ula3kq7xw2mzb6
+                      self: /api/v1/access-tokens/atk_hnd4rjpt5yc4ula3kq7xw2mzb4
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
@@ -3368,7 +3383,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PlaybackTokenRequest'
+              $ref: '#/components/schemas/PlaybackTokenCreation'
             examples:
               torrent:
                 summary: A day's playback of one torrent
@@ -3392,7 +3407,7 @@ paths:
                 torrent:
                   summary: A day's playback of one torrent
                   value:
-                    token: tpp_aeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcai
+                    token: tpp_ahvtehy5upsff6pxalsrmdnkd66qaaaaabvn332a7ndq4m2kzb6hxw3rjpt5yc4uldc5yngltp3n5kqniwnganjy3goa
                     torrent_id: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
                     expires_at: '2026-10-25T12:00:00Z'
         '400':
@@ -3431,8 +3446,6 @@ paths:
           headers:
             Cache-Control:
               $ref: '#/components/headers/CacheControl'
-            X-Request-Id:
-              $ref: '#/components/headers/RequestId'
           content:
             text/plain:
               schema:
@@ -3541,7 +3554,7 @@ components:
         maxLength: 64
       example: tmdb-tv-1399-
     UpNextEntryId:
-      name: entry_id
+      name: up_next_entry_id
       in: path
       required: true
       description: The up next entry's ID.
@@ -3555,7 +3568,7 @@ components:
       description: The access token's ID.
       schema:
         type: string
-      example: atk_5mzb6hnd4rjpt5yc4ula3kq7xw
+      example: atk_5mzb6hnd4rjpt5yc4ula3kq7xu
     FileId:
       name: file_id
       in: path
@@ -3571,7 +3584,7 @@ components:
       description: The preload's ID.
       schema:
         type: string
-      example: prl_4qhvgmtq62qwv4xfuperelxpq
+      example: prl_4qhvgmtq62qwv4xfuperelxpqa
     ViewingId:
       name: viewing_id
       in: path
@@ -3579,7 +3592,7 @@ components:
       description: The viewing's ID.
       schema:
         type: string
-      example: vwg_q62qwv4xfuperelxpq4qhvgmt
+      example: vwg_q62qwv4xfuperelxpq4qhvgmta
     ViewingQuery:
       name: viewing_id
       in: query
@@ -3589,7 +3602,7 @@ components:
         is not-found. HEAD ignores it.
       schema:
         type: string
-      example: vwg_q62qwv4xfuperelxpq4qhvgmt
+      example: vwg_q62qwv4xfuperelxpq4qhvgmta
     PageSize:
       name: page_size
       in: query
@@ -3754,23 +3767,43 @@ components:
         format: int64
         minimum: 0
       example: 4100
-    IfMatch:
+    ConfigurationIfMatch:
       name: If-Match
       in: header
       required: true
       description: >-
-        The resource's current strong ETag, from its last read. A request
-        without it receives 428; a stale value receives 412.
+        The configuration's current strong ETag, from its last read. A
+        request without it receives 428; a stale value receives 412.
       schema:
         type: string
       example: '"cfg-3"'
+    ProfileIfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: >-
+        The profile's current strong ETag, from its last read. A request
+        without it receives 428; a stale value receives 412.
+      schema:
+        type: string
+      example: '"prf-5f1c0a9e2b7d4c3a8e6f1b2d"'
+    SettingsIfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: >-
+        The settings' current strong ETag, from their last read. A request
+        without it receives 428; a stale value receives 412.
+      schema:
+        type: string
+      example: '"set-2"'
     IfNoneMatch:
       name: If-None-Match
       in: header
       description: An ETag the client holds; a match receives 304.
       schema:
         type: string
-      example: '"st-17"'
+      example: '"st-5f1c0a9e2b7d4c3a8e6f1b2d"'
     Range:
       name: Range
       in: header
@@ -3789,17 +3822,6 @@ components:
       example: '"sha1-0123456789abcdef0123456789abcdef01234567-0"'
 
   headers:
-    RequestId:
-      description: >-
-        The request's ID: the X-Request-Id the request carried, when it has 1
-        to 128 letters, digits, and the characters . _ : -, or else one the
-        application chose. Every response carries it, and the request's log
-        records name it.
-      required: true
-      schema:
-        type: string
-        pattern: '^[A-Za-z0-9._:-]{1,128}$'
-      example: req_hxw3rjpt5yc4ula7ndq4m2kzb6
     Location:
       description: The created resource's URI.
       required: true
@@ -3808,24 +3830,28 @@ components:
         format: uri-reference
       example: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
     StateETag:
-      description: A validator that changes whenever the torrent's representation changes.
+      description: A strong validator that changes whenever the torrent's representation changes.
       required: true
       schema:
         type: string
-      example: '"st-17"'
+        pattern: '^"st-[0-9a-f]{24}"$'
+      example: '"st-5f1c0a9e2b7d4c3a8e6f1b2d"'
     ConfigurationETag:
       description: A strong validator that changes only when the configuration changes.
       required: true
       schema:
         type: string
+        pattern: '^"cfg-[0-9]+"$'
       example: '"cfg-3"'
     SettingsETag:
       description: >-
         A strong validator that changes only when a setting or the
-        command-line options that override settings change.
+        command-line options that override settings change; with overrides,
+        it ends with them, such as "set-2-nodht-log.debug".
       required: true
       schema:
         type: string
+        pattern: '^"set-[0-9]+(-nodht)?(-log\.(error|warn|info|debug|trace|custom))?"$'
       example: '"set-2"'
     ListingETag:
       description: >-
@@ -3834,24 +3860,28 @@ components:
       required: true
       schema:
         type: string
+        pattern: '^"tl-[0-9a-f]{24}"$'
       example: '"tl-9b0e3f6a1c2d4e5f7a8b9c0d"'
     ProfileETag:
       description: A strong validator that changes whenever the profile's representation changes.
       required: true
       schema:
         type: string
+        pattern: '^"prf-[0-9a-f]{24}"$'
       example: '"prf-5f1c0a9e2b7d4c3a8e6f1b2d"'
     UpNextETag:
       description: A strong validator of the page of up next entries.
       required: true
       schema:
         type: string
+        pattern: '^"upn-[0-9a-f]{24}"$'
       example: '"upn-9b0e3f6a1c2d4e5f7a8b9c0d"'
     PosterETag:
       description: A strong validator that identifies the poster's bytes.
       required: true
       schema:
         type: string
+        pattern: '^"pst-[0-9a-f]{24}"$'
       example: '"pst-5f1c0a9e2b7d4c3a8e6f1b2d"'
     MetainfoETag:
       description: >-
@@ -3860,6 +3890,7 @@ components:
       required: true
       schema:
         type: string
+        pattern: '^"mti-[0-9a-f]{24}"$'
       example: '"mti-0123456789abcdef01234567"'
     MetainfoDisposition:
       description: >-
@@ -3874,6 +3905,7 @@ components:
       required: true
       schema:
         type: string
+        pattern: '^"sha1-[0-9a-f]{40}-[0-9]+"$'
       example: '"sha1-0123456789abcdef0123456789abcdef01234567-0"'
     CacheControl:
       description: Requires caches to revalidate the representation before reuse.
@@ -3883,7 +3915,9 @@ components:
         const: no-cache
       example: no-cache
     NoStore:
-      description: Forbids caches from storing a response that holds a secret.
+      description: >-
+        Forbids caches from storing the response, which holds a secret or
+        reports health that must never be stale.
       required: true
       schema:
         type: string
@@ -3945,6 +3979,7 @@ components:
       required: true
       schema:
         type: string
+        pattern: '^"scalar-[0-9a-f]{16}(-gzip)?"$'
       example: '"scalar-26b06691fc0e2e35-gzip"'
     VaryAcceptEncoding:
       description: The response depends on Accept-Encoding.
@@ -3973,7 +4008,8 @@ components:
       required: true
       schema:
         type: string
-      example: '"st-17"'
+        pattern: '^"[a-z0-9]+-[0-9a-z.-]+"$'
+      example: '"st-5f1c0a9e2b7d4c3a8e6f1b2d"'
     RetryAfter:
       description: The number of seconds after which a retry may succeed.
       schema:
@@ -3996,6 +4032,9 @@ components:
           $ref: '#/components/headers/MatchedETag'
     Healthy:
       description: The check passes.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
       content:
         application/json:
           schema:
@@ -4053,7 +4092,7 @@ components:
                 title: Not found
                 status: 404
                 detail: No torrent has the ID trr_wjrvmrmv2x4p77h4gzl5twylli.
-                request_id: req_hxw3rjpt5yc4ula7ndq4m2kzb6
+                request_id: req_hxw3rjpt5yc4ula7ndq4m2kzb4
     RequestTimeout:
       description: >-
         The request body did not arrive in time. The server closes the
@@ -4255,7 +4294,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           examples:
-            torrent_file:
+            metainfo:
               summary: An oversized torrent file
               value:
                 type: tag:skunkie.github.io,2026:torrplay/problems/content-too-large
@@ -4341,7 +4380,7 @@ components:
                 detail: The body is invalid.
                 errors:
                   - detail: Not valid torrent metainfo.
-                    pointer: /torrent_file
+                    pointer: /metainfo
             v2_only:
               summary: A v2-only torrent
               value:
@@ -4500,9 +4539,6 @@ components:
                 detail: Send If-Match with the configuration's current ETag.
     InternalError:
       description: An unexpected failure.
-      headers:
-        X-Request-Id:
-          $ref: '#/components/headers/RequestId'
       content:
         application/problem+json:
           schema:
@@ -4515,7 +4551,7 @@ components:
                 title: Internal error
                 status: 500
                 detail: The request failed unexpectedly.
-                request_id: req_hxw3rjpt5yc4ula7ndq4m2kzb6
+                request_id: req_hxw3rjpt5yc4ula7ndq4m2kzb4
     EngineUnavailable:
       description: >-
         The torrent engine cannot serve the request right now, or, after a
@@ -4682,9 +4718,9 @@ components:
       type: object
       description: The multipart form that previews a torrent file.
       additionalProperties: false
-      required: [torrent_file]
+      required: [metainfo]
       properties:
-        torrent_file:
+        metainfo:
           type: string
           contentMediaType: application/x-bittorrent
           description: The torrent file to preview, at most 10485760 bytes.
@@ -4791,16 +4827,16 @@ components:
           description: The media type the file's content would be served with.
           examples: [video/x-matroska]
 
-    TorrentFileUpload:
+    TorrentCreationUpload:
       type: object
       description: >-
         The multipart form that creates a torrent from a torrent file. Each
         member is one part, except categories and genres, which take one part
         per value; year is a decimal integer.
       additionalProperties: false
-      required: [torrent_file]
+      required: [metainfo]
       properties:
-        torrent_file:
+        metainfo:
           type: string
           contentMediaType: application/x-bittorrent
           description: The torrent file, at most 10485760 bytes.
@@ -5212,7 +5248,7 @@ components:
     TorrentPage:
       type: object
       description: A page of torrents.
-      required: [items, total, facets, links]
+      required: [items, total_count, facets, links]
       properties:
         items:
           type: array
@@ -5220,7 +5256,7 @@ components:
           items:
             $ref: '#/components/schemas/Torrent'
           examples: [[]]
-        total:
+        total_count:
           type: integer
           format: int64
           minimum: 0
@@ -5244,7 +5280,7 @@ components:
               type: string
               format: uri-reference
               description: The next page of torrents, omitted on the last page.
-              examples: ['/api/v1/torrents?cursor=eyJhZnRlciI6InRycl83bmRxNG0ya3piNmh4dzNyanB0NXljNHVsYSJ9']
+              examples: ['/api/v1/torrents?cursor=aea6hmgeikmpyhauaaaaaadk2ydeaaaaaaahi4tsl43w4zdrgrwte232mi3gq6dxgnzgu4dugv4wgndvnrqq']
 
     TorrentFacets:
       type: object
@@ -5253,9 +5289,9 @@ components:
         kind, and info_hash filters, before its search and its category,
         uncategorized, and genre filters, so a client's menus list every
         choice while one is selected.
-      required: [total, uncategorized, categories, genres, version]
+      required: [total_count, uncategorized, categories, genres, version]
       properties:
-        total:
+        total_count:
           type: integer
           format: int64
           minimum: 0
@@ -5272,7 +5308,7 @@ components:
           description: >-
             The categories of those torrents with how many have each, ordered
             by name in Unicode code point order. A torrent counts once in each
-            of its categories, so the counts need not add up to total.
+            of its categories, so the counts need not add up to total_count.
           items:
             $ref: '#/components/schemas/LabelCount'
           examples: [[{name: Movies, count: 1}]]
@@ -5568,7 +5604,7 @@ components:
           examples: [true]
         log_level:
           type: string
-          enum: [error, warn, info, debug, trace]
+          $ref: '#/components/schemas/LogLevel'
           default: info
           description: >-
             The least severe level of TorrPlay's own log messages; other
@@ -5800,7 +5836,7 @@ components:
               type: string
               format: uri-reference
               description: The next page of files, omitted on the last page.
-              examples: ['/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files?cursor=eyJhZnRlciI6ImZpbF94ZnVwZXJlbHhwcXE0cWh2Z210cTYycXd2NCJ9']
+              examples: ['/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files?cursor=aebohmgeikmpyhauaaaaaaaaaaadc']
 
     PreloadState:
       type: string
@@ -5827,7 +5863,7 @@ components:
             an eighth of its length before this offset. Omitted, it covers
             the file's head and tail.
           examples: [536870912]
-        ttl_seconds:
+        expires_in_seconds:
           type: integer
           format: int32
           minimum: 10
@@ -5848,7 +5884,7 @@ components:
           description: >-
             The preload's ID, valid until it is canceled or removed, or the
             application restarts.
-          examples: [prl_4qhvgmtq62qwv4xfuperelxpq]
+          examples: [prl_4qhvgmtq62qwv4xfuperelxpqa]
         state:
           $ref: '#/components/schemas/PreloadState'
         offset_bytes:
@@ -5916,13 +5952,13 @@ components:
         links:
           type: object
           description: Links from a preload.
-          required: [self, file, content]
+          required: [self, file, content, torrent]
           properties:
             self:
               type: string
               format: uri-reference
               description: This preload.
-              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads/prl_4qhvgmtq62qwv4xfuperelxpq]
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads/prl_4qhvgmtq62qwv4xfuperelxpqa]
             file:
               type: string
               format: uri-reference
@@ -5933,6 +5969,11 @@ components:
               format: uri-reference
               description: The preloaded file's content.
               examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content]
+            torrent:
+              type: string
+              format: uri-reference
+              description: The torrent of the preloaded file.
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula]
 
     Viewing:
       type: object
@@ -5947,7 +5988,7 @@ components:
           description: >-
             The viewing's ID, valid until it is removed or expires, its
             torrent is deleted, or the application restarts.
-          examples: [vwg_q62qwv4xfuperelxpq4qhvgmt]
+          examples: [vwg_q62qwv4xfuperelxpq4qhvgmta]
         position_seconds:
           type: [number, 'null']
           format: double
@@ -6000,7 +6041,7 @@ components:
               type: string
               format: uri-reference
               description: This viewing.
-              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/viewings/vwg_q62qwv4xfuperelxpq4qhvgmt]
+              examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/viewings/vwg_q62qwv4xfuperelxpq4qhvgmta]
             file:
               type: string
               format: uri-reference
@@ -6017,7 +6058,7 @@ components:
               description: >-
                 The file's content with this viewing's viewing_id, the URL to
                 give the player.
-              examples: ['/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content?viewing_id=vwg_q62qwv4xfuperelxpq4qhvgmt']
+              examples: ['/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content?viewing_id=vwg_q62qwv4xfuperelxpq4qhvgmta']
 
     PreloadRange:
       type: object
@@ -6392,7 +6433,7 @@ components:
         The ID the process chose when it started, which tells its log records
         apart from those of earlier runs.
       pattern: '^run_[a-z2-7]{26}$'
-      examples: [run_q4m2kzb6hxw3rjpt5yc4ula7nd]
+      examples: [run_q4m2kzb6hxw3rjpt5yc4ula7na]
 
     LogLevel:
       type: string
@@ -6406,7 +6447,7 @@ components:
         One message the application logged. Standard error in the JSON log
         format and the log files hold the same members. Credentials and
         private tracker parameters are redacted before a record is written.
-      required: [sequence, time, level, run_id, request_id, target, message, fields]
+      required: [sequence, logged_at, level, run_id, request_id, target, message, fields]
       properties:
         sequence:
           type: integer
@@ -6418,7 +6459,7 @@ components:
             orders records whose times are equal and shows where records were
             removed or dropped.
           examples: [4182]
-        time:
+        logged_at:
           type: string
           format: date-time
           description: When the record was logged, in UTC, to the millisecond.
@@ -6434,7 +6475,7 @@ components:
             X-Request-Id response header gave it, or null for a record logged
             outside a request.
           maxLength: 128
-          examples: [req_hxw3rjpt5yc4ula7ndq4m2kzb6]
+          examples: [req_hxw3rjpt5yc4ula7ndq4m2kzb4]
         target:
           type: string
           description: >-
@@ -6502,7 +6543,7 @@ components:
               type: string
               format: uri-reference
               description: The next, older page, omitted on the last page.
-              examples: ['/api/v1/log-records?cursor=aeeaaaaaaaaaaaaaaaaaaaaaaaaaaecda']
+              examples: ['/api/v1/log-records?cursor=aeeohmgeikmpyhauaaaaaaaaaaick']
 
     Health:
       type: object
@@ -6553,7 +6594,7 @@ components:
             The request's ID, as the X-Request-Id response header gives it, so
             a report of the problem leads to its log records.
           maxLength: 128
-          examples: [req_hxw3rjpt5yc4ula7ndq4m2kzb6]
+          examples: [req_hxw3rjpt5yc4ula7ndq4m2kzb4]
 
     ValidationProblem:
       description: A problem that lists the invalid parameters or body members.
@@ -6646,7 +6687,7 @@ components:
           type: object
           readOnly: true
           description: Links from a profile.
-          required: [self, avatar, up_next]
+          required: [self, avatar, up_next, title_progress]
           properties:
             self:
               type: string
@@ -6663,6 +6704,11 @@ components:
               format: uri-reference
               description: What the profile can resume or watch next.
               examples: [/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next]
+            title_progress:
+              type: string
+              format: uri-reference
+              description: The profile's progress of titles in external catalogs.
+              examples: [/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/title-progress]
 
     ProfileCreation:
       type: object
@@ -6707,7 +6753,7 @@ components:
               type: string
               format: uri-reference
               description: The next page of profiles, omitted on the last page.
-              examples: ['/api/v1/profiles?cursor=aebagbaf']
+              examples: ['/api/v1/profiles?cursor=aecohmgeikmpyhauaaaaaadk2ydeaaaaaaaha4tgl4zww4jxpb3te3l2mi3gq3tegrzgu4dugv4wgndvnrqq']
 
     Progress:
       type: object
@@ -6846,7 +6892,7 @@ components:
               type: string
               format: uri-reference
               description: The next page of progress, omitted on the last page.
-              examples: ['/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/progress?cursor=aebagbaf']
+              examples: ['/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/progress?cursor=aebohmgeikmpyhauaaaaaaaaaaadc']
 
     TitleProgress:
       type: object
@@ -7000,12 +7046,12 @@ components:
               type: string
               format: uri-reference
               description: The next page of title progress, omitted on the last page.
-              examples: ['/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/title-progress?cursor=aebagbaf']
+              examples: ['/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/title-progress?cursor=aed6hmgeikmpyhauaaaaaadk2z5eiaaaaaahi3lemiwxi5rngeztsojnomywkmi']
 
     UpNextEntry:
       type: object
       description: Something a profile can resume or watch next.
-      required: [id, reason, activity_at, torrent, file, progress, links]
+      required: [id, reason, last_active_at, torrent, file, progress, links]
       properties:
         id:
           type: string
@@ -7022,7 +7068,7 @@ components:
             handle values added later.
           enum: [resume, next_episode]
           examples: [resume]
-        activity_at:
+        last_active_at:
           type: string
           format: date-time
           description: When progress that put the entry here was last saved.
@@ -7073,7 +7119,7 @@ components:
               type: string
               format: uri-reference
               description: The next page of entries, omitted on the last page.
-              examples: ['/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next?cursor=aebagbaf']
+              examples: ['/api/v1/profiles/prf_3kq7xw2mzb6hnd4rjpt5yc4ula/up-next?cursor=aec6hmgeikmpyhauaaaaaadk2z5eiaaaaaahk4dol42wqzdrgjwto232mi3gq6dxgnzgu4dugr4wgmtvnrqq']
 
     ProfileKind:
       type: string
@@ -7186,7 +7232,7 @@ components:
           type: string
           readOnly: true
           description: The access token's opaque, stable ID, which is not its secret.
-          examples: [atk_5mzb6hnd4rjpt5yc4ula3kq7xw]
+          examples: [atk_5mzb6hnd4rjpt5yc4ula3kq7xu]
         name:
           type: string
           description: >-
@@ -7227,7 +7273,7 @@ components:
               type: string
               format: uri-reference
               description: This access token.
-              examples: [/api/v1/access-tokens/atk_5mzb6hnd4rjpt5yc4ula3kq7xw]
+              examples: [/api/v1/access-tokens/atk_5mzb6hnd4rjpt5yc4ula3kq7xu]
 
     CreatedAccessToken:
       description: A new access token with its secret, which no other response holds.
@@ -7305,9 +7351,9 @@ components:
               type: string
               format: uri-reference
               description: The next page of access tokens, omitted on the last page.
-              examples: ['/api/v1/access-tokens?cursor=aebagbaf']
+              examples: ['/api/v1/access-tokens?cursor=aedohmgeikmpyhauaaaaaadk2ydeaaaaaaagc5dll42w26tcgzug4zbuojvha5bvpfrti5lmmezww4jxpb2q']
 
-    PlaybackTokenRequest:
+    PlaybackTokenCreation:
       type: object
       description: The scope and lifetime of a playback token to issue.
       additionalProperties: false
@@ -7336,8 +7382,8 @@ components:
         token:
           type: string
           description: The token to send as the token query parameter.
-          pattern: '^tpp_[a-z2-7]+$'
-          examples: [tpp_aeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcai]
+          pattern: '^tpp_([a-z2-7]{66}|[a-z2-7]{92})$'
+          examples: [tpp_ahvtehy5upsff6pxalsrmdnkd66qaaaaabvn332a7ndq4m2kzb6hxw3rjpt5yc4uldc5yngltp3n5kqniwnganjy3goa]
         torrent_id:
           type: [string, 'null']
           description: The torrent the token allows, or null for every torrent.
