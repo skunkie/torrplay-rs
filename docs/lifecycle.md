@@ -415,10 +415,11 @@ temporary`; every other torrent is persisted.
 - While stored torrents are restored, the torrents are not all known yet,
   so every operation under `/api/v1/torrents` and `/api/v1/profiles`, whose
   progress and up next refer to torrents, returns `engine-unavailable`, as
-  do torrent previews, the application statistics, and settings changes.
-  The entry point, the OpenAPI document and its reference, the cache
-  statistics, the system resource, metrics, log records, settings reads,
-  the password, and access tokens are served.
+  do torrent previews, the application statistics, settings changes, and
+  playback tokens for one torrent. The entry point, the API catalog, the
+  OpenAPI document and its reference, the cache statistics, the system
+  resource, metrics, log records, settings reads, the password, access
+  tokens, and playback tokens for every torrent are served.
 - While the engine is unavailable after the torrents are restored,
   operations answered from the application's own records are served:
   torrents, their files, configurations other than lifecycle changes,
@@ -604,7 +605,9 @@ reports it in seconds, with the file's duration and a viewed mark.
   until metadata is available. It needs no engine, so it works while a
   torrent is paused or failed. It changes neither the torrent's
   representation nor the listing version.
-- Deleting the torrent or the profile deletes its progress.
+- Deleting a persisted torrent, or the profile, deletes its progress; a
+  temporary torrent's progress outlives it, as [Retention](#retention)
+  describes.
 
 The application infers the progress of files that DLNA media renderers
 stream, which report none, and saves it in the device profile:
@@ -772,14 +775,17 @@ a scope, and an optional lifetime.
   signing in is `lifecycle-conflict`, and no tokens exist.
 
 While a password is set, every request needs a credential except the entry
-point, the OpenAPI document, signing in, `/livez`, and `/readyz`.
+point, the API catalog, the OpenAPI document, the API reference, signing
+in, `/livez`, and `/readyz`.
 
 - A request sends an access token as `Authorization: Bearer`
   ([RFC 6750](https://www.rfc-editor.org/rfc/rfc6750.html)). Playback
   operations also take the `token` query parameter, for URLs that cannot
   carry a header, with a playback token or a `playback` access token; an
   `api` token in a URL is refused, so it stays out of history and proxy
-  logs. The header is used when both are present.
+  logs. The header is used when both are present, except on the
+  [Stremio addon](stremio.md)'s routes, whose path carries the token it
+  was installed with, which is used instead.
 - A request without a credential, or with an unknown, expired, or revoked
   one, is `401 authentication-required` with
   `WWW-Authenticate: Bearer realm="TorrPlay"`, which adds
@@ -865,10 +871,11 @@ local filesystem, as [ADR 8](adr/0008-database.md) requires.
   original bytes, or a magnet URI and, once metadata is recorded, the torrent
   file built from it. The configuration includes the library members, and a
   poster is stored with its bytes, media type, digest, and upload time.
-  Profiles, their avatars, progress, and dismissals are stored too, and are
-  read at startup, except avatar images. So are the password's hash, the key
-  that signs playback tokens, and the access tokens, by their secrets'
-  digests.
+  Profiles, their avatars, file and title progress, temporary torrents'
+  progress, and dismissals are stored too, and are read at startup, except
+  avatar images. So are the settings' explicitly set values, the DLNA
+  device's UUID, the password's hash, the key that signs playback tokens,
+  and the access tokens, by their secrets' digests.
 - It records whether the application last shut down cleanly. A disk
   torrent's resume bitfield, the record of its verified pieces, lives in the
   download directory beside its files rather than in the database.
@@ -915,8 +922,9 @@ local filesystem, as [ADR 8](adr/0008-database.md) requires.
 the idle timeout, the idle reader limits per torrent and in total, the drain
 period, the peer limit per torrent, the cache capacity, whether
 background downloads run, whether the DLNA media server is on and its name,
-whether torrents use the DHT, and the log level. The contract gives each
-one's bounds and default.
+whether torrents use the DHT, the log level, and the
+[temporary torrents'](#retention) idle time, limit, and progress
+retention. The contract gives each one's bounds and default.
 
 Command-line options set what the application needs before it serves the
 API: its listen address, allowed hosts, peer port, data directory, and
@@ -965,6 +973,11 @@ log level. Overrides follow one rule:
   byte-correct. A torrent added or retrieving metadata while the capacity
   shrinks is checked against the new capacity, as
   [Creation](#creation) describes for pieces longer than the cache.
+- The temporary torrents' idle time and progress retention apply at the
+  next check for unwatched torrents and expired progress, within 10
+  seconds. The temporary torrent limit applies to the next creation of a
+  temporary torrent: a lower limit deletes none at once, and that creation
+  deletes the ones unwatched longest until there is room.
 - Turning background downloads off applies at once: torrents then request
   only the pieces readers need, and requests already sent finish. Turning
   them on resumes them at once unless playback is active.

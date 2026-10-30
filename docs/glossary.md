@@ -187,6 +187,10 @@ of each.
 : The longest a reader waits for a missing piece before its stream is
   canceled. It bounds stalls when peers cannot supply the piece.
 
+**Drain period**
+: How long streams in progress may continue after a termination signal
+  before shutdown cancels them.
+
 **Readahead**
 : Fetching data ahead of a reader's current position. The **readahead
   window** is that range; its size is shared and rebalanced across
@@ -411,6 +415,11 @@ of each.
 : A name a request's `Host` may give: an IP address, `localhost`, a
   `.localhost` or `.local` name, or one configured with `--allowed-host`.
   Other names are refused, which defeats DNS rebinding.
+
+**Local network**
+: The addresses that may use the application while no password is set:
+  loopback, RFC 1918 and link-local IPv4, unique-local and link-local
+  IPv6, and the shared address space `100.64.0.0/10`.
 
 ## Observability
 
