@@ -246,6 +246,12 @@ async fn tools_and_resources_are_listed() {
     let tools = session.client.list_all_tools().await.expect("the tools");
     let mut names: Vec<_> = tools.iter().map(|tool| tool.name.to_string()).collect();
     names.sort();
+    let mut documented: Vec<_> = documented_tools()
+        .into_iter()
+        .map(|(tool, _)| tool)
+        .collect();
+    documented.sort();
+    assert_eq!(names, documented, "docs/mcp.md lists every tool");
     assert_eq!(
         names,
         [
@@ -680,4 +686,69 @@ async fn the_system_statistics_and_log_records_are_read() {
     assert_eq!(body["title"], "Invalid argument");
     session.close().await;
     application.stop().await;
+}
+
+/// The tools docs/mcp.md lists, with the operations behind each.
+fn documented_tools() -> Vec<(String, Vec<String>)> {
+    include_str!("../../../docs/mcp.md")
+        .lines()
+        .skip_while(|line| !line.starts_with("| Tool | Operations |"))
+        .skip(2)
+        .take_while(|line| line.starts_with('|'))
+        .map(|line| {
+            let cells: Vec<_> = line.split('|').map(str::trim).collect();
+            let names = |cell: &str| -> Vec<String> {
+                cell.split(',')
+                    .map(|name| name.trim().trim_matches('`').to_owned())
+                    .filter(|name| !name.is_empty())
+                    .collect()
+            };
+            (names(cells[1]).remove(0), names(cells[2]))
+        })
+        .collect()
+}
+
+/// An operation ID's words, such as `create`, `file`, `preload`.
+fn words(operation: &str) -> Vec<String> {
+    let mut words = vec![String::new()];
+    for character in operation.chars() {
+        if character.is_ascii_uppercase() {
+            words.push(String::new());
+        }
+        words
+            .last_mut()
+            .expect("a word")
+            .push(character.to_ascii_lowercase());
+    }
+    words
+}
+
+/// docs/naming.md: a tool takes its operation's verb, then words of its
+/// resource, unless it composes operations for a task no operation names.
+#[test]
+fn tools_are_named_for_their_operations() {
+    const TASKS: &[&str] = &["get_stream_url"];
+    let tools = documented_tools();
+    assert!(tools.len() > 10, "the tool table is found");
+    let named = |tool: &str, operation: &str| {
+        let tool: Vec<_> = tool.split('_').collect();
+        let operation = words(operation);
+        tool[0] == operation[0]
+            && tool[1..]
+                .iter()
+                .all(|word| operation[1..].iter().any(|other| other == word))
+    };
+    assert!(named("create_preload", "createFilePreload"));
+    assert!(
+        !named("cancel_preload", "deleteFilePreload"),
+        "the verb differs"
+    );
+    assert!(!named("preload_file", "createFilePreload"));
+    for (tool, operations) in tools {
+        assert!(
+            TASKS.contains(&tool.as_str())
+                || operations.iter().any(|operation| named(&tool, operation)),
+            "{tool} is named for none of {operations:?}"
+        );
+    }
 }
