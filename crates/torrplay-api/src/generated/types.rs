@@ -1000,6 +1000,8 @@ pub struct System {
 ///Links from the system resource.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SystemLinks {
+    ///The records the log files hold.
+    pub log_records: String,
     ///The metrics for Prometheus.
     pub metrics: String,
     ///This resource.
@@ -1008,8 +1010,6 @@ pub struct SystemLinks {
     ///The application's statistics.
     pub statistics: String,
 }
-///The ID the process chose when it started, which tells its log records apart from those of earlier runs.
-pub type RunId = String;
 ///Measurements across every torrent and reader. Totals count from when the process started, the started_at of the system resource, and restart at zero after a restart.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Statistics {
@@ -1772,6 +1772,96 @@ pub struct PasswordLinks {
     #[serde(rename = "self")]
     pub self_field: String,
 }
+///A page of log records, newest first.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LogRecordPage {
+    ///The records on this page, newest first.
+    pub items: Vec<LogRecord>,
+    ///The sequence of the newest record logged, whatever the filters, or null before the first.
+    ///Constraint: minimum=1
+    pub latest_sequence: Option<i64>,
+    ///Links from a page of log records.
+    pub links: LogRecordPageLinks,
+    ///The sequence of the oldest record the log files hold, whatever the filters, or null while they hold none.
+    ///Constraint: minimum=1
+    pub oldest_sequence: Option<i64>,
+}
+///Links from a page of log records.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LogRecordPageLinks {
+    ///The next, older page, omitted on the last page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+    ///This page of records.
+    #[serde(rename = "self")]
+    pub self_field: String,
+}
+///One message the application logged. Standard error in the JSON log format and the log files hold the same members. Credentials and private tracker parameters are redacted before a record is written.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LogRecord {
+    ///The record's structured fields, each value formatted as text and cut as the message is, to 1024 bytes. Fields of the spans the record was logged in are included; a record's own field wins over a span's with the same name.
+    pub fields: LogRecordFields,
+    pub level: LogLevel,
+    ///The message, cut to 4096 bytes at a character boundary, with an ellipsis added when it is cut.
+    pub message: String,
+    ///The ID of the HTTP request the record was logged for, as its X-Request-Id response header gave it, or null for a record logged outside a request.
+    ///Constraint: maxLength=128
+    pub request_id: Option<String>,
+    pub run_id: RunId,
+    ///The record's position among every record the log files have held, 1 for the first. A restart continues from the last record kept. It orders records whose times are equal and shows where records were removed or dropped.
+    ///Constraint: minimum=1
+    pub sequence: i64,
+    ///The module that logged the record, such as torrplay_engine::storage. Other components' records name their own modules.
+    pub target: String,
+    ///When the record was logged, in UTC, to the millisecond.
+    pub time: chrono::DateTime<chrono::Utc>,
+}
+///The ID the process chose when it started, which tells its log records apart from those of earlier runs.
+pub type RunId = String;
+///The record's structured fields, each value formatted as text and cut as the message is, to 1024 bytes. Fields of the spans the record was logged in are included; a record's own field wins over a span's with the same name.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct LogRecordFields {
+    /// Additional properties matching the spec's
+    /// `additionalProperties` value schema.
+    #[serde(flatten)]
+    pub additional_properties: std::collections::BTreeMap<String, String>,
+}
+///A log record's severity, from the most severe to the least.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum LogLevel {
+    #[default]
+    #[serde(rename = "error")]
+    Error,
+    #[serde(rename = "warn")]
+    Warn,
+    #[serde(rename = "info")]
+    Info,
+    #[serde(rename = "debug")]
+    Debug,
+    #[serde(rename = "trace")]
+    Trace,
+}
+impl LogLevel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Warn => "warn",
+            Self::Info => "info",
+            Self::Debug => "debug",
+            Self::Trace => "trace",
+        }
+    }
+}
+impl ::std::fmt::Display for LogLevel {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for LogLevel {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
 ///A protocol identifier of a torrent's info dictionary.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct InfoHash {
@@ -1852,6 +1942,8 @@ pub struct EntryPointLinks {
     pub access_tokens: String,
     ///The piece cache's statistics.
     pub cache_statistics: String,
+    ///The recent log records.
+    pub log_records: String,
     ///The metrics for Prometheus, outside the versioned API.
     pub metrics: String,
     ///The password, not-found while authentication is off.

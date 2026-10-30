@@ -4,7 +4,11 @@
 
 //! OBS-06: `torrplay --log-format json` writes only JSON records to standard
 //! error, each naming the run the system resource reports and, while it
-//! serves a request, the request's ID.
+//! serves a request, the request's ID. OBS-09: the log files keep a run's
+//! records for the next run's API.
+
+// The helpers that start and stop the process serve only these tests.
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
@@ -99,4 +103,82 @@ async fn json_records_name_the_run_and_the_request() {
     child.kill().expect("torrplay stops");
     child.wait().expect("its exit");
     reader.join().expect("the reader ends");
+}
+
+/// Starts torrplay on `data` with `args`, and returns it with its API's
+/// base URL once it answers.
+async fn start(data: &std::path::Path, args: &[&str]) -> (std::process::Child, String) {
+    let port = free_port().expect("a port");
+    let child = Command::new(env!("CARGO_BIN_EXE_torrplay"))
+        .args(args)
+        .args(["--no-dht", "--listen"])
+        .arg(format!("127.0.0.1:{port}"))
+        .arg("--peer-port")
+        .arg(free_port().expect("a peer port").to_string())
+        .arg("--data-dir")
+        .arg(data)
+        .env_remove("TORRPLAY_LOG_FORMAT")
+        .env_remove("TORRPLAY_LISTEN")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("torrplay starts");
+    let base = format!("http://127.0.0.1:{port}");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while reqwest::get(format!("{base}/readyz")).await.is_err() {
+        assert!(Instant::now() < deadline, "torrplay did not listen");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    (child, base)
+}
+
+async fn json(url: &str) -> Value {
+    let response = reqwest::get(url).await.expect("an answer");
+    serde_json::from_slice(&response.bytes().await.expect("a body")).expect("JSON")
+}
+
+/// Asks torrplay to shut down as a service manager does, and waits for it.
+#[cfg(unix)]
+async fn terminate(mut child: std::process::Child) {
+    let sent = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .expect("kill runs");
+    assert!(sent.success());
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if let Some(status) = child.try_wait().expect("its status") {
+            assert!(status.success(), "{status}");
+            return;
+        }
+        assert!(Instant::now() < deadline, "torrplay did not stop");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_next_run_reads_the_last_runs_records() {
+    let data = tempfile::TempDir::new().expect("a data directory");
+    let (first, base) = start(data.path(), &["--log-format", "text"]).await;
+    let system = reqwest::get(format!("{base}/api/v1/system")).await.unwrap();
+    let request_id = system.headers()["x-request-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let first_run: Value = serde_json::from_slice(&system.bytes().await.unwrap()).unwrap();
+    terminate(first).await;
+
+    let (second, base) = start(data.path(), &["--log-format", "text"]).await;
+    let page = json(&format!("{base}/api/v1/log-records?contains={request_id}")).await;
+    let records = page["items"].as_array().expect("records");
+    assert_eq!(records.len(), 1, "{page}");
+    assert_eq!(records[0]["run_id"], first_run["run_id"]);
+    assert_eq!(records[0]["fields"]["route"], "/api/v1/system");
+    let latest = page["latest_sequence"].as_u64().unwrap();
+    assert!(latest > records[0]["sequence"].as_u64().unwrap(), "{page}");
+    let second_run = json(&format!("{base}/api/v1/system")).await;
+    assert_ne!(second_run["run_id"], first_run["run_id"]);
+    terminate(second).await;
 }

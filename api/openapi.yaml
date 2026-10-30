@@ -55,7 +55,7 @@ tags:
   - name: Statistics
     description: Measurements of torrents, of the piece cache, and of all together.
   - name: System
-    description: The running process and its metrics.
+    description: The running process, its recent log records, and its metrics.
   - name: Health
     description: Liveness and readiness checks outside the versioned API.
 
@@ -88,6 +88,7 @@ paths:
                       cache_statistics: /api/v1/cache/statistics
                       statistics: /api/v1/statistics
                       system: /api/v1/system
+                      log_records: /api/v1/log-records
                       metrics: /metrics
                       settings: /api/v1/settings
                       password: /api/v1/password
@@ -2624,7 +2625,66 @@ paths:
                     links:
                       self: /api/v1/system
                       statistics: /api/v1/statistics
+                      log_records: /api/v1/log-records
                       metrics: /metrics
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/log-records:
+    get:
+      operationId: listLogRecords
+      summary: List recent log records
+      description: >-
+        Returns the records the log files still hold, newest first, across
+        restarts. The files receive what standard error receives, after the
+        log_level setting and --log-filter, and rotation removes the oldest
+        records; docs/observability.md gives the bounds. To follow new
+        records, a client passes the highest sequence it has seen as
+        after_sequence and follows next links until none remains; a gap
+        between that sequence and oldest_sequence means records were removed
+        before it read them. Only an api access token may read it, since
+        records name torrents, files, and clients.
+      tags: [System]
+      parameters:
+        - $ref: '#/components/parameters/MinLevel'
+        - $ref: '#/components/parameters/LogContains'
+        - $ref: '#/components/parameters/AfterSequence'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: A page of log records.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogRecordPage'
+              examples:
+                warnings:
+                  summary: Warnings and errors since sequence 4100
+                  value:
+                    items:
+                      - sequence: 4182
+                        time: '2026-10-30T09:15:02.481Z'
+                        level: warn
+                        run_id: run_q4m2kzb6hxw3rjpt5yc4ula7nd
+                        request_id: req_hxw3rjpt5yc4ula7ndq4m2kzb6
+                        target: torrplay_engine::storage
+                        message: a reader waited for a piece past its bound
+                        fields:
+                          torrent_id: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+                          piece: '1312'
+                          waited_seconds: '60'
+                    oldest_sequence: 3183
+                    latest_sequence: 4190
+                    links:
+                      self: /api/v1/log-records?min_level=warn&after_sequence=4100
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -3475,6 +3535,38 @@ components:
           type: string
           pattern: '^[0-9a-fA-F]{40}$'
       example: [0123456789abcdef0123456789abcdef01234567]
+    MinLevel:
+      name: min_level
+      in: query
+      description: >-
+        Limits the page to records at this level or more severe. Every
+        retained record is listed when it is omitted.
+      schema:
+        $ref: '#/components/schemas/LogLevel'
+      example: warn
+    LogContains:
+      name: contains
+      in: query
+      description: >-
+        Limits the page to records whose message, target, request ID, or a
+        field's name or value contains this text, compared without regard
+        to case. It is a plain substring, not the library search.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+      example: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+    AfterSequence:
+      name: after_sequence
+      in: query
+      description: >-
+        Limits the page to records with a greater sequence, for following new
+        records.
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+      example: 4100
     IfMatch:
       name: If-Match
       in: header
@@ -4257,7 +4349,7 @@ components:
         links:
           type: object
           description: Links to the top-level resources, the OpenAPI document, and the API reference.
-          required: [self, torrents, profiles, cache_statistics, statistics, system, metrics, settings, password, access_tokens, playback_tokens, service-desc, service-doc]
+          required: [self, torrents, profiles, cache_statistics, statistics, system, log_records, metrics, settings, password, access_tokens, playback_tokens, service-desc, service-doc]
           properties:
             self:
               type: string
@@ -4289,6 +4381,11 @@ components:
               format: uri-reference
               description: The running process, with its build and memory use.
               examples: [/api/v1/system]
+            log_records:
+              type: string
+              format: uri-reference
+              description: The recent log records.
+              examples: [/api/v1/log-records]
             metrics:
               type: string
               format: uri-reference
@@ -5917,7 +6014,7 @@ components:
         links:
           type: object
           description: Links from the system resource.
-          required: [self, statistics, metrics]
+          required: [self, statistics, log_records, metrics]
           properties:
             self:
               type: string
@@ -5929,6 +6026,11 @@ components:
               format: uri-reference
               description: The application's statistics.
               examples: [/api/v1/statistics]
+            log_records:
+              type: string
+              format: uri-reference
+              description: The records the log files hold.
+              examples: [/api/v1/log-records]
             metrics:
               type: string
               format: uri-reference
@@ -5942,6 +6044,116 @@ components:
         apart from those of earlier runs.
       pattern: '^run_[a-z2-7]{26}$'
       examples: [run_q4m2kzb6hxw3rjpt5yc4ula7nd]
+
+    LogLevel:
+      type: string
+      description: A log record's severity, from the most severe to the least.
+      enum: [error, warn, info, debug, trace]
+      examples: [warn]
+
+    LogRecord:
+      type: object
+      description: >-
+        One message the application logged. Standard error in the JSON log
+        format and the log files hold the same members. Credentials and
+        private tracker parameters are redacted before a record is written.
+      required: [sequence, time, level, run_id, request_id, target, message, fields]
+      properties:
+        sequence:
+          type: integer
+          format: int64
+          minimum: 1
+          description: >-
+            The record's position among every record the log files have held,
+            1 for the first. A restart continues from the last record kept. It
+            orders records whose times are equal and shows where records were
+            removed or dropped.
+          examples: [4182]
+        time:
+          type: string
+          format: date-time
+          description: When the record was logged, in UTC, to the millisecond.
+          examples: ['2026-10-30T09:15:02.481Z']
+        level:
+          $ref: '#/components/schemas/LogLevel'
+        run_id:
+          $ref: '#/components/schemas/RunId'
+        request_id:
+          type: [string, 'null']
+          description: >-
+            The ID of the HTTP request the record was logged for, as its
+            X-Request-Id response header gave it, or null for a record logged
+            outside a request.
+          maxLength: 128
+          examples: [req_hxw3rjpt5yc4ula7ndq4m2kzb6]
+        target:
+          type: string
+          description: >-
+            The module that logged the record, such as torrplay_engine::storage.
+            Other components' records name their own modules.
+          examples: [torrplay_engine::storage]
+        message:
+          type: string
+          description: >-
+            The message, cut to 4096 bytes at a character boundary, with an
+            ellipsis added when it is cut.
+          examples: [a reader waited for a piece past its bound]
+        fields:
+          type: object
+          description: >-
+            The record's structured fields, each value formatted as text and
+            cut as the message is, to 1024 bytes. Fields of the spans the
+            record was logged in are included; a record's own field wins over
+            a span's with the same name.
+          maxProperties: 32
+          additionalProperties:
+            type: string
+          examples:
+            - torrent_id: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+              piece: '1312'
+
+    LogRecordPage:
+      type: object
+      description: A page of log records, newest first.
+      required: [items, oldest_sequence, latest_sequence, links]
+      properties:
+        items:
+          type: array
+          description: The records on this page, newest first.
+          items:
+            $ref: '#/components/schemas/LogRecord'
+          examples: [[]]
+        oldest_sequence:
+          type: [integer, 'null']
+          format: int64
+          minimum: 1
+          description: >-
+            The sequence of the oldest record the log files hold, whatever the
+            filters, or null while they hold none.
+          examples: [3183]
+        latest_sequence:
+          type: [integer, 'null']
+          format: int64
+          minimum: 1
+          description: >-
+            The sequence of the newest record logged, whatever the filters, or
+            null before the first.
+          examples: [4190]
+        links:
+          type: object
+          description: Links from a page of log records.
+          required: [self]
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              description: This page of records.
+              examples: [/api/v1/log-records]
+            next:
+              type: string
+              format: uri-reference
+              description: The next, older page, omitted on the last page.
+              examples: ['/api/v1/log-records?cursor=aeeaaaaaaaaaaaaaaaaaaaaaaaaaaecda']
 
     Health:
       type: object

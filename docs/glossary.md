@@ -402,7 +402,11 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 
 **Log record**
 : One message the application logged, with its level, target, fields, and
-  a sequence number.
+  a sequence number that continues across restarts.
+
+**Log file**
+: One of the rotating JSON-lines files in the data directory that keep log
+  records across restarts, which `/api/v1/log-records` lists.
 
 **Run ID**
 : The ID a process chooses when it starts, which tells its log records

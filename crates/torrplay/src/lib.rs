@@ -37,6 +37,7 @@ pub use torrplay_core::settings::{LogLevel, LogOverride, Overrides};
 use torrplay_engine::{DEFAULT_PEER_PORT, EngineConfig, LibrqbitEngine, NetworkConfig};
 use torrplay_server::App;
 pub use torrplay_server::Run;
+pub use torrplay_server::log_files::{LogFiles, LogWriter};
 use torrplay_store::{Contents, Store};
 
 /// The default API port, as the contract's server URL documents.
@@ -516,16 +517,31 @@ pub async fn change_password(
     Ok(changed)
 }
 
+/// How long exiting and a panic wait for queued records to reach the log
+/// files.
+const LOG_FLUSH_LIMIT: Duration = Duration::from_secs(2);
+
 /// Changes the level of TorrPlay's own log messages after
-/// [`init_logging`].
+/// [`init_logging`], and flushes the log files.
 #[derive(Clone)]
-pub struct LogControl(Arc<dyn Fn(LogLevel) + Send + Sync>);
+pub struct LogControl {
+    set_level: Arc<dyn Fn(LogLevel) + Send + Sync>,
+    files: Option<Arc<LogWriter>>,
+}
 
 impl LogControl {
     /// Records TorrPlay's own messages at `level` and more severe, and
     /// other crates' warnings and errors.
     pub fn set_level(&self, level: LogLevel) {
-        (self.0)(level);
+        (self.set_level)(level);
+    }
+
+    /// Waits a bounded time for the records logged so far to reach the log
+    /// files, as exiting does.
+    pub fn flush(&self) {
+        if let Some(files) = &self.files {
+            files.flush(LOG_FLUSH_LIMIT);
+        }
     }
 }
 
@@ -560,18 +576,20 @@ fn level_filter(level: LogLevel) -> tracing_subscriber::filter::Targets {
     )
 }
 
-/// Records logs to standard error in `format`: TorrPlay's own at `level`
-/// and more severe, other crates' warnings and errors only, unless
-/// `filter`, already validated by [`parse_args`], sets every target's level
-/// instead. Records carry `run`'s ID and are counted in its counts. The
-/// returned control changes the level later.
+/// Records logs to standard error in `format`, and to `files` when they
+/// are open: TorrPlay's own at `level` and more severe, other crates'
+/// warnings and errors only, unless `filter`, already validated by
+/// [`parse_args`], sets every target's level instead. Records carry `run`'s
+/// ID and are counted in its counts. A panic is logged as an error and
+/// flushed to the files before the process ends. The returned control
+/// changes the level later and flushes the files.
 pub fn init_logging(
     level: LogLevel,
     filter: Option<&str>,
     format: LogFormat,
     run: &Run,
+    files: Option<(LogFiles, LogWriter)>,
 ) -> LogControl {
-    use tracing_subscriber::Layer;
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::reload;
     use tracing_subscriber::util::SubscriberInitExt;
@@ -580,22 +598,40 @@ pub fn init_logging(
         .and_then(|filter| filter.parse().ok())
         .unwrap_or_else(|| level_filter(level));
     let (filter, handle) = reload::Layer::new(filter);
-    let output = match format {
-        LogFormat::Text => tracing_subscriber::fmt::layer()
-            .with_writer(std::io::stderr)
-            .boxed(),
-        LogFormat::Json => logging::JsonLayer::new(run.id(), std::io::stderr).boxed(),
+    let files = files.map(|(files, writer)| (files, Arc::new(writer)));
+    let writer = files.as_ref().map(|(_, writer)| Arc::clone(writer));
+    let (text, json) = match format {
+        LogFormat::Text => (
+            Some(tracing_subscriber::fmt::layer().with_writer(std::io::stderr)),
+            None,
+        ),
+        LogFormat::Json => (None, Some(std::io::stderr as fn() -> io::Stderr)),
     };
+    let records =
+        (json.is_some() || files.is_some()).then(|| logging::JsonLayer::new(run.id(), json, files));
     tracing_subscriber::registry()
-        .with(output)
+        .with(text)
+        .with(records)
         .with(logging::CountingLayer(run.log_records()))
         .with(filter)
         .init();
-    LogControl(Arc::new(move |level| {
-        if let Err(error) = handle.reload(level_filter(level)) {
-            tracing::warn!(%error, "the log level could not be changed");
-        }
-    }))
+    if let Some(writer) = &writer {
+        let writer = Arc::clone(writer);
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            tracing::error!(panic = %info, "the application panicked");
+            writer.flush(LOG_FLUSH_LIMIT);
+            previous(info);
+        }));
+    }
+    LogControl {
+        set_level: Arc::new(move |level| {
+            if let Err(error) = handle.reload(level_filter(level)) {
+                tracing::warn!(%error, "the log level could not be changed");
+            }
+        }),
+        files: writer,
+    }
 }
 
 /// The bounds of the shutdown sequence.
@@ -630,6 +666,8 @@ pub struct ServeOptions {
     pub log: Option<LogControl>,
     /// The process run, whose ID the system resource and log records give.
     pub run: Run,
+    /// The log files the log records are read from, if they are written.
+    pub log_files: Option<LogFiles>,
 }
 
 /// Serves the API on `listener` over `engine`, which must not be started
@@ -696,6 +734,7 @@ pub async fn serve(
             .with_credentials(credentials)
             .with_allowed_hosts(options.allowed_hosts)
             .with_run(options.run)
+            .with_log_files(options.log_files)
             .with_media_server(Device {
                 uuid: media_server_udn.clone(),
                 version: env!("CARGO_PKG_VERSION").to_owned(),
