@@ -52,7 +52,7 @@ fn log_records_path() -> String {
 /// The metrics' path, outside the versioned API.
 pub(crate) const METRICS_PATH: &str = "/metrics";
 
-pub(crate) async fn system<E: Engine>(
+pub(crate) async fn get_system<E: Engine>(
     State(app): State<Arc<App<E>>>,
     headers: HeaderMap,
 ) -> Result<Response, Problem> {
@@ -77,7 +77,7 @@ pub(crate) async fn system<E: Engine>(
     uncached(json(StatusCode::OK, &representation)?)
 }
 
-pub(crate) async fn statistics<E: Engine>(
+pub(crate) async fn get_statistics<E: Engine>(
     State(app): State<Arc<App<E>>>,
     headers: HeaderMap,
 ) -> Result<Response, Problem> {
@@ -113,7 +113,7 @@ pub(crate) async fn statistics<E: Engine>(
 /// Serves the metrics. While the engine is unavailable or the stored
 /// torrents are restored, the metrics that need them are left out, so a
 /// scrape still sees the process.
-pub(crate) async fn metrics<E: Engine>(
+pub(crate) async fn get_metrics<E: Engine>(
     State(app): State<Arc<App<E>>>,
     headers: HeaderMap,
 ) -> Result<Response, Problem> {
@@ -176,7 +176,7 @@ const AFTER_SEQUENCE: &str = "after_sequence";
 /// The longest `contains` text.
 const CONTAINS_MAX_CHARS: usize = 256;
 
-pub(crate) async fn log_records<E: Engine>(
+pub(crate) async fn list_log_records<E: Engine>(
     State(app): State<Arc<App<E>>>,
     headers: HeaderMap,
     uri: Uri,

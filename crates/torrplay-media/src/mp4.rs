@@ -13,7 +13,7 @@ use crate::{
 };
 
 /// The most top-level boxes walked looking for `moov`.
-const BOXES_MAX: usize = 1024;
+const BOX_LIMIT: usize = 1024;
 
 /// The longest box header: a size, a type, and a 64-bit size.
 const HEADER_MAX_BYTES: u64 = 16;
@@ -137,7 +137,7 @@ pub(crate) async fn read_index<S: Source + Send>(
     let mut moov = None;
     let mut media: Option<Range<u64>> = None;
     let mut offset = 0;
-    for _ in 0..BOXES_MAX {
+    for _ in 0..BOX_LIMIT {
         if offset >= size {
             break;
         }

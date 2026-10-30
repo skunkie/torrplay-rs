@@ -20,13 +20,13 @@ use crate::library::{self, TextError};
 
 /// The most person profiles the application keeps; the device profile is
 /// not counted.
-pub const PROFILES_MAX: usize = 32;
+pub const PROFILE_LIMIT: usize = 32;
 
 /// The most characters a profile's name has.
 pub const PROFILE_NAME_MAX_CHARS: usize = 64;
 
 /// The name of the person profile created when none is stored.
-pub const DEFAULT_PROFILE_NAME: &str = "Default";
+pub const PROFILE_NAME_DEFAULT: &str = "Default";
 
 /// The device profile's name, or the first of it with a number that no
 /// person profile has, since names are unique.
@@ -37,7 +37,7 @@ pub const DURATION_MAX_MS: u64 = 1_000_000_000;
 
 /// The most titles' progress a profile keeps; saving a new one past it
 /// removes the one saved longest ago.
-pub const TITLE_PROGRESS_MAX: usize = 10_000;
+pub const TITLE_PROGRESS_LIMIT: usize = 10_000;
 
 /// A title or episode in an external catalog, as the contract's title key
 /// pattern names it: `tmdb-movie-{id}`, `tmdb-tv-{id}-s{season}e{episode}`,
@@ -267,7 +267,7 @@ pub struct Entry {
     /// The file to play.
     pub file: FileId,
     /// When the progress that put it here was saved.
-    pub activity_at: SystemTime,
+    pub last_active_at: SystemTime,
 }
 
 /// Returns a profile's up next entries, most recent activity first, then by
@@ -292,7 +292,7 @@ pub fn up_next<'a>(
                         reason: Reason::Resume,
                         torrent: torrent.torrent.clone(),
                         file: (*file).clone(),
-                        activity_at: progress.updated_at,
+                        last_active_at: progress.updated_at,
                     });
                 }
             }
@@ -301,11 +301,11 @@ pub fn up_next<'a>(
     entries.retain(|entry| {
         dismissals
             .get(&entry.id)
-            .is_none_or(|&dismissed| entry.activity_at > dismissed)
+            .is_none_or(|&dismissed| entry.last_active_at > dismissed)
     });
     entries.sort_by(|a, b| {
-        b.activity_at
-            .cmp(&a.activity_at)
+        b.last_active_at
+            .cmp(&a.last_active_at)
             .then_with(|| a.id.cmp(&b.id))
     });
     entries
@@ -324,7 +324,7 @@ fn series_entry(torrent: &VideoFiles<'_>, saved: &BTreeMap<FileId, Progress>) ->
         reason,
         torrent: torrent.torrent.clone(),
         file: file.clone(),
-        activity_at: progress.updated_at,
+        last_active_at: progress.updated_at,
     };
     if progress.in_progress() {
         return Some(entry(Reason::Resume, latest));
@@ -537,11 +537,11 @@ impl Viewing {
 
     /// Returns the title a new title's progress would remove: the one saved
     /// longest ago, then the greatest key, once the profile keeps
-    /// [`TITLE_PROGRESS_MAX`] other titles.
+    /// [`TITLE_PROGRESS_LIMIT`] other titles.
     pub fn title_to_make_room(&self, profile: &ProfileId, key: &str) -> Option<TitleKey> {
         let state = self.lock();
         let titles = state.titles.get(profile)?;
-        if titles.contains_key(key) || titles.len() < TITLE_PROGRESS_MAX {
+        if titles.contains_key(key) || titles.len() < TITLE_PROGRESS_LIMIT {
             return None;
         }
         titles
@@ -756,7 +756,7 @@ mod tests {
         );
         let next = entries(vec![(1, saved(0, true, 3))]);
         assert_eq!(
-            (next[0].reason, &next[0].file, next[0].activity_at),
+            (next[0].reason, &next[0].file, next[0].last_active_at),
             (Reason::NextEpisode, &files[0], at(3)),
             "S01E02 follows S01E01 whatever the metadata order"
         );
@@ -858,7 +858,7 @@ mod tests {
         let viewing = Viewing::default();
         let profile = ProfileId::from_random_bytes([1; 16]);
         let key = |n: usize| TitleKey::parse(&format!("tmdb-movie-{}", n + 1)).unwrap();
-        for n in 0..TITLE_PROGRESS_MAX {
+        for n in 0..TITLE_PROGRESS_LIMIT {
             // The second is the oldest.
             let secs = if n == 1 { 1 } else { 10 + n as u64 };
             viewing.set_title(

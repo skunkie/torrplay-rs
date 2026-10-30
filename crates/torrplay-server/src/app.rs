@@ -26,7 +26,7 @@ use torrplay_core::id::{FileId, ProfileId, TorrentId, random_torrent_id_bytes};
 use torrplay_core::lifecycle::{Failure, ObservedState, Readiness, StorageMode};
 use torrplay_core::metadata::Metadata;
 use torrplay_core::profiles::{
-    self, DEFAULT_PROFILE_NAME, DEVICE_PROFILE_NAME, DURATION_MAX_MS, Profile, ProfileKind,
+    self, DEVICE_PROFILE_NAME, DURATION_MAX_MS, PROFILE_NAME_DEFAULT, Profile, ProfileKind,
     ProgressUpdate, Viewing,
 };
 use torrplay_core::registry::{Registry, TorrentRecord};
@@ -49,7 +49,7 @@ pub type SeekIndexes = Arc<dyn Fn(&TorrentId, &FileId) -> Option<SeekIndex> + Se
 
 /// How long a request body may take to arrive by default, as the contract
 /// documents.
-const DEFAULT_BODY_TIMEOUT: Duration = Duration::from_secs(30);
+const BODY_TIMEOUT_DEFAULT: Duration = Duration::from_secs(30);
 
 /// The source of the current time for credentials' expiry, which tests
 /// replace.
@@ -168,7 +168,7 @@ impl<E: Engine> App<E> {
             viewing: Viewing::default(),
             store,
             writes: tokio::sync::Mutex::new(()),
-            body_timeout: DEFAULT_BODY_TIMEOUT,
+            body_timeout: BODY_TIMEOUT_DEFAULT,
             observations: Mutex::new(Observations::default()),
             settings: Mutex::new(StoredSettings::default()),
             restoring: AtomicBool::new(true),
@@ -376,11 +376,11 @@ impl<E: Engine> App<E> {
         match tokio::time::timeout(INDEX_TIMEOUT, read).await {
             Ok(Ok(index)) => index,
             Ok(Err(error)) => {
-                tracing::debug!(%torrent, %file, %error, "the file's seek index could not be read");
+                tracing::debug!(torrent_id = %torrent, file_id = %file, %error, "the file's seek index could not be read");
                 None
             }
             Err(_) => {
-                tracing::debug!(%torrent, %file, "reading the file's seek index timed out");
+                tracing::debug!(torrent_id = %torrent, file_id = %file, "reading the file's seek index timed out");
                 None
             }
         }
@@ -453,9 +453,11 @@ impl<E: Engine> App<E> {
                 continue;
             }
             match self.remove_torrent(&id).await {
-                Ok(()) => tracing::info!(%id, "an unwatched temporary torrent was deleted"),
+                Ok(()) => {
+                    tracing::info!(torrent_id = %id, "an unwatched temporary torrent was deleted")
+                }
                 Err(problem) => {
-                    tracing::warn!(%id, problem = problem.detail(), "an unwatched temporary torrent could not be deleted");
+                    tracing::warn!(torrent_id = %id, problem = problem.detail(), "an unwatched temporary torrent could not be deleted");
                 }
             }
         }
@@ -527,7 +529,7 @@ impl<E: Engine> App<E> {
             // it still holds of it when it stops.
             Err(error) => tracing::error!(
                 error = %torrplay_core::redact::redact(&error.to_string()),
-                %id,
+                torrent_id = %id,
                 "the engine did not remove a deleted torrent"
             ),
         }
@@ -608,7 +610,7 @@ impl<E: Engine> App<E> {
     async fn ensure_profiles(&self) {
         let _lane = self.writes.lock().await;
         if self.viewing.people() == 0 {
-            self.create_profile(DEFAULT_PROFILE_NAME.to_owned(), ProfileKind::Person)
+            self.create_profile(PROFILE_NAME_DEFAULT.to_owned(), ProfileKind::Person)
                 .await;
         }
         if self.viewing.device().is_none() {
@@ -703,7 +705,7 @@ impl<E: Engine> App<E> {
     pub async fn restore(&self, torrents: Vec<StoredTorrent>) -> Result<(), EngineError> {
         for stored in torrents {
             let source = match (&stored.metainfo, &stored.magnet_uri) {
-                (Some(bytes), _) => Source::TorrentFile(bytes.clone()),
+                (Some(bytes), _) => Source::Metainfo(bytes.clone()),
                 (None, Some(uri)) => Source::MagnetUri(uri.clone()),
                 // The store returns no torrent without either.
                 (None, None) => continue,
@@ -746,7 +748,7 @@ impl<E: Engine> App<E> {
             };
             if self.registry.insert(record).is_err() {
                 // The store's keys are unique; a second record is skipped.
-                tracing::error!(id = %stored.id, "a stored torrent was registered twice");
+                tracing::error!(torrent_id = %stored.id, "a stored torrent was registered twice");
                 continue;
             }
             if refusal.is_none() {
@@ -766,7 +768,7 @@ impl<E: Engine> App<E> {
                 }
             }
             if let Some(detail) = refusal {
-                tracing::warn!(id = %stored.id, %detail, "a stored torrent could not be restored");
+                tracing::warn!(torrent_id = %stored.id, %detail, "a stored torrent could not be restored");
                 self.observations()
                     .torrents
                     .entry(stored.id)
@@ -951,7 +953,7 @@ impl<E: Engine> App<E> {
         id: &TorrentId,
         metadata: &Arc<Metadata>,
     ) -> Result<bool, Problem> {
-        let torrent_file = match self.engine.torrent_file(id).await {
+        let metainfo = match self.engine.metainfo(id).await {
             Ok(Some(bytes)) => bytes,
             Ok(None) | Err(EngineError::Unavailable { .. } | EngineError::UnknownTorrent) => {
                 return Ok(false);
@@ -968,12 +970,10 @@ impl<E: Engine> App<E> {
         }
         // A temporary torrent keeps it in memory, to be stored if it is
         // persisted.
-        if !self
-            .temporaries
-            .record_torrent_file(id, torrent_file.clone())
-            && let Err(error) = self.store.set_metainfo(id, torrent_file).await
+        if !self.temporaries.record_metainfo(id, metainfo.clone())
+            && let Err(error) = self.store.set_metainfo(id, metainfo).await
         {
-            tracing::error!(%error, %id, "retrieved metadata could not be stored");
+            tracing::error!(%error, torrent_id = %id, "retrieved metadata could not be stored");
             return Ok(false);
         }
         Ok(self
@@ -1019,7 +1019,7 @@ impl<E: Engine> App<E> {
                 Ok(()) => {
                     if let Err(error) = app.store.set_storage_mode(&id, target).await {
                         // The next start runs the transition again.
-                        tracing::error!(%error, %id, "a completed transition could not be stored");
+                        tracing::error!(%error, torrent_id = %id, "a completed transition could not be stored");
                     }
                     let _ = app.registry.set_storage_mode(id.as_str(), target);
                     None
@@ -1033,7 +1033,7 @@ impl<E: Engine> App<E> {
                     Some((target, detail))
                 }
                 Err(error) => {
-                    tracing::warn!(%error, %id, "a storage mode transition was interrupted");
+                    tracing::warn!(%error, torrent_id = %id, "a storage mode transition was interrupted");
                     None
                 }
             };
@@ -1051,7 +1051,7 @@ impl<E: Engine> App<E> {
         for record in self.registry.list() {
             let target = record.configuration.storage_mode();
             if target != record.storage_mode && self.restore_failure(&record.id).is_none() {
-                tracing::info!(id = %record.id, target = target.as_str(), "resuming a storage mode transition");
+                tracing::info!(torrent_id = %record.id, target = target.as_str(), "resuming a storage mode transition");
                 self.start_transition(record.id, target);
             }
         }
@@ -1076,7 +1076,7 @@ impl<E: Engine> App<E> {
         }
         if let Err(error) = self.store.set_configuration(id, &configuration).await {
             // The next start runs the transition again.
-            tracing::error!(%error, %id, "a failed transition's configuration could not be reverted");
+            tracing::error!(%error, torrent_id = %id, "a failed transition's configuration could not be reverted");
             return;
         }
         let _ = self.registry.set_configuration(id.as_str(), configuration);

@@ -37,7 +37,7 @@ pub const CURSOR_PARAMETER: &str = "cursor";
 
 /// The longest cursor accepted, which bounds decoding work. Issued cursors
 /// are far shorter.
-const MAX_CURSOR_CHARS: usize = 1024;
+const CURSOR_MAX_CHARS: usize = 1024;
 
 /// The cursor format version.
 const CURSOR_VERSION: u8 = 1;
@@ -245,7 +245,7 @@ fn encode_cursor<K: SortKey>(key: &K, filters: FilterFingerprint) -> String {
 }
 
 fn decode_cursor<K: SortKey>(cursor: &str, filters: FilterFingerprint) -> Result<K, PageError> {
-    if cursor.len() > MAX_CURSOR_CHARS {
+    if cursor.len() > CURSOR_MAX_CHARS {
         return Err(PageError::MalformedCursor);
     }
     let bytes = base32::decode(cursor).ok_or(PageError::MalformedCursor)?;
@@ -579,15 +579,15 @@ impl SortKey for AccessTokenSortKey {
 /// entry ID.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpNextSortKey {
-    activity_at: SystemTime,
+    last_active_at: SystemTime,
     id: String,
 }
 
 impl UpNextSortKey {
-    /// Returns the key of an entry whose activity was at `activity_at`.
-    pub fn of(id: &UpNextEntryId, activity_at: SystemTime) -> Self {
+    /// Returns the key of an entry whose activity was at `last_active_at`.
+    pub fn of(id: &UpNextEntryId, last_active_at: SystemTime) -> Self {
         Self {
-            activity_at,
+            last_active_at,
             id: id.as_str().to_owned(),
         }
     }
@@ -596,8 +596,8 @@ impl UpNextSortKey {
 impl Ord for UpNextSortKey {
     fn cmp(&self, other: &Self) -> Ordering {
         other
-            .activity_at
-            .cmp(&self.activity_at)
+            .last_active_at
+            .cmp(&self.last_active_at)
             .then_with(|| self.id.cmp(&other.id))
     }
 }
@@ -612,13 +612,13 @@ impl SortKey for UpNextSortKey {
     const KIND: u8 = 5;
 
     fn encode(&self, out: &mut Vec<u8>) {
-        encode_time(self.activity_at, out);
+        encode_time(self.last_active_at, out);
         out.extend_from_slice(self.id.as_bytes());
     }
 
     fn decode(bytes: &[u8]) -> Option<Self> {
-        let (activity_at, id) = decode_time(bytes)?;
-        Some(Self { activity_at, id })
+        let (last_active_at, id) = decode_time(bytes)?;
+        Some(Self { last_active_at, id })
     }
 }
 
@@ -834,7 +834,7 @@ mod tests {
             files_cursor.to_uppercase(),
             base32::encode(&bad_version),
             base32::encode(&truncated),
-            "a".repeat(MAX_CURSOR_CHARS + 8),
+            "a".repeat(CURSOR_MAX_CHARS + 8),
             base32::encode(b"\x01\x02"),
         ];
         for cursor in &cases {

@@ -24,7 +24,7 @@ const DOCUMENT: &str = include_str!("../../../api/openapi.yaml");
 /// The media type of the document (RFC 9512).
 const YAML: &str = "application/yaml";
 
-pub(crate) async fn entry_point(headers: HeaderMap) -> Result<Response, Problem> {
+pub(crate) async fn get_entry_point(headers: HeaderMap) -> Result<Response, Problem> {
     negotiate(&headers, JSON)?;
     let response = json(
         StatusCode::OK,
@@ -53,11 +53,11 @@ pub(crate) async fn entry_point(headers: HeaderMap) -> Result<Response, Problem>
 
 /// Answers `/api/v1/` with a permanent redirect to `/api/v1`, since API
 /// paths never end in a slash.
-pub(crate) async fn entry_point_with_slash() -> Redirect {
+pub(crate) async fn redirect_to_entry_point() -> Redirect {
     Redirect::permanent(BASE)
 }
 
-pub(crate) async fn document(headers: HeaderMap) -> Result<Response, Problem> {
+pub(crate) async fn get_openapi_document(headers: HeaderMap) -> Result<Response, Problem> {
     negotiate(&headers, YAML)?;
     Ok((
         [
@@ -82,14 +82,14 @@ fn healthy() -> Result<Response, Problem> {
 }
 
 /// Liveness: the process is running and serving requests.
-pub(crate) async fn liveness(headers: HeaderMap) -> Result<Response, Problem> {
+pub(crate) async fn get_liveness(headers: HeaderMap) -> Result<Response, Problem> {
     negotiate(&headers, JSON)?;
     healthy()
 }
 
 /// Readiness: the engine is ready and the application is not shutting
 /// down.
-pub(crate) async fn readiness<E: Engine>(
+pub(crate) async fn get_readiness<E: Engine>(
     State(app): State<Arc<App<E>>>,
     headers: HeaderMap,
 ) -> Result<Response, Problem> {

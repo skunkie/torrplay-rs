@@ -422,7 +422,7 @@ impl FakeEngine {
 impl State {
     fn inspect(&self, source: &Source) -> Result<Inspection, SourceRejection> {
         match source {
-            Source::TorrentFile(bytes) => {
+            Source::Metainfo(bytes) => {
                 let found = self.fixtures.iter().find_map(|(info_hash, fixture)| {
                     if &fixture.metainfo == bytes {
                         return Some((info_hash, fixture, Vec::new()));
@@ -589,13 +589,9 @@ impl Engine for FakeEngine {
         Ok(())
     }
 
-    async fn supply_metadata(
-        &self,
-        id: &TorrentId,
-        torrent_file: &[u8],
-    ) -> Result<(), EngineError> {
+    async fn supply_metadata(&self, id: &TorrentId, metainfo: &[u8]) -> Result<(), EngineError> {
         let mut state = self.ready()?;
-        let inspection = state.inspect(&Source::TorrentFile(torrent_file.to_vec()))?;
+        let inspection = state.inspect(&Source::Metainfo(metainfo.to_vec()))?;
         let torrent = state.torrent(id)?;
         if inspection.info_hash != torrent.info_hash {
             return Err(EngineError::MetadataMismatch);
@@ -640,7 +636,7 @@ impl Engine for FakeEngine {
         })
     }
 
-    async fn torrent_file(&self, id: &TorrentId) -> Result<Option<Vec<u8>>, EngineError> {
+    async fn metainfo(&self, id: &TorrentId) -> Result<Option<Vec<u8>>, EngineError> {
         let mut state = self.ready()?;
         let torrent = state.torrent(id)?;
         if torrent.metadata.is_none() {
@@ -734,7 +730,7 @@ impl Engine for FakeEngine {
             ranges,
             completed_bytes: 0,
             created_at,
-            expires_at: created_at + request.ttl,
+            expires_at: created_at + request.expires_in,
             ended_at: None,
             failure: None,
         };
@@ -832,7 +828,7 @@ fn file_size(torrent: &Torrent, file: FileIndex) -> Result<u64, EngineError> {
 /// Ranges shaped like the engine's, without pieces: the whole file when it
 /// fits, or else its head and tail, or a window at `offset`.
 fn fake_ranges(size_bytes: u64, offset: Option<u64>) -> Vec<ByteRange> {
-    let limit = preload::MAX_PRELOAD_BYTES;
+    let limit = preload::PRELOAD_MAX_BYTES;
     if size_bytes <= limit {
         return ByteRange::new(0, size_bytes).into_iter().collect();
     }
@@ -957,7 +953,7 @@ mod tests {
     }
 
     fn file(spec: &FixtureSpec) -> Source {
-        Source::TorrentFile(spec.metainfo().bytes)
+        Source::Metainfo(spec.metainfo().bytes)
     }
 
     async fn read(reader: FakeReader) -> Vec<u8> {
@@ -968,7 +964,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn recognizes_catalog_torrent_files_and_magnets() {
+    async fn recognizes_catalog_metainfo_and_magnets() {
         let engine = FakeEngine::with_catalog();
         let spec = catalog::multi_boundary();
         let expected = InfoHashV1::from_bytes(spec.metainfo().info_hash);
@@ -1007,7 +1003,7 @@ mod tests {
         let v2_hash = format!("1220{}", "ab".repeat(32));
         let cases = [
             (
-                Source::TorrentFile(catalog::invalid_metainfo()),
+                Source::Metainfo(catalog::invalid_metainfo()),
                 SourceRejection::Invalid {
                     detail: INVALID_TORRENT_FILE.into(),
                 },
@@ -1031,7 +1027,7 @@ mod tests {
                 },
             ),
             (
-                Source::TorrentFile(catalog::v2_only().v2_only_metainfo()),
+                Source::Metainfo(catalog::v2_only().v2_only_metainfo()),
                 SourceRejection::Unsupported {
                     detail: V2_ONLY.into(),
                 },
@@ -1058,7 +1054,7 @@ mod tests {
         let engine = FakeEngine::with_catalog();
         for spec in [catalog::hybrid(), catalog::hybrid_equal_padding()] {
             let bytes = spec.hybrid_metainfo().bytes;
-            let inspection = engine.inspect(&Source::TorrentFile(bytes)).await.unwrap();
+            let inspection = engine.inspect(&Source::Metainfo(bytes)).await.unwrap();
             let reported = inspection.metadata.unwrap();
             assert!(
                 reported.files.iter().any(|file| file.padding),
@@ -1286,7 +1282,7 @@ mod tests {
         let engine = FakeEngine::with_catalog();
         let bytes = catalog::hybrid().hybrid_metainfo().bytes;
         engine
-            .add(&id(1), &Source::TorrentFile(bytes), DesiredState::Started)
+            .add(&id(1), &Source::Metainfo(bytes), DesiredState::Started)
             .await
             .unwrap();
         let reported = engine.status(&id(1)).await.unwrap().metadata.unwrap();

@@ -24,16 +24,16 @@ use crate::client::{Client, Failure};
 
 /// How many torrents a page of `list_torrents` holds by default, and at
 /// most.
-const DEFAULT_TORRENTS: u32 = 20;
-const MAX_TORRENTS: u32 = 100;
+const TORRENT_PAGE_SIZE_DEFAULT: u32 = 20;
+const TORRENT_PAGE_SIZE_MAX: u32 = 100;
 
 /// How many files `get_torrent` reports.
-const MAX_FILES: u32 = 200;
+const FILE_PAGE_SIZE: u32 = 200;
 
 /// How many records a page of `list_log_records` holds by default, and at
 /// most, as the native listing's page size allows.
-const DEFAULT_LOG_RECORDS: u32 = 50;
-const MAX_LOG_RECORDS: u32 = 200;
+const LOG_RECORD_PAGE_SIZE_DEFAULT: u32 = 50;
+const LOG_RECORD_PAGE_SIZE_MAX: u32 = 200;
 
 const TORRENTS_URI: &str = "torrplay://torrents";
 const TORRENT_URI_PREFIX: &str = "torrplay://torrents/";
@@ -48,7 +48,7 @@ streaming URLs. Torrents and their files have IDs such as trr_... and \
 fil_...: find them with list_torrents and get_torrent. To play a file, pick \
 the torrent's largest file with a video/ media type that is not a sample, \
 and pass it to get_stream_url. A stream's health shows in get_torrent's \
-statistics: its peers, download rate, and piece progress. preload_file \
+statistics: its peers, download rate, and piece progress. create_preload \
 fetches a file's head and tail so playback starts at once. To look into a \
 failure, read list_log_records at warn or above, narrowed with contains to \
 a torrent's ID or a request_id from a problem; get_system and \
@@ -76,7 +76,7 @@ impl Server {
             .client
             .get(
                 &format!("{path}/files"),
-                &[("page_size", MAX_FILES.to_string())],
+                &[("page_size", FILE_PAGE_SIZE.to_string())],
             )
             .await
         {
@@ -117,7 +117,7 @@ pub struct ListTorrents {
     /// persisted (the default), temporary, or any.
     pub retention: Option<String>,
     /// How many torrents to return, 1 to 100; 20 by default.
-    pub limit: Option<u32>,
+    pub page_size: Option<u32>,
     /// The cursor query parameter of a previous result's links.next, for
     /// the page after it.
     pub cursor: Option<String>,
@@ -130,9 +130,9 @@ pub struct TorrentArgument {
     pub torrent_id: String,
 }
 
-/// The arguments of `add_torrent`.
+/// The arguments of `create_torrent`.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct AddTorrent {
+pub struct CreateTorrent {
     /// A magnet URI, magnet:?xt=urn:btih:...
     pub magnet_uri: String,
     /// The library title, such as "Sintel".
@@ -202,9 +202,9 @@ pub struct StreamUrl {
     pub expires_in_seconds: Option<i64>,
 }
 
-/// The arguments of `preload_file`.
+/// The arguments of `create_preload`.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct PreloadFile {
+pub struct CreatePreload {
     /// The torrent's ID, trr_...
     pub torrent_id: String,
     /// The file's ID, fil_...
@@ -237,7 +237,7 @@ pub struct ListLogRecords {
     /// latest_sequence, for what was logged since.
     pub after_sequence: Option<u64>,
     /// How many records to return, 1 to 200; 50 by default.
-    pub limit: Option<u32>,
+    pub page_size: Option<u32>,
     /// The cursor query parameter of a previous result's links.next, for
     /// the page after it.
     pub cursor: Option<String>,
@@ -263,13 +263,13 @@ impl Server {
     ) -> CallToolResult {
         answer(
             async {
-                let limit = arguments.limit.unwrap_or(DEFAULT_TORRENTS);
-                if !(1..=MAX_TORRENTS).contains(&limit) {
+                let page_size = arguments.page_size.unwrap_or(TORRENT_PAGE_SIZE_DEFAULT);
+                if !(1..=TORRENT_PAGE_SIZE_MAX).contains(&page_size) {
                     return Err(Failure::Argument(format!(
-                        "limit must be 1 to {MAX_TORRENTS}"
+                        "page_size must be 1 to {TORRENT_PAGE_SIZE_MAX}"
                     )));
                 }
-                let mut query = vec![("page_size", limit.to_string())];
+                let mut query = vec![("page_size", page_size.to_string())];
                 if let Some(search) = arguments.search {
                     query.extend([("search", search), ("fuzzy", "true".to_owned())]);
                 }
@@ -314,7 +314,10 @@ impl Server {
             members. Its metadata arrives from peers in the background.",
         annotations(open_world_hint = true)
     )]
-    async fn add_torrent(&self, Parameters(arguments): Parameters<AddTorrent>) -> CallToolResult {
+    async fn create_torrent(
+        &self,
+        Parameters(arguments): Parameters<CreateTorrent>,
+    ) -> CallToolResult {
         answer(
             async {
                 let mut creation = api::TorrentCreation::new(arguments.magnet_uri);
@@ -459,7 +462,10 @@ impl Server {
             again reports the same preload.",
         annotations(open_world_hint = false)
     )]
-    async fn preload_file(&self, Parameters(arguments): Parameters<PreloadFile>) -> CallToolResult {
+    async fn create_preload(
+        &self,
+        Parameters(arguments): Parameters<CreatePreload>,
+    ) -> CallToolResult {
         answer(
             async {
                 let torrent_id = segment("torrent_id", &arguments.torrent_id, "trr_")?;
@@ -492,7 +498,7 @@ impl Server {
         description = "Cancel a file's preloads, releasing what they hold.",
         annotations(idempotent_hint = true, open_world_hint = false)
     )]
-    async fn cancel_preload(
+    async fn delete_preload(
         &self,
         Parameters(arguments): Parameters<FileArgument>,
     ) -> CallToolResult {
@@ -588,13 +594,13 @@ impl Server {
     ) -> CallToolResult {
         answer(
             async {
-                let limit = arguments.limit.unwrap_or(DEFAULT_LOG_RECORDS);
-                if !(1..=MAX_LOG_RECORDS).contains(&limit) {
+                let page_size = arguments.page_size.unwrap_or(LOG_RECORD_PAGE_SIZE_DEFAULT);
+                if !(1..=LOG_RECORD_PAGE_SIZE_MAX).contains(&page_size) {
                     return Err(Failure::Argument(format!(
-                        "limit must be 1 to {MAX_LOG_RECORDS}"
+                        "page_size must be 1 to {LOG_RECORD_PAGE_SIZE_MAX}"
                     )));
                 }
-                let mut query = vec![("page_size", limit.to_string())];
+                let mut query = vec![("page_size", page_size.to_string())];
                 if let Some(level) = arguments.min_level {
                     let _: api::LogLevel = member("min_level", level.clone())?;
                     query.push(("min_level", level));

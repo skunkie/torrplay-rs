@@ -26,13 +26,13 @@ pub const TIMEOUT_MIN: Duration = Duration::from_secs(60);
 pub const TIMEOUT_MAX: Duration = Duration::from_secs(1800);
 
 /// The most subscriptions kept at once.
-pub const SUBSCRIPTIONS_MAX: usize = 64;
+pub const SUBSCRIPTION_LIMIT: usize = 64;
 
 /// How long one `NOTIFY` may take.
 pub const DELIVERY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The most callbacks one subscription keeps.
-const CALLBACKS_MAX: usize = 4;
+const CALLBACK_LIMIT: usize = 4;
 
 /// A service that sends events.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -259,7 +259,7 @@ impl Subscriptions {
             subscriber,
         )
         .ok_or(Refusal::PreconditionFailed)?;
-        if subscriptions.len() >= SUBSCRIPTIONS_MAX {
+        if subscriptions.len() >= SUBSCRIPTION_LIMIT {
             return Err(Refusal::Unavailable);
         }
         let sid = sid().ok_or(Refusal::Unavailable)?;
@@ -356,7 +356,7 @@ fn parse_callbacks(header: &str, subscriber: IpAddr) -> Option<Vec<Callback>> {
         callbacks.push(Callback::parse(url.trim(), subscriber)?);
         rest = after.trim_start();
     }
-    (!callbacks.is_empty() && callbacks.len() <= CALLBACKS_MAX).then_some(callbacks)
+    (!callbacks.is_empty() && callbacks.len() <= CALLBACK_LIMIT).then_some(callbacks)
 }
 
 #[cfg(test)]
@@ -479,7 +479,7 @@ mod tests {
             ),
             Err(Refusal::PreconditionFailed)
         );
-        for n in 0..SUBSCRIPTIONS_MAX {
+        for n in 0..SUBSCRIPTION_LIMIT {
             subscriptions
                 .subscribe(
                     Service::ContentDirectory,

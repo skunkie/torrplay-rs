@@ -12,7 +12,7 @@
 //!
 //! Files whose mapped paths differ only in case or Unicode normalization
 //! would be one file on macOS and Windows, and a mapped component longer
-//! than [`MAX_COMPONENT_BYTES`] fits no common filesystem, so a torrent with
+//! than [`COMPONENT_MAX_BYTES`] fits no common filesystem, so a torrent with
 //! either cannot use disk storage anywhere.
 
 use std::collections::HashMap;
@@ -24,7 +24,7 @@ use torrplay_core::metadata::ReportedMetadata;
 
 /// The longest mapped path component, in bytes, that common filesystems
 /// hold.
-pub const MAX_COMPONENT_BYTES: usize = 255;
+pub const COMPONENT_MAX_BYTES: usize = 255;
 
 /// The characters Windows forbids in file names, beside control characters.
 const FORBIDDEN: &[u8] = b"/\\:*?\"<>|";
@@ -57,7 +57,7 @@ pub enum UnmappablePaths {
     },
     /// A component maps to a name longer than filesystems hold.
     #[error(
-        "Disk storage cannot hold the file {file}, whose names exceed {MAX_COMPONENT_BYTES} bytes."
+        "Disk storage cannot hold the file {file}, whose names exceed {COMPONENT_MAX_BYTES} bytes."
     )]
     TooLong {
         /// The file's path, as the API reports it.
@@ -142,7 +142,7 @@ pub fn map_files(metadata: &ReportedMetadata) -> Result<Vec<Option<PathBuf>>, Un
                 return Err(UnmappablePaths::Empty { file: shown });
             }
             let name = map_component(component);
-            if name.len() > MAX_COMPONENT_BYTES {
+            if name.len() > COMPONENT_MAX_BYTES {
                 return Err(UnmappablePaths::TooLong { file: shown });
             }
             if depth > 0 {
@@ -308,12 +308,12 @@ mod tests {
 
     #[test]
     fn overlong_and_empty_names_are_refused() {
-        let long = "x".repeat(MAX_COMPONENT_BYTES + 1);
+        let long = "x".repeat(COMPONENT_MAX_BYTES + 1);
         assert!(matches!(
             map_files(&metadata(&[&["Example", &long]])),
             Err(UnmappablePaths::TooLong { .. })
         ));
-        let escaped = "?".repeat(MAX_COMPONENT_BYTES / 3 + 1);
+        let escaped = "?".repeat(COMPONENT_MAX_BYTES / 3 + 1);
         assert!(
             matches!(
                 map_files(&metadata(&[&["Example", &escaped]])),

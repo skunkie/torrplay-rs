@@ -14,10 +14,10 @@ use crate::id::{ObjectId, ROOT_PARENT, encode};
 use crate::search::{Criteria, SortCriteria};
 
 /// How many torrents `recent` holds.
-pub const RECENT_COUNT: usize = 20;
+pub const RECENT_LIMIT: usize = 20;
 
 /// How many files `recently-viewed` holds.
-pub const RECENTLY_VIEWED_COUNT: usize = 20;
+pub const RECENTLY_VIEWED_LIMIT: usize = 20;
 
 /// The library a media server presents: the torrents it lists, newest
 /// first, each with its playable files in tree order, and the files the
@@ -155,7 +155,7 @@ impl Catalog {
                     .find(|candidate| candidate.id == *file)?;
                 Some((torrent, file))
             })
-            .take(RECENTLY_VIEWED_COUNT)
+            .take(RECENTLY_VIEWED_LIMIT)
             .collect()
     }
 
@@ -187,7 +187,7 @@ impl Catalog {
         };
         Some(match id {
             ObjectId::All => self.torrents.iter().collect(),
-            ObjectId::Recent => self.torrents.iter().take(RECENT_COUNT).collect(),
+            ObjectId::Recent => self.torrents.iter().take(RECENT_LIMIT).collect(),
             ObjectId::Movies => self.of_kind(Kind::Movie).collect(),
             ObjectId::Series => self.of_kind(Kind::Series).collect(),
             ObjectId::Category(name) => {
@@ -311,7 +311,7 @@ impl Catalog {
             ObjectId::All => ("All".to_owned(), self.torrents.len()),
             ObjectId::Recent => (
                 "Recently added".to_owned(),
-                self.torrents.len().min(RECENT_COUNT),
+                self.torrents.len().min(RECENT_LIMIT),
             ),
             ObjectId::RecentlyViewed => {
                 ("Recently viewed".to_owned(), self.recently_viewed().len())

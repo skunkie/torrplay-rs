@@ -2885,13 +2885,12 @@ paths:
                         logged_at: '2026-10-30T09:15:02.481Z'
                         level: warn
                         run_id: run_q4m2kzb6hxw3rjpt5yc4ula7na
-                        request_id: req_hxw3rjpt5yc4ula7ndq4m2kzb4
-                        target: torrplay_engine::storage
-                        message: a reader waited for a piece past its bound
+                        request_id: null
+                        target: torrplay_server::app
+                        message: an unwatched temporary torrent could not be deleted
                         fields:
                           torrent_id: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
-                          piece: '1312'
-                          waited_seconds: '60'
+                          problem: The torrent engine is not ready.
                     oldest_sequence: 3183
                     latest_sequence: 4190
                     links:

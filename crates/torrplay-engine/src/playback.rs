@@ -34,19 +34,19 @@ use crate::preload::Preloads;
 use crate::scheduler::{Reader, TorrentScheduler};
 
 /// The default idle timeout, as the lifecycle defines it.
-pub const DEFAULT_IDLE_READER_TIMEOUT: Duration = Duration::from_secs(30);
+pub const IDLE_READER_TIMEOUT_DEFAULT: Duration = Duration::from_secs(30);
 
 /// The default least readahead of a ramping reader, as Go TorrPlay's. A
 /// 16 MiB start, tried against the benchmark's slow-profile stalls, delayed
 /// the first byte there instead: the urgent piece then shared the links with
 /// more of the window's pieces.
-pub const DEFAULT_READAHEAD_RAMP_BYTES: u64 = 1024 * 1024;
+pub const READAHEAD_RAMP_BYTES_DEFAULT: u64 = 1024 * 1024;
 
 /// The default limit of idle readers per torrent.
-pub const DEFAULT_IDLE_READER_LIMIT_PER_TORRENT: usize = 4;
+pub const IDLE_READER_LIMIT_PER_TORRENT_DEFAULT: usize = 4;
 
 /// The default limit of idle readers across torrents.
-pub const DEFAULT_IDLE_READER_LIMIT: usize = 16;
+pub const IDLE_READER_LIMIT_DEFAULT: usize = 16;
 
 /// How readers share readahead and how long idle readers stay.
 #[derive(Clone, Copy, Debug)]
@@ -70,10 +70,10 @@ impl PlaybackConfig {
     pub fn new(readahead_bytes: u64) -> Self {
         Self {
             readahead_bytes,
-            readahead_ramp_bytes: DEFAULT_READAHEAD_RAMP_BYTES,
-            idle_reader_timeout: DEFAULT_IDLE_READER_TIMEOUT,
-            idle_reader_limit_per_torrent: DEFAULT_IDLE_READER_LIMIT_PER_TORRENT,
-            idle_reader_limit: DEFAULT_IDLE_READER_LIMIT,
+            readahead_ramp_bytes: READAHEAD_RAMP_BYTES_DEFAULT,
+            idle_reader_timeout: IDLE_READER_TIMEOUT_DEFAULT,
+            idle_reader_limit_per_torrent: IDLE_READER_LIMIT_PER_TORRENT_DEFAULT,
+            idle_reader_limit: IDLE_READER_LIMIT_DEFAULT,
         }
     }
 }
@@ -687,13 +687,13 @@ mod tests {
         pool.park(later(start, 10_000), 1, 0, 0, "second");
         assert_eq!(
             pool.next_deadline(),
-            Some(start + DEFAULT_IDLE_READER_TIMEOUT)
+            Some(start + IDLE_READER_TIMEOUT_DEFAULT)
         );
         assert!(pool.expire(later(start, 29_999)).is_empty());
-        assert_eq!(pool.expire(start + DEFAULT_IDLE_READER_TIMEOUT), ["first"]);
+        assert_eq!(pool.expire(start + IDLE_READER_TIMEOUT_DEFAULT), ["first"]);
         assert_eq!(
             pool.next_deadline(),
-            Some(later(start, 10_000) + DEFAULT_IDLE_READER_TIMEOUT)
+            Some(later(start, 10_000) + IDLE_READER_TIMEOUT_DEFAULT)
         );
         assert_eq!(pool.expire(later(start, 60_000)), ["second"]);
         assert_eq!(pool.next_deadline(), None);

@@ -23,7 +23,7 @@ pub const SORT_CAPABILITIES: &str = "dc:title,dc:date";
 const CRITERIA_MAX_BYTES: usize = 4096;
 
 /// How deeply criteria may nest parentheses.
-const NESTING_MAX: usize = 32;
+const NESTING_LIMIT: usize = 32;
 
 /// Search criteria the server cannot read: UPnP error `708`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -319,7 +319,7 @@ impl Parser {
     fn primary(&mut self, depth: usize) -> Result<Expression, InvalidCriteria> {
         match self.next().ok_or(InvalidCriteria)? {
             Token::Open => {
-                if depth >= NESTING_MAX {
+                if depth >= NESTING_LIMIT {
                     return Err(InvalidCriteria);
                 }
                 let expression = self.or(depth + 1)?;

@@ -95,14 +95,14 @@ async fn entries<E: Engine>(
             .get(&entry.torrent)
             .and_then(|files| files.get(&entry.file));
         entries.push((
-            UpNextSortKey::of(&entry.id, entry.activity_at),
+            UpNextSortKey::of(&entry.id, entry.last_active_at),
             api::UpNextEntry {
                 id: entry.id.to_string(),
                 reason: match entry.reason {
                     Reason::Resume => api::UpNextEntryReason::Resume,
                     Reason::NextEpisode => api::UpNextEntryReason::NextEpisode,
                 },
-                last_active_at: entry.activity_at.into(),
+                last_active_at: entry.last_active_at.into(),
                 torrent: representation::torrent(view),
                 file: representation::file(&entry.torrent, file),
                 progress: saved.map(|saved| {

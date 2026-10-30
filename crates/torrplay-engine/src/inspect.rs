@@ -41,7 +41,7 @@ pub(crate) struct InspectedFile {
 }
 
 /// Inspects the bytes of a torrent file.
-pub(crate) fn torrent_file(bytes: &[u8]) -> Result<InspectedFile, SourceRejection> {
+pub(crate) fn metainfo(bytes: &[u8]) -> Result<InspectedFile, SourceRejection> {
     let invalid = || SourceRejection::Invalid {
         detail: INVALID_TORRENT_FILE.to_owned(),
     };
@@ -184,7 +184,7 @@ mod tests {
     fn v1_torrent_files_report_their_files_under_the_torrent_name() {
         let spec = catalog::multi_boundary();
         let metainfo = spec.metainfo();
-        let inspected = torrent_file(&metainfo.bytes).unwrap();
+        let inspected = super::metainfo(&metainfo.bytes).unwrap();
         assert_eq!(inspected.info_hash.as_bytes(), &metainfo.info_hash);
         assert_eq!(inspected.piece_length, spec.piece_length);
         assert_eq!(inspected.metadata.name, b"multi-boundary");
@@ -198,7 +198,7 @@ mod tests {
         assert!(files.iter().all(|file| !file.padding));
 
         let single = catalog::single_small().metainfo();
-        let inspected = torrent_file(&single.bytes).unwrap();
+        let inspected = super::metainfo(&single.bytes).unwrap();
         assert_eq!(
             inspected.metadata.files[0].path,
             [b"single-small.bin".to_vec()]
@@ -209,17 +209,14 @@ mod tests {
     fn trackers_come_from_the_announce_urls() {
         let spec = catalog::single_small();
         assert!(
-            torrent_file(&spec.metainfo().bytes)
+            metainfo(&spec.metainfo().bytes)
                 .unwrap()
                 .trackers
                 .is_empty()
         );
         let announce = "http://tracker.test/announce?passkey=secret";
         let announcing = spec.metainfo_announcing(announce);
-        assert_eq!(
-            torrent_file(&announcing.bytes).unwrap().trackers,
-            [announce]
-        );
+        assert_eq!(metainfo(&announcing.bytes).unwrap().trackers, [announce]);
 
         let info_hash = spec.metainfo().info_hash;
         let uri = format!(
@@ -239,7 +236,7 @@ mod tests {
     fn hybrid_torrents_load_as_v1_with_padding_files() {
         let spec = catalog::hybrid();
         let metainfo = spec.hybrid_metainfo();
-        let inspected = torrent_file(&metainfo.bytes).unwrap();
+        let inspected = super::metainfo(&metainfo.bytes).unwrap();
         assert_eq!(inspected.info_hash.as_bytes(), &metainfo.info_hash);
         assert!(inspected.metadata.files.iter().any(|file| file.padding));
     }
@@ -247,21 +244,21 @@ mod tests {
     #[test]
     fn invalid_v2_only_and_unloadable_files_are_told_apart() {
         assert!(matches!(
-            rejection(torrent_file(&catalog::invalid_metainfo())),
+            rejection(metainfo(&catalog::invalid_metainfo())),
             SourceRejection::Invalid { .. }
         ));
         assert!(matches!(
-            rejection(torrent_file(b"not bencode")),
+            rejection(metainfo(b"not bencode")),
             SourceRejection::Invalid { .. }
         ));
         assert_eq!(
-            rejection(torrent_file(&catalog::v2_only().v2_only_metainfo())),
+            rejection(metainfo(&catalog::v2_only().v2_only_metainfo())),
             SourceRejection::Unsupported {
                 detail: V2_ONLY.to_owned()
             }
         );
         assert!(matches!(
-            rejection(torrent_file(
+            rejection(metainfo(
                 &catalog::hybrid_equal_padding().hybrid_metainfo().bytes
             )),
             SourceRejection::Unsupported { .. }

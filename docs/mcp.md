@@ -81,12 +81,12 @@ its field names.
 | --- | --- | --- |
 | `list_torrents` | `listTorrents` | read-only |
 | `get_torrent` | `getTorrent`, `listTorrentFiles`, `getTorrentStatistics` | read-only |
-| `add_torrent` | `createTorrent` | |
+| `create_torrent` | `createTorrent` | |
 | `update_torrent` | `updateTorrentConfiguration` | idempotent |
 | `delete_torrent` | `deleteTorrent` | destructive |
 | `get_stream_url` | `createPlaybackToken` | |
-| `preload_file` | `createFilePreload`, `getFilePreload` | |
-| `cancel_preload` | `deleteFilePreload` | idempotent |
+| `create_preload` | `createFilePreload`, `getFilePreload` | |
+| `delete_preload` | `deleteFilePreload` | idempotent |
 | `get_cache_statistics` | `getCacheStatistics` | read-only |
 | `list_up_next` | `listProfiles`, `listUpNext` | read-only |
 | `get_system` | `getSystem` | read-only |
@@ -95,12 +95,12 @@ its field names.
 
 - `list_torrents` takes `search`, `kind`, `genre`, `category`, and
   `retention`, with the native filters' meanings; `search` is fuzzy. It
-  returns at most `limit` torrents, 20 by default and at most 100, with a
+  returns at most `page_size` torrents, 20 by default and at most 100, with a
   `cursor` for the next page and the total count.
 - `get_torrent` returns the torrent, its first 200 files, with
   `files_truncated` when it has more, and its current statistics, in one
   result. Before metadata is available, `files` is `null`.
-- `add_torrent` takes `magnet_uri`, and optionally `title`, `kind`,
+- `create_torrent` takes `magnet_uri`, and optionally `title`, `kind`,
   `year`, `imdb_id`, `description`, `categories`, `genres`, `retention`,
   `storage_mode`, and `desired_state`. Uploading torrent files is not
   offered.
@@ -118,12 +118,12 @@ its field names.
   on the origin
   the server reaches the application by, so a player elsewhere may need
   another host name.
-- `preload_file` takes `torrent_id`, `file_id`, and optionally
+- `create_preload` takes `torrent_id`, `file_id`, and optionally
   `offset_bytes` and `expires_in_seconds`, with the preload's meanings. It
   returns the file's preload that is queued, downloading, or ready with
   the same offset, or else creates one, so calling it again reports
   progress.
-- `cancel_preload` takes `torrent_id` and `file_id`, and cancels the
+- `delete_preload` takes `torrent_id` and `file_id`, and cancels the
   file's preloads.
 - `list_up_next` takes a `profile_id`. Without one, it returns the
   profiles to choose from instead.
@@ -133,7 +133,7 @@ its field names.
   state, readers, peers, and the transfer totals and rates.
 - `list_log_records` takes `min_level`, `contains`, and `after_sequence`,
   with [the listing's](observability.md#log-records) meanings, and
-  returns at most `limit` records, newest first, 50 by default and at
+  returns at most `page_size` records, newest first, 50 by default and at
   most 200, with a `cursor` for the next page. To read what was logged
   since an earlier call, the assistant passes that result's
   `latest_sequence` as `after_sequence`. Like the native operation, it

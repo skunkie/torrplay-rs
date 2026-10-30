@@ -23,19 +23,19 @@ use torrplay_stremio::{Base, Extra, Library};
 
 use crate::app::App;
 use crate::files::{self, Watcher};
+use crate::playable;
 use crate::problem::{InvalidValue, Problem};
 use crate::query::Query;
 use crate::representation::file_name;
-use crate::shelf;
 
 /// The response header that lets Stremio's web client read the addon.
 pub(crate) const ALLOW_ORIGIN: HeaderValue = HeaderValue::from_static("*");
 
-/// The library as the addon presents it: the shelved movies and series with
+/// The library as the addon presents it: the playable movies and series with
 /// their video files.
 async fn library<E: Engine>(app: &App<E>) -> Result<Library, Problem> {
-    let shelved = shelf::shelved(app).await?.unwrap_or_default();
-    let torrents = shelved
+    let playable = playable::torrents(app).await?.unwrap_or_default();
+    let torrents = playable
         .into_iter()
         .filter_map(|torrent| {
             let kind = match torrent.kind? {

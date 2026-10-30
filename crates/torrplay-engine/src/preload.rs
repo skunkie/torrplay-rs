@@ -25,7 +25,7 @@ use torrplay_core::id::{PreloadId, TorrentId};
 use torrplay_core::lifecycle::Failure;
 use torrplay_core::metadata::FileIndex;
 use torrplay_core::preload::{
-    self, MAX_PRELOAD_BYTES, PreloadRequest, PreloadState, PreloadStatus, TAIL_BYTES,
+    self, PRELOAD_MAX_BYTES, PreloadRequest, PreloadState, PreloadStatus, TAIL_BYTES,
 };
 
 use crate::playback::Playback;
@@ -203,9 +203,9 @@ impl Preloads {
     /// disk storage may cover.
     fn limit_bytes(&self, cached: bool) -> u64 {
         if cached {
-            MAX_PRELOAD_BYTES.min(self.playback.readahead_bytes() / 2)
+            PRELOAD_MAX_BYTES.min(self.playback.readahead_bytes() / 2)
         } else {
-            MAX_PRELOAD_BYTES
+            PRELOAD_MAX_BYTES
         }
     }
 
@@ -260,7 +260,7 @@ impl Preloads {
                 ranges: coverage.ranges.clone(),
                 completed_bytes: 0,
                 created_at,
-                expires_at: created_at + request.ttl,
+                expires_at: created_at + request.expires_in,
                 ended_at: None,
                 failure: None,
             };
@@ -271,7 +271,7 @@ impl Preloads {
                 coverage,
                 pin_bytes,
                 cached,
-                expires: now + request.ttl,
+                expires: now + request.expires_in,
                 progress_at: now,
                 ended: None,
             });

@@ -21,7 +21,7 @@ use torrplay_engine::test_support::Seeder;
 use torrplay_fixtures::catalog;
 
 /// A creation form for a torrent file in disk storage.
-fn disk_upload(torrent_file: &[u8]) -> (String, Vec<u8>) {
+fn disk_upload(metainfo: &[u8]) -> (String, Vec<u8>) {
     const BOUNDARY: &str = "torrplay-boundary";
     let mut body = format!(
         "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"storage_mode\"\r\n\r\ndisk\r\n\
@@ -29,7 +29,7 @@ fn disk_upload(torrent_file: &[u8]) -> (String, Vec<u8>) {
          filename=\"upload.torrent\"\r\nContent-Type: application/x-bittorrent\r\n\r\n"
     )
     .into_bytes();
-    body.extend_from_slice(torrent_file);
+    body.extend_from_slice(metainfo);
     body.extend_from_slice(format!("\r\n--{BOUNDARY}--\r\n").as_bytes());
     (format!("multipart/form-data; boundary={BOUNDARY}"), body)
 }

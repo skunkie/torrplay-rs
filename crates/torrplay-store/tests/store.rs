@@ -201,7 +201,7 @@ async fn torrents_survive_a_reopen_in_creation_order() {
 }
 
 #[tokio::test]
-async fn configurations_and_retrieved_torrent_files_are_stored() {
+async fn configurations_and_retrieved_metainfo_are_stored() {
     let dir = TempDir::new().unwrap();
     let magnet = torrent(1, 10);
     let upload = torrent(2, 20);

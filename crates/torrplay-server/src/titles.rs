@@ -231,7 +231,7 @@ fn update<E: Engine>(
     }
 }
 
-pub(crate) async fn put<E: Engine>(
+pub(crate) async fn set<E: Engine>(
     State(app): State<Arc<App<E>>>,
     Path((profile, title)): Path<(String, String)>,
     headers: HeaderMap,

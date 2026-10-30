@@ -275,16 +275,16 @@ impl Running {
     }
 }
 
-/// A multipart creation request body for `torrent_file`, with its media
+/// A multipart creation request body for `metainfo`, with its media
 /// type.
-pub fn upload_form(torrent_file: &[u8]) -> (String, Vec<u8>) {
+pub fn upload_form(metainfo: &[u8]) -> (String, Vec<u8>) {
     const BOUNDARY: &str = "torrplay-boundary";
     let mut body = format!(
         "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"metainfo\"; \
          filename=\"upload.torrent\"\r\nContent-Type: application/x-bittorrent\r\n\r\n"
     )
     .into_bytes();
-    body.extend_from_slice(torrent_file);
+    body.extend_from_slice(metainfo);
     body.extend_from_slice(format!("\r\n--{BOUNDARY}--\r\n").as_bytes());
     (format!("multipart/form-data; boundary={BOUNDARY}"), body)
 }

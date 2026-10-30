@@ -65,10 +65,10 @@ fn headers(
 /// The torrent file's bytes: a temporary torrent's from memory, a persisted
 /// one's from the store. Metadata is recorded only once the file is kept,
 /// so a torrent with metadata has one.
-async fn torrent_file<E: Engine>(app: &App<E>, id: &str) -> Result<Vec<u8>, Problem> {
+async fn metainfo<E: Engine>(app: &App<E>, id: &str) -> Result<Vec<u8>, Problem> {
     let record = app.registry()?.get(id).ok_or_else(torrents::not_found)?;
     match app.temporaries().source(&record.id) {
-        Some(Source::TorrentFile(bytes)) => Ok(bytes),
+        Some(Source::Metainfo(bytes)) => Ok(bytes),
         Some(Source::MagnetUri(_)) => Err(Problem::internal()),
         None => match app.store().metainfo(&record.id).await {
             Ok(Some(bytes)) => Ok(bytes),
@@ -90,7 +90,7 @@ pub(crate) async fn get<E: Engine>(
     if let Some(response) = not_modified(&request, &etag(&info_hash)) {
         return Ok(response);
     }
-    let bytes = torrent_file(&app, &id).await?;
+    let bytes = metainfo(&app, &id).await?;
     let (parts, _) = headers(&info_hash, &metadata, bytes.len())?.into_parts();
     Ok(Response::from_parts(parts, Body::from(bytes)))
 }
@@ -107,6 +107,6 @@ pub(crate) async fn head<E: Engine>(
         return Ok(response);
     }
     // Content-Length needs the file's size, which only its bytes give.
-    let bytes = torrent_file(&app, &id).await?;
+    let bytes = metainfo(&app, &id).await?;
     headers(&info_hash, &metadata, bytes.len())
 }

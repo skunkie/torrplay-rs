@@ -18,7 +18,7 @@ use torrplay_core::engine::Engine;
 use torrplay_core::id::{ProfileId, random_torrent_id_bytes};
 use torrplay_core::image::ImageInfo;
 use torrplay_core::pagination::{FilterFingerprint, PageRequest, ProfileSortKey, paginate};
-use torrplay_core::profiles::{self, PROFILES_MAX, Profile, ProfileKind};
+use torrplay_core::profiles::{self, PROFILE_LIMIT, Profile, ProfileKind};
 use torrplay_store::StoreError;
 
 use crate::app::{App, store_failed};
@@ -193,11 +193,11 @@ pub(crate) async fn create<E: Engine>(
     {
         let _lane = app.write_lane().await;
         let viewing = app.viewing()?;
-        if viewing.people() >= PROFILES_MAX {
+        if viewing.people() >= PROFILE_LIMIT {
             return Err(Problem::new(
                 ProblemType::TooManyProfiles,
                 format!(
-                    "The application keeps at most {PROFILES_MAX} person profiles; delete one first."
+                    "The application keeps at most {PROFILE_LIMIT} person profiles; delete one first."
                 ),
             ));
         }
@@ -369,7 +369,7 @@ pub(crate) async fn head_avatar<E: Engine>(
     }
 }
 
-pub(crate) async fn put_avatar<E: Engine>(
+pub(crate) async fn set_avatar<E: Engine>(
     State(app): State<Arc<App<E>>>,
     Path(id): Path<String>,
     request: HeaderMap,

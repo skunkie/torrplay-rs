@@ -47,7 +47,7 @@ mod worker;
 pub const FILE_NAME: &str = "torrplay.db";
 
 /// How many commands may wait for the worker before senders wait too.
-const QUEUE: usize = 64;
+const COMMAND_CAPACITY: usize = 64;
 
 /// A stored torrent.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -284,7 +284,7 @@ impl Store {
         let credentials = credentials::credentials(&mut connection, SystemTime::now())?;
         let media_server_udn = schema::media_server_udn(&mut connection)?;
         let clean_shutdown = schema::begin_run(&mut connection)?;
-        let (sender, receiver) = mpsc::channel(QUEUE);
+        let (sender, receiver) = mpsc::channel(COMMAND_CAPACITY);
         #[cfg(feature = "test-support")]
         let (failing, failing_reads) = (
             Arc::new(AtomicBool::new(false)),
@@ -377,13 +377,9 @@ impl Store {
 
     /// Stores the torrent file of a torrent that has none; a torrent file
     /// already stored is kept.
-    pub async fn set_metainfo(
-        &self,
-        id: &TorrentId,
-        torrent_file: Vec<u8>,
-    ) -> Result<(), StoreError> {
+    pub async fn set_metainfo(&self, id: &TorrentId, metainfo: Vec<u8>) -> Result<(), StoreError> {
         let id = id.clone();
-        self.send(|reply| Command::SetMetainfo(id, torrent_file, reply))
+        self.send(|reply| Command::SetMetainfo(id, metainfo, reply))
             .await
     }
 

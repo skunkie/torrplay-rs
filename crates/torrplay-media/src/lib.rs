@@ -37,7 +37,7 @@ pub const TABLE_MAX_BYTES: u64 = 16 << 20;
 pub const READ_BUDGET_BYTES: u64 = 32 << 20;
 
 /// The most seek points an index keeps.
-pub const POINTS_MAX: usize = 100_000;
+pub const POINT_LIMIT: usize = 100_000;
 
 /// The least playback time between kept seek points.
 pub const POINT_SPACING: Duration = Duration::from_secs(1);
@@ -111,7 +111,7 @@ pub struct SeekIndex {
 impl SeekIndex {
     /// An index from what a container lists, keeping the points inside the
     /// media range and the duration, ascending in both offset and time, at
-    /// least [`POINT_SPACING`] apart, and at most [`POINTS_MAX`]. None
+    /// least [`POINT_SPACING`] apart, and at most [`POINT_LIMIT`]. None
     /// without a duration, media data, or a point.
     pub fn new(duration: Duration, media: Range<u64>, mut points: Vec<SeekPoint>) -> Option<Self> {
         if duration.is_zero() || media.is_empty() {
@@ -119,7 +119,7 @@ impl SeekIndex {
         }
         points.retain(|point| media.contains(&point.offset) && point.time <= duration);
         points.sort_by_key(|point| (point.offset, point.time));
-        let mut kept: Vec<SeekPoint> = Vec::with_capacity(points.len().min(POINTS_MAX));
+        let mut kept: Vec<SeekPoint> = Vec::with_capacity(points.len().min(POINT_LIMIT));
         for point in points {
             let spaced = kept
                 .last()
@@ -128,8 +128,8 @@ impl SeekIndex {
                 kept.push(point);
             }
         }
-        if kept.len() > POINTS_MAX {
-            let step = kept.len().div_ceil(POINTS_MAX);
+        if kept.len() > POINT_LIMIT {
+            let step = kept.len().div_ceil(POINT_LIMIT);
             kept = kept.into_iter().step_by(step).collect();
         }
         if kept.is_empty() {
@@ -405,10 +405,10 @@ mod tests {
 
     #[test]
     fn points_past_the_most_are_thinned_evenly() {
-        let count = POINTS_MAX as u64 + 10;
+        let count = POINT_LIMIT as u64 + 10;
         let points = (0..count).map(|n| point(n, 1000 + n)).collect();
         let index = SeekIndex::new(Duration::from_secs(count), 1000..1000 + count, points).unwrap();
-        assert!(index.points().len() <= POINTS_MAX);
+        assert!(index.points().len() <= POINT_LIMIT);
         assert_eq!(index.points()[0], point(0, 1000));
         assert_eq!(index.points()[1], point(2, 1002));
     }

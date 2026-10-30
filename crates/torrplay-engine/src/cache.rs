@@ -27,7 +27,7 @@
 //! The cache lock guards only the accounting. Piece buffers have locks of
 //! their own: buffers are allocated, and bytes copied in and out, with the
 //! cache lock released. A buffer freed while nothing waits for room is
-//! retained for reuse, up to [`MAX_RETAINED_BUFFERS`], and counts in cache
+//! retained for reuse, up to [`RETAINED_BUFFER_LIMIT`], and counts in cache
 //! usage until reused or released to make room.
 //!
 //! [`Evictor`]: crate::evictor::Evictor
@@ -40,7 +40,7 @@ use tokio::sync::Notify;
 
 /// The most freed piece buffers the cache retains for reuse, as ADR 5's
 /// milestone 4 defaults fix it.
-pub const MAX_RETAINED_BUFFERS: usize = 4;
+pub const RETAINED_BUFFER_LIMIT: usize = 4;
 
 /// Identifies one torrent's pieces in the cache.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -323,7 +323,7 @@ impl State {
             match Arc::try_unwrap(buffer).map(Mutex::into_inner) {
                 Ok(Ok(bytes))
                     if self.waiting.is_empty()
-                        && self.retained.len() < MAX_RETAINED_BUFFERS
+                        && self.retained.len() < RETAINED_BUFFER_LIMIT
                         && self.shortfall(bytes.len() as u64) == 0 =>
                 {
                     self.add(bytes.len());
@@ -1477,8 +1477,8 @@ mod tests {
         assert_eq!(
             (stats.retained_bytes, stats.usage_bytes),
             (
-                MAX_RETAINED_BUFFERS as u64 * 100,
-                MAX_RETAINED_BUFFERS as u64 * 100
+                RETAINED_BUFFER_LIMIT as u64 * 100,
+                RETAINED_BUFFER_LIMIT as u64 * 100
             )
         );
         cache.write(torrent, 10, 100, 0, &[1]).unwrap();
@@ -1627,6 +1627,6 @@ mod tests {
             }
         });
         let stats = cache.audit().unwrap();
-        assert!(stats.retained_bytes <= MAX_RETAINED_BUFFERS as u64 * 1024);
+        assert!(stats.retained_bytes <= RETAINED_BUFFER_LIMIT as u64 * 1024);
     }
 }

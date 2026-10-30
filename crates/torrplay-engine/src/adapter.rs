@@ -72,8 +72,8 @@ use crate::disk::{self, DiskFiles, DiskRefusal, DiskStorageFactory, bitfield};
 use crate::evictor::Evictor;
 use crate::inspect;
 use crate::playback::{
-    DEFAULT_IDLE_READER_LIMIT, DEFAULT_IDLE_READER_LIMIT_PER_TORRENT, DEFAULT_IDLE_READER_TIMEOUT,
-    DEFAULT_READAHEAD_RAMP_BYTES, Playback, PlaybackConfig, Reaper,
+    IDLE_READER_LIMIT_DEFAULT, IDLE_READER_LIMIT_PER_TORRENT_DEFAULT, IDLE_READER_TIMEOUT_DEFAULT,
+    Playback, PlaybackConfig, READAHEAD_RAMP_BYTES_DEFAULT, Reaper,
 };
 use crate::preload::{PreloadTimer, Preloads};
 use crate::reader::RangeReader;
@@ -83,13 +83,13 @@ use crate::storage::{CachedTorrent, Layout, MemoryStorageFactory};
 const MIB: u64 = 1024 * 1024;
 
 /// The default cache capacity, as ADR 5's milestone 4 defaults fix it.
-pub const DEFAULT_CACHE_CAPACITY_BYTES: u64 = 256 * MIB;
+pub const CACHE_CAPACITY_BYTES_DEFAULT: u64 = 256 * MIB;
 
 /// The default piece wait bound.
-pub const DEFAULT_PIECE_WAIT: Duration = Duration::from_secs(60);
+pub const PIECE_WAIT_DEFAULT: Duration = Duration::from_secs(60);
 
 /// The default request window, in blocks per peer.
-pub const DEFAULT_REQUEST_WINDOW_BLOCKS: usize = 32;
+pub const REQUEST_WINDOW_BLOCKS_DEFAULT: usize = 32;
 
 /// The default number of peers one torrent connects to at a time, connecting
 /// ones included, as Go TorrPlay's engine keeps about 50 established
@@ -97,28 +97,28 @@ pub const DEFAULT_REQUEST_WINDOW_BLOCKS: usize = 32;
 /// stream rarely needs more than a few dozen good peers; librqbit's default
 /// of 128 let a few busy torrents exhaust the 256 open files a macOS
 /// terminal allows.
-pub const DEFAULT_PEER_LIMIT: usize = 50;
+pub const PEER_LIMIT_DEFAULT: usize = 50;
 
 /// The default interval between keep-alive messages to an idle peer. It is
 /// shorter than any peer's idle timeout we know of: librqbit drops a peer
 /// that sends nothing for 10 seconds, so a torrent without readers would
 /// otherwise lose its peers and make its next stream wait for a reconnect.
-pub const DEFAULT_PEER_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(5);
+pub const PEER_KEEP_ALIVE_INTERVAL_DEFAULT: Duration = Duration::from_secs(5);
 
 /// The default time a peer may send nothing before it is dropped. It is
 /// longer than the two-minute keep-alive interval BEP 3 suggests, which
 /// librqbit and other clients use, so idle peers are kept.
-pub const DEFAULT_PEER_READ_TIMEOUT: Duration = Duration::from_secs(150);
+pub const PEER_READ_TIMEOUT_DEFAULT: Duration = Duration::from_secs(150);
 
 /// The default peer listen port, as ADR 2's network configuration fixes it.
-pub const DEFAULT_PEER_PORT: u16 = 4240;
+pub const PEER_PORT_DEFAULT: u16 = 4240;
 
 /// The first delay before a failed metadata retrieval runs again; it
-/// doubles up to [`MAX_RETRIEVAL_DELAY`].
+/// doubles up to [`RETRIEVAL_DELAY_MAX`].
 const FIRST_RETRIEVAL_DELAY: Duration = Duration::from_secs(1);
 
 /// The longest delay between metadata retrieval attempts.
-const MAX_RETRIEVAL_DELAY: Duration = Duration::from_secs(60);
+const RETRIEVAL_DELAY_MAX: Duration = Duration::from_secs(60);
 
 /// The failure detail of a torrent librqbit stopped with an error.
 const ENGINE_FAILURE: &str = "The torrent engine stopped the torrent after an error.";
@@ -146,7 +146,7 @@ impl NetworkConfig {
     /// with DHT and trackers on.
     pub fn public() -> Self {
         Self {
-            listen: (std::net::Ipv6Addr::UNSPECIFIED, DEFAULT_PEER_PORT).into(),
+            listen: (std::net::Ipv6Addr::UNSPECIFIED, PEER_PORT_DEFAULT).into(),
             dht: true,
             dht_bootstrap: None,
             trackers: true,
@@ -210,17 +210,17 @@ impl EngineConfig {
     /// session's folder.
     pub fn new(folder: PathBuf, network: NetworkConfig) -> Self {
         Self {
-            cache_capacity_bytes: DEFAULT_CACHE_CAPACITY_BYTES,
-            readahead_bytes: DEFAULT_CACHE_CAPACITY_BYTES / 2,
-            readahead_ramp_bytes: DEFAULT_READAHEAD_RAMP_BYTES,
-            piece_wait: DEFAULT_PIECE_WAIT,
-            idle_reader_timeout: DEFAULT_IDLE_READER_TIMEOUT,
-            idle_reader_limit_per_torrent: DEFAULT_IDLE_READER_LIMIT_PER_TORRENT,
-            idle_reader_limit: DEFAULT_IDLE_READER_LIMIT,
-            request_window_blocks: DEFAULT_REQUEST_WINDOW_BLOCKS,
-            peer_limit: DEFAULT_PEER_LIMIT,
-            peer_keep_alive_interval: DEFAULT_PEER_KEEP_ALIVE_INTERVAL,
-            peer_read_timeout: DEFAULT_PEER_READ_TIMEOUT,
+            cache_capacity_bytes: CACHE_CAPACITY_BYTES_DEFAULT,
+            readahead_bytes: CACHE_CAPACITY_BYTES_DEFAULT / 2,
+            readahead_ramp_bytes: READAHEAD_RAMP_BYTES_DEFAULT,
+            piece_wait: PIECE_WAIT_DEFAULT,
+            idle_reader_timeout: IDLE_READER_TIMEOUT_DEFAULT,
+            idle_reader_limit_per_torrent: IDLE_READER_LIMIT_PER_TORRENT_DEFAULT,
+            idle_reader_limit: IDLE_READER_LIMIT_DEFAULT,
+            request_window_blocks: REQUEST_WINDOW_BLOCKS_DEFAULT,
+            peer_limit: PEER_LIMIT_DEFAULT,
+            peer_keep_alive_interval: PEER_KEEP_ALIVE_INTERVAL_DEFAULT,
+            peer_read_timeout: PEER_READ_TIMEOUT_DEFAULT,
             download_dir: folder.join("downloads"),
             folder,
             network,
@@ -1024,7 +1024,7 @@ impl LibrqbitEngine {
                         "metadata retrieval failed; retrying"
                     );
                     tokio::time::sleep(delay).await;
-                    delay = (delay * 2).min(MAX_RETRIEVAL_DELAY);
+                    delay = (delay * 2).min(RETRIEVAL_DELAY_MAX);
                 }
             }
         }
@@ -1554,8 +1554,8 @@ impl Engine for LibrqbitEngine {
     async fn inspect(&self, source: &Source) -> Result<Inspection, EngineError> {
         self.running()?;
         match source {
-            Source::TorrentFile(bytes) => {
-                let inspected = inspect::torrent_file(bytes)?;
+            Source::Metainfo(bytes) => {
+                let inspected = inspect::metainfo(bytes)?;
                 Ok(Inspection {
                     info_hash: inspected.info_hash,
                     metadata: Some(Arc::new(inspected.metadata)),
@@ -1580,8 +1580,8 @@ impl Engine for LibrqbitEngine {
         let running = self.running()?;
         let directory = self.config.download_dir.join(id.as_str());
         let (info_hash, metadata, magnet_uri, initial) = match source {
-            Source::TorrentFile(bytes) => {
-                let inspected = inspect::torrent_file(bytes)?;
+            Source::Metainfo(bytes) => {
+                let inspected = inspect::metainfo(bytes)?;
                 self.check_storage(&inspected, storage_mode, &directory)?;
                 let initial = match storage_mode {
                     StorageMode::Memory => None,
@@ -1631,7 +1631,7 @@ impl Engine for LibrqbitEngine {
         }
         let _operations = torrent.operations.lock().await;
         match source {
-            Source::TorrentFile(bytes) => {
+            Source::Metainfo(bytes) => {
                 match self
                     .add_to_session(
                         &running,
@@ -1675,7 +1675,7 @@ impl Engine for LibrqbitEngine {
                 None => return Ok(()),
             }
         };
-        let inspected = inspect::torrent_file(&bytes)?;
+        let inspected = inspect::metainfo(&bytes)?;
         self.check_storage(&inspected, storage_mode, &torrent.directory)
     }
 
@@ -1708,14 +1708,10 @@ impl Engine for LibrqbitEngine {
         }
     }
 
-    async fn supply_metadata(
-        &self,
-        id: &TorrentId,
-        torrent_file: &[u8],
-    ) -> Result<(), EngineError> {
+    async fn supply_metadata(&self, id: &TorrentId, metainfo: &[u8]) -> Result<(), EngineError> {
         let running = self.running()?;
         let torrent = self.torrent(id)?;
-        let inspected = inspect::torrent_file(torrent_file)?;
+        let inspected = inspect::metainfo(metainfo)?;
         if inspected.info_hash != torrent.info_hash {
             return Err(EngineError::MetadataMismatch);
         }
@@ -1731,7 +1727,7 @@ impl Engine for LibrqbitEngine {
             .add_to_session(
                 &running,
                 &torrent,
-                AddTorrent::from_bytes(torrent_file.to_vec()),
+                AddTorrent::from_bytes(metainfo.to_vec()),
                 desired,
                 None,
             )
@@ -1863,7 +1859,7 @@ impl Engine for LibrqbitEngine {
         })
     }
 
-    async fn torrent_file(&self, id: &TorrentId) -> Result<Option<Vec<u8>>, EngineError> {
+    async fn metainfo(&self, id: &TorrentId) -> Result<Option<Vec<u8>>, EngineError> {
         self.running()?;
         let torrent = self.torrent(id)?;
         let state = torrent.state();

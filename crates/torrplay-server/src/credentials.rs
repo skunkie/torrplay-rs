@@ -20,8 +20,8 @@ use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value};
 use torrplay_api as api;
 use torrplay_core::credentials::{
-    ACCESS_TOKEN_LIFETIME, ACCESS_TOKENS_MAX, AccessToken, Grant, PLAYBACK_TOKEN_DEFAULT_LIFETIME,
-    PLAYBACK_TOKEN_LIFETIME, PasswordHash, PlaybackGrant, Scope, SigningKey, new_secret,
+    ACCESS_TOKEN_LIFETIME, ACCESS_TOKEN_LIMIT, AccessToken, Grant, PLAYBACK_TOKEN_LIFETIME,
+    PLAYBACK_TOKEN_LIFETIME_DEFAULT, PasswordHash, PlaybackGrant, Scope, SigningKey, new_secret,
     normalize_password, normalize_token_name,
 };
 use torrplay_core::engine::Engine;
@@ -408,11 +408,11 @@ pub(crate) async fn create_access_token<E: Engine>(
     let _lane = app.credential_lane().await;
     check_password(&app, given).await?;
     let now = app.now();
-    if app.credentials().tokens(now).len() >= ACCESS_TOKENS_MAX {
+    if app.credentials().tokens(now).len() >= ACCESS_TOKEN_LIMIT {
         return Err(Problem::new(
             ProblemType::TooManyAccessTokens,
             format!(
-                "The application keeps at most {ACCESS_TOKENS_MAX} access tokens; revoke one first."
+                "The application keeps at most {ACCESS_TOKEN_LIMIT} access tokens; revoke one first."
             ),
         ));
     }
@@ -436,7 +436,7 @@ pub(crate) async fn create_access_token<E: Engine>(
         .await
         .map_err(store_failed)?;
     app.credentials().insert_token(token.clone(), &expired);
-    tracing::info!(id = %token.id, scope = token.scope.as_str(), "an access token was created");
+    tracing::info!(access_token_id = %token.id, scope = token.scope.as_str(), "an access token was created");
 
     let representation = access_token(&token);
     let body = api::CreatedAccessToken {
@@ -491,7 +491,7 @@ pub(crate) async fn delete_access_token<E: Engine>(
         .await
         .map_err(store_failed)?;
     app.credentials().remove_token(token.id.as_str());
-    tracing::info!(id = %token.id, "an access token was revoked");
+    tracing::info!(access_token_id = %token.id, "an access token was revoked");
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -504,7 +504,7 @@ pub(crate) async fn create_playback_token<E: Engine>(
     negotiate(&headers, JSON)?;
     let members = json_body(&app, &headers, body).await?;
     let mut errors = Vec::new();
-    let (mut torrent, mut lifetime_given) = (None, PLAYBACK_TOKEN_DEFAULT_LIFETIME);
+    let (mut torrent, mut lifetime_given) = (None, PLAYBACK_TOKEN_LIFETIME_DEFAULT);
     for (member, value) in &members {
         match member.as_str() {
             "torrent_id" if value.is_null() => {}

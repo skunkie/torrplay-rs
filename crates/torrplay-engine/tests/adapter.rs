@@ -42,7 +42,7 @@ async fn uploads_stream_every_file_and_range_byte_for_byte() -> anyhow::Result<(
     let status = engine.status(&id(1)).await?;
     assert!(status.metadata.is_some() && status.failure.is_none());
     assert_eq!(
-        engine.torrent_file(&id(1)).await?,
+        engine.metainfo(&id(1)).await?,
         Some(spec.metainfo().bytes),
         "an upload's torrent file is its original bytes"
     );
@@ -255,14 +255,14 @@ async fn magnet_metadata_arrives_from_a_seeder() -> anyhow::Result<()> {
     let with_tracker = Source::MagnetUri(format!("{uri}&tr=http%3A%2F%2F127.0.0.1%3A9%2Fannounce"));
     let inspection = engine.inspect(&with_tracker).await?;
     assert!(inspection.metadata.is_none());
-    assert_eq!(engine.torrent_file(&id(1)).await.ok(), None);
+    assert_eq!(engine.metainfo(&id(1)).await.ok(), None);
     // Added paused, so a fast local seeder cannot deliver the metadata
     // before the torrent file is checked.
     engine
         .add(&id(1), &with_tracker, DesiredState::Paused)
         .await?;
     assert_eq!(
-        engine.torrent_file(&id(1)).await?,
+        engine.metainfo(&id(1)).await?,
         None,
         "no torrent file before metadata"
     );
@@ -276,12 +276,12 @@ async fn magnet_metadata_arrives_from_a_seeder() -> anyhow::Result<()> {
     .await?;
     assert_eq!(metadata.name, b"single-small.bin");
     let built = engine
-        .torrent_file(&id(1))
+        .metainfo(&id(1))
         .await?
         .expect("a torrent file once metadata arrived");
     assert_eq!(
         engine
-            .inspect(&Source::TorrentFile(built.clone()))
+            .inspect(&Source::Metainfo(built.clone()))
             .await?
             .info_hash,
         inspection.info_hash

@@ -36,14 +36,14 @@ const CLUSTER: u64 = 0x1F43_B675;
 const VIDEO_TRACK: u64 = 1;
 
 /// The timestamp scale without an `Info` that sets it, in nanoseconds.
-const DEFAULT_TIMESTAMP_SCALE: u64 = 1_000_000;
+const TIMESTAMP_SCALE_DEFAULT: u64 = 1_000_000;
 
 /// The most elements walked at the top level and in a segment before its
 /// first cluster: headers, chapters, tags, attachments, and padding.
-const ELEMENTS_MAX: usize = 256;
+const ELEMENT_LIMIT: usize = 256;
 
 /// The most `SeekHead`s followed from the first.
-const SEEK_HEADS_MAX: usize = 4;
+const SEEK_HEAD_LIMIT: usize = 4;
 
 /// The segment's elements before its first cluster, by ID, and the
 /// segment-relative positions its seek heads list.
@@ -62,7 +62,7 @@ pub(crate) async fn read_index<S: Source + Send>(
     };
     let segment = scan(reader, element).await?;
 
-    let mut scale = DEFAULT_TIMESTAMP_SCALE;
+    let mut scale = TIMESTAMP_SCALE_DEFAULT;
     let mut duration_units = None;
     if let Some(info) = body(reader, &segment, INFO).await? {
         if let Some(data) = ebml::child(&info, TIMESTAMP_SCALE)? {
@@ -130,7 +130,7 @@ async fn find_segment<S: Source + Send>(
 ) -> Result<Option<Element>, IndexError> {
     let size = reader.size();
     let mut offset = 0;
-    for _ in 0..ELEMENTS_MAX {
+    for _ in 0..ELEMENT_LIMIT {
         if offset >= size {
             break;
         }
@@ -157,7 +157,7 @@ async fn scan<S: Source + Send>(
     };
     let end = segment.element.data.end;
     let mut offset = segment.element.data.start;
-    for _ in 0..ELEMENTS_MAX {
+    for _ in 0..ELEMENT_LIMIT {
         if offset >= end.min(reader.size()) {
             break;
         }
@@ -177,7 +177,7 @@ async fn scan<S: Source + Send>(
     }
     // A seek head may list another, often after the clusters, which lists
     // what the first does not.
-    for _ in 0..SEEK_HEADS_MAX {
+    for _ in 0..SEEK_HEAD_LIMIT {
         let Some(position) = segment.targets.remove(&SEEK_HEAD) else {
             break;
         };

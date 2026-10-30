@@ -23,6 +23,14 @@
 //! application does not serve and, while a password is set, requests
 //! without a credential their operation allows.
 //!
+//! A native handler is named for its operation's verb, with the resource
+//! where its module serves several: `preloads::create` serves
+//! `createFilePreload`, and `credentials::create_access_token` serves
+//! `createAccessToken`. The DLNA and Stremio adapters' handlers take their
+//! protocols' service and resource names, such as `content_directory` and
+//! `manifest`, with a method verb where one resource answers several, as
+//! `stremio::get_play` and `head_play`.
+//!
 //! Binding the listener and the shutdown sequence belong to the caller.
 
 mod app;
@@ -38,6 +46,7 @@ mod inference;
 mod library;
 pub mod log_files;
 mod metainfo;
+mod playable;
 mod posters;
 mod preloads;
 mod previews;
@@ -50,7 +59,6 @@ mod representation;
 mod retention;
 mod service;
 mod settings;
-mod shelf;
 mod stremio;
 mod system;
 mod telemetry;
@@ -79,9 +87,9 @@ pub use crate::telemetry::Run;
 pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
     let torrent = "/api/v1/torrents/{torrent_id}";
     Router::new()
-        .route("/api/v1", get(service::entry_point))
-        .route("/api/v1/", any(service::entry_point_with_slash))
-        .route("/api/v1/openapi.yaml", get(service::document))
+        .route("/api/v1", get(service::get_entry_point))
+        .route("/api/v1/", any(service::redirect_to_entry_point))
+        .route("/api/v1/openapi.yaml", get(service::get_openapi_document))
         .route("/api/v1/reference", get(reference::get_page))
         .route("/api/v1/reference/scalar.js", get(reference::get_script))
         .route(
@@ -105,7 +113,7 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
             &format!("{torrent}/poster"),
             get(posters::get::<E>)
                 .head(posters::head::<E>)
-                .put(posters::put::<E>)
+                .put(posters::set::<E>)
                 .delete(posters::delete::<E>),
         )
         .route(&format!("{torrent}/files"), get(files::list::<E>))
@@ -135,15 +143,15 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
         )
         .route(
             &format!("{torrent}/statistics"),
-            get(torrents::statistics::<E>),
+            get(torrents::get_statistics::<E>),
         )
         .route(
             "/api/v1/cache/statistics",
-            get(torrents::cache_statistics::<E>),
+            get(torrents::get_cache_statistics::<E>),
         )
-        .route("/api/v1/statistics", get(system::statistics::<E>))
-        .route("/api/v1/system", get(system::system::<E>))
-        .route("/api/v1/log-records", get(system::log_records::<E>))
+        .route("/api/v1/statistics", get(system::get_statistics::<E>))
+        .route("/api/v1/system", get(system::get_system::<E>))
+        .route("/api/v1/log-records", get(system::list_log_records::<E>))
         .route(
             "/api/v1/settings",
             get(settings::get::<E>).patch(settings::update::<E>),
@@ -162,7 +170,7 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
             "/api/v1/profiles/{profile_id}/avatar",
             get(profiles::get_avatar::<E>)
                 .head(profiles::head_avatar::<E>)
-                .put(profiles::put_avatar::<E>)
+                .put(profiles::set_avatar::<E>)
                 .delete(profiles::delete_avatar::<E>),
         )
         .route(
@@ -172,7 +180,7 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
         .route(
             "/api/v1/profiles/{profile_id}/torrents/{torrent_id}/progress/{file_id}",
             get(progress::get::<E>)
-                .put(progress::put::<E>)
+                .put(progress::set::<E>)
                 .delete(progress::delete::<E>),
         )
         .route(
@@ -182,7 +190,7 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
         .route(
             "/api/v1/profiles/{profile_id}/title-progress/{title_key}",
             get(titles::get::<E>)
-                .put(titles::put::<E>)
+                .put(titles::set::<E>)
                 .delete(titles::delete::<E>),
         )
         .route(
@@ -278,9 +286,9 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
             "/dlna/posters/{torrent_id}",
             get(dlna::get_poster::<E>).head(dlna::head_poster::<E>),
         )
-        .route("/metrics", get(system::metrics::<E>))
-        .route("/livez", get(service::liveness))
-        .route("/readyz", get(service::readiness::<E>))
+        .route("/metrics", get(system::get_metrics::<E>))
+        .route("/livez", get(service::get_liveness))
+        .route("/readyz", get(service::get_readiness::<E>))
         .fallback(unknown_resource)
         .layer(axum::middleware::from_fn_with_state(
             Arc::clone(&app),

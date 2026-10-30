@@ -22,7 +22,7 @@ pub trait Target: Send + Sync {
     fn create(
         &self,
         source: Source,
-        torrent_file: &[u8],
+        metainfo: &[u8],
         magnet_uri: &str,
     ) -> impl Future<Output = anyhow::Result<Self::Torrent>> + Send;
 
@@ -124,16 +124,16 @@ impl TorrPlay {
     }
 }
 
-/// The multipart body of a creation request for `torrent_file`, with its
+/// The multipart body of a creation request for `metainfo`, with its
 /// media type.
-fn upload_form(torrent_file: &[u8]) -> (String, Vec<u8>) {
+fn upload_form(metainfo: &[u8]) -> (String, Vec<u8>) {
     const BOUNDARY: &str = "torrplay-bench-boundary";
     let mut body = format!(
         "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"metainfo\"; \
          filename=\"bench.torrent\"\r\nContent-Type: application/x-bittorrent\r\n\r\n"
     )
     .into_bytes();
-    body.extend_from_slice(torrent_file);
+    body.extend_from_slice(metainfo);
     body.extend_from_slice(format!("\r\n--{BOUNDARY}--\r\n").as_bytes());
     (format!("multipart/form-data; boundary={BOUNDARY}"), body)
 }
@@ -145,13 +145,13 @@ impl Target for TorrPlay {
     async fn create(
         &self,
         source: Source,
-        torrent_file: &[u8],
+        metainfo: &[u8],
         magnet_uri: &str,
     ) -> anyhow::Result<String> {
         let request = self.client.post(format!("{}/api/v1/torrents", self.base));
         let request = match source {
             Source::Upload => {
-                let (content_type, body) = upload_form(torrent_file);
+                let (content_type, body) = upload_form(metainfo);
                 request.header("content-type", content_type).body(body)
             }
             Source::Magnet => request
@@ -291,7 +291,7 @@ impl Target for GoTorrPlay {
     async fn create(
         &self,
         source: Source,
-        torrent_file: &[u8],
+        metainfo: &[u8],
         magnet_uri: &str,
     ) -> anyhow::Result<GoTorrent> {
         let request = self.client.post(format!("{}/api/v1/torrents", self.base));
@@ -304,7 +304,7 @@ impl Target for GoTorrPlay {
                      filename=\"bench.torrent\"\r\nContent-Type: application/x-bittorrent\r\n\r\n"
                 )
                 .into_bytes();
-                body.extend_from_slice(torrent_file);
+                body.extend_from_slice(metainfo);
                 body.extend_from_slice(format!("\r\n--{BOUNDARY}--\r\n").as_bytes());
                 request
                     .header(

@@ -35,7 +35,7 @@ pub const PASSWORD_MIN_CHARS: usize = 8;
 pub const PASSWORD_MAX_CHARS: usize = 256;
 
 /// The most access tokens the application keeps.
-pub const ACCESS_TOKENS_MAX: usize = 64;
+pub const ACCESS_TOKEN_LIMIT: usize = 64;
 
 /// The most characters an access token's name may have.
 pub const ACCESS_TOKEN_NAME_MAX_CHARS: usize = 64;
@@ -49,7 +49,7 @@ pub const PLAYBACK_TOKEN_LIFETIME: RangeInclusive<Duration> =
     Duration::from_secs(60)..=Duration::from_secs(30 * 86_400);
 
 /// How long a playback token lasts unless the request says otherwise.
-pub const PLAYBACK_TOKEN_DEFAULT_LIFETIME: Duration = Duration::from_secs(86_400);
+pub const PLAYBACK_TOKEN_LIFETIME_DEFAULT: Duration = Duration::from_secs(86_400);
 
 /// How often an access token's last use is stored.
 pub const LAST_USED_RESOLUTION: Duration = Duration::from_secs(3600);
