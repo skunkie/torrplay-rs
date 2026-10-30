@@ -10,6 +10,9 @@
 //! [`io::ErrorKind::TimedOut`], which ends the stream; the bound restarts
 //! with every byte delivered, so a slow but moving stream is never cut off.
 //!
+//! Each wait for data is counted while it lasts and recorded when it ends,
+//! by how it ended, for the piece wait metrics.
+//!
 //! Dropping a range reader that has not failed, whether its range is done or
 //! its client went away, keeps the scheduler reader idle for the next stream
 //! of the file; a reader that failed or was canceled is released.
@@ -17,11 +20,13 @@
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf, Take};
 use tokio::time::{Instant, Sleep};
+use torrplay_core::telemetry::{PieceWaitRecorder, WaitOutcome};
 
 use crate::scheduler::Reader;
 
@@ -36,17 +41,25 @@ pub struct RangeReader {
     piece_wait: Duration,
     // Armed while a read waits for data.
     deadline: Option<Pin<Box<Sleep>>>,
+    waits: Arc<PieceWaitRecorder>,
 }
 
 impl RangeReader {
     /// Wraps `inner`, already positioned at the range's start, to yield
-    /// `length` bytes, each read waiting at most `piece_wait`.
-    pub(crate) fn new(inner: Reader, length: u64, piece_wait: Duration) -> Self {
+    /// `length` bytes, each read waiting at most `piece_wait`, with its
+    /// waits recorded in `waits`.
+    pub(crate) fn new(
+        inner: Reader,
+        length: u64,
+        piece_wait: Duration,
+        waits: Arc<PieceWaitRecorder>,
+    ) -> Self {
         Self {
             inner: Some(inner.take(length)),
             failed: false,
             piece_wait,
             deadline: None,
+            waits,
         }
     }
 }
@@ -70,8 +83,12 @@ impl AsyncRead for RangeReader {
             .as_ref()
             .map(|deadline| deadline.deadline() - this.piece_wait);
         let result = Self::poll_inner(inner, &mut this.deadline, this.piece_wait, cx, buf, before);
+        if waiting_since.is_none() && result.is_pending() {
+            this.waits.begin();
+        }
         if let (Poll::Ready(outcome), Some(since)) = (&result, waiting_since) {
             let waited = since.elapsed();
+            this.waits.end(wait_outcome(outcome), waited);
             if waited >= LOGGED_WAIT {
                 let reader = inner.get_ref();
                 tracing::debug!(
@@ -85,8 +102,19 @@ impl AsyncRead for RangeReader {
         }
         if let Poll::Ready(Err(_)) = &result {
             this.failed = true;
+            // A failed read leaves its deadline, which no longer marks a wait.
+            this.deadline = None;
         }
         result
+    }
+}
+
+/// How a wait that ended with `outcome` is recorded.
+fn wait_outcome(outcome: &io::Result<()>) -> WaitOutcome {
+    match outcome {
+        Ok(()) => WaitOutcome::Ready,
+        Err(error) if error.kind() == io::ErrorKind::TimedOut => WaitOutcome::TimedOut,
+        Err(_) => WaitOutcome::Canceled,
     }
 }
 
@@ -131,6 +159,11 @@ impl RangeReader {
 
 impl Drop for RangeReader {
     fn drop(&mut self) {
+        // A wait still armed ends with its stream.
+        if let Some(deadline) = self.deadline.take() {
+            let since = deadline.deadline() - self.piece_wait;
+            self.waits.end(WaitOutcome::Canceled, since.elapsed());
+        }
         if let Some(inner) = self.inner.take()
             && !self.failed
         {

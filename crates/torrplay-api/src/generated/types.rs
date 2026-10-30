@@ -68,6 +68,10 @@ pub struct ValidationProblem {
     ///An identifier of this occurrence, omitted when there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instance: Option<String>,
+    ///The request's ID, as the X-Request-Id response header gives it, so a report of the problem leads to its log records.
+    ///Constraint: maxLength=128
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
     ///The HTTP status code of the response.
     ///Constraint: minimum=400, maximum=599
     pub status: i32,
@@ -972,6 +976,97 @@ pub struct TitleProgressLinks {
     #[serde(rename = "self")]
     pub self_field: String,
 }
+///The running process's build, platform, and resource use.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct System {
+    ///The processor architecture the build targets, as Rust names it, such as x86_64 or aarch64.
+    pub architecture: String,
+    ///Links from the system resource.
+    pub links: SystemLinks,
+    ///The operating system the build targets, as Rust names it, such as linux, macos, windows, or android.
+    pub os: String,
+    ///The process's resident memory, or null where the platform does not report it. It includes the piece cache's usage and every other allocation, so it may exceed the cache capacity.
+    ///Constraint: minimum=0
+    pub resident_memory_bytes: Option<i64>,
+    pub run_id: RunId,
+    ///When the process started, in UTC. A later value means a restart, which resets the statistics' totals.
+    pub started_at: chrono::DateTime<chrono::Utc>,
+    ///How long the process has run, from a monotonic clock, so it is right even when the system clock or the client's is not.
+    ///Constraint: minimum=0
+    pub uptime_seconds: i64,
+    ///The application's version, as its package declares it.
+    pub version: String,
+}
+///Links from the system resource.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SystemLinks {
+    ///The metrics for Prometheus.
+    pub metrics: String,
+    ///This resource.
+    #[serde(rename = "self")]
+    pub self_field: String,
+    ///The application's statistics.
+    pub statistics: String,
+}
+///The ID the process chose when it started, which tells its log records apart from those of earlier runs.
+pub type RunId = String;
+///Measurements across every torrent and reader. Totals count from when the process started, the started_at of the system resource, and restart at zero after a restart.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Statistics {
+    ///The number of readers serving a stream in progress.
+    ///Constraint: minimum=0
+    pub active_reader_count: i64,
+    ///The download rate of every torrent together, averaged over about the last 5 seconds.
+    ///Constraint: minimum=0
+    pub download_rate_bytes_per_second: i64,
+    ///Piece data downloaded from peers since the process started, without duplicates. Pieces downloaded again after eviction count again.
+    ///Constraint: minimum=0
+    pub downloaded_bytes: i64,
+    ///The number of idle readers, kept after their stream ended for the player's next range request. Active playback is on while this or active_reader_count is above 0.
+    ///Constraint: minimum=0
+    pub idle_reader_count: i64,
+    ///Links from the statistics.
+    pub links: StatisticsLinks,
+    ///The connected peers summed over torrents. A peer connected for two torrents counts twice.
+    ///Constraint: minimum=0
+    pub peer_count: i64,
+    ///File content sent in streams since the process started. Against downloaded_bytes it shows how much was fetched but never played, or fetched again after eviction.
+    ///Constraint: minimum=0
+    pub streamed_bytes: i64,
+    ///The number of torrents, persisted and temporary.
+    ///Constraint: minimum=0
+    pub torrent_count: i64,
+    ///The number of torrents in each observed state. Every state is present, with 0 when no torrent is in it, and the counts add up to torrent_count. Clients must handle states added later.
+    pub torrent_counts_by_observed_state: StatisticsTorrentCountsByObservedState,
+    ///The upload rate of every torrent together, averaged over about the last 5 seconds.
+    ///Constraint: minimum=0
+    pub upload_rate_bytes_per_second: i64,
+    ///Piece data uploaded to peers since the process started.
+    ///Constraint: minimum=0
+    pub uploaded_bytes: i64,
+    ///The number of active readers waiting for a missing piece now. A player stalls while its reader waits, so this is the first sign that peers cannot keep up.
+    ///Constraint: minimum=0
+    pub waiting_reader_count: i64,
+}
+///The number of torrents in each observed state. Every state is present, with 0 when no torrent is in it, and the counts add up to torrent_count. Clients must handle states added later.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct StatisticsTorrentCountsByObservedState {
+    /// Additional properties matching the spec's
+    /// `additionalProperties` value schema.
+    #[serde(flatten)]
+    pub additional_properties: std::collections::BTreeMap<String, i64>,
+}
+///Links from the statistics.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct StatisticsLinks {
+    ///The piece cache capacity and usage behind these totals.
+    pub cache_statistics: String,
+    ///These measurements.
+    #[serde(rename = "self")]
+    pub self_field: String,
+    ///The running process, with when the totals started.
+    pub system: String,
+}
 ///A JSON merge patch of the settings. Omitted members keep their values; a member set to null returns to its default.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct SettingsPatch {
@@ -1384,6 +1479,10 @@ pub struct ProfileConflictProblem {
     ///The profile that has the name, present only in a duplicate-profile problem.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
+    ///The request's ID, as the X-Request-Id response header gives it, so a report of the problem leads to its log records.
+    ///Constraint: maxLength=128
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
     ///The HTTP status code of the response.
     ///Constraint: minimum=400, maximum=599
     pub status: i32,
@@ -1753,6 +1852,8 @@ pub struct EntryPointLinks {
     pub access_tokens: String,
     ///The piece cache's statistics.
     pub cache_statistics: String,
+    ///The metrics for Prometheus, outside the versioned API.
+    pub metrics: String,
     ///The password, not-found while authentication is off.
     pub password: String,
     ///Where clients get playback tokens.
@@ -1770,6 +1871,10 @@ pub struct EntryPointLinks {
     pub service_doc: String,
     ///The application's settings.
     pub settings: String,
+    ///The statistics across every torrent and reader.
+    pub statistics: String,
+    ///The running process, with its build and memory use.
+    pub system: String,
     ///The torrents collection.
     pub torrents: String,
 }
@@ -1782,6 +1887,10 @@ pub struct CreationConflictProblem {
     ///An identifier of this occurrence, omitted when there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instance: Option<String>,
+    ///The request's ID, as the X-Request-Id response header gives it, so a report of the problem leads to its log records.
+    ///Constraint: maxLength=128
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
     ///The HTTP status code of the response.
     ///Constraint: minimum=400, maximum=599
     pub status: i32,
@@ -1802,6 +1911,10 @@ pub struct Problem {
     ///An identifier of this occurrence, omitted when there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instance: Option<String>,
+    ///The request's ID, as the X-Request-Id response header gives it, so a report of the problem leads to its log records.
+    ///Constraint: maxLength=128
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
     ///The HTTP status code of the response.
     ///Constraint: minimum=400, maximum=599
     pub status: i32,
@@ -1972,12 +2085,15 @@ pub enum AccessTokenCreationScope {
     Api,
     #[serde(rename = "playback")]
     Playback,
+    #[serde(rename = "metrics")]
+    Metrics,
 }
 impl AccessTokenCreationScope {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Api => "api",
             Self::Playback => "playback",
+            Self::Metrics => "metrics",
         }
     }
 }
@@ -2009,7 +2125,7 @@ pub struct AccessToken {
     pub name: String,
     pub scope: AccessTokenScope,
 }
-///What an access token allows. An api token allows every operation. A playback token allows only reading torrents' file content and posters, and may travel in a URL's token query parameter.
+///What an access token allows. An api token allows every operation. A playback token allows only reading torrents' file content and posters, and may travel in a URL's token query parameter. A metrics token allows only reading the metrics, the system resource, and the application's and the piece cache's statistics, for a monitoring scraper; it travels only as a bearer token.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum AccessTokenScope {
     #[default]
@@ -2017,12 +2133,15 @@ pub enum AccessTokenScope {
     Api,
     #[serde(rename = "playback")]
     Playback,
+    #[serde(rename = "metrics")]
+    Metrics,
 }
 impl AccessTokenScope {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Api => "api",
             Self::Playback => "playback",
+            Self::Metrics => "metrics",
         }
     }
 }

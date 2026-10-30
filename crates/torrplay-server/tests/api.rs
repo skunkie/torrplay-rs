@@ -24,7 +24,10 @@ use common::{
 };
 use http::{Method, StatusCode, header};
 use serde_json::{Value, json};
-use torrplay_core::engine::{CacheStatistics, Ratio, TorrentStatistics};
+use torrplay_core::engine::{
+    CacheStatistics, ConnectionOutcomes, EngineStatistics, PeerConnections, Ratio,
+    TorrentStatistics,
+};
 use torrplay_core::id::FileId;
 use torrplay_core::lifecycle::{Readiness, StorageMode};
 use torrplay_core::preload::PreloadState;
@@ -384,6 +387,40 @@ async fn uploaded_content(server: &TestServer, spec: &FixtureSpec) -> (String, S
         torrent["id"].as_str().unwrap().to_owned(),
         format!("{file}/content"),
     )
+}
+
+/// Asserts that `text` follows the Prometheus text exposition format: each
+/// family's `HELP` and `TYPE` come once, before its samples, and each sample
+/// is a name, optional labels, and a number.
+fn assert_exposition(text: &str) {
+    let mut typed = HashSet::new();
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("# TYPE ") {
+            let (name, kind) = rest.split_once(' ').unwrap();
+            assert!(["counter", "gauge", "histogram"].contains(&kind), "{line}");
+            assert!(typed.insert(name.to_owned()), "{name} typed twice");
+            continue;
+        }
+        if line.starts_with("# HELP ") {
+            continue;
+        }
+        let (series, value) = line.rsplit_once(' ').unwrap();
+        assert!(value.parse::<f64>().is_ok(), "{line}");
+        let name = series.split('{').next().unwrap();
+        assert!(
+            name.bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'),
+            "{line}"
+        );
+        let family = ["_bucket", "_sum", "_count"]
+            .iter()
+            .find_map(|suffix| {
+                name.strip_suffix(suffix)
+                    .filter(|base| typed.contains(*base))
+            })
+            .unwrap_or(name);
+        assert!(typed.contains(family), "{name} has no TYPE before it");
+    }
 }
 
 /// Asserts a `401` whose challenge names `error`, if any.
@@ -1631,6 +1668,165 @@ mod scenario {
         let cache = server.get("/api/v1/cache/statistics").await.json();
         assert_eq!(cache["usage_bytes"], 1 << 20);
         assert_eq!(cache["eviction_count"], 2);
+        server.stop().await;
+    }
+
+    /// OBS-01 to OBS-05: the system resource, the statistics, the metrics,
+    /// and request IDs.
+    pub async fn observability() {
+        let logs = LogCapture::start();
+        let server = TestServer::start().await;
+        let (_, content) = uploaded_content(&server, &catalog::single_small()).await;
+        server
+            .upload(&catalog::multi_boundary().metainfo().bytes, Some("paused"))
+            .await;
+        let streamed = server.get(&content).await;
+        assert_eq!(streamed.status, StatusCode::OK);
+        let mut totals = EngineStatistics {
+            active_reader_count: 1,
+            idle_reader_count: 2,
+            peer_count: 7,
+            downloaded_bytes: 1 << 30,
+            download_rate_bytes_per_second: 1 << 20,
+            peer_connections: PeerConnections {
+                tcp: ConnectionOutcomes {
+                    succeeded: 5,
+                    failed: 3,
+                },
+                ..PeerConnections::default()
+            },
+            ..EngineStatistics::default()
+        };
+        totals.piece_waits.waiting_reader_count = 1;
+        server.engine.set_engine_statistics(totals);
+
+        // OBS-01: the system resource describes the run.
+        let system = server.get("/api/v1/system").await;
+        assert_eq!(system.header(header::CACHE_CONTROL), Some("no-cache"));
+        let body = system.json();
+        assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(body["os"], std::env::consts::OS);
+        assert!(body["run_id"].as_str().unwrap().starts_with("run_"));
+        if cfg!(target_os = "linux") {
+            assert!(body["resident_memory_bytes"].as_u64().unwrap() > 0);
+        }
+        assert_eq!(body["links"]["metrics"], "/metrics");
+
+        // OBS-02: the statistics count torrents by state and the bytes
+        // streamed.
+        let statistics = server.get("/api/v1/statistics").await.json();
+        assert_eq!(statistics["torrent_count"], 2);
+        assert_eq!(
+            statistics["torrent_counts_by_observed_state"],
+            json!({
+                "retrieving_metadata": 0,
+                "downloading": 1,
+                "paused": 1,
+                "failed": 0,
+            })
+        );
+        assert_eq!(
+            statistics["streamed_bytes"],
+            catalog::single_small().total_size_bytes(),
+            "the whole file streamed"
+        );
+        assert_eq!(
+            (
+                &statistics["active_reader_count"],
+                &statistics["idle_reader_count"],
+                &statistics["waiting_reader_count"],
+                &statistics["downloaded_bytes"],
+            ),
+            (&json!(1), &json!(2), &json!(1), &json!(1 << 30))
+        );
+
+        // OBS-03: the metrics are well-formed and count what was served.
+        let metrics = server.get("/metrics").await;
+        assert_eq!(
+            metrics.header(header::CONTENT_TYPE),
+            Some("text/plain; version=0.0.4; charset=utf-8")
+        );
+        let text = String::from_utf8(metrics.body.clone()).unwrap();
+        assert_exposition(&text);
+        for line in [
+            format!("torrplay_build_info{{version=\"{}\"}} 1", env!("CARGO_PKG_VERSION")),
+            "torrplay_torrents{observed_state=\"paused\"} 1".to_owned(),
+            "torrplay_readers{state=\"idle\"} 2".to_owned(),
+            "torrplay_waiting_readers 1".to_owned(),
+            "torrplay_peer_connections_total{transport=\"tcp\",outcome=\"failed\"} 3".to_owned(),
+            "torrplay_downloaded_bytes_total 1073741824".to_owned(),
+            "torrplay_piece_wait_seconds_count{outcome=\"ready\"} 0".to_owned(),
+            "torrplay_http_requests_total{method=\"GET\",route=\"/api/v1/system\",status=\"200\"} 1"
+                .to_owned(),
+            "torrplay_http_response_head_seconds_count{method=\"GET\",route=\"/api/v1/statistics\"} 1"
+                .to_owned(),
+        ] {
+            assert!(text.lines().any(|candidate| candidate == line), "{line} in\n{text}");
+        }
+        assert!(text.contains("\nprocess_start_time_seconds "), "{text}");
+        assert!(!text.contains("trr_"), "no torrent IDs as labels");
+
+        // OBS-04: a usable request ID is kept, another replaced, and a
+        // problem and the request's log records name it.
+        let kept = server
+            .send(with_header(
+                Method::GET,
+                "/api/v1/system",
+                header::HeaderName::from_static("x-request-id"),
+                "proxy-7f3a.1",
+            ))
+            .await;
+        assert_eq!(kept.header("x-request-id"), Some("proxy-7f3a.1"));
+        let replaced = server
+            .send(with_header(
+                Method::GET,
+                "/api/v1/system",
+                header::HeaderName::from_static("x-request-id"),
+                "two words",
+            ))
+            .await;
+        assert!(
+            replaced
+                .header("x-request-id")
+                .is_some_and(|id| id.starts_with("req_"))
+        );
+        let missing = server
+            .get("/api/v1/torrents/trr_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+            .await;
+        let request_id = missing.header("x-request-id").unwrap().to_owned();
+        assert_eq!(missing.json()["request_id"], request_id.as_str());
+        assert!(
+            logs.text()
+                .lines()
+                .any(|line| line.contains(&request_id) && line.contains("status=404")),
+            "{}",
+            logs.text()
+        );
+
+        // OBS-05: without the engine, the statistics are unavailable and the
+        // metrics keep the process; an engine fault fails both.
+        server
+            .engine
+            .set_readiness(Readiness::Unavailable { retry_after: None });
+        assert_problem(
+            &server.get("/api/v1/statistics").await,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "engine-unavailable",
+        );
+        let unavailable = String::from_utf8(server.get("/metrics").await.body).unwrap();
+        assert_exposition(&unavailable);
+        assert!(unavailable.contains("process_start_time_seconds"));
+        assert!(!unavailable.contains("torrplay_readers"), "{unavailable}");
+        server.engine.set_readiness(Readiness::Ready);
+        server.engine.inject_fault(Some("the engine failed"));
+        for path in ["/api/v1/statistics", "/metrics"] {
+            assert_problem(
+                &server.get(path).await,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal-error",
+            );
+        }
+        server.engine.inject_fault(None);
         server.stop().await;
     }
 
@@ -6146,6 +6342,44 @@ mod scenario {
             "insufficient-scope",
         );
 
+        // AUT-12: a metrics access token reads the metrics, the system
+        // resource, and statistics, as a bearer token only.
+        let (_, scraper) = sign_in(&server, "Prometheus", "metrics").await;
+        for path in [
+            "/metrics",
+            "/api/v1/system",
+            "/api/v1/statistics",
+            "/api/v1/cache/statistics",
+        ] {
+            let read = server.send(bearer_empty(Method::GET, path, &scraper)).await;
+            assert_eq!(read.status, StatusCode::OK, "{path}");
+        }
+        for path in [
+            "/api/v1/torrents".to_owned(),
+            format!("/api/v1/torrents/{torrent}/statistics"),
+            content.clone(),
+        ] {
+            assert_problem(
+                &server
+                    .send(bearer_empty(Method::GET, &path, &scraper))
+                    .await,
+                StatusCode::FORBIDDEN,
+                "insufficient-scope",
+            );
+        }
+        assert_unauthenticated(
+            &server.get(&format!("{content}?token={scraper}")).await,
+            Some("invalid_token"),
+        );
+        assert_unauthenticated(&server.get("/metrics").await, None);
+        assert_problem(
+            &server
+                .send(bearer_empty(Method::GET, "/metrics", &television))
+                .await,
+            StatusCode::FORBIDDEN,
+            "insufficient-scope",
+        );
+
         // AUT-06: a playback token of one torrent.
         let one = playback_token(&server, &api, Some(&torrent)).await;
         assert_eq!(
@@ -6658,6 +6892,8 @@ const EXEMPT: &[(&str, u16)] = &[
     ("getApiReferenceScript", 500),
     ("getTorrentConfiguration", 500),
     ("getSettings", 500),
+    // The run and the process's resources need no engine or store.
+    ("getSystem", 500),
     // A process that answers is live.
     ("getLiveness", 503),
     // A failed read of the store, which tests cannot inject, and a HEAD,
@@ -6724,6 +6960,7 @@ scenarios!(
     engine_unavailable,
     deletion,
     statistics,
+    observability,
     failures,
     passkey_redaction,
     bodies_refused_while_streaming,

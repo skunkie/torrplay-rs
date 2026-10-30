@@ -54,8 +54,8 @@ use tokio::io::AsyncSeekExt;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use torrplay_core::engine::{
-    ByteRange, CacheStatistics, Engine, EngineError, Inspection, Ratio, Source, SourceRejection,
-    TorrentStatistics, TorrentStatus,
+    ByteRange, CacheStatistics, ConnectionOutcomes, Engine, EngineError, EngineStatistics,
+    Inspection, PeerConnections, Ratio, Source, SourceRejection, TorrentStatistics, TorrentStatus,
 };
 use torrplay_core::id::{InfoHashV1, PreloadId, TorrentId};
 use torrplay_core::lifecycle::{DesiredState, Failure, Readiness, StorageMode};
@@ -63,6 +63,7 @@ use torrplay_core::metadata::{FileIndex, ReportedMetadata};
 use torrplay_core::preload::{PreloadRequest, PreloadStatus};
 use torrplay_core::redact::redact;
 use torrplay_core::settings::Settings;
+use torrplay_core::telemetry::PieceWaitRecorder;
 
 use crate::cache::TorrentKey;
 use crate::cache::{CacheError, PieceCache};
@@ -319,6 +320,8 @@ pub struct LibrqbitEngine {
     /// Whether the session runs a DHT, which `start` reads and `set_dht`
     /// changes; the lock serializes them, since both await the session.
     dht_enabled: tokio::sync::Mutex<bool>,
+    /// Every reader's waits for missing pieces.
+    piece_waits: Arc<PieceWaitRecorder>,
 }
 
 /// The values [`Engine::apply_settings`] changes.
@@ -469,6 +472,7 @@ impl LibrqbitEngine {
             torrents: Mutex::new(HashMap::new()),
             trust_bitfields: std::sync::atomic::AtomicBool::new(true),
             dht_enabled: tokio::sync::Mutex::new(config.network.dht),
+            piece_waits: Arc::default(),
             config,
         })
     }
@@ -1928,6 +1932,7 @@ impl Engine for LibrqbitEngine {
             reader,
             range.len_bytes(),
             self.tunables().piece_wait,
+            self.piece_waits.clone(),
         ))
     }
 
@@ -2042,6 +2047,37 @@ impl Engine for LibrqbitEngine {
             usage_bytes: stats.usage_bytes,
             pinned_bytes: stats.pinned_bytes,
             eviction_count: stats.eviction_count,
+        })
+    }
+
+    async fn engine_statistics(&self) -> Result<EngineStatistics, EngineError> {
+        let running = self.running()?;
+        let session = running.session.stats_snapshot();
+        let readers = running.playback.stats();
+        // librqbit does not export the snapshot types, so their fields are
+        // read by name.
+        macro_rules! outcomes {
+            ($family:expr) => {
+                ConnectionOutcomes {
+                    succeeded: $family.v4.successes + $family.v6.successes,
+                    failed: $family.v4.errors + $family.v6.errors,
+                }
+            };
+        }
+        Ok(EngineStatistics {
+            active_reader_count: readers.readers.saturating_sub(readers.idle_readers),
+            idle_reader_count: readers.idle_readers,
+            peer_count: u64::from(session.peers.live),
+            downloaded_bytes: session.counters.fetched_bytes,
+            uploaded_bytes: session.counters.uploaded_bytes,
+            download_rate_bytes_per_second: session.download_speed.as_bytes(),
+            upload_rate_bytes_per_second: session.upload_speed.as_bytes(),
+            peer_connections: PeerConnections {
+                tcp: outcomes!(session.connections.tcp),
+                utp: outcomes!(session.connections.utp),
+                socks: outcomes!(session.connections.socks),
+            },
+            piece_waits: self.piece_waits.snapshot(),
         })
     }
 }

@@ -90,6 +90,10 @@ pub struct App<E> {
     /// The viewings whose progress is inferred, and the files' seek indexes.
     inference: Inference,
     seek_indexes: Option<SeekIndexes>,
+    /// The process run, for the system resource and log records.
+    run: crate::telemetry::Run,
+    /// The server's measurements of its responses and streams.
+    telemetry: crate::telemetry::Telemetry,
 }
 
 /// The settings the DLNA media server's announcer follows.
@@ -182,7 +186,24 @@ impl<E: Engine> App<E> {
             temporaries: crate::retention::Temporaries::default(),
             inference: Inference::default(),
             seek_indexes: None,
+            run: crate::telemetry::Run::default(),
+            telemetry: crate::telemetry::Telemetry::default(),
         }
+    }
+
+    /// Belongs to `run`, whose ID log records carry. Without it, the server
+    /// draws a run of its own.
+    pub fn with_run(mut self, run: crate::telemetry::Run) -> Self {
+        self.run = run;
+        self
+    }
+
+    pub(crate) fn run(&self) -> &crate::telemetry::Run {
+        &self.run
+    }
+
+    pub(crate) fn telemetry(&self) -> &crate::telemetry::Telemetry {
+        &self.telemetry
     }
 
     /// Runs with the settings the command line overrides. Call it before

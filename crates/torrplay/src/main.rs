@@ -7,6 +7,7 @@
 //! listener, and serves until a termination signal. `torrplay password`
 //! changes a stopped application's password instead.
 
+use std::io::IsTerminal;
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -38,9 +39,22 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    let variable = std::env::var_os(torrplay::LOG_FORMAT_VARIABLE)
+        .map(|value| value.to_string_lossy().into_owned());
+    let format =
+        match torrplay::log_format(config.log_format, variable, std::io::stderr().is_terminal()) {
+            Ok(format) => format,
+            Err(error) => {
+                eprintln!("torrplay: {error}\n\n{USAGE}");
+                return ExitCode::from(2);
+            }
+        };
+    let process_run = torrplay::Run::draw();
     let log = torrplay::init_logging(
         config.log_level.unwrap_or_default(),
         config.log_filter.as_deref(),
+        format,
+        &process_run,
     );
     match torrplay_engine::raise_open_file_limit() {
         Ok(limit) => tracing::info!(limit, "open file limit"),
@@ -59,7 +73,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let result = runtime.block_on(run(&config, log));
+    let result = runtime.block_on(run(&config, log, process_run));
     // Shutdown has stopped the engine; blocking work still running must not
     // hold the process.
     runtime.shutdown_timeout(RUNTIME_SHUTDOWN);
@@ -72,7 +86,7 @@ fn main() -> ExitCode {
     }
 }
 
-async fn run(config: &Config, log: torrplay::LogControl) -> anyhow::Result<()> {
+async fn run(config: &Config, log: torrplay::LogControl, run: torrplay::Run) -> anyhow::Result<()> {
     let data_dir = config.data_dir()?;
     let opening = data_dir.clone();
     let (store, contents) = tokio::task::spawn_blocking(move || Store::open(&opening))
@@ -105,6 +119,7 @@ async fn run(config: &Config, log: torrplay::LogControl) -> anyhow::Result<()> {
             allowed_hosts: AllowedHosts::new(config.allowed_hosts.clone()),
             overrides: config.overrides(),
             log: Some(log),
+            run,
         },
         ShutdownTimings::default(),
         termination(),

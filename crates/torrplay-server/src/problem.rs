@@ -335,6 +335,7 @@ impl Problem {
             return to_json(&api::CreationConflictProblem {
                 detail,
                 instance: None,
+                request_id: crate::telemetry::current_request_id(),
                 status,
                 title,
                 torrent: Some(torrent.clone()),
@@ -345,6 +346,7 @@ impl Problem {
             return to_json(&api::ProfileConflictProblem {
                 detail,
                 instance: None,
+                request_id: crate::telemetry::current_request_id(),
                 status,
                 title,
                 profile: Some(profile.clone()),
@@ -372,6 +374,7 @@ impl Problem {
                 detail,
                 errors,
                 instance: None,
+                request_id: crate::telemetry::current_request_id(),
                 status,
                 title,
                 r#type: problem_type.uri(),
@@ -380,6 +383,7 @@ impl Problem {
         to_json(&api::Problem {
             detail,
             instance: None,
+            request_id: crate::telemetry::current_request_id(),
             status,
             title,
             r#type: problem_type.uri(),
