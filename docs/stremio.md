@@ -12,10 +12,11 @@ the adapter's contract: the resources it serves, the IDs it uses, and how
 it reaches the native streaming implementation. It is separate from the
 native REST API, whose contract is `api/openapi.yaml`.
 
-Stremio's [addon protocol](https://github.com/Stremio/stremio-addon-sdk/blob/master/docs/protocol.md)
-defines the manifest and the `catalog`, `meta`, and `stream` resources:
-JSON documents at fixed paths below the URL the addon is installed from.
-The adapter implements the parts below; everything it does not name is
+Stremio's [addon
+protocol](https://github.com/Stremio/stremio-addon-sdk/blob/master/docs/protocol.md)
+defines the manifest and the `catalog`, `meta`, and `stream` resources: JSON
+documents at fixed paths below the URL the addon is installed from. The
+adapter implements the parts below; everything it does not name is
 unsupported.
 
 ## Installing it

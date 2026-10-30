@@ -55,16 +55,17 @@ follow their own specifications instead.
 - A request body that differs from the resource's representation is named
   after the resource with a purpose suffix: `TorrentCreation` for creation
   input, `TorrentConfigurationPatch` for a merge patch.
-- Members carry their unit in the name when the value has one:
+- Members carry their unit in the name when the value has one, and integers
+  use the `int64` format:
 
   | Quantity | Suffix | Type | Example |
   |---|---|---|---|
-  | Size | `_bytes` | integer, `int64` | `size_bytes` |
-  | Rate | `_bytes_per_second` | integer, `int64` | `download_rate_bytes_per_second` |
-  | Duration | `_seconds` or `_milliseconds` | integer, `int64` | `uptime_seconds` |
+  | Size | `_bytes` | integer | `size_bytes` |
+  | Rate | `_bytes_per_second` | integer | `download_rate_bytes_per_second` |
+  | Duration | `_seconds` or `_milliseconds` | integer | `uptime_seconds` |
   | Point in time | `_at` | string, `date-time` | `created_at` |
   | Ratio | `_ratio` | number, 0.0 to 1.0 inclusive | `completion_ratio` |
-  | Count | `_count` | integer, `int64` | `piece_count` |
+  | Count | `_count` | integer | `piece_count` |
 
 - Every integer declares its `format` *(linted)*. Timestamps are
   [RFC 3339](https://www.rfc-editor.org/rfc/rfc3339.html) date-times in UTC

@@ -64,11 +64,11 @@ DLNA/UPnP, and MCP keep their own terminology inside their adapters.
 : The opaque, server-assigned, stable identifier of a torrent resource. It is
   independent of info hashes and engine handles.
 
-**Info hash**
-: The hash that identifies a torrent's info dictionary, always paired with
-  its algorithm: SHA-1 for v1 ([BEP 3](https://www.bittorrent.org/beps/bep_0003.html))
-  and SHA-256 for v2 ([BEP 52](https://www.bittorrent.org/beps/bep_0052.html)).
-  A hybrid torrent has one of each.
+**Info hash** : The hash that identifies a torrent's info dictionary, always
+paired with its algorithm: SHA-1 for v1 ([BEP
+3](https://www.bittorrent.org/beps/bep_0003.html)) and SHA-256 for v2 ([BEP
+52](https://www.bittorrent.org/beps/bep_0052.html)). A hybrid torrent has one
+of each.
 
 **Metadata**
 : The torrent's info dictionary, which lists its name, files, piece length,

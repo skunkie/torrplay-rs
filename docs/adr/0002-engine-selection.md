@@ -716,8 +716,8 @@ scheduler's unit tests already cover them.
   indefinitely; librqbit's read timeout counts keep-alives. With P6's request
   stall timeout set to the piece wait bound, the peer is disconnected and its
   pieces return to the queue and leave the cache.
-  `adversarial_peers::a_peer_that_never_delivers_is_dropped_after_the_stall_timeout`
-  checks it, and fails without the timeout.
+  `a_peer_that_never_delivers_is_dropped_after_the_stall_timeout` in
+  `adversarial_peers` checks it, and fails without the timeout.
 - **Request window.** Seek latency depends on outstanding requests; the
   adapter should configure a small `max_request_window` for memory
   torrents, tuned by the milestone 5 benchmarks.
