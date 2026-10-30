@@ -513,6 +513,21 @@ impl Exposition {
             }
         }
         self.family(
+            "torrplay_piece_hash_checks_total",
+            "counter",
+            "Downloaded pieces checked against their hash; a failure is bad peer data.",
+        );
+        for (result, number) in [
+            ("passed", engine.hash_checks.passed),
+            ("failed", engine.hash_checks.failed),
+        ] {
+            self.sample(
+                "torrplay_piece_hash_checks_total",
+                &[("result", result)],
+                number,
+            );
+        }
+        self.family(
             "torrplay_piece_wait_seconds",
             "histogram",
             "How long a reader waited for a missing piece, observed when the wait ended.",

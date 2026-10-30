@@ -385,6 +385,7 @@ These scenarios accept [the DLNA contract](dlna.md) (M7).
 | OBS-07 | A reader waits for a piece no peer has, then a torrent downloads from a local seeder | One timed-out wait of at least the bound and no reader waiting; engine totals count the download and the connection |
 | OBS-08 | List log records with `min_level`, `contains` naming a field and a request ID, `after_sequence`, and pages of 2; then bad parameters, a restart, and an unreadable file | Newest first, filtered and bounded; next links reach the oldest; `400 malformed-request` for each bad parameter and a cursor of other filters; the sequence continues after the restart; `500 internal-error` |
 | OBS-09 | Request the system resource, stop `torrplay`, start it again on the same data directory, and list records containing the request ID | The earlier run's response record, with its run ID, which differs from the new run's |
+| OBS-10 | Download from a peer that serves corrupt blocks, then from a valid one; and from a valid seeder alone | At least one failed hash check and one passed check per piece; with the valid seeder alone, every piece passes and none fails |
 
 ### Peers
 

@@ -40,7 +40,7 @@ fn live_snapshot(handle: &ManagedTorrent) -> anyhow::Result<librqbit::api::LiveS
 
 /// CAC-11: a peer that sends corrupt blocks has them fail the hash check;
 /// the pieces come again from a valid peer, and the reader receives only
-/// correct bytes.
+/// correct bytes. The session counts the failed and passed checks (OBS-10).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn corrupt_blocks_fail_and_come_again_from_a_valid_peer() -> anyhow::Result<()> {
     let spec = catalog::single_small();
@@ -110,6 +110,14 @@ async fn corrupt_blocks_fail_and_come_again_from_a_valid_peer() -> anyhow::Resul
         torrent.handle.stats().state,
         TorrentStatsState::Error
     ));
+    let checks = leecher.session.stats_snapshot().counters;
+    assert!(checks.hash_checks_failed >= 1, "the corrupt pieces failed");
+    assert_eq!(
+        checks.hash_checks_passed,
+        spec.total_size_bytes()
+            .div_ceil(u64::from(spec.piece_length)),
+        "every piece passed once from the valid peer"
+    );
     memory.cache.audit()?;
 
     leecher.session.stop().await;

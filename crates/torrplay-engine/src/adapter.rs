@@ -55,7 +55,8 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use torrplay_core::engine::{
     ByteRange, CacheStatistics, ConnectionOutcomes, Engine, EngineError, EngineStatistics,
-    Inspection, PeerConnections, Ratio, Source, SourceRejection, TorrentStatistics, TorrentStatus,
+    HashChecks, Inspection, PeerConnections, Ratio, Source, SourceRejection, TorrentStatistics,
+    TorrentStatus,
 };
 use torrplay_core::id::{InfoHashV1, PreloadId, TorrentId};
 use torrplay_core::lifecycle::{DesiredState, Failure, Readiness, StorageMode};
@@ -2076,6 +2077,10 @@ impl Engine for LibrqbitEngine {
                 tcp: outcomes!(session.connections.tcp),
                 utp: outcomes!(session.connections.utp),
                 socks: outcomes!(session.connections.socks),
+            },
+            hash_checks: HashChecks {
+                passed: session.counters.hash_checks_passed,
+                failed: session.counters.hash_checks_failed,
             },
             piece_waits: self.piece_waits.snapshot(),
         })
