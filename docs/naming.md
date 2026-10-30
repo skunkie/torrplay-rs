@@ -48,7 +48,8 @@ A constant named for what a protocol or the contract names keeps that
 name, such as SSDP's `MAX_AGE_SECONDS` and `MIN_LEVEL` for the `min_level`
 query parameter. Associated constants follow Rust's own, such as
 `PageSize::MAX`. `crates/torrplay/tests/naming.rs` refuses constants that
-begin with `MAX_`, `MIN_`, or `DEFAULT_`.
+begin with `MAX_`, `MIN_`, or `DEFAULT_`, and size and duration bounds
+named `_LIMIT` and a unit.
 
 ## Verbs
 

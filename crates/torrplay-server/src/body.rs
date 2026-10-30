@@ -15,17 +15,17 @@ use http_body_util::BodyExt;
 use crate::problem::{Problem, ProblemType};
 
 /// The largest JSON body, creation or merge patch.
-pub(crate) const JSON_LIMIT_BYTES: usize = 16 * 1024;
+pub(crate) const JSON_MAX_BYTES: usize = 16 * 1024;
 
 /// The largest uploaded torrent file.
-pub(crate) const TORRENT_FILE_LIMIT_BYTES: usize = 10 * 1024 * 1024;
+pub(crate) const METAINFO_MAX_BYTES: usize = 10 * 1024 * 1024;
 
 /// Room for a form's boundaries, part headers, and other fields beyond the
 /// torrent file, so the file's own limit decides what is too large.
 const FORM_OVERHEAD_BYTES: usize = 64 * 1024;
 
 /// The largest form body.
-pub(crate) const FORM_LIMIT_BYTES: usize = TORRENT_FILE_LIMIT_BYTES + FORM_OVERHEAD_BYTES;
+pub(crate) const FORM_MAX_BYTES: usize = METAINFO_MAX_BYTES + FORM_OVERHEAD_BYTES;
 
 /// Reads a body of at most `limit` bytes that arrives within `timeout`. A
 /// declared `Content-Length` over the limit is refused before reading, and a

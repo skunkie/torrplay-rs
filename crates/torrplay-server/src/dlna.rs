@@ -314,8 +314,8 @@ async fn action<E: Engine>(
     let bytes = read_limited(
         headers,
         body,
-        soap::BODY_LIMIT_BYTES,
-        soap::BODY_LIMIT_BYTES as u64,
+        soap::BODY_MAX_BYTES,
+        soap::BODY_MAX_BYTES as u64,
         app.body_timeout(),
     )
     .await?;

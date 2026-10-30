@@ -27,7 +27,7 @@ use crate::problem::Problem;
 use crate::representation::NO_STORE;
 use crate::torrents::{self, not_modified, with_etag};
 
-const TORRENT_FILE: &str = "application/x-bittorrent";
+const BITTORRENT: &str = "application/x-bittorrent";
 
 /// The torrent file's validator. Once metadata is known, a torrent's file
 /// never changes, so the info hash identifies its bytes.
@@ -44,7 +44,7 @@ fn headers(
 ) -> Result<Response, Problem> {
     let mut response = StatusCode::OK.into_response();
     let headers = response.headers_mut();
-    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(TORRENT_FILE));
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(BITTORRENT));
     headers.insert(header::CONTENT_LENGTH, HeaderValue::from(size_bytes));
     // Path separators would name a directory the client does not mean.
     let name = metadata.display_name().replace(['/', '\\'], "_");
@@ -84,7 +84,7 @@ pub(crate) async fn get<E: Engine>(
     Path(id): Path<String>,
     request: HeaderMap,
 ) -> Result<Response, Problem> {
-    negotiate(&request, TORRENT_FILE)?;
+    negotiate(&request, BITTORRENT)?;
     let (view, metadata) = with_metadata(&app, &id).await?;
     let info_hash = view.record.info_hash;
     if let Some(response) = not_modified(&request, &etag(&info_hash)) {
@@ -100,7 +100,7 @@ pub(crate) async fn head<E: Engine>(
     Path(id): Path<String>,
     request: HeaderMap,
 ) -> Result<Response, Problem> {
-    negotiate(&request, TORRENT_FILE)?;
+    negotiate(&request, BITTORRENT)?;
     let (view, metadata) = with_metadata(&app, &id).await?;
     let info_hash = view.record.info_hash;
     if let Some(response) = not_modified(&request, &etag(&info_hash)) {

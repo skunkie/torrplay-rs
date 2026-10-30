@@ -18,6 +18,9 @@ const EXTERNAL_NAMES: &[&str] = &["MAX_AGE_SECONDS", "MIN_LEVEL"];
 /// Qualifiers that come last in a constant's name.
 const QUALIFIERS: &[&str] = &["MAX_", "MIN_", "DEFAULT_"];
 
+/// The units a size or duration bound ends in.
+const UNITS: &[&str] = &["BYTES", "CHARS", "SECONDS", "MS", "NS"];
+
 /// Every Rust file of the workspace's crates, generated ones aside.
 fn sources(directory: &Path, found: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(directory).expect("a readable directory") {
@@ -46,33 +49,63 @@ fn constant(line: &str) -> Option<&str> {
     rest.split(':').next().map(str::trim)
 }
 
-#[test]
-fn constants_put_their_qualifier_last() {
+/// Every constant the workspace declares, with where it is declared.
+fn declared_constants() -> Vec<(String, String)> {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("the crates directory");
     let mut files = Vec::new();
     sources(crates, &mut files);
     assert!(files.len() > 100, "the workspace's sources are found");
-    let mut misnamed = Vec::new();
+    let mut declared = Vec::new();
     for file in files {
         let text = fs::read_to_string(&file).expect("a readable source");
         for (number, line) in text.lines().enumerate() {
-            let Some(name) = constant(line) else {
-                continue;
-            };
-            if QUALIFIERS
-                .iter()
-                .any(|qualifier| name.starts_with(qualifier))
-                && !EXTERNAL_NAMES.contains(&name)
-            {
-                misnamed.push(format!("{}:{}: {name}", file.display(), number + 1));
+            if let Some(name) = constant(line) {
+                declared.push((
+                    format!("{}:{}", file.display(), number + 1),
+                    name.to_owned(),
+                ));
             }
         }
     }
+    declared
+}
+
+#[test]
+fn constants_put_their_qualifier_last() {
+    let misnamed: Vec<String> = declared_constants()
+        .into_iter()
+        .filter(|(_, name)| {
+            QUALIFIERS
+                .iter()
+                .any(|qualifier| name.starts_with(qualifier))
+                && !EXTERNAL_NAMES.contains(&name.as_str())
+        })
+        .map(|(at, name)| format!("{at}: {name}"))
+        .collect();
     assert!(
         misnamed.is_empty(),
         "these constants put a qualifier first; docs/naming.md puts it last:\n{}",
+        misnamed.join("\n")
+    );
+}
+
+#[test]
+fn size_and_duration_bounds_say_max_or_min() {
+    let misnamed: Vec<String> = declared_constants()
+        .into_iter()
+        .filter(|(_, name)| {
+            UNITS
+                .iter()
+                .any(|unit| name.contains(&format!("_LIMIT_{unit}")))
+        })
+        .map(|(at, name)| format!("{at}: {name}"))
+        .collect();
+    assert!(
+        misnamed.is_empty(),
+        "these bounds on a size or duration end in _LIMIT and a unit; docs/naming.md \
+         keeps _LIMIT for counts and names these _MAX or _MIN:\n{}",
         misnamed.join("\n")
     );
 }

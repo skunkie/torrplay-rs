@@ -22,7 +22,7 @@ use torrplay_core::profiles::{self, PROFILE_LIMIT, Profile, ProfileKind};
 use torrplay_store::StoreError;
 
 use crate::app::{App, store_failed};
-use crate::body::{JSON_LIMIT_BYTES, read_limited};
+use crate::body::{JSON_MAX_BYTES, read_limited};
 use crate::headers::{EntityTags, MediaType, negotiate};
 use crate::images;
 use crate::problem::{InvalidValue, Problem, ProblemType};
@@ -172,8 +172,8 @@ pub(crate) async fn create<E: Engine>(
     let bytes = read_limited(
         &headers,
         body,
-        JSON_LIMIT_BYTES,
-        JSON_LIMIT_BYTES as u64,
+        JSON_MAX_BYTES,
+        JSON_MAX_BYTES as u64,
         app.body_timeout(),
     )
     .await?;
@@ -261,8 +261,8 @@ pub(crate) async fn update<E: Engine>(
     let bytes = read_limited(
         &headers,
         body,
-        JSON_LIMIT_BYTES,
-        JSON_LIMIT_BYTES as u64,
+        JSON_MAX_BYTES,
+        JSON_MAX_BYTES as u64,
         app.body_timeout(),
     )
     .await?;

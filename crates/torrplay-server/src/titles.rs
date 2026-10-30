@@ -25,7 +25,7 @@ use torrplay_core::profiles::{self, ProfileKind, TitleKey, TitleProgress};
 use torrplay_store::StoredTitleProgress;
 
 use crate::app::App;
-use crate::body::{JSON_LIMIT_BYTES, read_limited};
+use crate::body::{JSON_MAX_BYTES, read_limited};
 use crate::headers::{MediaType, negotiate};
 use crate::problem::{InvalidValue, Problem, ProblemType};
 use crate::profiles as profile_routes;
@@ -253,8 +253,8 @@ pub(crate) async fn set<E: Engine>(
     let bytes = read_limited(
         &headers,
         body,
-        JSON_LIMIT_BYTES,
-        JSON_LIMIT_BYTES as u64,
+        JSON_MAX_BYTES,
+        JSON_MAX_BYTES as u64,
         app.body_timeout(),
     )
     .await?;

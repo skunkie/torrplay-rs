@@ -29,7 +29,7 @@ pub const EXPIRES_IN_MIN: Duration = Duration::from_secs(10);
 pub const EXPIRES_IN_MAX: Duration = Duration::from_secs(3600);
 
 /// How long an expired or failed preload stays readable.
-pub const RETENTION: Duration = Duration::from_secs(300);
+pub const ENDED_LIFETIME: Duration = Duration::from_secs(300);
 
 /// The most active preloads one file may have.
 pub const PER_FILE_LIMIT: usize = 4;

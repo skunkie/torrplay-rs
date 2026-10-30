@@ -32,9 +32,7 @@ use torrplay_core::search::{Query as SearchQuery, SEARCH_MAX_CHARS};
 use torrplay_store::StoredTorrent;
 
 use crate::app::{App, TorrentView, store_failed};
-use crate::body::{
-    FORM_LIMIT_BYTES, JSON_LIMIT_BYTES, TORRENT_FILE_LIMIT_BYTES, parse_form, read_limited,
-};
+use crate::body::{FORM_MAX_BYTES, JSON_MAX_BYTES, METAINFO_MAX_BYTES, parse_form, read_limited};
 use crate::headers::{EntityTags, MediaType, negotiate};
 use crate::library::{self, LibraryPatch};
 use crate::problem::{InvalidValue, Problem, ProblemType};
@@ -379,8 +377,8 @@ pub(crate) async fn create<E: Engine>(
             let bytes = read_limited(
                 &headers,
                 body,
-                JSON_LIMIT_BYTES,
-                JSON_LIMIT_BYTES as u64,
+                JSON_MAX_BYTES,
+                JSON_MAX_BYTES as u64,
                 app.body_timeout(),
             )
             .await?;
@@ -601,8 +599,8 @@ pub(crate) async fn read_form<E: Engine>(
     read_limited(
         headers,
         body,
-        FORM_LIMIT_BYTES,
-        TORRENT_FILE_LIMIT_BYTES as u64,
+        FORM_MAX_BYTES,
+        METAINFO_MAX_BYTES as u64,
         app.body_timeout(),
     )
     .await
@@ -610,10 +608,10 @@ pub(crate) async fn read_form<E: Engine>(
 
 /// A torrent file part, refused when it exceeds the limit.
 pub(crate) fn metainfo_part(data: Bytes) -> Result<Bytes, Problem> {
-    if data.len() > TORRENT_FILE_LIMIT_BYTES {
+    if data.len() > METAINFO_MAX_BYTES {
         return Err(Problem::new(
             ProblemType::ContentTooLarge,
-            format!("The torrent file exceeds {TORRENT_FILE_LIMIT_BYTES} bytes."),
+            format!("The torrent file exceeds {METAINFO_MAX_BYTES} bytes."),
         ));
     }
     Ok(data)
@@ -987,8 +985,8 @@ pub(crate) async fn update_configuration<E: Engine>(
     let bytes = read_limited(
         &headers,
         body,
-        JSON_LIMIT_BYTES,
-        JSON_LIMIT_BYTES as u64,
+        JSON_MAX_BYTES,
+        JSON_MAX_BYTES as u64,
         app.body_timeout(),
     )
     .await?;
@@ -1409,7 +1407,7 @@ mod tests {
     }
 
     #[test]
-    fn forms_require_one_torrent_file() {
+    fn forms_require_one_metainfo_part() {
         let form = |text: &'static str| Bytes::from_static(text.as_bytes());
         let problem = creation_from_form(
             &form("--b\r\nContent-Disposition: form-data; name=\"x\"\r\n\r\n1\r\n--b--"),
