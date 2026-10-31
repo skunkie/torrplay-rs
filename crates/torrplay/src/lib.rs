@@ -36,9 +36,9 @@ use torrplay_core::id::TorrentId;
 use torrplay_core::lifecycle::StorageMode;
 pub use torrplay_core::settings::{LogLevel, LogOverride, Overrides};
 use torrplay_engine::{EngineConfig, LibrqbitEngine, NetworkConfig, PEER_PORT_DEFAULT};
-use torrplay_server::App;
 pub use torrplay_server::Run;
 pub use torrplay_server::log_files::{LogFiles, LogWriter};
+use torrplay_server::{App, delete_temporary_files};
 use torrplay_store::{Contents, Store};
 
 /// The default API port, as the contract's server URL documents.
@@ -831,6 +831,20 @@ pub async fn serve(
         })
         .map(|torrent| torrent.id.clone())
         .collect();
+    // Temporary files of backups that a crash left.
+    if let Some(directory) = store.path().parent().map(Path::to_path_buf) {
+        match tokio::task::spawn_blocking(move || delete_temporary_files(&directory)).await {
+            Ok(Ok(deleted)) => {
+                for path in deleted {
+                    tracing::info!(path = %path.display(), "deleted a backup's temporary file");
+                }
+            }
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "backups' temporary files could not be deleted")
+            }
+            Err(error) => tracing::warn!(%error, "deleting backups' temporary files panicked"),
+        }
+    }
     let sweeping = engine.clone();
     match tokio::task::spawn_blocking(move || sweeping.sweep_download_dir(&keep)).await {
         Ok(Ok(deleted)) => {

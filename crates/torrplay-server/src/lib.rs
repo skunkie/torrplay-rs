@@ -35,6 +35,7 @@
 
 mod app;
 mod authentication;
+mod backup;
 mod body;
 mod content;
 mod credentials;
@@ -79,7 +80,8 @@ use axum::routing::{any, get, post};
 use torrplay_core::engine::Engine;
 use tracing::Level;
 
-pub use crate::app::{App, Clock, MediaServerSetting, SeekIndexes};
+pub use crate::app::{App, Clock, FreeBytes, MediaServerSetting, SeekIndexes};
+pub use crate::backup::delete_temporary_files;
 use crate::problem::{Problem, ProblemType};
 pub use crate::telemetry::Run;
 
@@ -156,6 +158,10 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
         .route(
             "/api/v1/settings",
             get(settings::get::<E>).patch(settings::update::<E>),
+        )
+        .route(
+            "/api/v1/backup",
+            get(backup::get::<E>).put(backup::set::<E>),
         )
         .route(
             "/api/v1/profiles",

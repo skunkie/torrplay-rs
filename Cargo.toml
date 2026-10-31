@@ -107,7 +107,7 @@ sha2 = "0.11.1"
 socket2 = { version = "0.6", features = ["all"] }
 tempfile = "3"
 thiserror = "2"
-tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["io"] }
 torrplay-api = { path = "crates/torrplay-api" }
 torrplay-contract = { path = "crates/torrplay-contract" }
@@ -123,6 +123,9 @@ torrplay-store = { path = "crates/torrplay-store" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
 url = { version = "2", features = ["serde"] }
+# Backup archives: stored and deflated entries only, through flate2, which
+# is already in the tree.
+zip = { version = "=9.0.3", default-features = false, features = ["deflate-flate2"] }
 
 # Dev builds keep only line tables, enough for backtraces with file and line,
 # which cuts each test binary that links librqbit almost threefold.

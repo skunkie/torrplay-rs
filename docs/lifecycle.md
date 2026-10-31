@@ -322,7 +322,8 @@ only until the application restarts.
 
 - `DELETE` unregisters the torrent and returns `204 No Content` once the
   deletion is stored. From then on the torrent and all its subresources
-  return `not-found`, including a repeated `DELETE` and after a restart.
+  return `not-found`, including a repeated `DELETE` and after a restart,
+  until a [backup](#backup-and-restore) that holds it is restored.
 - Streams in progress are canceled, readers released, metadata retrieval
   stopped, and peer connections closed.
 - Partial pieces are discarded and their reservations released. Verified
@@ -419,12 +420,13 @@ temporary`; every other torrent is persisted.
   playback tokens for one torrent. The entry point, the API catalog, the
   OpenAPI document and its reference, the cache statistics, the system
   resource, metrics, log records, settings reads, the password, access
-  tokens, and playback tokens for every torrent are served.
+  tokens, playback tokens for every torrent, and the backup download are
+  served.
 - While the engine is unavailable after the torrents are restored,
   operations answered from the application's own records are served:
   torrents, their files, configurations other than lifecycle changes,
-  posters, metainfo, viewings other than their creation, and profiles with
-  their progress and up next.
+  posters, metainfo, viewings other than their creation, profiles with
+  their progress and up next, and the backup download.
 - If the engine stops unexpectedly, the same rules apply until it is ready
   again, and torrents it cannot resume become `failed`.
 
@@ -915,6 +917,99 @@ local filesystem, as [ADR 8](adr/0008-database.md) requires.
 - If the database cannot be opened, for example because it is damaged or
   was written by a newer schema, the application stops with an error naming
   the cause instead of starting without its torrents.
+
+## Backup and restore
+
+A backup is a portable copy of the application's records, for moving them
+to another installation or recovering them: `GET /api/v1/backup` downloads
+one, and `PUT /api/v1/backup` restores one. It holds no torrent data, which
+peers can supply again.
+
+- A backup is a zip archive. Its `backup.json` is the contract's `Backup`:
+  the format version, 1, the application's version, the time it was
+  written, the settings set explicitly, the persisted torrents in creation
+  order, and the profiles with their progress, title progress, temporary
+  torrents' progress, and dismissals. Beside it,
+  `metainfo/{torrent_id}.torrent` holds each torrent file the database
+  keeps, `posters/{torrent_id}` each poster, and `avatars/{profile_id}` each
+  avatar, as their bytes.
+- The archive is an ordinary zip, so other tools can open it or write one:
+  entries are stored or deflated, with ZIP64 where sizes need it, and an
+  encrypted entry is invalid. Directory entries for `metainfo/`,
+  `posters/`, and `avatars/` may be present. The application deflates
+  `backup.json` and stores the other files as they are.
+- It leaves out the password, access tokens, and the key that signs playback
+  tokens, so a backup grants no access, and a restore keeps the
+  application's own. It leaves out the DLNA media server's device UUID as
+  well, which each installation draws once and keeps, so a restore never
+  takes another installation's media server identity; televisions see a
+  restored installation on another computer as a new media server. It
+  leaves out temporary torrents, preloads, viewings, observed state, and the
+  log files too. Torrent files may hold private trackers' passkeys, so a
+  client keeps a backup as a secret.
+- The download is written from one short read transaction to a temporary
+  file in the data directory, so it is consistent even while the records
+  change, and the file is then sent with its length and deleted. One
+  backup is written at a time, and another download waits for it. A backup
+  whose files would exceed the bounds a restore enforces is not written,
+  so every backup the application writes can be restored; the download is
+  then `500 internal-error` naming the bound. A `HEAD` request answers the
+  headers without writing the archive, and so without a length. The
+  download needs no engine and is served in every state, shutdown and
+  restoring included. Too little free space for the file is
+  `507 insufficient-storage`.
+- A restore writes the body, at most 16 GiB, to a temporary file in the
+  data directory as it arrives; too little free space for it is
+  `507 insufficient-storage`. It then checks the archive before anything
+  changes. Each entry's size is checked before it is inflated, so a small
+  archive cannot expand without bound: a torrent file may have 33 MiB, as
+  an upload may, an image 1 MiB, and `backup.json` 512 MiB, and together
+  they may not exceed 16 GiB. `backup.json` must be a `Backup` of a format
+  version the application reads; each ID must be one the application could
+  have issued, of its kind; its torrents' IDs and info hashes, and its
+  profiles' IDs and names, must each be unique; it must hold one device
+  profile, at least one person profile, and no more profiles or title
+  progress than the limits allow; each torrent needs its torrent file or a
+  magnet URI, which must name its info hash, as a creation's would; progress
+  and dismissals must name its torrents, and progress its torrents' files
+  where their metadata is known; each image must have its size and the
+  signature of its media type; text and settings must be valid as they are
+  for a write; and the archive may hold no other entry. A failure is
+  `422 validation-failed`, and nothing changes. Its `pointer` names the
+  member of `backup.json` at fault, or the torrent or profile whose file is
+  missing or invalid; a body that is not a zip archive, or lacks
+  `backup.json`, has a `detail` alone.
+- The records are then replaced in one write transaction, matching torrents
+  by ID. Torrents the backup lacks are deleted as [Deletion](#deletion)
+  describes, their disk data included, even one with the info hash of a
+  torrent the backup holds under another ID, such as one added again since
+  the backup was written. The backup's torrents, profiles, and settings
+  take the place of the current ones, with their IDs and creation times, so
+  links, content URLs, and cursors carry over, and so do the device
+  profile's resume positions that televisions read. A failed write is an
+  `internal-error`, and nothing changes.
+- A torrent the backup holds in disk storage keeps its directory in the
+  download directory; every other entry named like a torrent ID is deleted,
+  as at startup.
+- Configurations and the settings take new ETags, so a conditional request
+  from before the restore fails with `412`. The settings apply at once, as
+  a `PATCH`'s would: the DLNA media server, the DHT, the cache capacity, and
+  the log level follow them, and command-line overrides stay in effect.
+- The response, `204`, follows the write. The application then ends every
+  stream, reader, preload, and viewing, forgets its temporary torrents, and
+  restores the torrents as [Restarts](#restarts) describes: until it is
+  done, `/readyz` returns `503` and the operations that wait for a restore,
+  as [Engine availability](#engine-availability) lists them, return
+  `engine-unavailable`. A torrent in disk storage whose data is missing, as
+  on another computer, checks its files and downloads again; one the engine
+  does not accept is restored as `failed`.
+- A restore needs the engine, so it is `engine-unavailable` while the engine
+  is unavailable, while torrents are restored, and during shutdown. A crash
+  during its write leaves either the records before it or the backup's.
+- Temporary files are named `backup-*.tmp` in the data directory, and those
+  a crash leaves are deleted at the next startup.
+- A restore reads every earlier format version and refuses later ones, so a
+  newer release restores an older release's backup.
 
 ## Settings
 

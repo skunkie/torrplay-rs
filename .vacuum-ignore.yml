@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# Findings vacuum may skip, each with its reason. Keep this list short: a
+# finding listed here no longer fails CI.
+
+oas3-unused-component:
+  # Backup describes backup.json inside the backup archive, which no
+  # OpenAPI construct can reference from an application/zip body.
+  - $.components.schemas['Backup']

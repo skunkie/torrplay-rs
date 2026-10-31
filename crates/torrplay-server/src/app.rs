@@ -13,7 +13,8 @@
 //! taken while a synchronous lock is held, and engine calls stay outside it
 //! wherever their order allows.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime};
@@ -23,7 +24,7 @@ use tokio::sync::watch;
 use torrplay_core::credentials::{AllowedHosts, AttemptLimiter, Credentials};
 use torrplay_core::engine::{CacheStatistics, Engine, EngineError, Source};
 use torrplay_core::id::{FileId, ProfileId, TorrentId, random_torrent_id_bytes};
-use torrplay_core::lifecycle::{Failure, ObservedState, Readiness, StorageMode};
+use torrplay_core::lifecycle::{Configuration, Failure, ObservedState, Readiness, StorageMode};
 use torrplay_core::metadata::Metadata;
 use torrplay_core::profiles::{
     self, DEVICE_PROFILE_NAME, DURATION_MAX_MS, PROFILE_NAME_DEFAULT, Profile, ProfileKind,
@@ -34,8 +35,8 @@ use torrplay_core::settings::{LogLevel, Overrides, Settings};
 use torrplay_dlna::description::Device;
 use torrplay_media::SeekIndex;
 use torrplay_store::{
-    Store, StoreError, StoredCredentials, StoredDismissal, StoredProgress, StoredSettings,
-    StoredTemporaryProgress, StoredTitleProgress, StoredTorrent,
+    ImageReader, Replacement, Store, StoreError, StoredCredentials, StoredDismissal,
+    StoredProgress, StoredSettings, StoredTemporaryProgress, StoredTitleProgress, StoredTorrent,
 };
 
 use crate::inference::{Due, EngineSource, INDEX_TIMEOUT, Inference, PendingIndex};
@@ -51,6 +52,9 @@ pub type SeekIndexes = Arc<dyn Fn(&TorrentId, &FileId) -> Option<SeekIndex> + Se
 /// documents.
 const BODY_TIMEOUT_DEFAULT: Duration = Duration::from_secs(30);
 
+/// Reports a directory's free space, which tests replace.
+pub type FreeBytes = Arc<dyn Fn() -> u64 + Send + Sync>;
+
 /// The source of the current time for credentials' expiry, which tests
 /// replace.
 pub type Clock = Arc<dyn Fn() -> SystemTime + Send + Sync>;
@@ -63,6 +67,12 @@ pub struct App<E> {
     store: Store,
     /// Serializes mutations; see the [module documentation](self).
     writes: tokio::sync::Mutex<()>,
+    /// Serializes writing backups, so one temporary archive exists at a
+    /// time.
+    backup_writes: tokio::sync::Mutex<()>,
+    /// Reports the data directory's free space instead of its filesystem,
+    /// for tests.
+    data_free_bytes: Mutex<Option<FreeBytes>>,
     body_timeout: Duration,
     observations: Mutex<Observations>,
     /// The stored settings, changed under the write lane after the store.
@@ -168,6 +178,8 @@ impl<E: Engine> App<E> {
             viewing: Viewing::default(),
             store,
             writes: tokio::sync::Mutex::new(()),
+            backup_writes: tokio::sync::Mutex::new(()),
+            data_free_bytes: Mutex::new(None),
             body_timeout: BODY_TIMEOUT_DEFAULT,
             observations: Mutex::new(Observations::default()),
             settings: Mutex::new(StoredSettings::default()),
@@ -567,6 +579,18 @@ impl<E: Engine> App<E> {
         temporary_progress: Vec<StoredTemporaryProgress>,
         dismissals: Vec<StoredDismissal>,
     ) -> Self {
+        self.load_viewing(profiles, progress, titles, temporary_progress, dismissals);
+        self
+    }
+
+    fn load_viewing(
+        &self,
+        profiles: Vec<Profile>,
+        progress: Vec<StoredProgress>,
+        titles: Vec<StoredTitleProgress>,
+        temporary_progress: Vec<StoredTemporaryProgress>,
+        dismissals: Vec<StoredDismissal>,
+    ) {
         for profile in profiles {
             self.viewing.set_profile(profile);
         }
@@ -594,7 +618,6 @@ impl<E: Engine> App<E> {
             self.viewing
                 .set_dismissal(&stored.profile, &stored.entry, stored.at);
         }
-        self
     }
 
     /// The profiles, their progress, and their dismissals, once the stored
@@ -781,6 +804,115 @@ impl<E: Engine> App<E> {
         Ok(())
     }
 
+    /// Replaces the records with a backup's, as docs/lifecycle.md describes:
+    /// the store first, in one transaction, then the records in memory, which
+    /// wait for a restore as at startup. The engine's torrents are then
+    /// removed, keeping the disk data of the backup's torrents in disk
+    /// storage, and the backup's torrents restored, in the background.
+    pub(crate) async fn restore_backup(
+        self: &Arc<Self>,
+        restored: crate::backup::Restored,
+        images: ImageReader,
+    ) -> Result<(), Problem> {
+        let _lane = self.write_lane().await;
+        // Another restore, or shutdown, may have begun meanwhile.
+        self.require_engine()?;
+        // New versions differ from every ETag issued before.
+        let version = self
+            .registry
+            .list()
+            .iter()
+            .map(|record| record.configuration.version())
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let mut torrents = Vec::with_capacity(restored.torrents.len());
+        for torrent in restored.torrents {
+            let configuration = Configuration::from_stored(
+                torrent.desired_state,
+                torrent.storage_mode,
+                torrent.library,
+                version,
+            )
+            .ok_or_else(Problem::internal)?;
+            torrents.push(StoredTorrent {
+                id: torrent.id,
+                info_hash: torrent.info_hash,
+                created_at: torrent.created_at,
+                configuration,
+                storage_mode: torrent.storage_mode,
+                magnet_uri: torrent.magnet_uri,
+                metainfo: torrent.metainfo,
+                poster: torrent.poster,
+            });
+        }
+        let settings = StoredSettings {
+            explicit: restored.explicit,
+            version: self.settings().version + 1,
+        };
+        self.store
+            .replace(Replacement {
+                torrents: torrents.clone(),
+                settings: settings.clone(),
+                profiles: restored.profiles.clone(),
+                progress: restored.progress.clone(),
+                titles: restored.titles.clone(),
+                temporary_progress: restored.temporary_progress.clone(),
+                dismissals: restored.dismissals.clone(),
+                images,
+            })
+            .await
+            .map_err(store_failed)?;
+        self.restoring.store(true, Ordering::SeqCst);
+        for record in self.registry.list() {
+            self.registry.remove(record.id.as_str());
+            self.inference.forget_torrent(&record.id);
+            self.forget(&record.id);
+        }
+        self.temporaries.clear();
+        self.viewing.clear();
+        self.load_viewing(
+            restored.profiles,
+            restored.progress,
+            restored.titles,
+            restored.temporary_progress,
+            restored.dismissals,
+        );
+        self.set_settings(settings);
+        let keep: HashSet<TorrentId> = torrents
+            .iter()
+            .filter(|torrent| torrent.storage_mode == StorageMode::Disk)
+            .map(|torrent| torrent.id.clone())
+            .collect();
+        let app = Arc::clone(self);
+        tokio::spawn(async move {
+            if let Err(error) = app.engine.remove_all(&keep).await {
+                tracing::error!(%error, "the engine did not remove the torrents a restore replaced");
+            }
+            // The engine holds no torrent now, so it refuses no capacity.
+            if let Err(error) = app
+                .engine
+                .apply_settings(&app.settings().explicit.effective())
+            {
+                tracing::error!(%error, "the engine did not apply the restored settings");
+            }
+            if let Err(error) = app.apply_dht().await {
+                tracing::error!(%error, "the DHT could not follow the restored settings");
+            }
+            let count = torrents.len();
+            match app.restore(torrents).await {
+                Ok(()) => {
+                    tracing::info!(torrents = count, "a backup was restored");
+                    app.resume_transitions();
+                }
+                Err(error) => {
+                    tracing::error!(%error, "the restored torrents could not be added");
+                }
+            }
+        });
+        Ok(())
+    }
+
     /// Closes the store after the server has stopped writing.
     pub async fn close_store(&self) -> Result<(), StoreError> {
         let _lane = self.writes.lock().await;
@@ -830,6 +962,41 @@ impl<E: Engine> App<E> {
     /// Takes the write lane; see the [module documentation](self).
     pub(crate) async fn write_lane(&self) -> LaneGuard<'_, ()> {
         self.writes.lock().await
+    }
+
+    /// Takes the lane of backups being written.
+    pub(crate) async fn backup_lane(&self) -> LaneGuard<'_, ()> {
+        self.backup_writes.lock().await
+    }
+
+    /// The data directory, which holds the database.
+    pub(crate) fn data_directory(&self) -> PathBuf {
+        self.store
+            .path()
+            .parent()
+            .map_or_else(PathBuf::new, std::path::Path::to_path_buf)
+    }
+
+    /// The data directory's free space, if it can be learned.
+    pub(crate) fn data_free_bytes(&self) -> Option<u64> {
+        let free = self
+            .data_free_bytes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        match free {
+            Some(free) => Some(free()),
+            None => fs4::available_space(self.data_directory()).ok(),
+        }
+    }
+
+    /// Reports the data directory's free space from `free` instead of its
+    /// filesystem, or from the filesystem again, for tests.
+    pub fn set_data_free_bytes(&self, free: Option<FreeBytes>) {
+        *self
+            .data_free_bytes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = free;
     }
 
     /// Why the torrent could not be restored at startup, if it could not.

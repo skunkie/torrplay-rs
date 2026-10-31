@@ -59,6 +59,11 @@ impl Temporaries {
         self.lock().remove(id).map(|temporary| temporary.source)
     }
 
+    /// Forgets every temporary torrent, for a restore.
+    pub(crate) fn clear(&self) {
+        self.lock().clear();
+    }
+
     /// Whether torrent `id` is temporary.
     pub(crate) fn contains(&self, id: &TorrentId) -> bool {
         self.lock().contains_key(id)

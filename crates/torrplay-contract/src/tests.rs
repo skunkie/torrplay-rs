@@ -94,7 +94,7 @@ fn has_invalid_body(found: &[Violation], needle: &str) -> bool {
 #[test]
 fn the_contract_parses_with_every_operation() {
     let contract = fresh();
-    assert_eq!(contract.operations.len(), 68);
+    assert_eq!(contract.operations.len(), 70);
     assert!(
         contract
             .documented_responses()
@@ -728,4 +728,52 @@ fn prose_names_only_documented_responses() {
         }
     }
     assert!(undocumented.is_empty(), "{undocumented:#?}");
+}
+
+/// Backups keep the settings a patch sets, so the two lists of members and
+/// their bounds must not drift apart.
+#[test]
+fn backup_settings_match_the_settings_patch() {
+    let contract = fresh();
+    let properties = |pointer: &str| {
+        contract
+            .document
+            .pointer(pointer)
+            .and_then(Value::as_object)
+            .unwrap()
+            .clone()
+    };
+    let patch = properties("/components/schemas/SettingsPatch/properties");
+    let backup = properties("/components/schemas/Backup/properties/settings/properties");
+    let names =
+        |members: &serde_json::Map<String, Value>| members.keys().cloned().collect::<Vec<_>>();
+    assert_eq!(names(&backup), names(&patch), "the same settings, in order");
+    for (name, patched) in &patch {
+        let backed_up = &backup[name];
+        for bound in [
+            "format",
+            "minimum",
+            "maximum",
+            "minLength",
+            "maxLength",
+            "pattern",
+        ] {
+            assert_eq!(backed_up.get(bound), patched.get(bound), "{name}: {bound}");
+        }
+        // A patch also takes null, to return a setting to its default.
+        let mut types = patched["type"].as_array().unwrap().clone();
+        types.retain(|kind| kind != "null");
+        if name == "log_level" {
+            assert_eq!(backed_up["$ref"], "#/components/schemas/LogLevel");
+            let mut levels = patched["enum"].as_array().unwrap().clone();
+            levels.retain(|level| !level.is_null());
+            assert_eq!(
+                Value::Array(levels),
+                contract.document["components"]["schemas"]["LogLevel"]["enum"],
+                "{name}"
+            );
+        } else {
+            assert_eq!(backed_up["type"], types[0], "{name}: type");
+        }
+    }
 }

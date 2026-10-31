@@ -21,6 +21,7 @@ bytes.workspace = true
 flate2.workspace = true
 chrono.workspace = true
 form_urlencoded.workspace = true
+fs4.workspace = true
 futures-util.workspace = true
 h2.workspace = true
 http-body.workspace = true
@@ -39,6 +40,7 @@ torrplay-stremio.workspace = true
 torrplay-store.workspace = true
 tracing.workspace = true
 url.workspace = true
+zip.workspace = true
 
 [dev-dependencies]
 http.workspace = true
@@ -50,3 +52,4 @@ torrplay-fixtures.workspace = true
 torrplay-media.workspace = true
 torrplay-store = { workspace = true, features = ["test-support"] }
 tracing-subscriber.workspace = true
+zip.workspace = true

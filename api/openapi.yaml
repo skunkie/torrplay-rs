@@ -54,6 +54,8 @@ tags:
       what it streams.
   - name: Settings
     description: The application's settings, which tune streaming and shutdown.
+  - name: Backup
+    description: A portable copy of the application's records, and its restore.
   - name: Authentication
     description: The password, access tokens, and playback tokens.
   - name: Statistics
@@ -99,6 +101,7 @@ paths:
                       log_records: /api/v1/log-records
                       metrics: /metrics
                       settings: /api/v1/settings
+                      backup: /api/v1/backup
                       password: /api/v1/password
                       access_tokens: /api/v1/access-tokens
                       playback_tokens: /api/v1/playback-tokens
@@ -3118,6 +3121,95 @@ paths:
         '503':
           $ref: '#/components/responses/EngineUnavailable'
 
+  /api/v1/backup:
+    get:
+      operationId: getBackup
+      summary: Download a backup
+      description: >-
+        Returns a backup of the application's records as a zip archive: its
+        persisted torrents with their configurations, sources, and posters;
+        its profiles with their avatars, progress, title progress, temporary
+        torrents' progress, and dismissals; and the settings set explicitly.
+        It holds no torrent data, credentials, logs, temporary torrents,
+        preloads, viewings, or the DLNA media server's device UUID. The
+        archive's backup.json is a Backup, and docs/lifecycle.md describes
+        the archive's other files. It is written from one consistent view of
+        the database to a temporary file in the data directory, then sent,
+        and needs no engine; one backup is written at a time, and another
+        download waits for it. A HEAD request answers the headers without
+        writing the archive, and so without Content-Length. Torrent files
+        may carry private trackers' credentials, so a backup is a secret,
+        which a playback token cannot read and caches do not store.
+      tags: [Backup]
+      responses:
+        '200':
+          description: The backup archive.
+          headers:
+            Content-Length:
+              $ref: '#/components/headers/ContentLength'
+            Content-Disposition:
+              $ref: '#/components/headers/BackupDisposition'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptions'
+          content:
+            application/zip:
+              schema:
+                type: string
+                contentMediaType: application/zip
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '507':
+          $ref: '#/components/responses/BackupInsufficientStorage'
+    put:
+      operationId: setBackup
+      summary: Restore a backup
+      description: >-
+        Replaces the application's records with a backup's, as
+        docs/lifecycle.md describes. The whole archive is checked before
+        anything changes, and the records are replaced in one write: torrents
+        the backup lacks are deleted with their data, and the backup's
+        torrents, profiles, and settings take the place of the current ones,
+        matched by ID, and the settings apply at once. The password, access
+        tokens, the key that signs playback tokens, and the DLNA device UUID
+        stay as they are, so a restore never takes another installation's
+        media server identity. The response follows the write; the
+        application then restores the
+        torrents as it does at startup, answering engine-unavailable for
+        torrents and profiles, and /readyz reports when it is done.
+      tags: [Backup]
+      requestBody:
+        description: >-
+          A backup archive, at most 17179869184 bytes, which the server
+          writes to a temporary file in the data directory as it arrives.
+          Larger bodies are content-too-large, a body the data directory has
+          no room for is insufficient-storage, and a body that stops arriving
+          for 30 seconds is request-timeout.
+        required: true
+        content:
+          application/zip:
+            schema:
+              type: string
+              contentMediaType: application/zip
+      responses:
+        '204':
+          description: The backup's records replaced the application's.
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/EngineUnavailable'
+        '507':
+          $ref: '#/components/responses/BackupInsufficientStorage'
+
   /api/v1/password:
     get:
       operationId: getPassword
@@ -3964,6 +4056,14 @@ components:
       schema:
         type: string
       example: attachment; filename="Example Collection.torrent"
+    BackupDisposition:
+      description: >-
+        An attachment named after the time the backup was written, encoded as
+        RFC 6266 specifies.
+      required: true
+      schema:
+        type: string
+      example: attachment; filename="torrplay-backup-20261030T201500Z.zip"
     ContentETag:
       description: A strong validator that identifies the file's bytes.
       required: true
@@ -4525,6 +4625,24 @@ components:
                 detail: >-
                   The torrent's files need 1073740800 bytes, and the download
                   directory has 52428800 free.
+    BackupInsufficientStorage:
+      description: >-
+        The data directory's filesystem has less free space than the backup's
+        temporary file needs. Nothing changed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            full:
+              summary: Too little free space for a backup
+              value:
+                type: tag:skunkie.github.io,2026:torrplay/problems/insufficient-storage
+                title: Insufficient storage
+                status: 507
+                detail: >-
+                  The backup needs 734003200 bytes, and the data directory has
+                  52428800 free.
     InvalidCredentials:
       description: The password does not match.
       content:
@@ -4652,7 +4770,7 @@ components:
         links:
           type: object
           description: Links to the top-level resources, the OpenAPI document, and the API reference.
-          required: [self, torrents, torrent_previews, profiles, cache_statistics, statistics, system, log_records, metrics, settings, password, access_tokens, playback_tokens, service-desc, service-doc, api-catalog]
+          required: [self, torrents, torrent_previews, profiles, cache_statistics, statistics, system, log_records, metrics, settings, backup, password, access_tokens, playback_tokens, service-desc, service-doc, api-catalog]
           properties:
             self:
               type: string
@@ -4704,6 +4822,11 @@ components:
               format: uri-reference
               description: The application's settings.
               examples: [/api/v1/settings]
+            backup:
+              type: string
+              format: uri-reference
+              description: A backup of the application's records, to download or restore.
+              examples: [/api/v1/backup]
             password:
               type: string
               format: uri-reference
@@ -5894,6 +6017,470 @@ components:
           description: The new value, or null for the default, info.
           examples: [debug, null]
 
+    Backup:
+      type: object
+      description: >-
+        The document backup.json in a backup archive. Times are in UTC, as
+        RFC 3339 to the nanosecond, so a restore keeps the listing order.
+      additionalProperties: false
+      required: [format_version, application_version, created_at, settings, torrents, profiles]
+      properties:
+        format_version:
+          type: integer
+          format: int32
+          minimum: 1
+          description: >-
+            The archive format's version, 1. A restore reads every earlier
+            version and refuses later ones.
+          examples: [1]
+        application_version:
+          type: string
+          description: The version of the application that wrote the backup.
+          examples: [0.1.0]
+        created_at:
+          type: string
+          format: date-time
+          description: When the backup was written.
+          examples: ['2026-10-30T20:15:00.123456789Z']
+        settings:
+          type: object
+          additionalProperties: false
+          description: >-
+            The settings set explicitly. An omitted member is unset and takes
+            its default; none is null.
+          properties:
+            piece_wait_seconds:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 600
+              examples: [60]
+              description: The piece_wait_seconds value set explicitly, as Settings names it.
+            idle_reader_timeout_seconds:
+              type: integer
+              format: int32
+              minimum: 0
+              maximum: 3600
+              examples: [30]
+              description: The idle_reader_timeout_seconds value set explicitly, as Settings names it.
+            idle_reader_limit_per_torrent:
+              type: integer
+              format: int32
+              minimum: 0
+              maximum: 64
+              examples: [4]
+              description: The idle_reader_limit_per_torrent value set explicitly, as Settings names it.
+            idle_reader_limit:
+              type: integer
+              format: int32
+              minimum: 0
+              maximum: 256
+              examples: [16]
+              description: The idle_reader_limit value set explicitly, as Settings names it.
+            drain_period_seconds:
+              type: integer
+              format: int32
+              minimum: 0
+              maximum: 25
+              examples: [10]
+              description: The drain_period_seconds value set explicitly, as Settings names it.
+            peer_limit:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 500
+              examples: [50]
+              description: The peer_limit value set explicitly, as Settings names it.
+            cache_capacity_bytes:
+              type: integer
+              format: int64
+              minimum: 4194304
+              maximum: 68719476736
+              examples: [268435456]
+              description: The cache_capacity_bytes value set explicitly, as Settings names it.
+            temporary_idle_seconds:
+              type: integer
+              format: int32
+              minimum: 60
+              maximum: 86400
+              examples: [600]
+              description: The temporary_idle_seconds value set explicitly, as Settings names it.
+            temporary_torrent_limit:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 64
+              examples: [16]
+              description: The temporary_torrent_limit value set explicitly, as Settings names it.
+            temporary_progress_seconds:
+              type: integer
+              format: int32
+              minimum: 86400
+              maximum: 31536000
+              examples: [2592000]
+              description: The temporary_progress_seconds value set explicitly, as Settings names it.
+            background_downloads_enabled:
+              type: boolean
+              examples: [false]
+              description: The background_downloads_enabled value set explicitly, as Settings names it.
+            dlna_enabled:
+              type: boolean
+              examples: [true]
+              description: The dlna_enabled value set explicitly, as Settings names it.
+            dlna_name:
+              type: string
+              minLength: 1
+              maxLength: 64
+              pattern: '^[^\x00-\x1F\x7F]+$'
+              examples: [Living room]
+              description: The dlna_name value set explicitly, as Settings names it.
+            dht_enabled:
+              type: boolean
+              examples: [false]
+              description: The dht_enabled value set explicitly, as Settings names it.
+            log_level:
+              $ref: '#/components/schemas/LogLevel'
+        torrents:
+          type: array
+          description: The persisted torrents, in creation order.
+          items:
+            $ref: '#/components/schemas/BackupTorrent'
+        profiles:
+          type: array
+          description: The profiles, the device profile included.
+          items:
+            $ref: '#/components/schemas/BackupProfile'
+      examples:
+        - format_version: 1
+          application_version: 0.1.0
+          created_at: '2026-10-30T20:15:00.123456789Z'
+          settings:
+            cache_capacity_bytes: 536870912
+            dlna_enabled: true
+          torrents:
+            - id: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+              info_hash:
+                algorithm: sha1
+                value: 0123456789abcdef0123456789abcdef01234567
+              created_at: '2026-10-19T12:00:00.000000001Z'
+              magnet_uri: null
+              configuration:
+                desired_state: started
+                storage_mode: memory
+                title: Example Film
+                kind: movie
+                year: 2010
+                imdb_id: null
+                description: null
+                categories: [Movies]
+                genres: [Animation]
+              poster:
+                media_type: image/jpeg
+                size_bytes: 48213
+                updated_at: '2026-10-19T12:05:00Z'
+          profiles:
+            - id: prf_3kq7xw2mzb6hnd4rjpt5yc4ula
+              name: Default
+              kind: person
+              created_at: '2026-10-19T11:00:00Z'
+              avatar: null
+              progress:
+                - torrent_id: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+                  file_id: fil_xfuperelxpqq4qhvgmtq62qwv4
+                  position_seconds: 1325.5
+                  duration_seconds: 5400.0
+                  viewed_at: null
+                  updated_at: '2026-10-19T20:15:00Z'
+              title_progress:
+                - title_key: tmdb-tv-1399-s1e2
+                  position_seconds: 812.0
+                  duration_seconds: 2760.0
+                  viewed_at: null
+                  updated_at: '2026-10-19T21:05:00Z'
+                  torrent_id: null
+                  file_id: null
+              temporary_progress: []
+              dismissals: []
+            - id: prf_7mzb6hnd4rjpt5yc4ula3kq7xu
+              name: Devices
+              kind: device
+              created_at: '2026-10-19T11:00:00Z'
+              avatar: null
+              progress: []
+              title_progress: []
+              temporary_progress: []
+              dismissals: []
+    BackupTorrent:
+      type: object
+      description: >-
+        A persisted torrent in a backup. Its torrent file is
+        metainfo/{id}.torrent in the archive: always for an upload, and for a
+        magnet URI once its metadata was recorded, without which a restored
+        magnet torrent retrieves it again. Its poster is posters/{id}.
+      additionalProperties: false
+      required: [id, info_hash, created_at, magnet_uri, configuration, poster]
+      properties:
+        id:
+          type: string
+          description: The torrent's ID, which a restore keeps.
+          examples: [trr_7ndq4m2kzb6hxw3rjpt5yc4ula]
+        info_hash:
+          $ref: '#/components/schemas/InfoHash'
+        created_at:
+          type: string
+          format: date-time
+          description: When the torrent was created.
+          examples: ['2026-10-19T12:00:00.000000001Z']
+        magnet_uri:
+          type: [string, 'null']
+          description: >-
+            The magnet URI it was created from, or null for an uploaded
+            torrent file, whose torrent file the archive must then hold.
+          examples: ['magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567']
+        configuration:
+          type: object
+          additionalProperties: false
+          description: Its configuration, always persisted.
+          required: [desired_state, storage_mode, title, kind, year, imdb_id, description, categories, genres]
+          properties:
+            desired_state:
+              $ref: '#/components/schemas/DesiredState'
+            storage_mode:
+              $ref: '#/components/schemas/StorageMode'
+            title:
+              $ref: '#/components/schemas/Title'
+            kind:
+              $ref: '#/components/schemas/ConfiguredKind'
+            year:
+              $ref: '#/components/schemas/Year'
+            imdb_id:
+              $ref: '#/components/schemas/ImdbId'
+            description:
+              $ref: '#/components/schemas/Description'
+            categories:
+              $ref: '#/components/schemas/Categories'
+            genres:
+              $ref: '#/components/schemas/Genres'
+        poster:
+          type: [object, 'null']
+          additionalProperties: false
+          description: Its poster, whose bytes are a file of the archive, or null if it has none.
+          required: [media_type, size_bytes, updated_at]
+          properties:
+            media_type:
+              $ref: '#/components/schemas/ImageMediaType'
+            size_bytes:
+              type: integer
+              format: int64
+              minimum: 1
+              maximum: 1048576
+              description: The poster's size, which its file must have.
+              examples: [48213]
+            updated_at:
+              type: string
+              format: date-time
+              description: When the poster was uploaded.
+              examples: ['2026-10-19T12:05:00Z']
+          examples: [null]
+    BackupProfile:
+      type: object
+      description: >-
+        A profile in a backup, with what belongs to it. Its avatar, if it
+        has one, is avatars/{id} in the archive.
+      additionalProperties: false
+      required: [id, name, kind, created_at, avatar, progress, title_progress, temporary_progress, dismissals]
+      properties:
+        id:
+          type: string
+          description: The profile's ID, which a restore keeps.
+          examples: [prf_3kq7xw2mzb6hnd4rjpt5yc4ula]
+        name:
+          $ref: '#/components/schemas/ProfileName'
+        kind:
+          $ref: '#/components/schemas/ProfileKind'
+        created_at:
+          type: string
+          format: date-time
+          description: When the profile was created.
+          examples: ['2026-10-19T11:00:00Z']
+        avatar:
+          type: [object, 'null']
+          additionalProperties: false
+          description: Its avatar, whose bytes are a file of the archive, or null if it has none.
+          required: [media_type, size_bytes, updated_at]
+          properties:
+            media_type:
+              $ref: '#/components/schemas/ImageMediaType'
+            size_bytes:
+              type: integer
+              format: int64
+              minimum: 1
+              maximum: 1048576
+              description: The avatar's size, which its file must have.
+              examples: [48213]
+            updated_at:
+              type: string
+              format: date-time
+              description: When the avatar was uploaded.
+              examples: ['2026-10-19T12:05:00Z']
+          examples: [null]
+        progress:
+          type: array
+          description: Its progress in the backup's torrents' files.
+          items:
+            $ref: '#/components/schemas/BackupProgress'
+        title_progress:
+          type: array
+          description: Its title progress.
+          items:
+            $ref: '#/components/schemas/BackupTitleProgress'
+        temporary_progress:
+          type: array
+          description: Its progress in temporary torrents' files, by info hash.
+          items:
+            $ref: '#/components/schemas/BackupTemporaryProgress'
+        dismissals:
+          type: array
+          description: Its dismissed up next entries.
+          items:
+            $ref: '#/components/schemas/BackupDismissal'
+    BackupProgress:
+      type: object
+      description: A profile's progress in a file of a torrent in the backup.
+      additionalProperties: false
+      required: [torrent_id, file_id, position_seconds, duration_seconds, viewed_at, updated_at]
+      properties:
+        torrent_id:
+          type: string
+          description: The torrent, which the backup must hold.
+          examples: [trr_7ndq4m2kzb6hxw3rjpt5yc4ula]
+        file_id:
+          type: string
+          description: The file, which the torrent must hold.
+          examples: [fil_xfuperelxpqq4qhvgmtq62qwv4]
+        position_seconds:
+          type: number
+          format: double
+          minimum: 0
+          description: The position in the file, to the millisecond, at most its duration.
+          examples: [1325.5]
+        duration_seconds:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+          maximum: 1000000
+          description: The file's duration in this progress, to the millisecond.
+          examples: [5400.0]
+        viewed_at:
+          type: [string, 'null']
+          format: date-time
+          description: When the file last became viewed, or null while it is not.
+          examples: [null]
+        updated_at:
+          type: string
+          format: date-time
+          description: When the file's progress was last saved.
+          examples: ['2026-10-19T20:15:00Z']
+    BackupTitleProgress:
+      type: object
+      description: A profile's title progress in a backup.
+      additionalProperties: false
+      required: [title_key, position_seconds, duration_seconds, viewed_at, updated_at, torrent_id, file_id]
+      properties:
+        title_key:
+          type: string
+          pattern: '^(tmdb-movie-[1-9][0-9]{0,9}|tmdb-tv-[1-9][0-9]{0,9}-s(0|[1-9][0-9]{0,3})e(0|[1-9][0-9]{0,3})|imdb-tt[0-9]{7,10}(-s(0|[1-9][0-9]{0,3})e(0|[1-9][0-9]{0,3}))?)$'
+          description: The title key.
+          examples: [tmdb-tv-1399-s1e2]
+        position_seconds:
+          type: number
+          format: double
+          minimum: 0
+          description: The position in the title, to the millisecond, at most its duration.
+          examples: [812.0]
+        duration_seconds:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+          maximum: 1000000
+          description: The title's duration, to the millisecond.
+          examples: [2760.0]
+        viewed_at:
+          type: [string, 'null']
+          format: date-time
+          description: When the title last became viewed, or null if it is not viewed.
+          examples: [null]
+        updated_at:
+          type: string
+          format: date-time
+          description: When the title's progress was last saved.
+          examples: ['2026-10-19T21:05:00Z']
+        torrent_id:
+          type: [string, 'null']
+          description: >-
+            The torrent of the file that played, which need not be in the
+            backup, or null.
+          examples: [null]
+        file_id:
+          type: [string, 'null']
+          description: The file that played, or null; null exactly when torrent_id is.
+          examples: [null]
+    BackupTemporaryProgress:
+      type: object
+      description: A profile's progress in a file of a temporary torrent, kept by its info hash.
+      additionalProperties: false
+      required: [info_hash, file_id, position_seconds, duration_seconds, viewed_at, updated_at]
+      properties:
+        info_hash:
+          $ref: '#/components/schemas/InfoHash'
+        file_id:
+          type: string
+          description: The temporary torrent's file.
+          examples: [fil_xfuperelxpqq4qhvgmtq62qwv4]
+        position_seconds:
+          type: number
+          format: double
+          minimum: 0
+          description: The position in the temporary file, to the millisecond, at most its duration.
+          examples: [61.0]
+        duration_seconds:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+          maximum: 1000000
+          description: The temporary file's duration, to the millisecond.
+          examples: [5400.0]
+        viewed_at:
+          type: [string, 'null']
+          format: date-time
+          description: When the temporary file last became viewed, or null while it is not.
+          examples: [null]
+        updated_at:
+          type: string
+          format: date-time
+          description: >-
+            When the temporary file's progress was last saved, from which its retention,
+            temporary_progress_seconds, counts.
+          examples: ['2026-10-29T20:15:00Z']
+    BackupDismissal:
+      type: object
+      description: A dismissed up next entry in a backup.
+      additionalProperties: false
+      required: [up_next_entry_id, torrent_id, dismissed_at]
+      properties:
+        up_next_entry_id:
+          type: string
+          description: The entry's ID.
+          examples: [upn_5hdq2m7kzb6hxw3rjpt4yc2ula]
+        torrent_id:
+          type: string
+          description: The entry's torrent, which the backup must hold.
+          examples: [trr_7ndq4m2kzb6hxw3rjpt5yc4ula]
+        dismissed_at:
+          type: string
+          format: date-time
+          description: When the entry was dismissed.
+          examples: ['2026-10-20T08:00:00Z']
     TorrentFile:
       type: object
       description: A file listed in a torrent's metadata.

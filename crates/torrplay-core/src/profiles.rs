@@ -371,6 +371,12 @@ struct State {
 }
 
 impl Viewing {
+    /// Forgets every profile with its progress and dismissals, for a
+    /// restore that records others.
+    pub fn clear(&self) {
+        *self.lock() = State::default();
+    }
+
     /// Records a profile, replacing one with its ID.
     pub fn set_profile(&self, profile: Profile) {
         self.lock().profiles.insert(profile.id.clone(), profile);
