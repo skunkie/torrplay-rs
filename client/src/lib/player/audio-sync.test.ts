@@ -207,6 +207,48 @@ describe("AudioSync", () => {
     expect(offset).toBeCloseTo(0.08);
   });
 
+  it("keeps a run's chunks back to back when the output latency changes", async () => {
+    context.outputLatency = 0.08;
+    const decoded: DecodedAudio = async function* () {
+      yield chunk(0);
+      // Chromium revises the latency while audio plays.
+      context.outputLatency = 0.2;
+      yield chunk(0.1);
+    };
+    const audio = sync(decoded);
+    audio.decode(0);
+    media.playing(0);
+    await vi.waitFor(() => expect(context.sources).toHaveLength(2));
+    // The first chunk plays from 10 s, 80 ms in, so it ends at 10.02 s.
+    expect(context.sources[1]?.start.mock.calls[0]?.[0]).toBeCloseTo(10.02);
+  });
+
+  it("resynchronizes on a lasting latency change, and keeps the last one while unknown", async () => {
+    const { decoded, runs } = decodedOf();
+    context.outputLatency = 0.1;
+    const audio = sync(decoded);
+    audio.decode(0);
+    media.playing(0);
+    await vi.waitFor(() => expect(runs).toHaveLength(1));
+
+    const at = async (contextTime: number, videoTime: number) => {
+      context.currentTime = contextTime;
+      media.currentTime = videoTime;
+      media.dispatchEvent(new Event("timeupdate"));
+      await Promise.resolve();
+    };
+    // Right after a start, Chromium reports no latency yet.
+    context.outputLatency = 0;
+    await at(11, 1);
+    await at(11.3, 1.3);
+    expect(runs).toHaveLength(1);
+
+    context.outputLatency = 0.3;
+    await at(11.4, 1.4);
+    await at(11.6, 1.6);
+    await vi.waitFor(() => expect(runs).toHaveLength(2));
+  });
+
   it("fades a run in from its first source", async () => {
     const audio = sync(decodedOf().decoded);
     audio.decode(0);

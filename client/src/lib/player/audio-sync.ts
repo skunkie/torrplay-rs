@@ -74,6 +74,12 @@ export class AudioSync {
   /** The video and Web Audio times the current run started at. */
   #epochVideo = 0;
   #epochContext = 0;
+  /** The output latency the current run schedules for. Browsers revise
+   * it while audio plays, so chunks scheduled for its changing value would
+   * overlap or leave gaps; drift observation resynchronizes on a lasting
+   * change. Right after a start, Chromium reports zero until it knows, so
+   * the last value known stands in. */
+  #latency = 0;
   #scheduledUntil = 0;
   /** When a run of drift within the hard threshold began, in Web Audio
    * time. */
@@ -226,8 +232,9 @@ export class AudioSync {
     if (!this.decoding || this.#failed || this.#media.paused || context?.state !== "running") {
       return;
     }
-    const expected =
-      this.#epochVideo + (contextTime - this.#epochContext) * this.#media.playbackRate;
+    // The output now plays what was scheduled the current latency ago.
+    const heard = contextTime - (outputLatency(context) || this.#latency) + this.#latency;
+    const expected = this.#epochVideo + (heard - this.#epochContext) * this.#media.playbackRate;
     const drift = Math.abs(videoTime - expected);
     if (drift > HARD_DRIFT_SECONDS) {
       this.#driftSince = undefined;
@@ -308,6 +315,7 @@ export class AudioSync {
     const context = this.#ensureContext();
     this.#epochVideo = videoTime;
     this.#epochContext = contextTime ?? context.currentTime;
+    this.#latency = outputLatency(context) || this.#latency;
     this.#scheduledUntil = context.currentTime;
     const gain = context.createGain();
     gain.gain.value = 0;
@@ -356,8 +364,7 @@ export class AudioSync {
       chunk.close();
     }
     const rate = this.#media.playbackRate;
-    const at =
-      this.#epochContext + (chunk.timestamp - this.#epochVideo) / rate - outputLatency(context);
+    const at = this.#epochContext + (chunk.timestamp - this.#epochVideo) / rate - this.#latency;
     const length = chunk.duration / rate;
     if (!gain || at + length < context.currentTime) return;
 
