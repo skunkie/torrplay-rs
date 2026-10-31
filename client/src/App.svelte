@@ -8,8 +8,8 @@ SPDX-License-Identifier: MIT
   import { type Backend, httpBackend } from "./lib/backend";
   import { provideBackend } from "./lib/context";
   import { here, location, navigate, startNavigation } from "./lib/navigation.svelte";
-  import { match } from "./lib/routes";
   import { chooseProfile, loadProfiles, profiles, resetProfiles } from "./lib/profile.svelte";
+  import { match } from "./lib/routes";
   import { session, signOut } from "./lib/session.svelte";
   import HomePage from "./pages/HomePage.svelte";
   import LibraryPage from "./pages/LibraryPage.svelte";
@@ -51,7 +51,7 @@ SPDX-License-Identifier: MIT
   });
 </script>
 
-<header class="bg-surface-raised flex items-center gap-4 px-4 py-3">
+<header class="flex items-center gap-4 bg-surface-raised px-4 py-3">
   <a href="/" class="text-lg font-semibold">TorrPlay</a>
   <nav class="flex gap-4" aria-label="Main">
     <a href="/library" aria-current={page?.name === "library" ? "page" : undefined}>Library</a>
@@ -67,7 +67,7 @@ SPDX-License-Identifier: MIT
             const chosen = profiles.people?.find((profile) => profile.id === id);
             if (chosen) chooseProfile(chosen);
           }}
-          class="bg-surface rounded-md px-2 py-1"
+          class="rounded-md bg-surface px-2 py-1"
         >
           {#each profiles.people as profile (profile.id)}
             <option value={profile.id}>{profile.name}</option>

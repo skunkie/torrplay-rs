@@ -6,16 +6,16 @@ SPDX-License-Identifier: MIT
 <script lang="ts">
   import { ApiError } from "../lib/api/http";
   import {
+    cursorOf,
     type PlaybackGrant,
     type TorrentPage,
     type TorrentQuery,
-    cursorOf,
   } from "../lib/backend";
   import { useBackend } from "../lib/context";
+  import { formatQuery, parseQuery } from "../lib/library-query";
   import { location, replaceQuery } from "../lib/navigation.svelte";
   import { PlaybackGrants, withGrant } from "../lib/playback";
   import { poll } from "../lib/poll";
-  import { formatQuery, parseQuery } from "../lib/library-query";
   import LibraryView from "./LibraryView.svelte";
 
   const PAGE_SIZE = 60;

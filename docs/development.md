@@ -149,10 +149,15 @@ pnpm build
 `client/src/lib/api/schema.d.ts` from `api/openapi.yaml` with
 openapi-typescript; rerun it after changing the contract, since CI fails when
 the committed file differs from its output. `pnpm check` type-checks with
-svelte-check, `pnpm lint` runs ESLint and
-checks Prettier's formatting (`pnpm format` applies it), `pnpm test` runs
-Vitest, and `pnpm build` writes the production bundle to `client/dist`. CI
-runs the same commands. Pin new dependencies to exact versions at least two
+svelte-check, and `pnpm lint` runs ESLint, checks Prettier's formatting
+(`pnpm format` applies it), and runs knip, which reports unused files,
+exports, and dependencies. Besides the recommended TypeScript and Svelte
+rules, ESLint sorts imports and exports, keeps one TypeScript style, and
+checks Tailwind classes: their order, that each exists, and that colors
+come from the theme's tokens in `src/app.css`, which removes Tailwind's
+palette; `pnpm exec eslint . --fix` sorts and rewrites what it can.
+`pnpm test` runs Vitest, and `pnpm build` writes the production bundle to
+`client/dist`. CI runs the same commands. Pin new dependencies to exact versions at least two
 weeks old.
 
 `torrplay` serves the bundle at `/`, outside the API's paths, through its

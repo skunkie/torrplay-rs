@@ -4,14 +4,14 @@
 
 /** The client's pages, by name, each with its path pattern. A `:name`
  * segment matches one path segment and is passed to the page decoded. */
-export const routes = {
+const routes = {
   home: "/",
   library: "/library",
   title: "/titles/:torrent_id",
   signIn: "/sign-in",
 } as const;
 
-export type RouteName = keyof typeof routes;
+type RouteName = keyof typeof routes;
 
 /** A path the route table matched: the page's name and its parameters. */
 export interface Match {

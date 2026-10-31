@@ -5,9 +5,9 @@
 import {
   ApiError,
   type Conditional,
+  conditional,
   type Http,
   type Schemas,
-  conditional,
   unwrap,
 } from "./api/http";
 

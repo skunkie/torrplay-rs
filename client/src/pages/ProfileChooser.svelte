@@ -25,7 +25,7 @@ SPDX-License-Identifier: MIT
           onclick={() => onchoose(profile)}
         >
           <span
-            class="bg-surface-raised flex h-20 w-20 items-center justify-center rounded-full text-3xl"
+            class="flex size-20 items-center justify-center rounded-full bg-surface-raised text-3xl"
             aria-hidden="true"
           >
             {profile.name.slice(0, 1).toUpperCase()}
@@ -35,5 +35,5 @@ SPDX-License-Identifier: MIT
       </li>
     {/each}
   </ul>
-  <p class="text-text-muted text-sm">This device remembers the choice; switch from the header.</p>
+  <p class="text-sm text-text-muted">This device remembers the choice; switch from the header.</p>
 </section>

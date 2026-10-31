@@ -15,7 +15,7 @@ SPDX-License-Identifier: MIT
 </script>
 
 <form
-  class="bg-surface-raised mx-auto mt-16 flex max-w-sm flex-col gap-4 rounded-lg p-6"
+  class="mx-auto mt-16 flex max-w-sm flex-col gap-4 rounded-lg bg-surface-raised p-6"
   onsubmit={(event) => {
     event.preventDefault();
     onsubmit(password);
@@ -33,7 +33,7 @@ SPDX-License-Identifier: MIT
       bind:value={password}
       aria-invalid={error !== undefined}
       aria-describedby={error ? "sign-in-error" : undefined}
-      class="bg-surface rounded-md px-3 py-2"
+      class="rounded-md bg-surface px-3 py-2"
     />
   </label>
   {#if error}
@@ -42,7 +42,7 @@ SPDX-License-Identifier: MIT
   <button
     type="submit"
     disabled={busy || password === ""}
-    class="bg-accent text-surface rounded-md px-4 py-2 font-medium disabled:opacity-50"
+    class="rounded-md bg-accent px-4 py-2 font-medium text-surface disabled:opacity-50"
   >
     {busy ? "Signing in…" : "Sign in"}
   </button>

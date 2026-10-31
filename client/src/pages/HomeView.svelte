@@ -30,7 +30,7 @@ SPDX-License-Identifier: MIT
 
 <div class="flex flex-col gap-8">
   {#if error}
-    <div role="alert" class="bg-surface-raised flex items-center gap-3 rounded-md p-3">
+    <div role="alert" class="flex items-center gap-3 rounded-md bg-surface-raised p-3">
       <span>{error}</span>
       <button type="button" class="text-accent underline" onclick={onretry}>Try again</button>
     </div>
@@ -58,11 +58,11 @@ SPDX-License-Identifier: MIT
                 <span class="line-clamp-1 text-sm">{subject}</span>
               {/if}
             </a>
-            <span class="text-text-muted flex items-center justify-between gap-2 text-sm">
+            <span class="flex items-center justify-between gap-2 text-sm text-text-muted">
               {entryReason(entry)}
               <button
                 type="button"
-                class="hover:text-text rounded px-1"
+                class="rounded-sm px-1 hover:text-text"
                 aria-label="Remove {torrentTitle(entry.torrent)} from up next"
                 title="Remove from up next"
                 onclick={() => ondismiss(entry)}
@@ -79,7 +79,7 @@ SPDX-License-Identifier: MIT
   <section aria-labelledby="recent" class="flex flex-col gap-3">
     <div class="flex items-baseline gap-4">
       <h2 id="recent" class="text-xl font-semibold">Recently added</h2>
-      <a href="/library" class="text-accent text-sm underline">See the library</a>
+      <a href="/library" class="text-sm text-accent underline">See the library</a>
     </div>
     {#if recent === undefined}
       <p class="text-text-muted" role="status">Loading…</p>
@@ -92,7 +92,7 @@ SPDX-License-Identifier: MIT
             <a href={titlePath(torrent.id)} class="flex flex-col gap-1 rounded-md">
               <Poster url={poster(torrent)} title={torrentTitle(torrent)} />
               <span class="line-clamp-2 font-medium">{torrentTitle(torrent)}</span>
-              <span class="text-text-muted text-sm">{torrentDetails(torrent)}</span>
+              <span class="text-sm text-text-muted">{torrentDetails(torrent)}</span>
             </a>
           </li>
         {/each}
