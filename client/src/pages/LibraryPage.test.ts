@@ -6,45 +6,11 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import type { Conditional } from "../lib/api/http";
-import type { Backend, PageRequest, Torrent, TorrentPage, TorrentQuery } from "../lib/backend";
+import type { PageRequest, Torrent, TorrentPage, TorrentQuery } from "../lib/backend";
 import { backendContext } from "../lib/context";
 import { location, navigate } from "../lib/navigation.svelte";
+import { fakeBackend, torrent } from "../testing";
 import LibraryPage from "./LibraryPage.svelte";
-
-function torrent(n: number, members: Partial<Torrent> = {}): Torrent {
-  const id = `trr_${String(n).padStart(26, "a")}`;
-  return {
-    id,
-    name: `Name ${n}`,
-    info_hashes: [],
-    observed_state: "downloading",
-    storage_mode: "memory",
-    retention: "persisted",
-    size_bytes: 1,
-    file_count: 1,
-    created_at: "2026-10-31T00:00:00Z",
-    failure: null,
-    storage_transition: null,
-    storage_failure: null,
-    title: `Title ${n}`,
-    kind: "movie",
-    year: 2026,
-    imdb_id: null,
-    description: null,
-    categories: [],
-    genres: [],
-    poster: null,
-    links: {
-      self: `/api/v1/torrents/${id}`,
-      configuration: "",
-      files: "",
-      statistics: "",
-      poster: `/api/v1/torrents/${id}/poster`,
-      metainfo: "",
-    },
-    ...members,
-  };
-}
 
 function page(items: Torrent[], next?: string): TorrentPage {
   return {
@@ -64,17 +30,16 @@ function page(items: Torrent[], next?: string): TorrentPage {
 /** A backend that answers listings with `answer` and records the calls. */
 function backend(answer: (query: TorrentQuery, page: PageRequest) => Conditional<TorrentPage>) {
   const calls: [TorrentQuery, PageRequest][] = [];
-  const fake: Backend = {
+  const fake = fakeBackend({
     async listTorrents(query, request) {
       calls.push([query, request]);
       return answer(query, request);
     },
-    signIn: vi.fn(),
     playbackGrant: async () => ({
       token: "tpk_test",
       expiresAt: new Date(Date.now() + 86_400_000),
     }),
-  };
+  });
   return { fake, calls };
 }
 

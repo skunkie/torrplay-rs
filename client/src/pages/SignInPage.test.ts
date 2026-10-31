@@ -10,10 +10,11 @@ import type { Backend } from "../lib/backend";
 import { backendContext } from "../lib/context";
 import { location, navigate } from "../lib/navigation.svelte";
 import { session, signOut } from "../lib/session.svelte";
+import { fakeBackend } from "../testing";
 import SignInPage from "./SignInPage.svelte";
 
 function backend(signIn: Backend["signIn"]): Backend {
-  return { listTorrents: vi.fn(), signIn, playbackGrant: vi.fn() };
+  return fakeBackend({ signIn });
 }
 
 async function submit(password: string): Promise<void> {
