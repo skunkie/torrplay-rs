@@ -1173,12 +1173,23 @@ async fn follow_log_level(mut level: tokio::sync::watch::Receiver<LogLevel>, con
 
 /// Waits until no stream is in progress, for at most `period`.
 async fn drain(engine: &LibrqbitEngine, period: Duration) {
-    let streaming = || {
+    let streams = || {
         engine
             .playback()
             .map(|playback| playback.stats())
-            .is_some_and(|stats| stats.readers > stats.idle_readers)
+            .map_or(0, |stats| stats.readers.saturating_sub(stats.idle_readers))
     };
+    let streaming = || streams() > 0;
+    let active = streams();
+    if active == 0 {
+        return;
+    }
+    // A player left open keeps its stream going, so say why stopping waits.
+    tracing::info!(
+        streams = active,
+        drain_seconds = period.as_secs(),
+        "waiting for streams in progress to finish"
+    );
     let _ = tokio::time::timeout(period, async {
         while streaming() {
             tokio::time::sleep(DRAIN_POLL).await;
