@@ -128,6 +128,11 @@ async fn page_paths_get_the_client_and_others_are_not_found() {
             .header(header::CONTENT_SECURITY_POLICY)
             .expect("a policy");
         assert!(policy.contains("frame-ancestors 'none'"), "{policy}");
+        // The audio decoders compile WebAssembly, never JavaScript.
+        assert!(
+            policy.contains("script-src 'self' 'wasm-unsafe-eval';"),
+            "{policy}"
+        );
     }
     for path in [
         "/assets/missing.js",

@@ -8,9 +8,48 @@ import { beforeAll, beforeEach, expect, it, vi } from "vitest";
 import App from "../App.svelte";
 import type { Backend, Progress, Torrent, TorrentFile } from "../lib/backend";
 import { navigate } from "../lib/navigation.svelte";
+import type * as Audio from "../lib/player/audio";
+import type { AudioTrack } from "../lib/player/audio";
 import { resetProfiles } from "../lib/profile.svelte";
 import { watchPath } from "../lib/routes";
 import { fakeBackend, file, profile, progress, torrent } from "../testing";
+
+const probed = vi.hoisted(() => ({ tracks: [] as AudioTrack[] }));
+const decoding = vi.hoisted(() => ({ tracks: [] as number[], works: true }));
+
+vi.mock("../lib/player/audio", async (original) => ({
+  ...(await original<typeof Audio>()),
+  probeAudio: async () => ({
+    tracks: probed.tracks,
+    decoded: async function* () {
+      yield* [];
+    },
+    dispose: () => {},
+  }),
+}));
+
+vi.mock("../lib/player/audio-sync", () => ({
+  AudioSync: class {
+    decode(track: number) {
+      decoding.tracks.push(track);
+      return decoding.works;
+    }
+    native = () => {};
+    destroy = () => {};
+  },
+}));
+
+function audioTrack(language: string, overrides: Partial<AudioTrack> = {}): AudioTrack {
+  return {
+    name: undefined,
+    language,
+    codec: "aac",
+    codecString: "mp4a.40.2",
+    channels: 2,
+    isDefault: false,
+    ...overrides,
+  };
+}
 
 const ana = profile(1, "Ana");
 const show = torrent(1, { kind: "series", title: "Harbor Lights", file_count: 2 });
@@ -59,6 +98,13 @@ beforeAll(async () => {
 beforeEach(() => {
   resetProfiles();
   localStorage.clear();
+  probed.tracks = [];
+  decoding.tracks = [];
+  decoding.works = true;
+  // jsdom plays no codec; this browser plays AAC, as every one does.
+  vi.spyOn(HTMLMediaElement.prototype, "canPlayType").mockImplementation((type) =>
+    type.includes("mp4a.40.2") ? "probably" : "",
+  );
 });
 
 it("plays the file with a playback token and resumes where the profile stopped", async () => {
@@ -108,4 +154,43 @@ it("says when the file is not in the torrent", async () => {
   expect(await screen.findByRole("alert", {}, { timeout: 10_000 })).toHaveTextContent(
     "This file is not in the torrent.",
   );
+});
+
+it("offers the file's audio tracks and decodes the one chosen", async () => {
+  probed.tracks = [
+    audioTrack("eng", { isDefault: true }),
+    audioTrack("rus", { codec: "ac3", codecString: "ac-3", channels: 6 }),
+  ];
+  navigate(watchPath(show.id, e1.id));
+  render(App, { backend: backend(show, [e1, e2]) });
+  await video();
+  const menu = await screen.findByRole("combobox", { name: "Audio track" });
+  expect([...menu.querySelectorAll("option")].map((option) => option.textContent)).toEqual([
+    "English (AAC, Stereo)",
+    "Russian (AC-3, 5.1)",
+  ]);
+  await fireEvent.change(menu, { target: { value: "1" } });
+  expect(decoding.tracks).toEqual([1]);
+  expect(screen.queryByText("This audio track could not be played.")).not.toBeInTheDocument();
+});
+
+it("says when a chosen audio track cannot be played", async () => {
+  probed.tracks = [audioTrack("eng"), audioTrack("rus")];
+  decoding.works = false;
+  navigate(watchPath(show.id, e1.id));
+  render(App, { backend: backend(show, [e1, e2]) });
+  await video();
+  const menu = await screen.findByRole("combobox", { name: "Audio track" });
+  await fireEvent.change(menu, { target: { value: "1" } });
+  expect(await screen.findByText("This audio track could not be played.")).toBeInTheDocument();
+  expect((menu as HTMLSelectElement).value).toBe("0");
+});
+
+it("offers no menu for a file with one audio track", async () => {
+  probed.tracks = [audioTrack("eng")];
+  navigate(watchPath(show.id, e1.id));
+  render(App, { backend: backend(show, [e1, e2]) });
+  await video();
+  await Promise.resolve();
+  expect(screen.queryByRole("combobox", { name: "Audio track" })).not.toBeInTheDocument();
 });

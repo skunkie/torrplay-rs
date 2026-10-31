@@ -19,6 +19,9 @@ export default defineConfig({
     assetsDir: "assets",
     outDir: "dist",
     emptyOutDir: true,
+    // The AC-3 and DTS decoders, about 1.1 and 1.6 MB, load only for a
+    // track that needs them.
+    chunkSizeWarningLimit: 2048,
   },
   server: {
     proxy: Object.fromEntries(["/api", "/livez", "/readyz"].map((path) => [path, application])),

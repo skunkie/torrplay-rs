@@ -353,6 +353,15 @@ of each.
   an MP4 file's sample tables, or a Matroska file's cues. The application
   reads it to map byte offsets to playback times and back.
 
+**Audio track**
+: One of a media file's audio streams, such as a language or a commentary,
+  with its codec and channels. The container declares one the default.
+
+**Decoded audio**
+: An audio track the client decodes itself and plays in sync with the
+  video, for a codec the browser cannot play or a track it cannot switch
+  to.
+
 **Avatar**
 : An image a client uploads to show a profile, under a poster's rules.
 

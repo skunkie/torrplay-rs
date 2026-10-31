@@ -42,9 +42,10 @@ const HASHED: &str = "assets/";
 
 const IMMUTABLE: HeaderValue = HeaderValue::from_static("public, max-age=31536000, immutable");
 
-/// Allows the client its own origin, and media and workers from blob URLs,
-/// which the player's audio path creates.
-const POLICY: &str = "default-src 'self'; script-src 'self'; \
+/// Allows the client its own origin, media and workers from blob URLs, and
+/// compiling WebAssembly, which the player's audio decoders need; it still
+/// forbids evaluating JavaScript from strings.
+const POLICY: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; \
     style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; \
     media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self'; \
     object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";

@@ -48,7 +48,10 @@
     "printWidth": 100
   },
   "dependencies": {
+    "@mediabunny/ac3": "1.61.6",
+    "@mediabunny/dts": "1.61.6",
     "@videojs/html": "10.1.0",
+    "mediabunny": "1.61.6",
     "openapi-fetch": "0.17.0"
   }
 }

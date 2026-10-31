@@ -281,7 +281,7 @@ These scenarios accept serving the [web client](adr/0011-web-client.md)
 | ID | Scenario | Expected |
 |---|---|---|
 | WEB-01 | GET a script of the bundle that Vite named by its content, again with its ETag, with `HEAD`, and a file it did not name so | `200` with its media type, `nosniff`, a strong ETag, and a year's immutable caching; `304`; the headers and length without a body; `no-cache` |
-| WEB-02 | GET `/`, page paths, a missing file, paths under `/api`, `/dlna`, `/stremio`, `/.well-known`, and `/livez`, and POST a page path | `index.html` with `no-cache` and the client's Content-Security-Policy for each page; `404 not-found` for the rest |
+| WEB-02 | GET `/`, page paths, a missing file, paths under `/api`, `/dlna`, `/stremio`, `/.well-known`, and `/livez`, and POST a page path | `index.html` with `no-cache` and the client's Content-Security-Policy for each page, which allows compiling WebAssembly but not evaluating JavaScript (`script-src 'self' 'wasm-unsafe-eval'`); `404 not-found` for the rest |
 | WEB-03 | GET a page and a script with a password set, and a page path without a bundle | `200` without a credential, while the API still needs one; `404 not-found` |
 
 ### Settings

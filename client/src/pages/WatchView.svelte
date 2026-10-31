@@ -29,12 +29,40 @@ SPDX-License-Identifier: MIT
     onplayed: (sample: Sample) => void;
     /** Playback paused or ended, or the page is closing (`closing`). */
     onflush: (sample: Sample, closing: boolean) => void;
+    /** The file's audio tracks, by label, offered when there are several. */
+    tracks: string[];
+    /** The index of the audio track playing. */
+    track: number;
+    /** Whether the audio track chosen last could not be played. */
+    trackFailed: boolean;
+    ontrack: (index: number) => void;
+    /** The media element appeared, or left with `undefined`. */
+    onmedia: (media: HTMLMediaElement | undefined) => void;
   }
 
-  let { url, title, subtitle, startAt, backHref, next, error, onplayed, onflush }: Props = $props();
+  let {
+    url,
+    title,
+    subtitle,
+    startAt,
+    backHref,
+    next,
+    error,
+    onplayed,
+    onflush,
+    tracks,
+    track,
+    trackFailed,
+    ontrack,
+    onmedia,
+  }: Props = $props();
 
   let video = $state<HTMLVideoElement>();
   let ended = $state(false);
+
+  $effect(() => {
+    onmedia(video);
+  });
 
   $effect(() => {
     if (video && url) seekWhenReady(video, startAt);
@@ -67,7 +95,27 @@ SPDX-License-Identifier: MIT
         <p class="truncate text-sm opacity-80">{subtitle}</p>
       {/if}
     </div>
+    {#if tracks.length > 1}
+      <select
+        aria-label={t().audio.track}
+        value={track}
+        onchange={(event) => {
+          ontrack(Number(event.currentTarget.value));
+          // A track that fails at once returns to the one before without
+          // changing `track`, which the menu would not show.
+          event.currentTarget.value = String(track);
+        }}
+        class="ml-auto max-w-1/2 truncate rounded-md bg-player px-2 py-1"
+      >
+        {#each tracks as label, index (index)}
+          <option value={index}>{label}</option>
+        {/each}
+      </select>
+    {/if}
   </div>
+  {#if trackFailed}
+    <p role="status" class="px-4 pb-2 text-sm opacity-80">{t().audio.failed}</p>
+  {/if}
 
   {#if error}
     <p role="alert" class="m-auto p-4">{error}</p>

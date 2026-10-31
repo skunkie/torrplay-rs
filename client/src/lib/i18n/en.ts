@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
+import { plural } from "./plural";
+
 /** The client's messages in American English, the source language. Their
  * type is the shape every other language's messages must have. */
 export const en = {
@@ -39,6 +41,15 @@ export const en = {
     fileNotFound: "This file is not in the torrent.",
     finished: "Finished",
     playNext: "Play",
+  },
+  audio: {
+    track: "Audio track",
+    mono: "Mono",
+    stereo: "Stereo",
+    channels: (count: number) =>
+      `${count}\u00A0${plural("en-US", count, { one: "channel", other: "channels" })}`,
+    unknownLanguage: "Unknown language",
+    failed: "This audio track could not be played.",
   },
   home: {
     upNext: "Up next",
