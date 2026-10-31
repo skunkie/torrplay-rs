@@ -51,6 +51,15 @@ export const en = {
     unknownLanguage: "Unknown language",
     failed: "This audio track could not be played.",
   },
+  subtitles: {
+    track: "Subtitles",
+    off: "Off",
+    forced: "forced",
+    sdh: "SDH",
+    commentary: "commentary",
+    unsupported: "not supported",
+    failed: "These subtitles could not be loaded.",
+  },
   home: {
     upNext: "Up next",
     upNextEmpty: "Nothing to resume. What you start watching appears here.",

@@ -357,6 +357,10 @@ of each.
 : One of a media file's audio streams, such as a language or a commentary,
   with its codec and channels. The container declares one the default.
 
+**Subtitle track**
+: Timed text shown over a video: a text track inside its Matroska file, or a
+  subtitle file beside it in the torrent that its name or folder ties to it.
+
 **Decoded audio**
 : An audio track the client decodes itself and plays in sync with the
   video, for a codec the browser cannot play or a track it cannot switch

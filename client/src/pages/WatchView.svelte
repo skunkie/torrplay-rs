@@ -36,6 +36,14 @@ SPDX-License-Identifier: MIT
     /** Whether the audio track chosen last could not be played. */
     trackFailed: boolean;
     ontrack: (index: number) => void;
+    /** The file's subtitle tracks, by label, and whether each is one the
+     * player cannot show. */
+    subtitleTracks: { label: string; unsupported: boolean }[];
+    /** The index of the subtitle track shown, or -1 while they are off. */
+    subtitleTrack: number;
+    subtitlesFailed: boolean;
+    /** Shows subtitle track `index`, or none for -1. */
+    onsubtitles: (index: number) => void;
     /** The media element appeared, or left with `undefined`. */
     onmedia: (media: HTMLMediaElement | undefined) => void;
   }
@@ -54,6 +62,10 @@ SPDX-License-Identifier: MIT
     track,
     trackFailed,
     ontrack,
+    subtitleTracks,
+    subtitleTrack,
+    subtitlesFailed,
+    onsubtitles,
     onmedia,
   }: Props = $props();
 
@@ -95,6 +107,7 @@ SPDX-License-Identifier: MIT
         <p class="truncate text-sm opacity-80">{subtitle}</p>
       {/if}
     </div>
+    <div class="ml-auto"></div>
     {#if tracks.length > 1}
       <select
         aria-label={t().audio.track}
@@ -105,14 +118,34 @@ SPDX-License-Identifier: MIT
           // changing `track`, which the menu would not show.
           event.currentTarget.value = String(track);
         }}
-        class="ml-auto max-w-1/2 truncate rounded-md bg-player px-2 py-1"
+        class="max-w-1/3 truncate rounded-md bg-player px-2 py-1"
       >
         {#each tracks as label, index (index)}
           <option value={index}>{label}</option>
         {/each}
       </select>
     {/if}
+    {#if subtitleTracks.length}
+      <select
+        aria-label={t().subtitles.track}
+        value={subtitleTrack}
+        onchange={(event) => onsubtitles(Number(event.currentTarget.value))}
+        class="max-w-1/3 truncate rounded-md bg-player px-2 py-1"
+      >
+        <option value={-1}>{t().subtitles.off}</option>
+        {#each subtitleTracks as subtitle, index (index)}
+          <option value={index} disabled={subtitle.unsupported}
+            >{subtitle.unsupported
+              ? `${subtitle.label} — ${t().subtitles.unsupported}`
+              : subtitle.label}</option
+          >
+        {/each}
+      </select>
+    {/if}
   </div>
+  {#if subtitlesFailed}
+    <p role="status" class="px-4 pb-2 text-sm opacity-80">{t().subtitles.failed}</p>
+  {/if}
   {#if trackFailed}
     <p role="status" class="px-4 pb-2 text-sm opacity-80">{t().audio.failed}</p>
   {/if}
