@@ -14,6 +14,8 @@ import {
 export type Torrent = Schemas["Torrent"];
 export type TorrentPage = Schemas["TorrentPage"];
 export type TorrentKind = Schemas["TorrentKind"];
+export type TorrentFile = Schemas["TorrentFile"];
+export type Progress = Schemas["Progress"];
 export type Profile = Schemas["Profile"];
 export type UpNextEntry = Schemas["UpNextEntry"];
 export type UpNextPage = Schemas["UpNextPage"];
@@ -45,6 +47,12 @@ export interface PlaybackGrant {
 export interface Backend {
   /** A page of the library's persisted torrents. */
   listTorrents(query: TorrentQuery, page: PageRequest): Promise<Conditional<TorrentPage>>;
+  /** A torrent, or `unchanged` when `etag` is still its ETag. */
+  getTorrent(torrentId: string, etag?: string): Promise<Conditional<Torrent>>;
+  /** Every file of a torrent whose metadata is known, in metadata order. */
+  listFiles(torrentId: string): Promise<TorrentFile[]>;
+  /** A profile's progress of a torrent's files, for files with progress. */
+  listProgress(profileId: string, torrentId: string): Promise<Progress[]>;
   /** Every profile, person and device, oldest first. */
   listProfiles(): Promise<Profile[]>;
   /** The first page of what `profileId` can resume or watch next. */
@@ -89,6 +97,53 @@ export function httpBackend(http: Http): Backend {
           },
         }),
       );
+    },
+
+    async getTorrent(torrentId, etag) {
+      return conditional(
+        await http.GET("/api/v1/torrents/{torrent_id}", {
+          params: {
+            path: { torrent_id: torrentId },
+            ...(etag ? { header: { "If-None-Match": etag } } : {}),
+          },
+        }),
+      );
+    },
+
+    async listFiles(torrentId) {
+      const files: TorrentFile[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = unwrap(
+          await http.GET("/api/v1/torrents/{torrent_id}/files", {
+            params: {
+              path: { torrent_id: torrentId },
+              query: { page_size: 200, ...(cursor ? { cursor } : {}) },
+            },
+          }),
+        );
+        files.push(...page.items);
+        cursor = cursorOf(page.links.next);
+      } while (cursor);
+      return files;
+    },
+
+    async listProgress(profileId, torrentId) {
+      const progress: Progress[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = unwrap(
+          await http.GET("/api/v1/profiles/{profile_id}/torrents/{torrent_id}/progress", {
+            params: {
+              path: { profile_id: profileId, torrent_id: torrentId },
+              query: { page_size: 200, ...(cursor ? { cursor } : {}) },
+            },
+          }),
+        );
+        progress.push(...page.items);
+        cursor = cursorOf(page.links.next);
+      } while (cursor);
+      return progress;
     },
 
     async listProfiles() {

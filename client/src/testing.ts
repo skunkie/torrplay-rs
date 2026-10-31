@@ -4,12 +4,15 @@
 
 import { vi } from "vitest";
 
-import type { Backend, Profile, Torrent, UpNextEntry } from "./lib/backend";
+import type { Backend, Profile, Progress, Torrent, TorrentFile, UpNextEntry } from "./lib/backend";
 
 /** A backend whose operations are mocks, with `members` replacing them. */
 export function fakeBackend(members: Partial<Backend> = {}): Backend {
   return {
     listTorrents: vi.fn(),
+    getTorrent: vi.fn(),
+    listFiles: vi.fn(async () => []),
+    listProgress: vi.fn(async () => []),
     listProfiles: vi.fn(async () => []),
     listUpNext: vi.fn(),
     dismissUpNext: vi.fn(async () => {}),
@@ -108,5 +111,41 @@ export function upNext(
             links: { self: "", profile: "", torrent: "", file: "", content: "" },
           },
     links: { self: "" },
+  };
+}
+
+/** A file of torrent `of` named `name`, a video unless its extension
+ * says otherwise, numbered as `episode`. */
+export function file(
+  of: Torrent,
+  name: string,
+  episode: { season: number; number: number } | null = null,
+): TorrentFile {
+  return {
+    id: `fil_${name
+      .replace(/[^a-z0-9]/gi, "")
+      .toLowerCase()
+      .padEnd(26, "a")
+      .slice(0, 26)}`,
+    path: [of.name ?? "", name],
+    size_bytes: 1,
+    media_type: name.endsWith(".mkv") ? "video/x-matroska" : "text/plain",
+    episode,
+    links: { self: "", content: "", preloads: "", viewings: "", torrent: of.links.self },
+  };
+}
+
+/** A profile's progress of `of` at `ratio` of an hour, or viewed. */
+export function progress(of: TorrentFile, ratio: number | "viewed"): Progress {
+  const viewed = ratio === "viewed";
+  return {
+    file_id: of.id,
+    position_seconds: viewed ? 0 : ratio * 3600,
+    duration_seconds: 3600,
+    completion_ratio: viewed ? 0 : ratio,
+    viewed,
+    viewed_at: viewed ? "2026-10-31T00:00:00Z" : null,
+    updated_at: "2026-10-31T00:00:00Z",
+    links: { self: "", profile: "", torrent: "", file: "", content: "" },
   };
 }

@@ -7,6 +7,7 @@ SPDX-License-Identifier: MIT
   import type { Schemas } from "../lib/api/http";
   import type { Torrent, TorrentKind, TorrentQuery } from "../lib/backend";
   import { torrentDetails, torrentTitle } from "../lib/describe";
+  import { titlePath } from "../lib/routes";
   import Poster from "../components/Poster.svelte";
 
   interface Props {
@@ -163,13 +164,15 @@ SPDX-License-Identifier: MIT
   <ul class="grid grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-4">
     {#each torrents as torrent (torrent.id)}
       {@const url = poster(torrent)}
-      <li class="flex flex-col gap-1">
-        <Poster {url} title={torrentTitle(torrent)} badge={states[torrent.observed_state]} />
-        <span class="line-clamp-2 font-medium">{torrentTitle(torrent)}</span>
-        <span class="text-text-muted text-sm">{torrentDetails(torrent)}</span>
-        {#if states[torrent.observed_state]}
-          <span class="sr-only">{states[torrent.observed_state]}</span>
-        {/if}
+      <li>
+        <a href={titlePath(torrent.id)} class="flex flex-col gap-1 rounded-md">
+          <Poster {url} title={torrentTitle(torrent)} badge={states[torrent.observed_state]} />
+          <span class="line-clamp-2 font-medium">{torrentTitle(torrent)}</span>
+          <span class="text-text-muted text-sm">{torrentDetails(torrent)}</span>
+          {#if states[torrent.observed_state]}
+            <span class="sr-only">{states[torrent.observed_state]}</span>
+          {/if}
+        </a>
       </li>
     {/each}
   </ul>
