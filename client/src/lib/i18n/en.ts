@@ -32,6 +32,13 @@ export const en = {
     episode: (episode: number) => `Episode ${episode}`,
     season: (season: number) => `Season ${season}`,
     specials: "Specials",
+    long: (season: number, episode: number) => `Season ${season}, Episode ${episode}`,
+  },
+  player: {
+    back: "Back",
+    fileNotFound: "This file is not in the torrent.",
+    finished: "Finished",
+    playNext: "Play",
   },
   home: {
     upNext: "Up next",

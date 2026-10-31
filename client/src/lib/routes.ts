@@ -8,6 +8,7 @@ const routes = {
   home: "/",
   library: "/library",
   title: "/titles/:torrent_id",
+  watch: "/watch/:torrent_id/:file_id",
   signIn: "/sign-in",
 } as const;
 
@@ -62,6 +63,11 @@ function split(path: string): string[] {
 /** The title page of a torrent. */
 export function titlePath(torrentId: string): string {
   return `/titles/${encodeURIComponent(torrentId)}`;
+}
+
+/** The player page of a torrent's file. */
+export function watchPath(torrentId: string, fileId: string): string {
+  return `/watch/${encodeURIComponent(torrentId)}/${encodeURIComponent(fileId)}`;
 }
 
 /** Where to go after signing in: the `next` path of `search`, a page's

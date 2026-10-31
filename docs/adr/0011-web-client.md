@@ -39,8 +39,11 @@ seek index. The plan keeps them.
   sliders, tabs, and toasts, with focus trapping and restoration.
 - Tailwind CSS 4 for styling, through design tokens for color, spacing, and
   type, with a dark and a light theme.
-- Vidstack's framework-free web components for the player, and Mediabunny
-  with its AC-3 and DTS decoders for the audio path.
+- Video.js 10's framework-free web components (`@videojs/html`) for the
+  player, wrapping a native `<video>` element, and Mediabunny with its AC-3
+  and DTS decoders for the audio path. Vidstack, which the Go client uses,
+  was the first choice; it is deprecated, with security fixes only until
+  January 2028, and Video.js 10 is its successor from the same teams.
 - SolidJS was the alternative: closer to React's JSX, with a thinner set of
   accessible components.
 
@@ -145,9 +148,12 @@ seek index. The plan keeps them.
 
 These Go client modules move over with their tests, adapted to the new
 contract: the Matroska audio path (`mkv-audio.ts`), the Matroska subtitle
-extractor (`mkv-subtitles.ts`), the video and playback position helpers,
-and the one adapter that reaches Vidstack's media element. Layouts,
-containers, flows, the API layer, and the demo fixtures are new.
+extractor (`mkv-subtitles.ts`), and the video helpers. Progress is saved
+through the API rather than local storage, so the playback position helper
+stays behind. Since the client provides the `<video>` element Video.js
+wraps, the adapter that reached Vidstack's media element becomes one small
+module for the player's media element. Layouts, containers, flows, the API
+layer, and the demo fixtures are new.
 
 ### Testing
 

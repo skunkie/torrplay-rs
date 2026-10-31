@@ -271,6 +271,16 @@ whose name is still exactly `Default`.
 - The page's `<html lang>` follows the chosen language, `en-US` or `ru`, so
   screen readers pronounce the text correctly.
 
+### K. The Player's Own Labels
+
+The player's controls, tooltips, announcements, and error dialogs come from
+Video.js's Russian pack. `client/src/lib/player/labels.ts` replaces only the
+labels that break this skill, such as a missing «ё» (`вперед`), a plain
+space before a unit, or an error that addresses the user (`ваш браузер`);
+other wording stays as the pack has it. When upgrading Video.js, check its
+Russian pack for new or changed labels that break the skill, and replace
+those too.
+
 ---
 
 ## 4. Typography

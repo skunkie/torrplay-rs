@@ -15,6 +15,7 @@ SPDX-License-Identifier: MIT
   } from "../lib/describe";
   import { type Playable, seasons } from "../lib/episodes";
   import { t } from "../lib/i18n/index.svelte";
+  import { watchPath } from "../lib/routes";
 
   interface Props {
     /** The torrent, or `undefined` before it is read. */
@@ -38,24 +39,29 @@ SPDX-License-Identifier: MIT
 
 {#snippet row(item: Playable, label: string, detail: string | undefined)}
   {@const status = progressLabel(item.progress)}
-  <li class="flex flex-col gap-1 rounded-md bg-surface-raised px-3 py-2">
-    <div class="flex items-baseline gap-3">
-      <span class="font-medium">{label}</span>
-      {#if detail}
-        <span class="min-w-0 truncate text-sm text-text-muted">{detail}</span>
-      {/if}
-      {#if status}
-        <span class="ml-auto shrink-0 text-sm text-text-muted">{status}</span>
-      {/if}
-    </div>
-    {#if item.progress && !(item.progress.viewed && item.progress.position_seconds === 0)}
-      <div class="h-1 overflow-hidden rounded-sm bg-surface" aria-hidden="true">
-        <div
-          class="h-full bg-accent"
-          style:width="{Math.round(item.progress.completion_ratio * 100)}%"
-        ></div>
+  <li>
+    <a
+      href={torrent ? watchPath(torrent.id, item.file.id) : undefined}
+      class="flex flex-col gap-1 rounded-md bg-surface-raised px-3 py-2"
+    >
+      <div class="flex items-baseline gap-3">
+        <span class="font-medium">{label}</span>
+        {#if detail}
+          <span class="min-w-0 truncate text-sm text-text-muted">{detail}</span>
+        {/if}
+        {#if status}
+          <span class="ml-auto shrink-0 text-sm text-text-muted">{status}</span>
+        {/if}
       </div>
-    {/if}
+      {#if item.progress && !(item.progress.viewed && item.progress.position_seconds === 0)}
+        <div class="h-1 overflow-hidden rounded-sm bg-surface" aria-hidden="true">
+          <div
+            class="h-full bg-accent"
+            style:width="{Math.round(item.progress.completion_ratio * 100)}%"
+          ></div>
+        </div>
+      {/if}
+    </a>
   </li>
 {/snippet}
 

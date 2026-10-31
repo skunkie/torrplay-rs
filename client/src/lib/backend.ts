@@ -16,6 +16,7 @@ export type TorrentPage = Schemas["TorrentPage"];
 export type TorrentKind = Schemas["TorrentKind"];
 export type TorrentFile = Schemas["TorrentFile"];
 export type Progress = Schemas["Progress"];
+type ProgressUpdate = Schemas["ProgressUpdate"];
 export type Profile = Schemas["Profile"];
 export type UpNextEntry = Schemas["UpNextEntry"];
 export type UpNextPage = Schemas["UpNextPage"];
@@ -53,6 +54,16 @@ export interface Backend {
   listFiles(torrentId: string): Promise<TorrentFile[]>;
   /** A profile's progress of a torrent's files, for files with progress. */
   listProgress(profileId: string, torrentId: string): Promise<Progress[]>;
+  /** Saves where a profile is in a file and returns the progress saved,
+   * whose position the server resets to 0 once the file is viewed. With
+   * `keepalive`, the request outlives the page, as when it closes. */
+  setProgress(
+    profileId: string,
+    torrentId: string,
+    fileId: string,
+    update: ProgressUpdate,
+    options?: { keepalive?: boolean },
+  ): Promise<Progress>;
   /** Every profile, person and device, oldest first. */
   listProfiles(): Promise<Profile[]>;
   /** The first page of what `profileId` can resume or watch next. */
@@ -144,6 +155,16 @@ export function httpBackend(http: Http): Backend {
         cursor = cursorOf(page.links.next);
       } while (cursor);
       return progress;
+    },
+
+    async setProgress(profileId, torrentId, fileId, update, options) {
+      return unwrap(
+        await http.PUT("/api/v1/profiles/{profile_id}/torrents/{torrent_id}/progress/{file_id}", {
+          params: { path: { profile_id: profileId, torrent_id: torrentId, file_id: fileId } },
+          body: update,
+          ...(options?.keepalive ? { keepalive: true } : {}),
+        }),
+      );
     },
 
     async listProfiles() {
