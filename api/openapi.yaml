@@ -390,7 +390,7 @@ paths:
       requestBody:
         description: >-
           A magnet URI in a JSON body of at most 16384 bytes, or a torrent file
-          of at most 10485760 bytes in a multipart form. Larger bodies are
+          of at most 34603008 bytes in a multipart form. Larger bodies are
           content-too-large, and a body that does not arrive within 30
           seconds is request-timeout.
         required: true
@@ -504,7 +504,7 @@ paths:
       tags: [Torrents]
       requestBody:
         description: >-
-          A torrent file of at most 10485760 bytes in a multipart form, as
+          A torrent file of at most 34603008 bytes in a multipart form, as
           createTorrent takes it. Larger bodies are content-too-large, and a
           body that does not arrive within 30 seconds is request-timeout.
         required: true
@@ -4364,7 +4364,7 @@ components:
                 type: tag:skunkie.github.io,2026:torrplay/problems/content-too-large
                 title: Content too large
                 status: 413
-                detail: The request body exceeds 10485760 bytes.
+                detail: The request body exceeds 34603008 bytes.
     UnsupportedMediaType:
       description: The request's Content-Type is not accepted by the operation.
       headers:
@@ -4867,7 +4867,7 @@ components:
         metainfo:
           type: string
           contentMediaType: application/x-bittorrent
-          description: The torrent file to preview, at most 10485760 bytes.
+          description: The torrent file to preview, at most 34603008 bytes.
           examples: ['d8:announce20:http://tracker.test/4:infod6:lengthi1024e4:name8:file.bin12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaaee']
 
     TorrentPreview:
@@ -4983,7 +4983,7 @@ components:
         metainfo:
           type: string
           contentMediaType: application/x-bittorrent
-          description: The torrent file, at most 10485760 bytes.
+          description: The torrent file, at most 34603008 bytes.
           examples: ['d8:announce20:http://tracker.test/4:infod6:lengthi1024e4:name8:file.bin12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaaee']
         desired_state:
           $ref: '#/components/schemas/CreationDesiredState'

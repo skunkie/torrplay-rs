@@ -17,8 +17,11 @@ use crate::problem::{Problem, ProblemType};
 /// The largest JSON body, creation or merge patch.
 pub(crate) const JSON_MAX_BYTES: usize = 16 * 1024;
 
-/// The largest uploaded torrent file.
-pub(crate) const METAINFO_MAX_BYTES: usize = 10 * 1024 * 1024;
+/// The largest uploaded torrent file: one the application builds from
+/// retrieved metadata, whose info dictionary librqbit accepts up to 32 MiB
+/// from peers, with the magnet URI's trackers, so `/metainfo` never serves
+/// a file that creation refuses.
+pub(crate) const METAINFO_MAX_BYTES: usize = 33 * 1024 * 1024;
 
 /// Room for a form's boundaries, part headers, and other fields beyond the
 /// torrent file, so the file's own limit decides what is too large.

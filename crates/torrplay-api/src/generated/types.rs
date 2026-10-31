@@ -361,7 +361,7 @@ pub struct TorrentCreationUpload {
         deserialize_with = "tri_state_serde::deserialize"
     )]
     pub kind: Option<Option<ConfiguredKind>>,
-    ///The torrent file, at most 10485760 bytes.
+    ///The torrent file, at most 34603008 bytes.
     pub metainfo: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retention: Option<CreationRetention>,
@@ -2466,6 +2466,6 @@ impl TitleProgressUpdateBuilder {
 ///The multipart form that previews a torrent file.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TorrentPreviewUpload {
-    ///The torrent file to preview, at most 10485760 bytes.
+    ///The torrent file to preview, at most 34603008 bytes.
     pub metainfo: String,
 }
