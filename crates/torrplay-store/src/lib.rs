@@ -10,7 +10,8 @@
 //! changes its records only after the store committed. The database is read
 //! once, at startup, by [`Store::open`], which returns the stored torrents,
 //! except for poster and avatar images, which [`Store::poster`] and
-//! [`Store::avatar`] read when they are served. Access tokens are stored by
+//! [`Store::avatar`] read when they are served. A backup reads a
+//! [`Snapshot`] instead, and a restore writes a [`Replacement`]. Access tokens are stored by
 //! their secrets' digests, never the secrets.
 //!
 //! One worker thread owns the database connection. The async methods send it
@@ -37,6 +38,9 @@ use torrplay_core::lifecycle::{Configuration, StorageMode};
 use torrplay_core::profiles::{Profile, Progress, TitleKey, TitleProgress};
 pub use torrplay_core::settings::Stored as StoredSettings;
 
+pub use backup::{ImageOwner, ImageReader, Replacement, Snapshot, SnapshotContents};
+
+mod backup;
 mod credentials;
 mod images;
 mod profiles;
@@ -202,6 +206,9 @@ pub enum StoreError {
     /// No stored profile has the ID.
     #[error("no stored profile has this ID")]
     UnknownProfile,
+    /// An image a [`Replacement`] describes could not be read.
+    #[error("an image to restore could not be read: {0}")]
+    Image(#[source] std::io::Error),
     /// The store was closed, or its worker ended.
     #[error("the store is closed")]
     Closed,
@@ -249,6 +256,8 @@ enum Command {
     DeleteAccessToken(AccessTokenId, Reply<()>),
     TouchAccessToken(AccessTokenId, SystemTime, Reply<()>),
     Delete(TorrentId, Reply<()>),
+    Snapshot(PathBuf, Reply<()>),
+    Replace(Box<Replacement>, Reply<()>),
 }
 
 /// An open store.
@@ -614,6 +623,25 @@ impl Store {
         self.send(|reply| Command::Delete(id, reply)).await
     }
 
+    /// Writes a consistent copy of the database to `path`, which must not
+    /// exist, for [`Snapshot::open`] to read while the store goes on. The
+    /// copy holds everything the database does, credentials included, so
+    /// the caller keeps it beside the database and deletes it. Other
+    /// commands wait while it is written.
+    pub async fn snapshot(&self, path: &Path) -> Result<(), StoreError> {
+        let path = path.to_owned();
+        self.send(|reply| Command::Snapshot(path, reply)).await
+    }
+
+    /// Replaces every torrent and profile, with all that refers to them, and
+    /// the settings, with `replacement`, in one transaction. The
+    /// credentials and the media server's UDN stay.
+    pub async fn replace(&self, replacement: Replacement) -> Result<(), StoreError> {
+        let replacement = Box::new(replacement);
+        self.send(|reply| Command::Replace(replacement, reply))
+            .await
+    }
+
     /// Closes the store: the worker finishes the commands sent before,
     /// checkpoints the database, and ends. Later calls fail with
     /// [`StoreError::Closed`].
@@ -646,8 +674,9 @@ impl Store {
             .store(failing, std::sync::atomic::Ordering::SeqCst);
     }
 
-    /// Makes every later read of a poster, an avatar, or a torrent file
-    /// fail with [`StoreError::Injected`], or succeed again.
+    /// Makes every later read of a poster, an avatar, or a torrent file,
+    /// and every snapshot, fail with [`StoreError::Injected`], or succeed
+    /// again.
     #[cfg(feature = "test-support")]
     pub fn fail_reads(&self, failing: bool) {
         self.failing_reads

@@ -19,7 +19,7 @@ use torrplay_core::lifecycle::Configuration;
 use crate::images::{self, Images};
 use crate::schema::{self, to_ns, version};
 use crate::{Command, StoreError, StoredTorrent};
-use crate::{credentials, profiles};
+use crate::{backup, credentials, profiles};
 
 pub(crate) struct Worker {
     pub(crate) connection: Connection,
@@ -222,6 +222,13 @@ impl Worker {
                         Ok(())
                     }));
                 }
+                Command::Snapshot(path, reply) => {
+                    let _ = reply.send(self.snapshot(&path));
+                }
+                Command::Replace(replacement, reply) => {
+                    let _ = reply
+                        .send(self.write(|connection| backup::replace(connection, *replacement)));
+                }
             }
         }
         self.connection
@@ -244,6 +251,21 @@ impl Worker {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         apply(&transaction)?;
         transaction.commit()?;
+        Ok(())
+    }
+
+    /// Copies the database to `path`. VACUUM INTO reads in its own
+    /// transaction, so the copy is consistent, and cannot run inside one.
+    fn snapshot(&mut self, path: &std::path::Path) -> Result<(), StoreError> {
+        #[cfg(feature = "test-support")]
+        if self.failing_reads.load(Ordering::SeqCst) {
+            return Err(StoreError::Injected);
+        }
+        let text = path.to_str().ok_or_else(|| StoreError::DataDirectory {
+            path: path.to_owned(),
+            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "not a UTF-8 path"),
+        })?;
+        self.connection.execute("VACUUM INTO ?1", [text])?;
         Ok(())
     }
 
@@ -333,7 +355,7 @@ fn set_labels(
     Ok(())
 }
 
-fn insert(connection: &Connection, torrent: &StoredTorrent) -> Result<(), StoreError> {
+pub(crate) fn insert(connection: &Connection, torrent: &StoredTorrent) -> Result<(), StoreError> {
     let library = torrent.configuration.library();
     connection.execute(
         "INSERT INTO torrents

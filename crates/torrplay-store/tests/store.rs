@@ -24,8 +24,8 @@ use torrplay_core::lifecycle::{Configuration, DesiredState, StorageMode};
 use torrplay_core::profiles::{Profile, ProfileKind, Progress, TitleKey, TitleProgress};
 use torrplay_core::settings::{Explicit, LogLevel};
 use torrplay_store::{
-    FILE_NAME, Store, StoreError, StoredDismissal, StoredProgress, StoredSettings,
-    StoredTemporaryProgress, StoredTitleProgress, StoredTorrent,
+    FILE_NAME, Replacement, Snapshot, Store, StoreError, StoredDismissal, StoredProgress,
+    StoredSettings, StoredTemporaryProgress, StoredTitleProgress, StoredTorrent,
 };
 
 /// Turns a database back into version 17, before names were aligned with the
@@ -1617,4 +1617,271 @@ async fn a_version_17_database_takes_the_contract_names() {
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
     assert_eq!(version, 17, "the failed migration left version 17");
+}
+
+/// The records two stores hold for the backup tests: torrent `n` with a
+/// poster, and a profile with an avatar and progress in it.
+fn backed_up(n: u32, name: &str) -> (StoredTorrent, Profile, StoredProgress, Vec<u8>) {
+    let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+    let bytes = format!("\u{89}PNG\r\n\u{1a}\nimage {n}").into_bytes();
+    let image = ImageInfo::of(ImageType::Png, &bytes, at);
+    let torrent = StoredTorrent {
+        poster: Some(image.clone()),
+        ..torrent(n, u64::from(n))
+    };
+    let profile = Profile {
+        avatar: Some(image),
+        ..profile(u8::try_from(n).unwrap(), name)
+    };
+    let progress = StoredProgress {
+        profile: profile.id.clone(),
+        torrent: torrent.id.clone(),
+        file: FileId::derive(&["Film.mkv"]),
+        progress: Progress {
+            position_ms: 1_500,
+            duration_ms: 10_000,
+            viewed_at: None,
+            updated_at: at,
+        },
+    };
+    (torrent, profile, progress, bytes)
+}
+
+#[tokio::test]
+async fn a_snapshot_holds_the_records_as_they_were() {
+    let dir = TempDir::new().unwrap();
+    let (store, _) = open(&dir);
+    let (backed, profile, progress, bytes) = backed_up(1, "Alex");
+    let poster = backed.poster.clone().unwrap();
+    store
+        .insert(StoredTorrent {
+            poster: None,
+            ..backed.clone()
+        })
+        .await
+        .unwrap();
+    store
+        .set_poster(&backed.id, &poster, bytes.clone())
+        .await
+        .unwrap();
+    store
+        .insert_profile(&Profile {
+            avatar: None,
+            ..profile.clone()
+        })
+        .await
+        .unwrap();
+    store
+        .set_avatar(&profile.id, &poster, bytes.clone())
+        .await
+        .unwrap();
+    store.set_progress(&progress).await.unwrap();
+    let settings = StoredSettings {
+        explicit: Explicit {
+            peer_limit: Some(80),
+            ..Explicit::default()
+        },
+        version: 2,
+    };
+    store.set_settings(settings.clone()).await.unwrap();
+
+    let path = dir.path().join("backup-1.tmp");
+    store.snapshot(&path).await.unwrap();
+    // The store goes on, and the snapshot keeps what it held.
+    store.insert(torrent(2, 20)).await.unwrap();
+    let (snapshot, contents) = Snapshot::open(&path).unwrap();
+    assert_eq!(contents.torrents, vec![backed.clone()]);
+    assert_eq!(contents.profiles, vec![profile.clone()]);
+    assert_eq!(contents.progress, vec![progress]);
+    assert_eq!(contents.settings, settings);
+    assert_eq!(snapshot.poster(&backed.id).unwrap(), Some(bytes.clone()));
+    assert_eq!(snapshot.avatar(&profile.id).unwrap(), Some(bytes));
+    assert_eq!(
+        snapshot.poster(&id(2)).unwrap(),
+        None,
+        "taken before torrent 2"
+    );
+    assert!(
+        store.snapshot(&path).await.is_err(),
+        "a snapshot never overwrites a file"
+    );
+}
+
+#[tokio::test]
+async fn a_replacement_takes_the_place_of_every_record_but_the_credentials() {
+    let dir = TempDir::new().unwrap();
+    let (old_torrent, old_profile, old_progress, _) = backed_up(1, "Sam");
+    let (torrent, profile, progress, bytes) = backed_up(2, "Alex");
+    let token = access_token(2, None);
+    let (udn, key) = {
+        let (store, contents) = Store::open(dir.path()).unwrap();
+        store
+            .insert(StoredTorrent {
+                poster: None,
+                ..old_torrent
+            })
+            .await
+            .unwrap();
+        store
+            .insert_profile(&Profile {
+                avatar: None,
+                ..old_profile
+            })
+            .await
+            .unwrap();
+        store.set_progress(&old_progress).await.unwrap();
+        store.insert_access_token(&token, &[]).await.unwrap();
+        let read = bytes.clone();
+        store
+            .replace(Replacement {
+                torrents: vec![torrent.clone()],
+                settings: StoredSettings {
+                    explicit: Explicit {
+                        dlna_enabled: Some(true),
+                        ..Explicit::default()
+                    },
+                    version: 5,
+                },
+                profiles: vec![profile.clone()],
+                progress: vec![progress.clone()],
+                titles: Vec::new(),
+                temporary_progress: Vec::new(),
+                dismissals: Vec::new(),
+                images: Box::new(move |_| Ok(read.clone())),
+            })
+            .await
+            .unwrap();
+        assert_eq!(store.poster(&torrent.id).await.unwrap().unwrap().1, bytes);
+        assert_eq!(store.avatar(&profile.id).await.unwrap().unwrap().1, bytes);
+        (contents.media_server_udn, contents.credentials.key)
+    };
+    let (_store, contents) = Store::open(dir.path()).unwrap();
+    assert_eq!(contents.torrents, vec![torrent]);
+    assert_eq!(contents.profiles, vec![profile]);
+    assert_eq!(contents.progress, vec![progress]);
+    assert_eq!(contents.settings.version, 5);
+    assert_eq!(contents.settings.explicit.dlna_enabled, Some(true));
+    assert_eq!(contents.media_server_udn, udn, "the UDN stays");
+    assert_eq!(contents.credentials.key, key, "the key stays");
+    assert_eq!(contents.credentials.tokens, vec![token], "the tokens stay");
+}
+
+#[tokio::test]
+async fn a_replacement_whose_image_cannot_be_read_changes_nothing() {
+    let dir = TempDir::new().unwrap();
+    let (old, _, _, _) = backed_up(1, "Sam");
+    let (torrent, _, _, _) = backed_up(2, "Alex");
+    {
+        let (store, _) = open(&dir);
+        store
+            .insert(StoredTorrent {
+                poster: None,
+                ..old.clone()
+            })
+            .await
+            .unwrap();
+        let failed = store
+            .replace(Replacement {
+                torrents: vec![torrent],
+                settings: StoredSettings::default(),
+                profiles: Vec::new(),
+                progress: Vec::new(),
+                titles: Vec::new(),
+                temporary_progress: Vec::new(),
+                dismissals: Vec::new(),
+                images: Box::new(|_| Err(std::io::Error::other("the archive ended"))),
+            })
+            .await;
+        assert!(matches!(failed, Err(StoreError::Image(_))), "{failed:?}");
+    }
+    let (_store, torrents) = open(&dir);
+    assert_eq!(
+        torrents,
+        vec![StoredTorrent {
+            poster: None,
+            ..old
+        }]
+    );
+}
+
+/// The environment variable that makes [`replacing_child`] run.
+const REPLACING_CHILD: &str = "TORRPLAY_STORE_REPLACING_CHILD";
+
+/// The torrents generation `generation` of the replacing child writes.
+fn generation(generation: u32) -> Vec<StoredTorrent> {
+    (0..16)
+        .map(|n| {
+            let n = generation * 100 + n;
+            StoredTorrent {
+                metainfo: Some(vec![(n % 251) as u8; 64 * 1024]),
+                ..torrent(n, u64::from(n))
+            }
+        })
+        .collect()
+}
+
+/// The writing child of the replacement recovery test: replaces every
+/// torrent with the next generation's, reporting each, until killed.
+#[test]
+#[ignore = "run by the replacement recovery test as its writing child"]
+fn replacing_child() {
+    let Ok(path) = std::env::var(REPLACING_CHILD) else {
+        return;
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (store, _) = Store::open(Path::new(&path)).unwrap();
+        let mut out = std::io::stdout();
+        let mut n = 0;
+        loop {
+            n += 1;
+            store
+                .replace(Replacement {
+                    torrents: generation(n),
+                    settings: StoredSettings::default(),
+                    profiles: Vec::new(),
+                    progress: Vec::new(),
+                    titles: Vec::new(),
+                    temporary_progress: Vec::new(),
+                    dismissals: Vec::new(),
+                    images: Box::new(|_| Ok(Vec::new())),
+                })
+                .await
+                .unwrap();
+            writeln!(out, "inserted {n}").unwrap();
+            out.flush().unwrap();
+        }
+    });
+}
+
+/// BAK-10: a process killed while it replaces the records leaves one
+/// generation of them whole.
+#[test]
+fn replacements_killed_at_any_moment_leave_one_generation() {
+    let dir = TempDir::new().unwrap();
+    for (round, delay_ms) in [0u64, 1, 3, 7, 11, 17].into_iter().enumerate() {
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "replacing_child", "--ignored", "--nocapture"])
+            .env(REPLACING_CHILD, dir.path())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        wait_for_insert(&mut child);
+        std::thread::sleep(Duration::from_millis(delay_ms));
+        child.kill().unwrap();
+        child.wait().unwrap();
+
+        let (store, torrents) = open(&dir);
+        drop(store);
+        let first = torrents.first().expect("a generation was written");
+        let n = u32::from_be_bytes(first.info_hash.as_bytes()[..4].try_into().unwrap());
+        assert_eq!(
+            torrents,
+            generation(n / 100),
+            "round {round}: one generation, whole"
+        );
+    }
 }
