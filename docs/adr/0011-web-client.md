@@ -116,7 +116,7 @@ seek index. The plan keeps them.
 |---|---|---|
 | `/` | Home | Up next for the profile, recently added titles, and a way to add |
 | `/library` | Library | The library's posters, with search, kind, category, and genre filters from the facets; the filters live in the URL |
-| `/titles/{torrent_id}` | Title | Poster, title, year, description, and genres; for a series, its episodes by season with each one's progress, once the contract reports episodes; otherwise its video files. A **Download** section holds the files, storage mode, preloads, and statistics; **Edit** changes the library members and poster |
+| `/titles/{torrent_id}` | Title | Poster, title, year, description, and genres; for a series, its episodes by season with each one's progress, from the episodes the contract reports on files; otherwise its video files. A **Download** section holds the files, storage mode, preloads, and statistics; **Edit** changes the library members and poster |
 | `/watch/{torrent_id}/{file_id}` | Player | The player, full window; resume, audio and subtitle tracks, and the next episode at the end |
 | `/add` | Add | A magnet URI or torrent file; a torrent file is previewed first. **Play** creates a temporary torrent; **Add to library** a persisted one |
 | `/settings/…` | Settings | Playback and cache, network and DLNA, profiles, security (password and access tokens), and backup |
@@ -169,11 +169,13 @@ containers, flows, the API layer, and the demo fixtures are new.
 - Polling costs a request per resource every few seconds while a page is
   visible, mostly answered with `304`.
 
-## Open questions
+## Scope
 
-- Should titles group several torrents of one series, which the contract
-  does not model yet, or stay one torrent per title page?
-- Grouping a series by season needs each video file's season and episode.
-  The server already reads them from episode patterns for Stremio; should
-  the contract report them on files, as an additive change, so the client
-  never parses names itself?
+- A title page shows one torrent. A series split across torrents, such as
+  one season pack per torrent, shows as one card per torrent, and up next
+  continues within each, as the server computes it. Grouping torrents of
+  one series, with up next across them, is a later contract and server
+  change.
+- The contract reports each file's season and episode, from the server's
+  episode patterns, so the client never parses file names and its episode
+  order matches up next's.
