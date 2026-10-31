@@ -145,7 +145,11 @@ pnpm test
 pnpm build
 ```
 
-`pnpm check` type-checks with svelte-check, `pnpm lint` runs ESLint and
+`pnpm generate` writes the API's TypeScript types to
+`client/src/lib/api/schema.d.ts` from `api/openapi.yaml` with
+openapi-typescript; rerun it after changing the contract, since CI fails when
+the committed file differs from its output. `pnpm check` type-checks with
+svelte-check, `pnpm lint` runs ESLint and
 checks Prettier's formatting (`pnpm format` applies it), `pnpm test` runs
 Vitest, and `pnpm build` writes the production bundle to `client/dist`. CI
 runs the same commands. Pin new dependencies to exact versions at least two

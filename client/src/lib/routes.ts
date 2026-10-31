@@ -6,6 +6,8 @@
  * segment matches one path segment and is passed to the page decoded. */
 export const routes = {
   home: "/",
+  library: "/library",
+  signIn: "/sign-in",
 } as const;
 
 export type RouteName = keyof typeof routes;
@@ -54,4 +56,11 @@ function split(path: string): string[] {
     // The leading slash, and a trailing one, separate nothing.
     return !(segment === "" && (index === 0 || index === all.length - 1));
   });
+}
+
+/** Where to go after signing in: the `next` path of `search`, a page's
+ * query, if it is one of the client's own, and home otherwise. */
+export function returnPath(search: string): string {
+  const next = new URLSearchParams(search).get("next");
+  return next?.startsWith("/") && !next.startsWith("//") && !next.startsWith("/\\") ? next : "/";
 }

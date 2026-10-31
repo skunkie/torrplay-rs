@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# openapi-typescript writes it, and CI checks it against its output.
+src/lib/api/schema.d.ts
+pnpm-lock.yaml
