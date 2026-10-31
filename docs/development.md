@@ -171,9 +171,9 @@ weeks old.
 `torrplay` serves the bundle at `/`, outside the API's paths, through its
 default `client` feature. A debug build reads `client/dist` as it is, so a
 rebuilt client shows on reload, and before the first `pnpm build` the
-client's paths are `not-found`; a release build embeds it and fails to
-compile without it, and `--no-default-features` builds the server without the
-client. While developing, `pnpm dev` serves the client with hot reloading and
+client's paths are `not-found`; a release build embeds it and, without it,
+stops with a message saying to build it, and `--no-default-features` builds
+the server without the client. While developing, `pnpm dev` serves the client with hot reloading and
 passes `/api`, `/livez`, and `/readyz` to a running TorrPlay at
 `TORRPLAY_URL`, by default `http://127.0.0.1:8642`.
 
