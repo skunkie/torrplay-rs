@@ -10,6 +10,7 @@ SPDX-License-Identifier: MIT
   import type { PlaybackGrant, Progress, Torrent, TorrentFile } from "../lib/backend";
   import { useBackend } from "../lib/context";
   import { playables } from "../lib/episodes";
+  import { failureMessage } from "../lib/i18n/index.svelte";
   import { PlaybackGrants, withGrant } from "../lib/playback";
   import { poll } from "../lib/poll";
   import { profiles } from "../lib/profile.svelte";
@@ -38,10 +39,6 @@ SPDX-License-Identifier: MIT
    * one is ignored. */
   let generation = 0;
 
-  function message(failure: unknown): string {
-    return failure instanceof ApiError ? failure.message : "TorrPlay could not be reached.";
-  }
-
   /** Reads the torrent when it changed, its files once its metadata is
    * known, and the profile's progress, which playback elsewhere changes. */
   async function refresh(id: string, profileId: string | undefined, mine: number): Promise<void> {
@@ -68,7 +65,7 @@ SPDX-License-Identifier: MIT
         missing = true;
       } else if (!(failure instanceof ApiError && failure.type === "lifecycle-conflict")) {
         // A lifecycle conflict means the metadata is not known yet.
-        error = message(failure);
+        error = failureMessage(failure);
       }
     }
   }

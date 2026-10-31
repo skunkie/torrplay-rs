@@ -7,6 +7,7 @@ SPDX-License-Identifier: MIT
   import { ApiError } from "../lib/api/http";
   import type { PlaybackGrant, Torrent, UpNextEntry } from "../lib/backend";
   import { useBackend } from "../lib/context";
+  import { failureMessage, t } from "../lib/i18n/index.svelte";
   import { PlaybackGrants, withGrant } from "../lib/playback";
   import { poll } from "../lib/poll";
   import { chooseProfile, loadProfiles, profiles } from "../lib/profile.svelte";
@@ -29,10 +30,6 @@ SPDX-License-Identifier: MIT
   let recentTag: string | undefined;
   /** Counts profile changes, so a response for an earlier one is ignored. */
   let generation = 0;
-
-  function message(failure: unknown): string {
-    return failure instanceof ApiError ? failure.message : "TorrPlay could not be reached.";
-  }
 
   /** Reads up next for `profileId` and the newest torrents, each only
    * when it changed since the last read. */
@@ -65,7 +62,7 @@ SPDX-License-Identifier: MIT
         await loadProfiles(backend);
         return;
       }
-      error = message(failure);
+      error = failureMessage(failure);
     }
   }
 
@@ -76,7 +73,7 @@ SPDX-License-Identifier: MIT
     try {
       await backend.dismissUpNext(profileId, entry.id);
     } catch (failure) {
-      error = message(failure);
+      error = failureMessage(failure);
     }
     upNextTag = undefined;
     await refresh(profileId, generation);
@@ -116,15 +113,15 @@ SPDX-License-Identifier: MIT
   />
 {:else if profiles.people && profiles.people.length > 0}
   <ProfileChooser people={profiles.people} onchoose={chooseProfile} />
-{:else if profiles.error}
+{:else if profiles.failed}
   <div role="alert" class="flex items-center gap-3 rounded-md bg-surface-raised p-3">
-    <span>{profiles.error}</span>
+    <span>{t().profiles.readFailed}</span>
     <button type="button" class="text-accent underline" onclick={() => loadProfiles(backend)}>
-      Try again
+      {t().common.retry}
     </button>
   </div>
 {:else if profiles.people}
-  <p class="text-text-muted">There are no profiles to watch as.</p>
+  <p class="text-text-muted">{t().profiles.none}</p>
 {:else}
-  <p class="text-text-muted" role="status">Loading…</p>
+  <p class="text-text-muted" role="status">{t().common.loading}</p>
 {/if}

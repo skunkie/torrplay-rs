@@ -4,15 +4,12 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
-  import { ApiError } from "../lib/api/http";
   import { useBackend } from "../lib/context";
+  import { failureMessage, t } from "../lib/i18n/index.svelte";
   import { location, navigate } from "../lib/navigation.svelte";
   import { returnPath } from "../lib/routes";
   import { signIn } from "../lib/session.svelte";
   import SignInView from "./SignInView.svelte";
-
-  /** The name the access token is listed under in the settings. */
-  const TOKEN_NAME = "Web browser";
 
   const backend = useBackend();
   let busy = $state(false);
@@ -22,15 +19,11 @@ SPDX-License-Identifier: MIT
     busy = true;
     error = undefined;
     try {
-      signIn(await backend.signIn(password, TOKEN_NAME));
+      // The name the access token is listed under in the settings.
+      signIn(await backend.signIn(password, t().signIn.tokenName));
       navigate(returnPath(location.search));
     } catch (failure) {
-      error =
-        failure instanceof ApiError && failure.status === 403
-          ? "The password is not correct."
-          : failure instanceof ApiError
-            ? failure.message
-            : "TorrPlay could not be reached.";
+      error = failureMessage(failure);
     } finally {
       busy = false;
     }

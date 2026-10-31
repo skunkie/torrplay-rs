@@ -82,7 +82,7 @@ it("shows the files once the metadata arrives", async () => {
   const fake = backend(() => shown, [file(shown, "a.mkv")]);
   navigate(titlePath(shown.id));
   render(App, { backend: fake });
-  expect(await screen.findByText("Finding the torrent's files…")).toBeInTheDocument();
+  expect(await screen.findByText("Finding the torrent’s files…")).toBeInTheDocument();
   expect(fake.listFiles).not.toHaveBeenCalled();
   shown = { ...shown, observed_state: "downloading" };
   await vi.advanceTimersByTimeAsync(5000);

@@ -26,6 +26,8 @@ export default ts.config(
         "error",
         { ignoreRestSiblings: true, varsIgnorePattern: "^_" },
       ],
+      // Messages write non-breaking spaces as \u00A0, which a reviewer can see.
+      "no-irregular-whitespace": ["error", { skipStrings: false, skipTemplates: false }],
       // An empty arrow function is a deliberate no-op, as in test doubles.
       "@typescript-eslint/no-empty-function": ["error", { allow: ["arrowFunctions"] }],
       "@typescript-eslint/consistent-type-imports": ["error", { fixStyle: "inline-type-imports" }],

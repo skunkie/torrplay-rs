@@ -34,15 +34,16 @@ export const profiles = $state<{
   /** The person profiles, or `undefined` before they are read. */
   people: Profile[] | undefined;
   current: Profile | undefined;
-  error: string | undefined;
-}>({ people: undefined, current: undefined, error: undefined });
+  /** Whether the last read failed. */
+  failed: boolean;
+}>({ people: undefined, current: undefined, failed: false });
 
 /** Reads the profiles and picks the one to watch as. */
 export async function loadProfiles(backend: Backend): Promise<void> {
   try {
     const people = persons(await backend.listProfiles());
     profiles.people = people;
-    profiles.error = undefined;
+    profiles.failed = false;
     const current = pick(people, profiles.current?.id ?? stored());
     if (current) {
       // Kept even when it was the only one, so a profile added later
@@ -52,7 +53,7 @@ export async function loadProfiles(backend: Backend): Promise<void> {
       profiles.current = undefined;
     }
   } catch {
-    profiles.error = "The profiles could not be read.";
+    profiles.failed = true;
   }
 }
 
@@ -70,5 +71,5 @@ export function chooseProfile(profile: Profile): void {
 export function resetProfiles(): void {
   profiles.people = undefined;
   profiles.current = undefined;
-  profiles.error = undefined;
+  profiles.failed = false;
 }
