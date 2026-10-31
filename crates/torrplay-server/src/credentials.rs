@@ -519,11 +519,9 @@ pub(crate) async fn create_playback_token<E: Engine>(
         }
     }
     checked(errors)?;
+    // Without a password content URLs need no token, which is no failure.
     if !app.credentials().is_enabled() {
-        return Err(Problem::new(
-            ProblemType::LifecycleConflict,
-            "No password is set, so content URLs need no token.",
-        ));
+        return Ok(StatusCode::NO_CONTENT.into_response());
     }
     // The guard admits only api access tokens here.
     let Some(Extension(Caller(Grant::Token { id: issuer, .. }))) = caller else {

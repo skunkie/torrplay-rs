@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
   import type { PlaybackGrant, Torrent, UpNextEntry } from "../lib/backend";
   import { useBackend } from "../lib/context";
   import { failureMessage, t } from "../lib/i18n/index.svelte";
-  import { PlaybackGrants, withGrant } from "../lib/playback";
+  import { playbackGrants, withGrant } from "../lib/playback";
   import { poll } from "../lib/poll";
   import { chooseProfile, loadProfiles, profiles } from "../lib/profile.svelte";
   import HomeView from "./HomeView.svelte";
@@ -19,7 +19,7 @@ SPDX-License-Identifier: MIT
   const POLL_MS = 5000;
 
   const backend = useBackend();
-  const grants = new PlaybackGrants(backend);
+  const grants = playbackGrants(backend);
 
   let entries = $state<UpNextEntry[]>();
   let recent = $state<Torrent[]>();

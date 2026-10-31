@@ -370,7 +370,7 @@ These scenarios accept the lifecycle's
 
 | ID | Scenario | Expected |
 |---|---|---|
-| AUT-01 | Without a password, read the password, list torrents with and without a bearer token, sign in, and issue a playback token | `404`; `200` both times; `409 lifecycle-conflict` twice |
+| AUT-01 | Without a password, read the password, list torrents with and without a bearer token, sign in, and issue a playback token | `404`; `200` both times; `409 lifecycle-conflict`; `204` without a token |
 | AUT-02 | Set a password, then list torrents without a token, with a wrong token, and with a signed-in token | `201` with `Location`; `401` with `WWW-Authenticate` and, for the wrong token, `invalid_token`; `200` |
 | AUT-03 | Sign in with a wrong password six times, then with the right one before and after `Retry-After` | `403 invalid-credentials` five times, then `429` with `Retry-After`; `429`, then `201` |
 | AUT-04 | Change the password without, with a wrong, and with the right `current_password`, revoking tokens | `422` naming `/current_password`; `403`; `200`, and the old token gets `401` |

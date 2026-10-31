@@ -216,20 +216,14 @@ export function httpBackend(http: Http): Backend {
     },
 
     async playbackGrant() {
-      try {
-        const grant = unwrap(
-          await http.POST("/api/v1/playback-tokens", {
-            body: { torrent_id: null, expires_in_seconds: GRANT_SECONDS },
-          }),
-        );
-        return { token: grant.token, expiresAt: new Date(grant.expires_at) };
-      } catch (error) {
-        // Without a password, content and poster URLs need no token.
-        if (error instanceof ApiError && error.type === "lifecycle-conflict") {
-          return undefined;
-        }
-        throw error;
-      }
+      const result = await http.POST("/api/v1/playback-tokens", {
+        body: { torrent_id: null, expires_in_seconds: GRANT_SECONDS },
+      });
+      // Without a password, content and poster URLs need no token.
+      if (result.response.status === 204) return undefined;
+      const grant = unwrap(result);
+      if (!grant) throw new ApiError(result.response.status, undefined);
+      return { token: grant.token, expiresAt: new Date(grant.expires_at) };
     },
   };
 }

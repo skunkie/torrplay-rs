@@ -807,7 +807,7 @@ element or an external player stream without an access token.
   It allows the playback operations of one torrent, or of every torrent
   when `torrent_id` is null, for 1 minute to 30 days, 1 day by default.
   An unknown `torrent_id` is `validation-failed`. While authentication is
-  off this is `lifecycle-conflict`, since content URLs need no token.
+  off content URLs need no token, so none is issued and this is `204`.
 - The token is `tpp_` and, in lowercase base32, a version, the issuing
   access token's ID, the expiry to the second, the torrent's ID if any,
   and a 128-bit HMAC-SHA-256 tag under a key the database keeps. It is

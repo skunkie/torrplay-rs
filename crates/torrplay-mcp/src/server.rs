@@ -425,19 +425,13 @@ impl Server {
                     torrent_id: Some(Some(torrent_id.to_owned())),
                     expires_in_seconds: arguments.expires_in_seconds,
                 };
-                let token = match self.client.post("/api/v1/playback-tokens", &request).await {
-                    Ok(token) => token.body,
-                    // Without a password, content URLs need no token.
-                    Err(Failure::Problem { status, problem })
-                        if status.as_u16() == 409
-                            && problem["type"]
-                                .as_str()
-                                .is_some_and(|kind| kind.ends_with("/lifecycle-conflict")) =>
-                    {
-                        Value::Null
-                    }
-                    Err(failure) => return Err(failure),
-                };
+                // Without a password the answer is empty: content URLs need
+                // no token.
+                let token = self
+                    .client
+                    .post("/api/v1/playback-tokens", &request)
+                    .await?
+                    .body;
                 if !token.is_null() {
                     let secret = token["token"].as_str().ok_or_else(|| {
                         Failure::Unusable("the playback token is missing".to_owned())
