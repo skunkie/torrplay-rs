@@ -320,6 +320,14 @@ status is not.
   `/readyz`. Both return `200 OK` when healthy and `503 Service Unavailable`
   with a Problem Details body when not. `/readyz` reports unavailable while
   the engine is starting or shutting down.
+- The [web client](adr/0011-web-client.md) takes every other path, outside
+  the contract. A `GET` or `HEAD` of a file of its bundle answers the file;
+  of a path whose last segment names no file, the client's `index.html`,
+  since the client routes its pages itself. Its files need no credential,
+  since the client signs in itself, and are cached by strong ETags. Paths
+  under `/api`, `/dlna`, `/stremio`, `/.well-known`, `/metrics`, `/livez`,
+  and `/readyz` are never the client's: an unknown one, a missing file, and
+  any other method answer `not-found`, as they do without a client.
 
 ## Security
 

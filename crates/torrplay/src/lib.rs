@@ -30,6 +30,8 @@ pub use torrplay_core::credentials::AllowedHosts;
 use torrplay_dlna::description::Device;
 use url::Url;
 
+#[cfg(feature = "client")]
+mod client;
 mod logging;
 mod media_server;
 use torrplay_core::id::TorrentId;
@@ -1007,7 +1009,7 @@ pub async fn serve(
         Err(error) => tracing::warn!(%error, "sweeping the download directory panicked"),
     }
     let app = Arc::new(
-        App::new(engine.clone(), store)
+        with_client(App::new(engine.clone(), store))
             .with_overrides(options.overrides)
             .with_settings(settings)
             .with_viewing(profiles, progress, titles, temporary_progress, dismissals)
@@ -1198,6 +1200,13 @@ fn server_ended(served: Result<std::io::Result<()>, tokio::task::JoinError>) -> 
         Ok(()) => anyhow::anyhow!("the server stopped unexpectedly"),
         Err(error) => error,
     }
+}
+
+/// Serves the embedded web client, when this build has one.
+fn with_client(app: App<LibrqbitEngine>) -> App<LibrqbitEngine> {
+    #[cfg(feature = "client")]
+    let app = app.with_client_files(client::files());
+    app
 }
 
 #[cfg(test)]

@@ -273,6 +273,17 @@ These scenarios accept the lifecycle's
 | BAK-13 | Run `torrplay backup create` on a stopped application, again to the same file, then `torrplay backup restore` with an invalid archive and with the first one after adding a disk torrent | The archive's `backup.json` matches the download's but for its time, and the second run fails without touching the file; the invalid restore names the member at fault and changes nothing; after the restore the next start lists the backup's torrents alone and deletes the added torrent's directory |
 | BAK-14 | Run `torrplay backup create` on a data directory without a database, and both commands while the application holds the database | Each fails; no database or archive is created |
 
+### Web client
+
+These scenarios accept serving the [web client](adr/0011-web-client.md)
+(M7).
+
+| ID | Scenario | Expected |
+|---|---|---|
+| WEB-01 | GET a script of the bundle that Vite named by its content, again with its ETag, with `HEAD`, and a file it did not name so | `200` with its media type, `nosniff`, a strong ETag, and a year's immutable caching; `304`; the headers and length without a body; `no-cache` |
+| WEB-02 | GET `/`, page paths, a missing file, paths under `/api`, `/dlna`, `/stremio`, `/.well-known`, and `/livez`, and POST a page path | `index.html` with `no-cache` and the client's Content-Security-Policy for each page; `404 not-found` for the rest |
+| WEB-03 | GET a page and a script with a password set, and a page path without a bundle | `200` without a credential, while the API still needs one; `404 not-found` |
+
 ### Settings
 
 | ID | Scenario | Expected |

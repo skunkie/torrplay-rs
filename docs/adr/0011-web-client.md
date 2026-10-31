@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT
 
 # 11. Web client
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-31
 
 ## Context

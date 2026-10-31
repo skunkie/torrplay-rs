@@ -1,0 +1,41 @@
+/*
+ * SPDX-FileCopyrightText: 2026 TorrPlay
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
+@import "tailwindcss";
+
+/* Design tokens: components use these names, never raw colors, so the
+   themes change in one place. Dark is the default; light follows the
+   system's preference. */
+@theme {
+  --color-surface: oklch(0.18 0.01 260);
+  --color-surface-raised: oklch(0.23 0.01 260);
+  --color-text: oklch(0.95 0.005 260);
+  --color-text-muted: oklch(0.72 0.01 260);
+  --color-accent: oklch(0.72 0.16 250);
+  --color-focus: oklch(0.82 0.16 85);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --color-surface: oklch(0.98 0.003 260);
+    --color-surface-raised: oklch(1 0 0);
+    --color-text: oklch(0.2 0.01 260);
+    --color-text-muted: oklch(0.45 0.01 260);
+    --color-accent: oklch(0.5 0.18 250);
+    --color-focus: oklch(0.6 0.18 60);
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-surface text-text min-h-dvh antialiased;
+  }
+
+  /* Every focusable element shows focus, for keyboards and remotes. */
+  :focus-visible {
+    @apply outline-focus outline-2 outline-offset-2;
+  }
+}

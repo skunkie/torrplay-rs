@@ -37,6 +37,7 @@ mod app;
 mod authentication;
 mod backup;
 mod body;
+mod client;
 mod content;
 mod credentials;
 mod dlna;
@@ -85,6 +86,7 @@ pub use crate::backup::{
     BackupCounts, BackupError, create_backup, delete_temporary_files,
     file_name as backup_file_name, restore_backup,
 };
+pub use crate::client::{ClientFile, ClientFiles};
 use crate::problem::{Problem, ProblemType};
 pub use crate::telemetry::Run;
 
@@ -299,7 +301,7 @@ pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {
         .route("/metrics", get(system::get_metrics::<E>))
         .route("/livez", get(service::get_liveness))
         .route("/readyz", get(service::get_readiness::<E>))
-        .fallback(unknown_resource)
+        .fallback(client::serve::<E>)
         .layer(axum::middleware::from_fn_with_state(
             Arc::clone(&app),
             authentication::guard::<E>,
@@ -365,10 +367,6 @@ fn response_level(status: StatusCode) -> Level {
     } else {
         Level::DEBUG
     }
-}
-
-async fn unknown_resource() -> Problem {
-    Problem::not_found("No resource has this path.")
 }
 
 /// Gives the router's own `405` responses, which carry `Allow` but no body,
