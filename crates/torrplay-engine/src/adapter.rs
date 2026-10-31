@@ -1575,21 +1575,7 @@ impl Engine for LibrqbitEngine {
 
     async fn inspect(&self, source: &Source) -> Result<Inspection, EngineError> {
         self.running()?;
-        match source {
-            Source::Metainfo(bytes) => {
-                let inspected = inspect::metainfo(bytes)?;
-                Ok(Inspection {
-                    info_hash: inspected.info_hash,
-                    metadata: Some(Arc::new(inspected.metadata)),
-                    trackers: inspected.trackers,
-                })
-            }
-            Source::MagnetUri(uri) => Ok(Inspection {
-                info_hash: inspect::magnet_uri(uri)?,
-                metadata: None,
-                trackers: inspect::magnet_trackers(uri),
-            }),
-        }
+        inspect::source(source)
     }
 
     async fn add_in(

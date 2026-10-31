@@ -10,6 +10,9 @@
 //! slow client holds no database transaction open and an upload is checked
 //! whole before anything changes. The archive holds `backup.json`, the
 //! contract's `Backup`, beside the torrent files, posters, and avatars.
+//!
+//! [`create_backup`] and [`restore_backup`] do the same for a stopped
+//! application, through its store alone.
 
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
@@ -28,11 +31,11 @@ use http_body_util::BodyExt;
 use serde_json::Value;
 use tokio::io::AsyncWriteExt;
 use torrplay_api as api;
-use torrplay_core::engine::{Engine, EngineError, Source};
+use torrplay_core::engine::{Engine, EngineError, Inspection, Source};
 use torrplay_core::id::{FileId, InfoHashV1, ProfileId, TorrentId, UpNextEntryId, random_uuid};
 use torrplay_core::image::{IMAGE_MAX_BYTES, ImageInfo, ImageType};
 use torrplay_core::library::{self, Kind, Library};
-use torrplay_core::lifecycle::{DesiredState, StorageMode};
+use torrplay_core::lifecycle::{Configuration, DesiredState, StorageMode};
 use torrplay_core::metadata::Metadata;
 use torrplay_core::profiles::{
     self, DURATION_MAX_MS, PROFILE_LIMIT, Profile, ProfileKind, Progress, TITLE_PROGRESS_LIMIT,
@@ -40,8 +43,9 @@ use torrplay_core::profiles::{
 };
 use torrplay_core::settings::{Explicit, LogLevel};
 use torrplay_store::{
-    ImageOwner, Snapshot, SnapshotContents, StoredDismissal, StoredProgress,
-    StoredTemporaryProgress, StoredTitleProgress, StoredTorrent,
+    Contents, ImageOwner, ImageReader, Replacement, Snapshot, SnapshotContents, Store,
+    StoredDismissal, StoredProgress, StoredSettings, StoredTemporaryProgress, StoredTitleProgress,
+    StoredTorrent,
 };
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -50,7 +54,7 @@ use crate::app::{App, store_failed};
 use crate::body::METAINFO_MAX_BYTES;
 use crate::content::disposition;
 use crate::headers::{MediaType, negotiate};
-use crate::problem::{InvalidValue, Problem, ProblemType};
+use crate::problem::{InvalidValue, Location, Problem, ProblemType};
 use crate::representation::{BASE, NO_STORE, image_type};
 
 const ZIP: &str = "application/zip";
@@ -173,7 +177,7 @@ fn seconds(milliseconds: u64) -> f64 {
 }
 
 /// The archive's name, after the time it was written.
-fn file_name(at: SystemTime) -> String {
+pub fn file_name(at: SystemTime) -> String {
     format!("torrplay-backup-{}.zip", time(at).format("%Y%m%dT%H%M%SZ"))
 }
 
@@ -232,7 +236,8 @@ pub(crate) async fn get<E: Engine>(
         created_at: now,
     };
     let (archive, length) = blocking(move || {
-        let length = write_archive(&snapshot.path, &archive.path, &written)?;
+        let file = File::create_new(&archive.path).map_err(|error| io_failed(&error))?;
+        let length = write_archive(&snapshot.path, file, &written)?;
         drop(snapshot);
         Ok::<_, Problem>((archive, length))
     })
@@ -265,9 +270,9 @@ fn over_bound(what: &str, bound: u64) -> Problem {
     )
 }
 
-/// Writes the archive of the snapshot at `snapshot` to `out`, returning its
+/// Writes the archive of the snapshot at `snapshot` to `file`, returning its
 /// length.
-fn write_archive(snapshot: &Path, out: &Path, written: &Written) -> Result<u64, Problem> {
+fn write_archive(snapshot: &Path, file: File, written: &Written) -> Result<u64, Problem> {
     let (snapshot, contents) = Snapshot::open(snapshot).map_err(store_failed)?;
     let document = serde_json::to_vec(&document(&contents, written)).map_err(|error| {
         tracing::error!(%error, "a backup's document could not be serialized");
@@ -276,7 +281,6 @@ fn write_archive(snapshot: &Path, out: &Path, written: &Written) -> Result<u64, 
     if document.len() as u64 > DOCUMENT_MAX_BYTES {
         return Err(over_bound(DOCUMENT, DOCUMENT_MAX_BYTES));
     }
-    let file = File::create_new(out).map_err(|error| io_failed(&error))?;
     let mut zip = ZipWriter::new(BufWriter::new(file));
     let zip_failed = |error: zip::result::ZipError| match error {
         zip::result::ZipError::Io(error) => io_failed(&error),
@@ -568,11 +572,25 @@ pub(crate) async fn set<E: Engine>(
     receive(&app, body, &upload.path).await?;
     let path = upload.path.clone();
     let parsed = blocking(move || read_archive(&path)).await??;
-    let restored = check_sources(&app, parsed).await?;
+    let mut inspections = Vec::with_capacity(parsed.torrents.len());
+    for source in sources(&parsed) {
+        inspections.push(match source {
+            Some(source) => Some(app.engine().inspect(&source).await),
+            None => None,
+        });
+    }
+    let restored = check_sources(parsed, inspections)?;
     let path = upload.path.clone();
+    app.restore_backup(restored, images(path, Some(upload)))
+        .await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// Reads the posters and avatars of the archive at `path` as a replacement
+/// writes them, keeping `upload`, the archive's temporary file, until then.
+fn images(path: PathBuf, upload: Option<TemporaryFile>) -> ImageReader {
     let mut archive = None;
-    let images = Box::new(move |owner: ImageOwner<'_>| {
-        // The upload outlives the write, which reads its images.
+    Box::new(move |owner: ImageOwner<'_>| {
         let _owned = &upload;
         let archive = match &mut archive {
             Some(archive) => archive,
@@ -589,9 +607,7 @@ pub(crate) async fn set<E: Engine>(
             .take(IMAGE_MAX_BYTES as u64)
             .read_to_end(&mut bytes)?;
         Ok(bytes)
-    });
-    app.restore_backup(restored, images).await?;
-    Ok(StatusCode::NO_CONTENT.into_response())
+    })
 }
 
 fn too_large() -> Problem {
@@ -731,7 +747,7 @@ fn entry(
 fn read_archive(path: &Path) -> Result<Parsed, Problem> {
     let file = File::open(path).map_err(|error| io_failed(&error))?;
     let mut archive =
-        ZipArchive::new(file).map_err(|_| invalid_archive("The body is not a zip archive."))?;
+        ZipArchive::new(file).map_err(|_| invalid_archive("The backup is not a zip archive."))?;
     let mut names = HashSet::new();
     let mut total = 0u64;
     for index in 0..archive.len() {
@@ -1362,22 +1378,39 @@ impl Checker<'_> {
     }
 }
 
-/// Checks each torrent's source with the engine, as a creation would, and
-/// each file progress names against the torrent's files where its metadata
-/// is known.
-async fn check_sources<E: Engine>(app: &App<E>, parsed: Parsed) -> Result<Restored, Problem> {
+/// Each torrent's source, the torrent file or else the magnet URI, in the
+/// archive's order.
+fn sources(parsed: &Parsed) -> Vec<Option<Source>> {
+    parsed
+        .torrents
+        .iter()
+        .map(|torrent| match (&torrent.metainfo, &torrent.magnet_uri) {
+            (Some(bytes), _) => Some(Source::Metainfo(bytes.clone())),
+            (None, Some(uri)) => Some(Source::MagnetUri(uri.clone())),
+            (None, None) => None,
+        })
+        .collect()
+}
+
+/// Checks each torrent's source by its inspection, as a creation would,
+/// and each file progress names against the torrent's files where its
+/// metadata is known. `inspections` follow [`sources`].
+fn check_sources(
+    parsed: Parsed,
+    inspections: Vec<Option<Result<Inspection, EngineError>>>,
+) -> Result<Restored, Problem> {
     let mut errors = Vec::new();
     let mut files: HashMap<TorrentId, HashSet<FileId>> = HashMap::new();
-    for torrent in &parsed.torrents {
-        let (source, pointer) = match (&torrent.metainfo, &torrent.magnet_uri) {
-            (Some(bytes), _) => (Source::Metainfo(bytes.clone()), torrent.pointer.clone()),
-            (None, Some(uri)) => (
-                Source::MagnetUri(uri.clone()),
-                format!("{}/magnet_uri", torrent.pointer),
-            ),
-            (None, None) => continue,
+    for (torrent, inspection) in parsed.torrents.iter().zip(inspections) {
+        let Some(inspection) = inspection else {
+            continue;
         };
-        match app.engine().inspect(&source).await {
+        let pointer = if torrent.metainfo.is_some() {
+            torrent.pointer.clone()
+        } else {
+            format!("{}/magnet_uri", torrent.pointer)
+        };
+        match inspection {
             Ok(inspection) if inspection.info_hash != torrent.info_hash => errors.push(
                 InvalidValue::pointer(pointer, "Names another info hash than info_hash."),
             ),
@@ -1442,6 +1475,167 @@ async fn check_sources<E: Engine>(app: &App<E>, parsed: Parsed) -> Result<Restor
         temporary_progress: parsed.temporary_progress,
         dismissals: parsed.dismissals,
     })
+}
+
+/// The stored torrents of `torrents`, their configurations at `version`.
+pub(crate) fn stored_torrents(
+    torrents: Vec<RestoredTorrent>,
+    version: u64,
+) -> Result<Vec<StoredTorrent>, Problem> {
+    torrents
+        .into_iter()
+        .map(|torrent| {
+            let configuration = Configuration::from_stored(
+                torrent.desired_state,
+                torrent.storage_mode,
+                torrent.library,
+                version,
+            )
+            .ok_or_else(Problem::internal)?;
+            Ok(StoredTorrent {
+                id: torrent.id,
+                info_hash: torrent.info_hash,
+                created_at: torrent.created_at,
+                configuration,
+                storage_mode: torrent.storage_mode,
+                magnet_uri: torrent.magnet_uri,
+                metainfo: torrent.metainfo,
+                poster: torrent.poster,
+            })
+        })
+        .collect()
+}
+
+/// What [`create_backup`] wrote or [`restore_backup`] restored.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BackupCounts {
+    /// The persisted torrents.
+    pub torrents: usize,
+    /// The profiles.
+    pub profiles: usize,
+}
+
+/// Why [`create_backup`] or [`restore_backup`] failed: the problem `GET` or
+/// `PUT /api/v1/backup` would answer with, whose display lists each invalid
+/// value on a line of its own.
+#[derive(Debug)]
+pub struct BackupError(Problem);
+
+impl BackupError {
+    /// Whether the archive is one a restore refuses, rather than one that
+    /// could not be read or written.
+    pub fn is_invalid_archive(&self) -> bool {
+        self.0.problem_type() == ProblemType::ValidationFailed
+    }
+}
+
+impl std::fmt::Display for BackupError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0.errors().is_empty() {
+            return f.write_str(self.0.detail());
+        }
+        // The detail of a problem with invalid values speaks of a request
+        // body.
+        f.write_str("The backup is invalid:")?;
+        for error in self.0.errors() {
+            match &error.location {
+                Location::Pointer(pointer) => write!(f, "\n  {pointer}: {}", error.detail)?,
+                Location::Parameter(name) => write!(f, "\n  {name}: {}", error.detail)?,
+            }
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for BackupError {}
+
+impl From<Problem> for BackupError {
+    fn from(problem: Problem) -> Self {
+        Self(problem)
+    }
+}
+
+/// Writes a backup of `store`, a stopped application's, to `out`, a new
+/// file, as `GET /api/v1/backup` would at `now`.
+pub async fn create_backup(
+    store: &Store,
+    out: File,
+    now: SystemTime,
+) -> Result<BackupCounts, BackupError> {
+    let snapshot = TemporaryFile::new(&data_directory(store)?)?;
+    store.snapshot(&snapshot.path).await.map_err(store_failed)?;
+    let written = Written {
+        application_version: env!("CARGO_PKG_VERSION"),
+        created_at: now,
+    };
+    Ok(blocking(move || {
+        write_archive(&snapshot.path, out, &written)?;
+        let (_, contents) = Snapshot::open(&snapshot.path).map_err(store_failed)?;
+        Ok::<_, Problem>(BackupCounts {
+            torrents: contents.torrents.len(),
+            profiles: contents.profiles.len(),
+        })
+    })
+    .await??)
+}
+
+/// Restores the archive at `archive` to `store`, a stopped application's
+/// whose records are `stored`, as `PUT /api/v1/backup` would: the archive
+/// is checked whole, with `inspect` reading each torrent's source, before
+/// every record is replaced in one transaction. The next start adds the
+/// restored torrents and deletes the disk data of those no longer kept on
+/// disk.
+pub async fn restore_backup(
+    store: &Store,
+    stored: &Contents,
+    archive: &Path,
+    inspect: impl Fn(&Source) -> Result<Inspection, EngineError>,
+) -> Result<BackupCounts, BackupError> {
+    let path = archive.to_owned();
+    let parsed = blocking(move || read_archive(&path)).await??;
+    let inspections = sources(&parsed)
+        .iter()
+        .map(|source| source.as_ref().map(&inspect))
+        .collect();
+    let restored = check_sources(parsed, inspections)?;
+    let counts = BackupCounts {
+        torrents: restored.torrents.len(),
+        profiles: restored.profiles.len(),
+    };
+    // New versions differ from every ETag issued before.
+    let version = stored
+        .torrents
+        .iter()
+        .map(|torrent| torrent.configuration.version())
+        .max()
+        .unwrap_or(0)
+        + 1;
+    store
+        .replace(Replacement {
+            torrents: stored_torrents(restored.torrents, version)?,
+            settings: StoredSettings {
+                explicit: restored.explicit,
+                version: stored.settings.version + 1,
+            },
+            profiles: restored.profiles,
+            progress: restored.progress,
+            titles: restored.titles,
+            temporary_progress: restored.temporary_progress,
+            dismissals: restored.dismissals,
+            images: images(archive.to_owned(), None),
+        })
+        .await
+        .map_err(store_failed)?;
+    Ok(counts)
+}
+
+/// The data directory of `store`, which holds the temporary files.
+fn data_directory(store: &Store) -> Result<PathBuf, Problem> {
+    store
+        .path()
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(Problem::internal)
 }
 
 #[cfg(test)]

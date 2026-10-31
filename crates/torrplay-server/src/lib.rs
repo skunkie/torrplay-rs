@@ -81,7 +81,10 @@ use torrplay_core::engine::Engine;
 use tracing::Level;
 
 pub use crate::app::{App, Clock, FreeBytes, MediaServerSetting, SeekIndexes};
-pub use crate::backup::delete_temporary_files;
+pub use crate::backup::{
+    BackupCounts, BackupError, create_backup, delete_temporary_files,
+    file_name as backup_file_name, restore_backup,
+};
 use crate::problem::{Problem, ProblemType};
 pub use crate::telemetry::Run;
 

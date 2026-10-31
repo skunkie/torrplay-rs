@@ -36,6 +36,7 @@ use torrplay_core::id::TorrentId;
 use torrplay_core::lifecycle::StorageMode;
 pub use torrplay_core::settings::{LogLevel, LogOverride, Overrides};
 use torrplay_engine::{EngineConfig, LibrqbitEngine, NetworkConfig, PEER_PORT_DEFAULT};
+pub use torrplay_server::BackupCounts;
 pub use torrplay_server::Run;
 pub use torrplay_server::log_files::{LogFiles, LogWriter};
 use torrplay_server::{App, delete_temporary_files};
@@ -71,12 +72,19 @@ pub const USAGE: &str = "\
 Usage: torrplay [OPTIONS]
        torrplay password set [--data-dir <DIR>]
        torrplay password remove [--data-dir <DIR>]
+       torrplay backup create [--output <FILE>] [--data-dir <DIR>]
+       torrplay backup restore <FILE> [--data-dir <DIR>]
        torrplay mcp [--url <URL>] [--transport stdio|http] [--listen <ADDRESS>]
 
 Streams torrents through the TorrPlay REST API. Authentication is off until a
 password is set. `password set` reads a new password from the first line of
 standard input, and `password remove` turns authentication off and revokes
-every token; both need the application stopped. `mcp` serves a running
+every token; both need the application stopped. `backup create` writes the
+archive GET /api/v1/backup returns to --output [default:
+torrplay-backup-<UTC time>.zip], never over an existing file, and `backup
+restore` replaces every record but the credentials with an archive's, as PUT
+/api/v1/backup does, checking it whole first; both need the application
+stopped, and the next start adds the restored torrents. `mcp` serves a running
 application's API to an MCP client: it reaches the application at --url or
 TORRPLAY_URL [default: http://127.0.0.1:8642], sends TORRPLAY_TOKEN, an api
 access token, as its credential, and speaks on standard input and output, or
@@ -258,6 +266,9 @@ pub enum Command {
     /// Change the password of the stopped application whose data directory
     /// the configuration names.
     Password(PasswordChange, Config),
+    /// Back up or restore the stopped application whose data directory the
+    /// configuration names.
+    Backup(BackupAction, Config),
     /// Serve the MCP server of `docs/mcp.md`.
     Mcp(McpConfig),
     /// Print [`USAGE`].
@@ -298,6 +309,56 @@ pub fn parse_origin(value: &str) -> Option<Url> {
         && url.query().is_none()
         && url.fragment().is_none())
     .then_some(url)
+}
+
+fn parse_backup(mut args: impl Iterator<Item = String>) -> Result<Command, ArgsError> {
+    let create = match args.next().as_deref() {
+        Some("create") => true,
+        Some("restore") => false,
+        Some("-h" | "--help") => return Ok(Command::Help),
+        _ => return Err(ArgsError::BackupUsage),
+    };
+    let mut config = Config::default();
+    let mut file = None;
+    while let Some(arg) = args.next() {
+        let (option, inline) = match arg.split_once('=') {
+            Some((option, value)) if option.starts_with("--") => {
+                (option.to_owned(), Some(value.to_owned()))
+            }
+            _ => (arg, None),
+        };
+        let mut path = |reason| {
+            let value = inline
+                .clone()
+                .or_else(|| args.next())
+                .ok_or_else(|| ArgsError::MissingValue(option.clone()))?;
+            if value.is_empty() {
+                return Err(ArgsError::InvalidValue {
+                    option: option.clone(),
+                    value,
+                    reason,
+                });
+            }
+            Ok(PathBuf::from(value))
+        };
+        match option.as_str() {
+            "-h" | "--help" => return Ok(Command::Help),
+            "--data-dir" => config.data_dir = Some(path("a directory")?),
+            "--output" if create && file.is_none() => file = Some(path("a file")?),
+            name if !create && file.is_none() && !name.starts_with('-') && !name.is_empty() => {
+                file = Some(PathBuf::from(name));
+            }
+            _ => return Err(ArgsError::BackupUsage),
+        }
+    }
+    let action = if create {
+        BackupAction::Create { output: file }
+    } else {
+        BackupAction::Restore {
+            archive: file.ok_or(ArgsError::BackupUsage)?,
+        }
+    };
+    Ok(Command::Backup(action, config))
 }
 
 fn parse_mcp(args: impl Iterator<Item = String>) -> Result<Command, ArgsError> {
@@ -365,6 +426,22 @@ fn parse_mcp(args: impl Iterator<Item = String>) -> Result<Command, ArgsError> {
     Ok(Command::Mcp(config))
 }
 
+/// What `torrplay backup` does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BackupAction {
+    /// Write a backup to `output`, or to a file named after the time in the
+    /// current directory.
+    Create {
+        /// The archive to write, which must not exist.
+        output: Option<PathBuf>,
+    },
+    /// Restore the archive at `archive`.
+    Restore {
+        /// The archive to read.
+        archive: PathBuf,
+    },
+}
+
 /// A change `torrplay password` makes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PasswordChange {
@@ -426,6 +503,10 @@ pub enum ArgsError {
     /// it does not take.
     #[error("torrplay password takes set or remove, and only --data-dir")]
     PasswordUsage,
+    /// A `backup` command other than `create` and `restore`, or an option or
+    /// argument it does not take.
+    #[error("torrplay backup takes create with --output or restore with a file, and --data-dir")]
+    BackupUsage,
     /// `--listen` for `torrplay mcp` without `--transport http`.
     #[error("torrplay mcp takes --listen only with --transport http")]
     McpListen,
@@ -462,6 +543,10 @@ pub fn parse_args(
     if args.peek().map(String::as_str) == Some("mcp") {
         args.next();
         return parse_mcp(args);
+    }
+    if args.peek().map(String::as_str) == Some("backup") {
+        args.next();
+        return parse_backup(args);
     }
     let password = if args.peek().map(String::as_str) == Some("password") {
         args.next();
@@ -630,6 +715,72 @@ pub async fn change_password(
     };
     store.close().await.context("closing the store")?;
     Ok(changed)
+}
+
+/// Writes a backup of the stopped application whose database is in
+/// `data_dir` to `output`, or to a file named after `now` in the current
+/// directory, returning its path. Fails if the application is running,
+/// since it holds the database's lock, or if the file exists; a failure
+/// deletes the partly written file.
+pub async fn create_backup(
+    data_dir: &Path,
+    output: Option<&Path>,
+    now: std::time::SystemTime,
+) -> anyhow::Result<(PathBuf, BackupCounts)> {
+    // Opening the store would create an empty database.
+    let database = data_dir.join(torrplay_store::FILE_NAME);
+    anyhow::ensure!(
+        database.try_exists().unwrap_or(true),
+        "{} holds no database to back up",
+        data_dir.display()
+    );
+    let output = output.map_or_else(
+        || PathBuf::from(torrplay_server::backup_file_name(now)),
+        Path::to_path_buf,
+    );
+    let (store, _) = open_store(data_dir).await?;
+    let file = std::fs::File::create_new(&output)
+        .with_context(|| format!("creating {}", output.display()));
+    let written = match file {
+        Ok(file) => {
+            let written = torrplay_server::create_backup(&store, file, now).await;
+            if written.is_err() {
+                // The file was created above, so it is this backup's.
+                let _ = std::fs::remove_file(&output);
+            }
+            written.map_err(anyhow::Error::from)
+        }
+        Err(error) => Err(error),
+    };
+    store.close().await.context("closing the store")?;
+    Ok((output, written?))
+}
+
+/// Restores the archive at `archive` to the stopped application whose
+/// database is in `data_dir`, as `PUT /api/v1/backup` does: the archive is
+/// checked whole before every record but the credentials is replaced. The
+/// next start adds the restored torrents and deletes the disk data of those
+/// no longer kept on disk. Fails if the application is running.
+pub async fn restore_backup(data_dir: &Path, archive: &Path) -> anyhow::Result<BackupCounts> {
+    anyhow::ensure!(archive.is_file(), "{} is not a file", archive.display());
+    let (store, contents) = open_store(data_dir).await?;
+    let restored = torrplay_server::restore_backup(
+        &store,
+        &contents,
+        archive,
+        torrplay_engine::inspect_source,
+    )
+    .await;
+    store.close().await.context("closing the store")?;
+    Ok(restored?)
+}
+
+async fn open_store(data_dir: &Path) -> anyhow::Result<(Store, Contents)> {
+    let opening = data_dir.to_path_buf();
+    tokio::task::spawn_blocking(move || Store::open(&opening))
+        .await
+        .context("opening the store")?
+        .with_context(|| format!("opening the store in {}", data_dir.display()))
 }
 
 /// How long exiting and a panic wait for queued records to reach the log
@@ -1353,6 +1504,46 @@ mod tests {
         ] {
             assert_eq!(parse(args), Err(ArgsError::PasswordUsage), "{args:?}");
         }
+    }
+
+    #[test]
+    fn backup_commands_take_a_file_and_a_data_directory() {
+        assert_eq!(
+            parse(&["backup", "create", "--data-dir", "/srv/torrplay"]),
+            Ok(Command::Backup(
+                BackupAction::Create { output: None },
+                Config {
+                    data_dir: Some("/srv/torrplay".into()),
+                    ..Config::default()
+                }
+            ))
+        );
+        assert!(matches!(
+            parse(&["backup", "create", "--output=saved.zip"]),
+            Ok(Command::Backup(BackupAction::Create { output: Some(output) }, _))
+                if output == Path::new("saved.zip")
+        ));
+        assert!(matches!(
+            parse(&["backup", "restore", "saved.zip", "--data-dir", "/srv/torrplay"]),
+            Ok(Command::Backup(BackupAction::Restore { archive }, _))
+                if archive == Path::new("saved.zip")
+        ));
+        assert_eq!(parse(&["backup", "--help"]), Ok(Command::Help));
+        for args in [
+            &["backup"][..],
+            &["backup", "show"],
+            &["backup", "restore"],
+            &["backup", "restore", "a.zip", "b.zip"],
+            &["backup", "restore", "--output", "a.zip"],
+            &["backup", "create", "saved.zip"],
+            &["backup", "create", "--listen", "0.0.0.0:80"],
+        ] {
+            assert_eq!(parse(args), Err(ArgsError::BackupUsage), "{args:?}");
+        }
+        assert!(matches!(
+            parse(&["backup", "create", "--output="]),
+            Err(ArgsError::InvalidValue { .. })
+        ));
     }
 
     #[test]
