@@ -7,6 +7,7 @@ SPDX-License-Identifier: MIT
   import Poster from "../components/Poster.svelte";
   import type { Torrent, UpNextEntry } from "../lib/backend";
   import { entryReason, entrySubject, torrentDetails, torrentTitle } from "../lib/describe";
+  import { t } from "../lib/i18n/index.svelte";
   import { titlePath } from "../lib/routes";
 
   interface Props {
@@ -32,16 +33,18 @@ SPDX-License-Identifier: MIT
   {#if error}
     <div role="alert" class="flex items-center gap-3 rounded-md bg-surface-raised p-3">
       <span>{error}</span>
-      <button type="button" class="text-accent underline" onclick={onretry}>Try again</button>
+      <button type="button" class="text-accent underline" onclick={onretry}
+        >{t().common.retry}</button
+      >
     </div>
   {/if}
 
   <section aria-labelledby="up-next" class="flex flex-col gap-3">
-    <h1 id="up-next" class="text-2xl font-semibold">Up next</h1>
+    <h1 id="up-next" class="text-2xl font-semibold">{t().home.upNext}</h1>
     {#if entries === undefined}
-      <p class="text-text-muted" role="status">Loading…</p>
+      <p class="text-text-muted" role="status">{t().common.loading}</p>
     {:else if entries.length === 0}
-      <p class="text-text-muted">Nothing to resume. What you start watching appears here.</p>
+      <p class="text-text-muted">{t().home.upNextEmpty}</p>
     {:else}
       <ul class={row}>
         {#each entries as entry (entry.id)}
@@ -63,8 +66,8 @@ SPDX-License-Identifier: MIT
               <button
                 type="button"
                 class="rounded-sm px-1 hover:text-text"
-                aria-label="Remove {torrentTitle(entry.torrent)} from up next"
-                title="Remove from up next"
+                aria-label={t().home.remove(torrentTitle(entry.torrent))}
+                title={t().home.removeHint}
                 onclick={() => ondismiss(entry)}
               >
                 ✕
@@ -78,13 +81,13 @@ SPDX-License-Identifier: MIT
 
   <section aria-labelledby="recent" class="flex flex-col gap-3">
     <div class="flex items-baseline gap-4">
-      <h2 id="recent" class="text-xl font-semibold">Recently added</h2>
-      <a href="/library" class="text-sm text-accent underline">See the library</a>
+      <h2 id="recent" class="text-xl font-semibold">{t().home.recent}</h2>
+      <a href="/library" class="text-sm text-accent underline">{t().home.seeLibrary}</a>
     </div>
     {#if recent === undefined}
-      <p class="text-text-muted" role="status">Loading…</p>
+      <p class="text-text-muted" role="status">{t().common.loading}</p>
     {:else if recent.length === 0}
-      <p class="text-text-muted">The library is empty.</p>
+      <p class="text-text-muted">{t().home.libraryEmpty}</p>
     {:else}
       <ul class={row}>
         {#each recent as torrent (torrent.id)}

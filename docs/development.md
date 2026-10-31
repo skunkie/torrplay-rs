@@ -157,7 +157,15 @@ checks Tailwind classes: their order, that each exists, and that colors
 come from the theme's tokens in `src/app.css`, which removes Tailwind's
 palette; `pnpm exec eslint . --fix` sorts and rewrites what it can.
 `pnpm test` runs Vitest, and `pnpm build` writes the production bundle to
-`client/dist`. CI runs the same commands. Pin new dependencies to exact versions at least two
+`client/dist`. CI runs the same commands.
+
+The client's messages live in `client/src/lib/i18n`: `en.ts` in American
+English is the source, and its type requires `ru.ts` to have every message
+with the same parameters. Write Russian messages with the [Russian
+translation skill](../.agents/skills/russian-technical-translation/SKILL.md);
+a test rejects Russian messages with Latin text, straight quotes, three-dot
+ellipses, or a breaking space between a number and its unit, and ESLint
+requires non-breaking spaces to be written as `\u00A0`. Pin new dependencies to exact versions at least two
 weeks old.
 
 `torrplay` serves the bundle at `/`, outside the API's paths, through its

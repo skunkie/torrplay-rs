@@ -103,7 +103,9 @@ it("removes a dismissed entry from up next", async () => {
     held = [];
   });
   render(App, { backend: fake });
-  await fireEvent.click(await screen.findByRole("button", { name: "Remove Title 8 from up next" }));
+  await fireEvent.click(
+    await screen.findByRole("button", { name: "Remove “Title 8” from up next" }),
+  );
   expect(
     await screen.findByText("Nothing to resume. What you start watching appears here."),
   ).toBeInTheDocument();
@@ -129,4 +131,20 @@ it("chooses again when the chosen profile was deleted elsewhere", async () => {
   render(App, { backend: fake });
   expect(await screen.findByText("Title 9")).toBeInTheDocument();
   expect(fake.listUpNext).toHaveBeenLastCalledWith(ana.id, expect.anything());
+});
+
+it("switches to Russian from the header and remembers it", async () => {
+  const fake = backend([ana], () => [
+    upNext(torrent(1, { kind: "series" }), null, { season: 1, number: 2 }),
+  ]);
+  render(App, { backend: fake });
+  expect(await screen.findByRole("heading", { name: "Up next" })).toBeInTheDocument();
+  await fireEvent.change(screen.getByRole("combobox", { name: "Language" }), {
+    target: { value: "ru" },
+  });
+  expect(await screen.findByRole("heading", { name: "Продолжить просмотр" })).toBeInTheDocument();
+  expect(screen.getByText("С1 Е2")).toBeInTheDocument();
+  expect(screen.getByText("Следующая серия")).toBeInTheDocument();
+  expect(document.documentElement.lang).toBe("ru");
+  expect(localStorage.getItem("torrplay.locale")).toBe("ru");
 });

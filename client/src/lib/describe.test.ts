@@ -8,7 +8,7 @@ import { file, progress, torrent, upNext } from "../testing";
 import { entryReason, entrySubject, progressLabel } from "./describe";
 
 it.each([
-  ["a resumed file by the minutes left", upNext(torrent(1), 0.5), "30 min left"],
+  ["a resumed file by the minutes left", upNext(torrent(1), 0.5), "30\u00A0min left"],
   ["a next episode", upNext(torrent(1), null, { season: 1, number: 3 }), "Next episode"],
   ["a file at its end without minutes", upNext(torrent(1), 1), "Resume"],
 ])("describes %s", (_, entry, expected) => {
@@ -16,7 +16,7 @@ it.each([
 });
 
 it.each([
-  ["an episode", upNext(torrent(1), 0.5, { season: 2, number: 4 }), "S2 E4"],
+  ["an episode", upNext(torrent(1), 0.5, { season: 2, number: 4 }), "S2\u00A0E4"],
   ["a file of several", upNext(torrent(1, { file_count: 3 }), 0.5), "Name 1.mkv"],
   ["nothing for a single file", upNext(torrent(1), 0.5), undefined],
 ])("names %s", (_, entry, expected) => {
@@ -31,9 +31,9 @@ it.each([
   [
     "a viewed file watched again by the minutes left",
     { ...progress(video, "viewed"), position_seconds: 600 },
-    "50 min left",
+    "50\u00A0min left",
   ],
-  ["a file in progress by the minutes left", progress(video, 0.75), "15 min left"],
+  ["a file in progress by the minutes left", progress(video, 0.75), "15\u00A0min left"],
 ])("labels %s", (_, held, expected) => {
   expect(progressLabel(held)).toBe(expected);
 });

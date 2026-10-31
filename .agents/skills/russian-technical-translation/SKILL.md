@@ -104,7 +104,7 @@ English message.
 | Next episode | Следующая серия | |
 | Progress | Прогресс просмотра; often omitted | `Осталось 26 мин` says it without the noun |
 | Dismissal | Убрать из раздела «Продолжить просмотр» | The action; the noun is rarely shown |
-| Profile | Профиль | |
+| Profile | Профиль | The chooser's heading is `Выберите профиль`; not `Кто смотрит?`, a calque, nor `Кто будет смотреть?` |
 | Device profile | Устройства | The client's label for it; never offered as someone to watch as |
 | Recently added | Недавно добавленные | |
 | Search | Поиск | `Найти` for the action |

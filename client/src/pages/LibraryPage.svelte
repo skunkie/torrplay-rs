@@ -4,7 +4,6 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
-  import { ApiError } from "../lib/api/http";
   import {
     cursorOf,
     type PlaybackGrant,
@@ -12,6 +11,7 @@ SPDX-License-Identifier: MIT
     type TorrentQuery,
   } from "../lib/backend";
   import { useBackend } from "../lib/context";
+  import { failureMessage } from "../lib/i18n/index.svelte";
   import { formatQuery, parseQuery } from "../lib/library-query";
   import { location, replaceQuery } from "../lib/navigation.svelte";
   import { PlaybackGrants, withGrant } from "../lib/playback";
@@ -39,10 +39,6 @@ SPDX-License-Identifier: MIT
   /** Counts loads, so a response to an earlier one is ignored. */
   let generation = 0;
 
-  function message(failure: unknown): string {
-    return failure instanceof ApiError ? failure.message : "TorrPlay could not be reached.";
-  }
-
   /** Reads the listing's first `count` pages for `filters`. */
   async function load(filters: TorrentQuery, count = 1): Promise<void> {
     const mine = ++generation;
@@ -67,7 +63,7 @@ SPDX-License-Identifier: MIT
         etag = tag;
       }
     } catch (failure) {
-      if (mine === generation) error = message(failure);
+      if (mine === generation) error = failureMessage(failure);
     } finally {
       if (mine === generation) loading = false;
     }
@@ -90,7 +86,7 @@ SPDX-License-Identifier: MIT
       const page = await backend.listTorrents(query, { pageSize: PAGE_SIZE, cursor });
       if (mine === generation && !page.unchanged) pages = [...pages, page.data];
     } catch (failure) {
-      if (mine === generation) error = message(failure);
+      if (mine === generation) error = failureMessage(failure);
     } finally {
       if (mine === generation) loading = false;
     }

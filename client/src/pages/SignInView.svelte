@@ -4,6 +4,7 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import { t } from "../lib/i18n/index.svelte";
   interface Props {
     busy: boolean;
     error: string | undefined;
@@ -21,9 +22,9 @@ SPDX-License-Identifier: MIT
     onsubmit(password);
   }}
 >
-  <h1 class="text-2xl font-semibold">Sign in</h1>
+  <h1 class="text-2xl font-semibold">{t().signIn.title}</h1>
   <label class="flex flex-col gap-1">
-    <span>Password</span>
+    <span>{t().signIn.password}</span>
     <!-- svelte-ignore a11y_autofocus -->
     <input
       type="password"
@@ -44,6 +45,6 @@ SPDX-License-Identifier: MIT
     disabled={busy || password === ""}
     class="rounded-md bg-accent px-4 py-2 font-medium text-surface disabled:opacity-50"
   >
-    {busy ? "Signing in…" : "Sign in"}
+    {busy ? t().signIn.busy : t().signIn.submit}
   </button>
 </form>
