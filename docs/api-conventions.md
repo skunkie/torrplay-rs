@@ -77,7 +77,9 @@ follow their own specifications instead.
 
 - Resource IDs are opaque, server-assigned strings. Clients must not parse
   them or derive them from other values. They are stable for the lifetime of
-  the resource and are not reused after deletion.
+  the resource and are not reused after deletion: an ID never names another
+  resource. Restoring a backup brings the backup's resources back under the
+  IDs they had, which are theirs.
 - Engine handles and internal indexes never appear as public identifiers.
 - Protocol identifiers are exposed separately from resource IDs, for example
   `info_hashes`, a list of objects with `algorithm` and `value`. `value` is
@@ -265,7 +267,7 @@ The initial problem types, by name, each appended to the base above:
 | `not-found` | 404 | The target resource does not exist. |
 | `method-not-allowed` | 405 | The resource does not support the method. |
 | `not-acceptable` | 406 | No supported media type matches `Accept`. |
-| `request-timeout` | 408 | The request body did not arrive within the request body timeout, 30 seconds by default. |
+| `request-timeout` | 408 | The request body did not arrive within the request body timeout, 30 seconds by default, or, for a backup's restore, stopped arriving for that long. |
 | `lifecycle-conflict` | 409 | The resource's current state does not allow the request, such as reading files before metadata is available. |
 | `duplicate-torrent` | 409 | A torrent with the same info hash already exists; the `torrent` extension member holds its URI. |
 | `too-many-preloads` | 409 | Creating a preload would exceed the limit of active preloads per file or in total. |
@@ -284,7 +286,7 @@ The initial problem types, by name, each appended to the base above:
 | `too-many-attempts` | 429 | Recent wrong passwords make the request wait; `Retry-After` gives how long. |
 | `internal-error` | 500 | An unexpected failure. |
 | `engine-unavailable` | 503 | The torrent engine cannot serve the request right now; `Retry-After` is sent when a retry time is known. |
-| `insufficient-storage` | 507 | The download directory's filesystem has less free space than a torrent in disk storage needs. |
+| `insufficient-storage` | 507 | A filesystem has less free space than the request needs: the download directory's for a torrent in disk storage, or the data directory's for a backup's temporary file. |
 
 Adding a problem type is an additive change; changing a type's meaning or
 status is not.
@@ -340,7 +342,8 @@ status is not.
 - Request bodies, uploaded torrent files, and magnet URIs have documented
   size limits, and oversized input is rejected before it is fully buffered.
   A request body must arrive within the request body timeout, so a client
-  that stops sending cannot hold a request open; streamed responses are
-  exempt from fixed deadlines.
+  that stops sending cannot hold a request open; a backup's restore, whose
+  body may be far larger, must instead never stop arriving for that long.
+  Streamed responses are exempt from fixed deadlines.
 - Private tracker parameters and other credentials are redacted from logs,
   problems, and examples.

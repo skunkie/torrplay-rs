@@ -769,35 +769,6 @@ pub struct TorrentConfigurationLinks {
     ///The torrent this configuration belongs to.
     pub torrent: String,
 }
-///The state the client wants a torrent in.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
-pub enum DesiredState {
-    #[default]
-    #[serde(rename = "started")]
-    Started,
-    #[serde(rename = "paused")]
-    Paused,
-}
-impl DesiredState {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Started => "started",
-            Self::Paused => "paused",
-        }
-    }
-}
-impl ::std::fmt::Display for DesiredState {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-impl AsRef<str> for DesiredState {
-    fn as_ref(&self) -> &str {
-        self.as_str()
-    }
-}
-///What the torrent holds, or null to infer it from the file names, as the torrent resource's kind describes. It defaults to null.
-pub type ConfiguredKind = TorrentKind;
 ///A torrent the application tracks. Its storage_mode is the storage mode in effect, which changes when a transition to the configuration's storage_mode completes.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Torrent {
@@ -838,8 +809,6 @@ pub struct Torrent {
     pub title: Option<Title>,
     pub year: Option<Year>,
 }
-///The release year, or null if unknown. It defaults to null.
-pub type Year = i32;
 ///The storage mode transition in progress, or null when there is none.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TorrentStorageTransition {
@@ -915,35 +884,6 @@ pub struct TorrentFailure {
     ///An explanation of the failure.
     pub detail: String,
 }
-///The title clients show instead of the metadata's name, or null to show the name. Normalized on write, as docs/lifecycle.md describes, to 1 to 1024 characters without control characters. It defaults to null.
-pub type Title = String;
-///Where a torrent keeps piece data. In memory storage it holds pieces in the global piece cache, which evicts them, downloads the pieces its readers need, and never uploads, because evicted pieces cannot be served. In disk storage it keeps verified pieces in files below the download directory and uploads them, and deleting the torrent deletes the files. Clients must handle values added later.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
-pub enum StorageMode {
-    #[default]
-    #[serde(rename = "memory")]
-    Memory,
-    #[serde(rename = "disk")]
-    Disk,
-}
-impl StorageMode {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Memory => "memory",
-            Self::Disk => "disk",
-        }
-    }
-}
-impl ::std::fmt::Display for StorageMode {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-impl AsRef<str> for StorageMode {
-    fn as_ref(&self) -> &str {
-        self.as_str()
-    }
-}
 ///Whether the application keeps the torrent. A persisted torrent is stored and survives restarts. A temporary torrent lives in memory storage only: it is hidden from the listing by default and from the DLNA media server, takes no library members or poster, and is deleted once it has gone unwatched for the temporary_idle_seconds setting, or when the application restarts. Its files' progress is kept by its info hash for the temporary_progress_seconds setting. Changing it to persisted keeps the torrent with its ID; a persisted torrent cannot become temporary. Clients must handle values added later.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum Retention {
@@ -1004,10 +944,6 @@ impl AsRef<str> for ObservedState {
         self.as_str()
     }
 }
-///The title's IMDb ID, tt and 7 to 10 digits, which links the torrent to that title in catalogs keyed by it, such as Stremio's Cinemeta, or null if unknown. It defaults to null.
-pub type ImdbId = String;
-///A plain-text synopsis, or null. Normalized on write to 1 to 4096 characters, keeping line feeds and tabs and no other control characters. It defaults to null.
-pub type Description = String;
 ///A page of a profile's title progress.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TitleProgressPage {
@@ -1237,7 +1173,7 @@ pub struct SettingsPatch {
         default,
         deserialize_with = "tri_state_serde::deserialize"
     )]
-    pub log_level: Option<Option<SettingsPatchLogLevel>>,
+    pub log_level: Option<Option<LogLevel>>,
     ///The new value, or null for the default, 50.
     ///Constraint: minimum=1, maximum=500
     #[serde(
@@ -1278,45 +1214,6 @@ pub struct SettingsPatch {
         deserialize_with = "tri_state_serde::deserialize"
     )]
     pub temporary_torrent_limit: Option<Option<i32>>,
-}
-///The new value, or null for the default, info.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
-pub enum SettingsPatchLogLevel {
-    #[default]
-    #[serde(rename = "error")]
-    Error,
-    #[serde(rename = "warn")]
-    Warn,
-    #[serde(rename = "info")]
-    Info,
-    #[serde(rename = "debug")]
-    Debug,
-    #[serde(rename = "trace")]
-    Trace,
-    #[serde(rename = "null")]
-    NullValue,
-}
-impl SettingsPatchLogLevel {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Error => "error",
-            Self::Warn => "warn",
-            Self::Info => "info",
-            Self::Debug => "debug",
-            Self::Trace => "trace",
-            Self::NullValue => "null",
-        }
-    }
-}
-impl ::std::fmt::Display for SettingsPatchLogLevel {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-impl AsRef<str> for SettingsPatchLogLevel {
-    fn as_ref(&self) -> &str {
-        self.as_str()
-    }
 }
 ///The application's settings. Each value is the one set, or its default while it is unset. Command-line options may override some of them for one run, which overrides lists.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1559,8 +1456,6 @@ pub struct Profile {
     pub links: ProfileLinks,
     pub name: ProfileName,
 }
-///A profile's name, normalized as a category is to 1 to 64 characters without control characters, and unique among profiles after normalization, case included.
-pub type ProfileName = String;
 ///Links from a profile.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProfileLinks {
@@ -1574,33 +1469,6 @@ pub struct ProfileLinks {
     ///What the profile can resume or watch next.
     pub up_next: String,
 }
-///What the profile is. A person profile is someone's viewing identity, created by clients. The device profile is created by the application, exactly one, and holds the progress it infers from clients that do not report their own, such as DLNA media renderers; it cannot be renamed or deleted, and clients cannot save its progress, only clear it or dismiss its up next entries. Clients should not offer the device profile as the profile someone watches as. Clients must handle values added later.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
-pub enum ProfileKind {
-    #[default]
-    #[serde(rename = "person")]
-    Person,
-    #[serde(rename = "device")]
-    Device,
-}
-impl ProfileKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Person => "person",
-            Self::Device => "device",
-        }
-    }
-}
-impl ::std::fmt::Display for ProfileKind {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-impl AsRef<str> for ProfileKind {
-    fn as_ref(&self) -> &str {
-        self.as_str()
-    }
-}
 ///The profile's avatar, or null if it has none.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProfileAvatar {
@@ -1610,42 +1478,6 @@ pub struct ProfileAvatar {
     pub size_bytes: i64,
     ///When the avatar was uploaded, in UTC.
     pub updated_at: chrono::DateTime<chrono::Utc>,
-}
-///The media type of a poster or avatar image. Clients must handle values added later.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
-pub enum ImageMediaType {
-    #[default]
-    #[serde(rename = "image/avif")]
-    ImageAvif,
-    #[serde(rename = "image/gif")]
-    ImageGif,
-    #[serde(rename = "image/jpeg")]
-    ImageJpeg,
-    #[serde(rename = "image/png")]
-    ImagePng,
-    #[serde(rename = "image/webp")]
-    ImageWebp,
-}
-impl ImageMediaType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::ImageAvif => "image/avif",
-            Self::ImageGif => "image/gif",
-            Self::ImageJpeg => "image/jpeg",
-            Self::ImagePng => "image/png",
-            Self::ImageWebp => "image/webp",
-        }
-    }
-}
-impl ::std::fmt::Display for ImageMediaType {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-impl AsRef<str> for ImageMediaType {
-    fn as_ref(&self) -> &str {
-        self.as_str()
-    }
 }
 ///A file's preloads.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1884,75 +1716,6 @@ pub struct LogRecordFields {
     #[serde(flatten)]
     pub additional_properties: std::collections::BTreeMap<String, String>,
 }
-///A log record's severity, from the most severe to the least.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
-pub enum LogLevel {
-    #[default]
-    #[serde(rename = "error")]
-    Error,
-    #[serde(rename = "warn")]
-    Warn,
-    #[serde(rename = "info")]
-    Info,
-    #[serde(rename = "debug")]
-    Debug,
-    #[serde(rename = "trace")]
-    Trace,
-}
-impl LogLevel {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Error => "error",
-            Self::Warn => "warn",
-            Self::Info => "info",
-            Self::Debug => "debug",
-            Self::Trace => "trace",
-        }
-    }
-}
-impl ::std::fmt::Display for LogLevel {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-impl AsRef<str> for LogLevel {
-    fn as_ref(&self) -> &str {
-        self.as_str()
-    }
-}
-///A protocol identifier of a torrent's info dictionary.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct InfoHash {
-    ///The hash algorithm. Clients must handle values added later.
-    pub algorithm: InfoHashAlgorithm,
-    ///The hash in lowercase hexadecimal.
-    ///Constraint: pattern=`^[0-9a-f]{40}$`
-    pub value: String,
-}
-///The hash algorithm. Clients must handle values added later.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
-pub enum InfoHashAlgorithm {
-    #[default]
-    #[serde(rename = "sha1")]
-    Sha1,
-}
-impl InfoHashAlgorithm {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Sha1 => "sha1",
-        }
-    }
-}
-impl ::std::fmt::Display for InfoHashAlgorithm {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-impl AsRef<str> for InfoHashAlgorithm {
-    fn as_ref(&self) -> &str {
-        self.as_str()
-    }
-}
 ///The result of a passing health check.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Health {
@@ -1983,10 +1746,6 @@ impl AsRef<str> for HealthStatus {
         self.as_str()
     }
 }
-///The torrent's genres, distinct after normalization and in the order given. It defaults to an empty list.
-pub type Genres = Vec<Genre>;
-///A genre that describes the content. Normalized and compared as a category is.
-pub type Genre = String;
 ///The API's entry point.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EntryPoint {
@@ -2001,6 +1760,8 @@ pub struct EntryPointLinks {
     ///The API catalog, under its RFC 9727 relation name.
     #[serde(rename = "api-catalog")]
     pub api_catalog: String,
+    ///A backup of the application's records, to download or restore.
+    pub backup: String,
     ///The piece cache's statistics.
     pub cache_statistics: String,
     ///The recent log records.
@@ -2099,10 +1860,6 @@ pub struct CreatedAccessToken {
     ///Constraint: pattern=`^tpa_[a-z2-7]{52}$`
     pub secret: String,
 }
-///The torrent's categories, distinct after normalization and in the order given; clients may treat the first as the primary one. It defaults to an empty list.
-pub type Categories = Vec<Category>;
-///A category: the user's own grouping of torrents, such as a menu entry. Normalized on write to 1 to 128 characters without control characters, and compared exactly; a slash is an ordinary character.
-pub type Category = String;
 ///The global piece cache's capacity and usage. Cache usage is reported separately from process memory and does not bound it.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CacheStatistics {
@@ -2127,6 +1884,422 @@ pub struct CacheStatisticsLinks {
     ///The cache statistics.
     #[serde(rename = "self")]
     pub self_field: String,
+}
+///The document backup.json in a backup archive. Times are in UTC, as RFC 3339 to the nanosecond, so a restore keeps the listing order.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Backup {
+    ///The version of the application that wrote the backup.
+    pub application_version: String,
+    ///When the backup was written.
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    ///The archive format's version, 1. A restore reads every earlier version and refuses later ones.
+    ///Constraint: minimum=1
+    pub format_version: i32,
+    ///The profiles, the device profile included.
+    pub profiles: Vec<BackupProfile>,
+    ///The settings set explicitly. An omitted member is unset and takes its default; none is null.
+    pub settings: BackupSettings,
+    ///The persisted torrents, in creation order.
+    pub torrents: Vec<BackupTorrent>,
+}
+///A persisted torrent in a backup. Its torrent file is metainfo/{id}.torrent in the archive: always for an upload, and for a magnet URI once its metadata was recorded, without which a restored magnet torrent retrieves it again. Its poster is posters/{id}.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BackupTorrent {
+    ///Its configuration, always persisted.
+    pub configuration: BackupTorrentConfiguration,
+    ///When the torrent was created.
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    ///The torrent's ID, which a restore keeps.
+    pub id: String,
+    pub info_hash: InfoHash,
+    ///The magnet URI it was created from, or null for an uploaded torrent file, whose torrent file the archive must then hold.
+    pub magnet_uri: Option<String>,
+    ///Its poster, whose bytes are a file of the archive, or null if it has none.
+    pub poster: Option<BackupTorrentPoster>,
+}
+///Its poster, whose bytes are a file of the archive, or null if it has none.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BackupTorrentPoster {
+    pub media_type: ImageMediaType,
+    ///The poster's size, which its file must have.
+    ///Constraint: minimum=1, maximum=1048576
+    pub size_bytes: i64,
+    ///When the poster was uploaded.
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+///Its configuration, always persisted.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BackupTorrentConfiguration {
+    pub categories: Categories,
+    pub description: Option<Description>,
+    pub desired_state: DesiredState,
+    pub genres: Genres,
+    pub imdb_id: Option<ImdbId>,
+    pub kind: Option<ConfiguredKind>,
+    pub storage_mode: StorageMode,
+    pub title: Option<Title>,
+    pub year: Option<Year>,
+}
+///The release year, or null if unknown. It defaults to null.
+pub type Year = i32;
+///The title clients show instead of the metadata's name, or null to show the name. Normalized on write, as docs/lifecycle.md describes, to 1 to 1024 characters without control characters. It defaults to null.
+pub type Title = String;
+///Where a torrent keeps piece data. In memory storage it holds pieces in the global piece cache, which evicts them, downloads the pieces its readers need, and never uploads, because evicted pieces cannot be served. In disk storage it keeps verified pieces in files below the download directory and uploads them, and deleting the torrent deletes the files. Clients must handle values added later.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum StorageMode {
+    #[default]
+    #[serde(rename = "memory")]
+    Memory,
+    #[serde(rename = "disk")]
+    Disk,
+}
+impl StorageMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Memory => "memory",
+            Self::Disk => "disk",
+        }
+    }
+}
+impl ::std::fmt::Display for StorageMode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for StorageMode {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+///The title's IMDb ID, tt and 7 to 10 digits, which links the torrent to that title in catalogs keyed by it, such as Stremio's Cinemeta, or null if unknown. It defaults to null.
+pub type ImdbId = String;
+///The torrent's genres, distinct after normalization and in the order given. It defaults to an empty list.
+pub type Genres = Vec<Genre>;
+///A genre that describes the content. Normalized and compared as a category is.
+pub type Genre = String;
+///The state the client wants a torrent in.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum DesiredState {
+    #[default]
+    #[serde(rename = "started")]
+    Started,
+    #[serde(rename = "paused")]
+    Paused,
+}
+impl DesiredState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Started => "started",
+            Self::Paused => "paused",
+        }
+    }
+}
+impl ::std::fmt::Display for DesiredState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for DesiredState {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+///A plain-text synopsis, or null. Normalized on write to 1 to 4096 characters, keeping line feeds and tabs and no other control characters. It defaults to null.
+pub type Description = String;
+///What the torrent holds, or null to infer it from the file names, as the torrent resource's kind describes. It defaults to null.
+pub type ConfiguredKind = TorrentKind;
+///The torrent's categories, distinct after normalization and in the order given; clients may treat the first as the primary one. It defaults to an empty list.
+pub type Categories = Vec<Category>;
+///A category: the user's own grouping of torrents, such as a menu entry. Normalized on write to 1 to 128 characters without control characters, and compared exactly; a slash is an ordinary character.
+pub type Category = String;
+///The settings set explicitly. An omitted member is unset and takes its default; none is null.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct BackupSettings {
+    ///The background_downloads_enabled value set explicitly, as Settings names it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background_downloads_enabled: Option<bool>,
+    ///The cache_capacity_bytes value set explicitly, as Settings names it.
+    ///Constraint: minimum=4194304, maximum=68719476736
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_capacity_bytes: Option<i64>,
+    ///The dht_enabled value set explicitly, as Settings names it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dht_enabled: Option<bool>,
+    ///The dlna_enabled value set explicitly, as Settings names it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dlna_enabled: Option<bool>,
+    ///The dlna_name value set explicitly, as Settings names it.
+    ///Constraint: minLength=1, maxLength=64, pattern=`^[^\x00-\x1F\x7F]+$`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dlna_name: Option<String>,
+    ///The drain_period_seconds value set explicitly, as Settings names it.
+    ///Constraint: minimum=0, maximum=25
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub drain_period_seconds: Option<i32>,
+    ///The idle_reader_limit value set explicitly, as Settings names it.
+    ///Constraint: minimum=0, maximum=256
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idle_reader_limit: Option<i32>,
+    ///The idle_reader_limit_per_torrent value set explicitly, as Settings names it.
+    ///Constraint: minimum=0, maximum=64
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idle_reader_limit_per_torrent: Option<i32>,
+    ///The idle_reader_timeout_seconds value set explicitly, as Settings names it.
+    ///Constraint: minimum=0, maximum=3600
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idle_reader_timeout_seconds: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_level: Option<LogLevel>,
+    ///The peer_limit value set explicitly, as Settings names it.
+    ///Constraint: minimum=1, maximum=500
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer_limit: Option<i32>,
+    ///The piece_wait_seconds value set explicitly, as Settings names it.
+    ///Constraint: minimum=1, maximum=600
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub piece_wait_seconds: Option<i32>,
+    ///The temporary_idle_seconds value set explicitly, as Settings names it.
+    ///Constraint: minimum=60, maximum=86400
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temporary_idle_seconds: Option<i32>,
+    ///The temporary_progress_seconds value set explicitly, as Settings names it.
+    ///Constraint: minimum=86400, maximum=31536000
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temporary_progress_seconds: Option<i32>,
+    ///The temporary_torrent_limit value set explicitly, as Settings names it.
+    ///Constraint: minimum=1, maximum=64
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temporary_torrent_limit: Option<i32>,
+}
+///A log record's severity, from the most severe to the least.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum LogLevel {
+    #[default]
+    #[serde(rename = "error")]
+    Error,
+    #[serde(rename = "warn")]
+    Warn,
+    #[serde(rename = "info")]
+    Info,
+    #[serde(rename = "debug")]
+    Debug,
+    #[serde(rename = "trace")]
+    Trace,
+}
+impl LogLevel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Warn => "warn",
+            Self::Info => "info",
+            Self::Debug => "debug",
+            Self::Trace => "trace",
+        }
+    }
+}
+impl ::std::fmt::Display for LogLevel {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for LogLevel {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+///A profile in a backup, with what belongs to it. Its avatar, if it has one, is avatars/{id} in the archive.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BackupProfile {
+    ///Its avatar, whose bytes are a file of the archive, or null if it has none.
+    pub avatar: Option<BackupProfileAvatar>,
+    ///When the profile was created.
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    ///Its dismissed up next entries.
+    pub dismissals: Vec<BackupDismissal>,
+    ///The profile's ID, which a restore keeps.
+    pub id: String,
+    pub kind: ProfileKind,
+    pub name: ProfileName,
+    ///Its progress in the backup's torrents' files.
+    pub progress: Vec<BackupProgress>,
+    ///Its progress in temporary torrents' files, by info hash.
+    pub temporary_progress: Vec<BackupTemporaryProgress>,
+    ///Its title progress.
+    pub title_progress: Vec<BackupTitleProgress>,
+}
+///A profile's name, normalized as a category is to 1 to 64 characters without control characters, and unique among profiles after normalization, case included.
+pub type ProfileName = String;
+///What the profile is. A person profile is someone's viewing identity, created by clients. The device profile is created by the application, exactly one, and holds the progress it infers from clients that do not report their own, such as DLNA media renderers; it cannot be renamed or deleted, and clients cannot save its progress, only clear it or dismiss its up next entries. Clients should not offer the device profile as the profile someone watches as. Clients must handle values added later.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum ProfileKind {
+    #[default]
+    #[serde(rename = "person")]
+    Person,
+    #[serde(rename = "device")]
+    Device,
+}
+impl ProfileKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Person => "person",
+            Self::Device => "device",
+        }
+    }
+}
+impl ::std::fmt::Display for ProfileKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for ProfileKind {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+///A profile's title progress in a backup.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BackupTitleProgress {
+    ///The title's duration, to the millisecond.
+    ///Constraint: maximum=1000000, exclusiveMinimum=0
+    pub duration_seconds: f64,
+    ///The file that played, or null; null exactly when torrent_id is.
+    pub file_id: Option<String>,
+    ///The position in the title, to the millisecond, at most its duration.
+    ///Constraint: minimum=0
+    pub position_seconds: f64,
+    ///The title key.
+    ///Constraint: pattern=`^(tmdb-movie-[1-9][0-9]{0,9}|tmdb-tv-[1-9][0-9]{0,9}-s(0|[1-9][0-9]{0,3})e(0|[1-9][0-9]{0,3})|imdb-tt[0-9]{7,10}(-s(0|[1-9][0-9]{0,3})e(0|[1-9][0-9]{0,3}))?)$`
+    pub title_key: String,
+    ///The torrent of the file that played, which need not be in the backup, or null.
+    pub torrent_id: Option<String>,
+    ///When the title's progress was last saved.
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    ///When the title last became viewed, or null if it is not viewed.
+    pub viewed_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+///A profile's progress in a file of a temporary torrent, kept by its info hash.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BackupTemporaryProgress {
+    ///The temporary file's duration, to the millisecond.
+    ///Constraint: maximum=1000000, exclusiveMinimum=0
+    pub duration_seconds: f64,
+    ///The temporary torrent's file.
+    pub file_id: String,
+    pub info_hash: InfoHash,
+    ///The position in the temporary file, to the millisecond, at most its duration.
+    ///Constraint: minimum=0
+    pub position_seconds: f64,
+    ///When the temporary file's progress was last saved, from which its retention, temporary_progress_seconds, counts.
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    ///When the temporary file last became viewed, or null while it is not.
+    pub viewed_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+///A protocol identifier of a torrent's info dictionary.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct InfoHash {
+    ///The hash algorithm. Clients must handle values added later.
+    pub algorithm: InfoHashAlgorithm,
+    ///The hash in lowercase hexadecimal.
+    ///Constraint: pattern=`^[0-9a-f]{40}$`
+    pub value: String,
+}
+///The hash algorithm. Clients must handle values added later.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum InfoHashAlgorithm {
+    #[default]
+    #[serde(rename = "sha1")]
+    Sha1,
+}
+impl InfoHashAlgorithm {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Sha1 => "sha1",
+        }
+    }
+}
+impl ::std::fmt::Display for InfoHashAlgorithm {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for InfoHashAlgorithm {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+///A profile's progress in a file of a torrent in the backup.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BackupProgress {
+    ///The file's duration in this progress, to the millisecond.
+    ///Constraint: maximum=1000000, exclusiveMinimum=0
+    pub duration_seconds: f64,
+    ///The file, which the torrent must hold.
+    pub file_id: String,
+    ///The position in the file, to the millisecond, at most its duration.
+    ///Constraint: minimum=0
+    pub position_seconds: f64,
+    ///The torrent, which the backup must hold.
+    pub torrent_id: String,
+    ///When the file's progress was last saved.
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    ///When the file last became viewed, or null while it is not.
+    pub viewed_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+///Its avatar, whose bytes are a file of the archive, or null if it has none.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BackupProfileAvatar {
+    pub media_type: ImageMediaType,
+    ///The avatar's size, which its file must have.
+    ///Constraint: minimum=1, maximum=1048576
+    pub size_bytes: i64,
+    ///When the avatar was uploaded.
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+///The media type of a poster or avatar image. Clients must handle values added later.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum ImageMediaType {
+    #[default]
+    #[serde(rename = "image/avif")]
+    ImageAvif,
+    #[serde(rename = "image/gif")]
+    ImageGif,
+    #[serde(rename = "image/jpeg")]
+    ImageJpeg,
+    #[serde(rename = "image/png")]
+    ImagePng,
+    #[serde(rename = "image/webp")]
+    ImageWebp,
+}
+impl ImageMediaType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ImageAvif => "image/avif",
+            Self::ImageGif => "image/gif",
+            Self::ImageJpeg => "image/jpeg",
+            Self::ImagePng => "image/png",
+            Self::ImageWebp => "image/webp",
+        }
+    }
+}
+impl ::std::fmt::Display for ImageMediaType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for ImageMediaType {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+///A dismissed up next entry in a backup.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BackupDismissal {
+    ///When the entry was dismissed.
+    pub dismissed_at: chrono::DateTime<chrono::Utc>,
+    ///The entry's torrent, which the backup must hold.
+    pub torrent_id: String,
+    ///The entry's ID.
+    pub up_next_entry_id: String,
 }
 ///The API catalog (RFC 9727): a linkset (RFC 9264) naming the APIs the host serves, with their descriptions.
 #[derive(Debug, Clone, Deserialize, Serialize)]

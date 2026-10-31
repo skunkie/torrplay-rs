@@ -48,13 +48,14 @@ exists.
 ## API contract checks
 
 [vacuum](https://quobix.com/vacuum/) lints `api/openapi.yaml` against the
-ruleset in `.vacuum.yml` and validates its examples against their schemas;
+ruleset in `.vacuum.yml`, skipping the findings `.vacuum-ignore.yml` lists
+with their reasons, and validates its examples against their schemas;
 the [contract tooling decision](adr/0001-contract-tooling.md) records why.
 Write examples with `value`: vacuum does not read the `dataValue` and
 `serializedValue` fields of OpenAPI 3.2, so the ruleset rejects them.
 
 ```sh
-vacuum lint -r .vacuum.yml --min-score 100 -d -b api/openapi.yaml
+vacuum lint -r .vacuum.yml --ignore-file .vacuum-ignore.yml --min-score 100 -d -b api/openapi.yaml
 ```
 
 Install vacuum at the release CI pins: the tag in `VACUUM_IMAGE` in

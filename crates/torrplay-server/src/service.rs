@@ -41,6 +41,7 @@ pub(crate) async fn get_entry_point(headers: HeaderMap) -> Result<Response, Prob
                 service_doc: format!("{BASE}/reference"),
                 profiles: format!("{BASE}/profiles"),
                 settings: format!("{BASE}/settings"),
+                backup: crate::backup::backup_path(),
                 torrents: torrents_path(),
                 torrent_previews: format!("{BASE}/torrent-previews"),
                 password: password_path(),

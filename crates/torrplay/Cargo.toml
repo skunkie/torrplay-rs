@@ -42,3 +42,5 @@ torrplay-engine = { workspace = true, features = ["faults", "test-support"] }
 torrplay-fixtures.workspace = true
 # The MCP scenario runs the executable.
 tokio = { workspace = true, features = ["process"] }
+# The backup scenario edits an archive the application wrote.
+zip.workspace = true

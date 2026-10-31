@@ -251,6 +251,26 @@ mode (M6).
 | TMP-11 | Patch a temporary torrent with progress to `retention: persisted`, then restart | The progress is ordinary progress, listed in up next, and survives the restart |
 | TMP-12 | Let `temporary_progress_seconds` pass after the last save | The progress is gone |
 
+### Backup and restore
+
+These scenarios accept the lifecycle's
+[backup and restore](lifecycle.md#backup-and-restore) (M7).
+
+| ID | Scenario | Expected |
+|---|---|---|
+| BAK-01 | Download a backup of an uploaded torrent, a magnet torrent with recorded metadata and one without, a poster, two person profiles with an avatar, progress, title progress, temporary progress, and a dismissal, explicit settings, a password, and a temporary torrent | `200` `application/zip` with its length, an attachment, `no-store`, and no temporary file left; `backup.json` is a `Backup` naming each record, beside each torrent file, poster, and avatar; no password, token, key, or temporary torrent |
+| BAK-02 | Restore that backup into a new data directory, then read everything and stream a content URL saved before | `204`; once `/readyz` is `200`, the torrents keep their IDs, creation order, configurations, and posters, the profiles their progress, up next, and dismissals, the settings their values; the DLNA device UUID is the new installation's own; the saved URL streams |
+| BAK-03 | Restore over torrents the backup lacks, one in disk storage, one the backup holds in disk storage, one deleted and added again since the backup, a stream, a preload, and a temporary torrent | The lacking torrents are `404` and the disk one's directory is deleted; the shared torrent keeps its directory; the re-added torrent's new ID is `404` and its old ID is back; the stream ends; the preload and the temporary torrent are `404` |
+| BAK-04 | Restore with a password set, then use the access token from before and the configuration and settings ETags from before | The token works and the password is unchanged; both conditional requests are `412` |
+| BAK-05 | Restore a body that is not a zip, one without `backup.json`, a later format version, a schema violation, a malformed profile ID, a repeated torrent ID and info hash, a torrent file of another info hash, a missing poster, an avatar of the wrong size or signature, an entry that inflates past its limit, an encrypted entry, progress of a torrent the backup lacks, two device profiles, and an extra entry | `422 validation-failed` each time, with a `pointer` to the member at fault except for the first two; nothing changes |
+| BAK-06 | Restore a body over 16 GiB, one as `application/json`, one that stops arriving, and one the data directory has no room for; download with no room for the file | `413`, `415`, `408`, and `507`, and nothing changes; `507` |
+| BAK-07 | Download and restore while the engine is unavailable, while torrents are restored, and during shutdown | The download is `200` each time; the restore is `503 engine-unavailable` |
+| BAK-08 | A database write fails during a restore | `500 internal-error`; the records and their ETags are unchanged |
+| BAK-09 | Restore a backup whose memory torrent's pieces are longer than its settings' cache capacity | `204`; the torrent is restored as `failed` with a failure detail |
+| BAK-10 | Kill the process at moments spread across a restore's write, and during a download, then start | The database holds either the records before the restore or the backup's, whole, and no `backup-*.tmp` file remains |
+| BAK-11 | Restore a backup with `dlna_enabled` and another cache capacity while the media server is off, with `--log-level debug` given | The media server announces itself, the cache statistics report the capacity at once, and `overrides` still lists the log level |
+| BAK-12 | Restore a backup another zip tool unpacked and wrote again, with directory entries and other compression levels | `204`, with the same records as the original archive gives |
+
 ### Settings
 
 | ID | Scenario | Expected |

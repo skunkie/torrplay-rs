@@ -256,6 +256,17 @@ of each.
 : A command-line option that sets a setting's value for one run without
   storing it. The settings report each override with the value in effect.
 
+**Backup**
+: A zip archive of the application's records, without torrent data or
+  credentials, that `/api/v1/backup` downloads. Restoring one replaces the
+  application's records with its own.
+
+**Restore**
+: Adding the stored torrents to the engine again, at startup or after a
+  backup's records replace the application's, while the operations that
+  need every torrent known answer `engine-unavailable`. Restoring a backup
+  is the replacement that ends in a restore.
+
 ## Library
 
 **Library**

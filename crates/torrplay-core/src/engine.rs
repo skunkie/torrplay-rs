@@ -16,6 +16,7 @@
 //! and never decide whether a torrent exists from the client's point of
 //! view.
 
+use std::collections::HashSet;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -439,6 +440,15 @@ pub trait Engine: Send + Sync + 'static {
     /// ADR 5 requires. A torrent in disk storage also loses its directory
     /// and resume bitfield, once its files are closed.
     fn remove(&self, id: &TorrentId) -> impl Future<Output = Result<(), EngineError>> + Send;
+
+    /// Removes every torrent, as [`remove`](Self::remove) does, except that
+    /// the torrents of `keep` keep their directories and resume bitfields,
+    /// then deletes every entry of the download directory named like a
+    /// torrent ID outside `keep`, for a restore that adds torrents again.
+    fn remove_all(
+        &self,
+        keep: &HashSet<TorrentId>,
+    ) -> impl Future<Output = Result<(), EngineError>> + Send;
 
     /// Returns a torrent's metadata, once available, and failure. Retrieved
     /// metadata whose piece length exceeds cache capacity fails the torrent,

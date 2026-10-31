@@ -11,6 +11,8 @@
 // covers only test functions.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+#[path = "api/backup.rs"]
+mod backup;
 // Each test binary uses only part of the shared harness.
 #[allow(dead_code)]
 mod common;
@@ -462,6 +464,13 @@ fn assert_unauthenticated(exchange: &Exchange, error: Option<&str>) {
 
 mod scenario {
     use super::*;
+
+    pub use super::backup::{
+        backups_hold_the_records, backups_restore_elsewhere, invalid_backups_change_nothing,
+        restore_bounds, restored_settings_apply_at_once,
+        restores_keep_credentials_and_change_etags, restores_need_the_engine_and_a_write,
+        restores_replace_what_the_backup_lacks,
+    };
 
     /// API-01, API-02, API-19.
     pub async fn service_endpoints() {
@@ -7896,6 +7905,14 @@ macro_rules! scenarios {
 
 scenarios!(
     service_endpoints,
+    backups_hold_the_records,
+    backups_restore_elsewhere,
+    restores_replace_what_the_backup_lacks,
+    restores_keep_credentials_and_change_etags,
+    invalid_backups_change_nothing,
+    restore_bounds,
+    restores_need_the_engine_and_a_write,
+    restored_settings_apply_at_once,
     temporary_torrents,
     named_dht_and_log_settings,
     api_reference,

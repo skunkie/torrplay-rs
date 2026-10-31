@@ -69,6 +69,8 @@ struct State {
     transition_gate: Option<Arc<tokio::sync::Notify>>,
     cache_statistics: CacheStatistics,
     engine_statistics: EngineStatistics,
+    /// The torrents whose disk data the last removal of every torrent kept.
+    kept_disk_data: Option<HashSet<TorrentId>>,
 }
 
 struct Fixture {
@@ -124,6 +126,7 @@ impl FakeEngine {
                 transition_gate: None,
                 cache_statistics: CacheStatistics::default(),
                 engine_statistics: EngineStatistics::default(),
+                kept_disk_data: None,
             }),
         }
     }
@@ -389,6 +392,12 @@ impl FakeEngine {
         self.lock().engine_statistics = statistics;
     }
 
+    /// Returns the torrents whose disk data the last
+    /// [`remove_all`](Engine::remove_all) kept, if it ran.
+    pub fn kept_disk_data(&self) -> Option<HashSet<TorrentId>> {
+        self.lock().kept_disk_data.clone()
+    }
+
     /// Returns the desired state the engine last accepted for a torrent, or
     /// `None` if it holds no torrent with the ID.
     pub fn desired_state(&self, id: &TorrentId) -> Option<DesiredState> {
@@ -625,6 +634,13 @@ impl Engine for FakeEngine {
             .remove(id)
             .map(drop)
             .ok_or(EngineError::UnknownTorrent)
+    }
+
+    async fn remove_all(&self, keep: &HashSet<TorrentId>) -> Result<(), EngineError> {
+        let mut state = self.ready()?;
+        state.torrents.clear();
+        state.kept_disk_data = Some(keep.clone());
+        Ok(())
     }
 
     async fn status(&self, id: &TorrentId) -> Result<TorrentStatus, EngineError> {

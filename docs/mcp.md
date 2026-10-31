@@ -150,9 +150,9 @@ or a value outside an enumeration, are tool errors as well, titled
 correct.
 
 Not offered: posters and avatars, profiles' management, progress writes,
-settings changes, the password, and access tokens. These change the
-application's security or need a person's judgment, and the web client
-covers them.
+settings changes, backups and their restore, the password, and access
+tokens. These change the application's security or need a person's
+judgment, and the web client covers them.
 
 ## Resources
 
