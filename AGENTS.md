@@ -79,6 +79,7 @@ These requirements apply when reusing or adding the client; they do not expand t
 - When reusing TorrPlay's player, preserve its Mediabunny/WASM audio path and bounded Matroska/WebM subtitle extractor until an alternative provides equivalent behavior. Subtitle selection and seeking must use bounded ranges and seek indexes rather than scanning or downloading whole files.
 - Keep access to Vidstack's underlying media element behind one adapter, including provider and DOM fallbacks. Update that adapter and its tests when upgrading the player library.
 - For Android, honor safe-area insets and handle magnet and file intents. For Tauri, use the opener, dialog, and shell plugins for their corresponding native operations and preserve browser fallbacks for web-supported actions.
+- Keep every client message in American English and Russian. Write and review Russian messages with [the Russian translation skill](.agents/skills/russian-technical-translation/SKILL.md), and add a term there before using it in a message.
 - When a pnpm-based `client/` is introduced, add and run unit tests, type checking, linting, and production build checks in CI. Keep their commands in the development guide and rerun them for client changes, including shared fixtures and demo changes.
 
 ## Testing and validation
