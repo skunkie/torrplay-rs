@@ -78,8 +78,9 @@ semantics can be verified with a fake engine and controlled payloads.
 `scripts/render-logo.py` draws the logo from one geometry in a dark and a
 light palette: `brand/logo-dark.svg`, `brand/logo-light.svg`, the adaptive
 `brand/logo.svg` that follows the viewer's color scheme, and the DLNA media
-server's PNG and JPEG icons in `crates/torrplay-server/assets/dlna/`. Never
-edit those files by hand. After changing the script, run it from the
+server's PNG and JPEG icons in `crates/torrplay-server/assets/dlna/`. The
+web client serves `brand/` at its root, as Vite's public directory, and
+uses `logo.svg` as its favicon. Never edit those files by hand. After changing the script, run it from the
 repository root with Pillow 11.3.0 and commit what it writes; it writes the
 same bytes on every run.
 
