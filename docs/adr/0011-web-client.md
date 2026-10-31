@@ -101,8 +101,9 @@ seek index. The plan keeps them.
   results are pages, so links, reloads, the back button, and a remote's
   back key work. Dialogs are for confirmations and short forms only.
 - **One profile at a time.** Progress and up next belong to a profile, so
-  the client always acts as one, chosen at start when there are several
-  and switchable from the header.
+  the client always acts as one. Each device remembers the last one chosen,
+  asks only on its first start when there are several person profiles, and
+  switches from the header.
 - **Phone, desktop, and television.** Layouts work from 360 pixels wide to
   a television, every action works from the keyboard with visible focus,
   and arrow keys move between items in grids and rows, as a remote does.
@@ -170,8 +171,6 @@ containers, flows, the API layer, and the demo fixtures are new.
 
 ## Open questions
 
-- Should home show a "who is watching" choice at every start when there are
-  several person profiles, or remember the last one per device?
 - Should titles group several torrents of one series, which the contract
   does not model yet, or stay one torrent per title page?
 - Grouping a series by season needs each video file's season and episode.
