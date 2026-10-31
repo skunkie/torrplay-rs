@@ -730,7 +730,8 @@ impl LogCapture {
         static INSTALL: std::sync::Once = std::sync::Once::new();
         INSTALL.call_once(|| {
             let subscriber = tracing_subscriber::fmt()
-                .with_max_level(tracing::Level::INFO)
+                // Responses that succeed are debug messages.
+                .with_max_level(tracing::Level::DEBUG)
                 .with_writer(|| CaptureWriter)
                 .finish();
             tracing::subscriber::set_global_default(subscriber)
