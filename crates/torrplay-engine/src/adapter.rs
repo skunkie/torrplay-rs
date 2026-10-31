@@ -1334,6 +1334,28 @@ impl LibrqbitEngine {
         result.map_err(|detail| EngineError::TransitionFailed { detail })
     }
 
+    /// Removes torrent `id` as [`Engine::remove`] does, deleting its disk
+    /// data unless `keep_data`.
+    async fn remove_keeping(&self, id: &TorrentId, keep_data: bool) -> Result<(), EngineError> {
+        let running = self.running()?;
+        let torrent = self.torrent(id)?;
+        let _operations = torrent.operations.lock().await;
+        self.cancel_retrieval(&running, &torrent).await;
+        let (live, storage_mode) = {
+            let mut state = torrent.state();
+            (state.live.take(), state.storage_mode)
+        };
+        self.lock_torrents().remove(id);
+        running.preloads.remove_torrent(id);
+        if let Some(live) = live {
+            self.delete_live(&running, live).await.map_err(internal)?;
+        }
+        if storage_mode == StorageMode::Disk && !keep_data {
+            delete_disk_data(torrent.directory.clone()).await;
+        }
+        Ok(())
+    }
+
     /// Cancels a torrent's metadata retrieval and removes anything it added
     /// to the session but did not record.
     async fn cancel_retrieval(&self, running: &Running, torrent: &Torrent) {
@@ -1826,23 +1848,33 @@ impl Engine for LibrqbitEngine {
     }
 
     async fn remove(&self, id: &TorrentId) -> Result<(), EngineError> {
-        let running = self.running()?;
-        let torrent = self.torrent(id)?;
-        let _operations = torrent.operations.lock().await;
-        self.cancel_retrieval(&running, &torrent).await;
-        let (live, storage_mode) = {
-            let mut state = torrent.state();
-            (state.live.take(), state.storage_mode)
-        };
-        self.lock_torrents().remove(id);
-        running.preloads.remove_torrent(id);
-        if let Some(live) = live {
-            self.delete_live(&running, live).await.map_err(internal)?;
+        self.remove_keeping(id, false).await
+    }
+
+    async fn remove_all(&self, keep: &HashSet<TorrentId>) -> Result<(), EngineError> {
+        let ids: Vec<TorrentId> = self.lock_torrents().keys().cloned().collect();
+        for id in ids {
+            match self.remove_keeping(&id, keep.contains(&id)).await {
+                Ok(()) | Err(EngineError::UnknownTorrent) => {}
+                Err(error) => return Err(error),
+            }
         }
-        if storage_mode == StorageMode::Disk {
-            delete_disk_data(torrent.directory.clone()).await;
+        // The engine is alive while one of its methods runs.
+        let sweeping = self
+            .this
+            .upgrade()
+            .ok_or_else(|| internal(anyhow::anyhow!("the engine was dropped")))?;
+        let keep = keep.clone();
+        match tokio::task::spawn_blocking(move || sweeping.sweep_download_dir(&keep)).await {
+            Ok(Ok(deleted)) => {
+                for path in deleted {
+                    tracing::info!(path = %path.display(), "deleted disk data a restore replaced");
+                }
+                Ok(())
+            }
+            Ok(Err(error)) => Err(internal(error)),
+            Err(error) => Err(internal(error)),
         }
-        Ok(())
     }
 
     async fn status(&self, id: &TorrentId) -> Result<TorrentStatus, EngineError> {
