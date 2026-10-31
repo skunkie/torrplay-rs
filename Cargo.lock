@@ -1724,7 +1724,7 @@ dependencies = [
 [[package]]
 name = "librqbit"
 version = "9.0.1"
-source = "git+https://github.com/skunkie/rqbit?rev=2419e0c575798380d95555d306f9258b4de9aa00#2419e0c575798380d95555d306f9258b4de9aa00"
+source = "git+https://github.com/skunkie/rqbit?rev=5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c#5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1787,7 +1787,7 @@ dependencies = [
 [[package]]
 name = "librqbit-bencode"
 version = "9.0.1"
-source = "git+https://github.com/skunkie/rqbit?rev=2419e0c575798380d95555d306f9258b4de9aa00#2419e0c575798380d95555d306f9258b4de9aa00"
+source = "git+https://github.com/skunkie/rqbit?rev=5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c#5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c"
 dependencies = [
  "anyhow",
  "arrayvec",
@@ -1803,7 +1803,7 @@ dependencies = [
 [[package]]
 name = "librqbit-buffers"
 version = "9.0.1"
-source = "git+https://github.com/skunkie/rqbit?rev=2419e0c575798380d95555d306f9258b4de9aa00#2419e0c575798380d95555d306f9258b4de9aa00"
+source = "git+https://github.com/skunkie/rqbit?rev=5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c#5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c"
 dependencies = [
  "bytes",
  "librqbit-clone-to-owned",
@@ -1814,7 +1814,7 @@ dependencies = [
 [[package]]
 name = "librqbit-clone-to-owned"
 version = "9.0.1"
-source = "git+https://github.com/skunkie/rqbit?rev=2419e0c575798380d95555d306f9258b4de9aa00#2419e0c575798380d95555d306f9258b4de9aa00"
+source = "git+https://github.com/skunkie/rqbit?rev=5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c#5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c"
 dependencies = [
  "bytes",
 ]
@@ -1822,7 +1822,7 @@ dependencies = [
 [[package]]
 name = "librqbit-core"
 version = "9.0.1"
-source = "git+https://github.com/skunkie/rqbit?rev=2419e0c575798380d95555d306f9258b4de9aa00#2419e0c575798380d95555d306f9258b4de9aa00"
+source = "git+https://github.com/skunkie/rqbit?rev=5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c#5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1851,7 +1851,7 @@ dependencies = [
 [[package]]
 name = "librqbit-dht"
 version = "9.0.1"
-source = "git+https://github.com/skunkie/rqbit?rev=2419e0c575798380d95555d306f9258b4de9aa00#2419e0c575798380d95555d306f9258b4de9aa00"
+source = "git+https://github.com/skunkie/rqbit?rev=5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c#5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c"
 dependencies = [
  "anyhow",
  "backon",
@@ -1898,7 +1898,7 @@ dependencies = [
 [[package]]
 name = "librqbit-lsd"
 version = "9.0.1"
-source = "git+https://github.com/skunkie/rqbit?rev=2419e0c575798380d95555d306f9258b4de9aa00#2419e0c575798380d95555d306f9258b4de9aa00"
+source = "git+https://github.com/skunkie/rqbit?rev=5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c#5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c"
 dependencies = [
  "anyhow",
  "atoi",
@@ -1917,7 +1917,7 @@ dependencies = [
 [[package]]
 name = "librqbit-peer-protocol"
 version = "9.0.1"
-source = "git+https://github.com/skunkie/rqbit?rev=2419e0c575798380d95555d306f9258b4de9aa00#2419e0c575798380d95555d306f9258b4de9aa00"
+source = "git+https://github.com/skunkie/rqbit?rev=5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c#5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c"
 dependencies = [
  "anyhow",
  "bitvec",
@@ -1937,7 +1937,7 @@ dependencies = [
 [[package]]
 name = "librqbit-sha1-wrapper"
 version = "9.0.1"
-source = "git+https://github.com/skunkie/rqbit?rev=2419e0c575798380d95555d306f9258b4de9aa00#2419e0c575798380d95555d306f9258b4de9aa00"
+source = "git+https://github.com/skunkie/rqbit?rev=5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c#5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c"
 dependencies = [
  "assert_cfg",
  "aws-lc-rs",
@@ -1946,7 +1946,7 @@ dependencies = [
 [[package]]
 name = "librqbit-tracker-comms"
 version = "9.0.1"
-source = "git+https://github.com/skunkie/rqbit?rev=2419e0c575798380d95555d306f9258b4de9aa00#2419e0c575798380d95555d306f9258b4de9aa00"
+source = "git+https://github.com/skunkie/rqbit?rev=5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c#5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1974,7 +1974,7 @@ dependencies = [
 [[package]]
 name = "librqbit-upnp"
 version = "9.0.1"
-source = "git+https://github.com/skunkie/rqbit?rev=2419e0c575798380d95555d306f9258b4de9aa00#2419e0c575798380d95555d306f9258b4de9aa00"
+source = "git+https://github.com/skunkie/rqbit?rev=5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c#5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c"
 dependencies = [
  "anyhow",
  "bstr",
