@@ -129,7 +129,7 @@ document that schedules it.
 
 | Feature | Go TorrPlay | Status | Evidence or plan |
 |---|---|---|---|
-| Web interface: torrent grid, filters, sorting, and search | Next.js client | Planned | Client reuse, with a lighter framework than React |
+| Web interface: torrent grid, filters, sorting, and search | Next.js client | Planned | A Svelte client of its own pages, as [ADR 11](adr/0011-web-client.md) decides; `torrplay` serves its bundle (WEB-01 to WEB-03) |
 | Player with native and demuxed audio tracks | Vidstack and Mediabunny | Planned | Client reuse, keeping both |
 | Subtitle tracks from Matroska and WebVTT | `mkv-subtitles` | Planned | Client reuse, with bounded ranges |
 | Settings, statistics, and logs dialogs | Client | Planned | Client reuse, after their resources |

@@ -47,3 +47,15 @@ SPDX-License-Identifier = "MIT AND Apache-2.0 AND ISC AND BSD-3-Clause AND BSD-2
 path = "crates/torrplay-server/assets/dlna/icon-*"
 SPDX-FileCopyrightText = "2026 TorrPlay"
 SPDX-License-Identifier = "MIT"
+
+# The web client's manifests: JSON has no comment syntax, pnpm writes the
+# lockfile, and the Node version file holds the version alone.
+[[annotations]]
+path = [
+  "client/.node-version",
+  "client/package.json",
+  "client/pnpm-lock.yaml",
+  "client/tsconfig.json",
+]
+SPDX-FileCopyrightText = "2026 TorrPlay"
+SPDX-License-Identifier = "MIT"

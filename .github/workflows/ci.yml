@@ -125,6 +125,37 @@ jobs:
         shell: bash
         run: docker run --rm -v "${PWD}:/work:ro" "${VACUUM_IMAGE}" lint -r .vacuum.yml --ignore-file .vacuum-ignore.yml --min-score 100 -d -b api/openapi.yaml
 
+  client:
+    name: Web client
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: client
+    env:
+      # Corepack fetches the pnpm release package.json names and checks it
+      # against the SHA-512 written there.
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: client/.node-version
+      - name: Enable pnpm
+        run: corepack enable pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Type-check
+        run: pnpm check
+      - name: Lint and check formatting
+        run: pnpm lint
+      - name: Test
+        run: pnpm test
+      - name: Build the production bundle
+        run: pnpm build
+
   quality:
     name: Rust quality
     needs: stage

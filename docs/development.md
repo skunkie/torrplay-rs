@@ -128,6 +128,37 @@ for blocked requests, since its Content-Security-Policy allows only the
 page's own origin. The bundle compiles in Scalar's dependencies, whose
 licenses `REUSE.toml` lists; review them when upgrading.
 
+## Web client
+
+`client/` holds the web client, a Svelte single-page application that
+[ADR 11](adr/0011-web-client.md) describes. It needs the Node version in
+`client/.node-version` and pnpm, which Corepack provides at the version and
+SHA-512 that `package.json` pins:
+
+```sh
+corepack enable pnpm
+cd client
+pnpm install --frozen-lockfile
+pnpm check
+pnpm lint
+pnpm test
+pnpm build
+```
+
+`pnpm check` type-checks with svelte-check, `pnpm lint` runs ESLint and
+checks Prettier's formatting (`pnpm format` applies it), `pnpm test` runs
+Vitest, and `pnpm build` writes the production bundle to `client/dist`. CI
+runs the same commands. Pin new dependencies to exact versions at least two
+weeks old.
+
+`torrplay` serves the bundle at `/`, outside the API's paths, through its
+default `client` feature. A debug build reads `client/dist` as it is, so a
+rebuilt client shows on reload; a release build embeds it and fails to
+compile without it, and `--no-default-features` builds the server without the
+client. While developing, `pnpm dev` serves the client with hot reloading and
+passes `/api`, `/livez`, and `/readyz` to a running TorrPlay at
+`TORRPLAY_URL`, by default `http://127.0.0.1:8642`.
+
 ## Running TorrPlay
 
 ```bash

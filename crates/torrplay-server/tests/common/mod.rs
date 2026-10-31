@@ -24,10 +24,17 @@ use torrplay_core::registry::Registry;
 use torrplay_core::settings::Overrides;
 use torrplay_fixtures::{FileSpec, FixtureSpec, Layout};
 use torrplay_server::log_files::{LogFiles, LogWriter};
-use torrplay_server::{App, SeekIndexes, router};
+use torrplay_server::{App, ClientFiles, SeekIndexes, router};
 use torrplay_store::{Store, StoredTorrent};
 
 /// A running server and its client.
+/// What a test server takes besides its defaults.
+#[derive(Default)]
+struct Options {
+    seek_indexes: Option<SeekIndexes>,
+    client_files: Option<ClientFiles>,
+}
+
 pub struct TestServer {
     pub engine: Arc<FakeEngine>,
     pub app: Arc<App<FakeEngine>>,
@@ -121,7 +128,24 @@ impl TestServer {
             true,
             AllowedHosts::default(),
             Overrides::default(),
+            Options::default(),
+        )
+        .await
+    }
+
+    /// Starts a server that serves the web client's files from `files`.
+    pub async fn start_with_client(files: ClientFiles) -> Self {
+        Self::start_over(
+            Arc::new(TempDir::new().expect("a data directory")),
+            FakeEngine::with_catalog(),
             None,
+            true,
+            AllowedHosts::default(),
+            Overrides::default(),
+            Options {
+                client_files: Some(files),
+                ..Options::default()
+            },
         )
         .await
     }
@@ -135,7 +159,10 @@ impl TestServer {
             true,
             AllowedHosts::default(),
             Overrides::default(),
-            Some(indexes),
+            Options {
+                seek_indexes: Some(indexes),
+                ..Options::default()
+            },
         )
         .await
     }
@@ -149,7 +176,7 @@ impl TestServer {
             true,
             AllowedHosts::default(),
             Overrides::default(),
-            None,
+            Options::default(),
         )
         .await
     }
@@ -170,7 +197,7 @@ impl TestServer {
             true,
             hosts,
             Overrides::default(),
-            None,
+            Options::default(),
         )
         .await
     }
@@ -202,7 +229,7 @@ impl TestServer {
             restore,
             hosts,
             Overrides::default(),
-            None,
+            Options::default(),
         )
         .await
     }
@@ -219,7 +246,7 @@ impl TestServer {
             true,
             hosts,
             overrides,
-            None,
+            Options::default(),
         )
         .await
     }
@@ -245,7 +272,7 @@ impl TestServer {
         restore: bool,
         allowed_hosts: AllowedHosts,
         overrides: Overrides,
-        seek_indexes: Option<SeekIndexes>,
+        options: Options,
     ) -> Self {
         let engine = Arc::new(engine);
         let (store, contents) = Store::open(data.path()).expect("the store opens");
@@ -288,8 +315,11 @@ impl TestServer {
         if let Some(timeout) = body_timeout {
             app = app.with_body_timeout(timeout);
         }
-        if let Some(indexes) = seek_indexes {
+        if let Some(indexes) = options.seek_indexes {
             app = app.with_seek_indexes(indexes);
+        }
+        if let Some(files) = options.client_files {
+            app = app.with_client_files(files);
         }
         let (log_files, log_writer) =
             LogFiles::open(&data.path().join("logs")).expect("the log files open");

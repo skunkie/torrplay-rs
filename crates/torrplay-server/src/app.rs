@@ -100,6 +100,8 @@ pub struct App<E> {
     /// The viewings whose progress is inferred, and the files' seek indexes.
     inference: Inference,
     seek_indexes: Option<SeekIndexes>,
+    /// The web client's files, if it is served.
+    client_files: Option<crate::client::ClientFiles>,
     /// The process run, for the system resource and log records.
     run: crate::telemetry::Run,
     /// The server's measurements of its responses and streams.
@@ -200,6 +202,7 @@ impl<E: Engine> App<E> {
             temporaries: crate::retention::Temporaries::default(),
             inference: Inference::default(),
             seek_indexes: None,
+            client_files: None,
             run: crate::telemetry::Run::default(),
             telemetry: crate::telemetry::Telemetry::default(),
             log_files: None,
@@ -298,6 +301,17 @@ impl<E: Engine> App<E> {
     pub fn with_seek_indexes(mut self, indexes: SeekIndexes) -> Self {
         self.seek_indexes = Some(indexes);
         self
+    }
+
+    /// Serves the web client's files from `files` at the paths no route
+    /// takes.
+    pub fn with_client_files(mut self, files: crate::client::ClientFiles) -> Self {
+        self.client_files = Some(files);
+        self
+    }
+
+    pub(crate) fn client_files(&self) -> Option<&crate::client::ClientFiles> {
+        self.client_files.as_ref()
     }
 
     /// Whether a password is set, so requests need credentials.
