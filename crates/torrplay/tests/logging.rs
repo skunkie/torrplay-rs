@@ -27,7 +27,15 @@ async fn json_records_name_the_run_and_the_request() {
     let data = tempfile::TempDir::new().expect("a data directory");
     let port = free_port().expect("a port");
     let mut child = Command::new(env!("CARGO_BIN_EXE_torrplay"))
-        .args(["--log-format", "json", "--no-dht", "--listen"])
+        // Responses that succeed are debug messages.
+        .args([
+            "--log-format",
+            "json",
+            "--log-level",
+            "debug",
+            "--no-dht",
+            "--listen",
+        ])
         .arg(format!("127.0.0.1:{port}"))
         .arg("--peer-port")
         .arg(free_port().expect("a peer port").to_string())
@@ -161,7 +169,12 @@ async fn terminate(mut child: std::process::Child) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_next_run_reads_the_last_runs_records() {
     let data = tempfile::TempDir::new().expect("a data directory");
-    let (first, base) = start(data.path(), &["--log-format", "text"]).await;
+    // Responses that succeed are debug messages.
+    let (first, base) = start(
+        data.path(),
+        &["--log-format", "text", "--log-level", "debug"],
+    )
+    .await;
     let system = reqwest::get(format!("{base}/api/v1/system")).await.unwrap();
     let request_id = system.headers()["x-request-id"]
         .to_str()

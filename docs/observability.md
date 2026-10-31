@@ -72,6 +72,15 @@ files. Both receive what the `log_level` setting and `--log-filter` let
 through, and both carry the same members, so a collector, a person reading
 a file, and a client of the API see the same record.
 
+Each HTTP response, the DLNA and Stremio interfaces' included, is logged as a
+`response` record with its method, route template, status, and elapsed
+milliseconds once its headers are ready. It is a `debug` record, since
+clients poll and fetch media ranges continually and
+[the metrics](#metrics) count every response already. A `5xx` other than
+`503` is a `warn` record instead, beside any record that names its cause; a
+`503` reports the lifecycle, as `/readyz` does while the engine starts, and
+stays a `debug` record.
+
 ### Standard error
 
 `--log-format text|json`, or the `TORRPLAY_LOG_FORMAT` environment variable,

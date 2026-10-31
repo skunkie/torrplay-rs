@@ -345,22 +345,25 @@ async fn log_response<E: Engine>(
             )
         };
     }
-    if response_level(route, status) == Level::DEBUG {
-        log!(Level::DEBUG);
+    if response_level(status) == Level::WARN {
+        log!(Level::WARN);
     } else {
-        log!(Level::INFO);
+        log!(Level::DEBUG);
     }
     response
 }
 
-/// The level a response is logged at. Renderers and control points browse,
-/// renew subscriptions, and fetch media ranges continually, so DLNA's
-/// responses are debug messages unless the server failed them.
-fn response_level(route: &str, status: StatusCode) -> Level {
-    if route.starts_with("/dlna/") && !status.is_server_error() {
-        Level::DEBUG
+/// The level a response is logged at. Clients poll, browse, and fetch media
+/// ranges continually, and the metrics count every response already, so
+/// responses are debug messages unless the server failed them, which are
+/// warnings beside the error that names the cause. A `503` reports the
+/// lifecycle, as `/readyz` does while the engine starts, rather than a
+/// failure.
+fn response_level(status: StatusCode) -> Level {
+    if status.is_server_error() && status != StatusCode::SERVICE_UNAVAILABLE {
+        Level::WARN
     } else {
-        Level::INFO
+        Level::DEBUG
     }
 }
 
@@ -406,22 +409,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dlna_responses_are_debug_messages_unless_the_server_failed() {
+    fn responses_are_debug_messages_unless_the_server_failed() {
         let cases = [
-            (
-                "/dlna/media/{torrent_id}/{file_id}/{file_name}",
-                206,
-                Level::DEBUG,
-            ),
-            ("/dlna/content-directory/events", 412, Level::DEBUG),
-            ("/dlna/content-directory/control", 500, Level::INFO),
-            ("/api/v1/torrents", 200, Level::INFO),
-            ("/api/v1/torrents", 404, Level::INFO),
-            ("unmatched", 404, Level::INFO),
+            (101, Level::DEBUG),
+            (200, Level::DEBUG),
+            (206, Level::DEBUG),
+            (304, Level::DEBUG),
+            (404, Level::DEBUG),
+            (412, Level::DEBUG),
+            (499, Level::DEBUG),
+            (500, Level::WARN),
+            (503, Level::DEBUG),
+            (507, Level::WARN),
         ];
-        for (route, status, level) in cases {
+        for (status, level) in cases {
             let status = StatusCode::from_u16(status).unwrap();
-            assert_eq!(response_level(route, status), level, "{route} {status}");
+            assert_eq!(response_level(status), level, "{status}");
         }
     }
 }
