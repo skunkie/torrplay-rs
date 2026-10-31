@@ -36,6 +36,9 @@ const HARD_DRIFT_SECONDS = 0.25;
 const FRAME_STALE_MS = 500;
 /** Bounds the output latency and frame display delay compensated for. */
 const MAX_LATENCY_SECONDS = 0.25;
+/** How long decoded audio fades in when it starts and out when it stops,
+ * so neither clicks. */
+const FADE_SECONDS = 0.025;
 
 /** Plays a media element's audio tracks the browser cannot play, decoded
  * by `decoded`, in sync with the element's video.
@@ -65,6 +68,9 @@ export class AudioSync {
   #run = 0;
   #samples: AsyncGenerator<DecodedChunk, void> | undefined;
   #sources = new Set<AudioBufferSourceNode>();
+  /** The current run's gain, which fades it in and out. */
+  #runGain: GainNode | undefined;
+  #fadedIn = false;
   /** The video and Web Audio times the current run started at. */
   #epochVideo = 0;
   #epochContext = 0;
@@ -85,7 +91,8 @@ export class AudioSync {
     this.#onError = options.onError ?? (() => {});
 
     const listeners: [string, () => void][] = [
-      ["play", () => this.#started()],
+      // Playback starts with `playing`, after `play`, once data is there;
+      // starting on both cut the first run off at once.
       ["playing", () => this.#started()],
       ["pause", () => this.#halted()],
       ["waiting", () => this.#halted()],
@@ -184,7 +191,17 @@ export class AudioSync {
   #halted(): void {
     if (!this.decoding) return;
     this.#stop();
-    if (this.#context?.state === "running") void this.#context.suspend();
+    const context = this.#context;
+    if (context?.state !== "running") return;
+    // Suspending at once would cut the fade out; playback that starts
+    // again meanwhile keeps the context running.
+    const halted = this.#run;
+    setTimeout(
+      () => {
+        if (halted === this.#run && context.state === "running") void context.suspend();
+      },
+      FADE_SECONDS * 1000 + 10,
+    );
   }
 
   #restartIfPlaying(): void {
@@ -254,21 +271,34 @@ export class AudioSync {
     this.#lastFrameAt = undefined;
   }
 
-  /** Stops every scheduled source at once, so none outlives a pause, seek,
-   * or track change. */
+  /** Fades out and stops every scheduled source, so none outlives a pause,
+   * seek, or track change. */
   #stop(): void {
     this.#run++;
     void this.#samples?.return().catch(() => {});
     this.#samples = undefined;
+    const context = this.#context;
+    const gain = this.#runGain;
+    // A suspended context's clock stands still, so nothing could fade.
+    const fading = context?.state === "running" && gain !== undefined;
+    const end = fading ? context.currentTime + FADE_SECONDS : 0;
+    if (fading) {
+      gain.gain.cancelScheduledValues(context.currentTime);
+      gain.gain.setValueAtTime(gain.gain.value, context.currentTime);
+      gain.gain.linearRampToValueAtTime(0, end);
+    }
     for (const source of this.#sources) {
       try {
-        source.stop();
+        source.stop(end);
       } catch {
         // A source that never started cannot stop.
       }
-      source.disconnect();
     }
     this.#sources.clear();
+    if (gain) {
+      setTimeout(() => gain.disconnect(), fading ? FADE_SECONDS * 1000 + 50 : 0);
+    }
+    this.#runGain = undefined;
   }
 
   #restart(videoTime: number, contextTime?: number): void {
@@ -279,6 +309,11 @@ export class AudioSync {
     this.#epochVideo = videoTime;
     this.#epochContext = contextTime ?? context.currentTime;
     this.#scheduledUntil = context.currentTime;
+    const gain = context.createGain();
+    gain.gain.value = 0;
+    if (this.#decodedGain) gain.connect(this.#decodedGain);
+    this.#runGain = gain;
+    this.#fadedIn = false;
     void this.#schedule(this.#run, track, videoTime);
   }
 
@@ -313,7 +348,7 @@ export class AudioSync {
   /** Schedules `chunk` to reach the output when the video shows its
    * time. */
   #play(context: AudioContext, chunk: DecodedChunk): void {
-    const gain = this.#decodedGain;
+    const gain = this.#runGain;
     let buffer: AudioBuffer;
     try {
       buffer = chunk.toAudioBuffer();
@@ -330,8 +365,14 @@ export class AudioSync {
     source.buffer = buffer;
     source.playbackRate.value = rate;
     source.connect(gain);
+    const start = Math.max(at, context.currentTime);
     if (at >= context.currentTime) source.start(at);
-    else source.start(context.currentTime, (context.currentTime - at) * rate);
+    else source.start(start, (start - at) * rate);
+    if (!this.#fadedIn) {
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(1, start + FADE_SECONDS);
+      this.#fadedIn = true;
+    }
     this.#scheduledUntil = Math.max(this.#scheduledUntil, at + length);
     this.#sources.add(source);
     source.onended = () => this.#sources.delete(source);

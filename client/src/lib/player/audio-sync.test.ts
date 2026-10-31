@@ -7,7 +7,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AudioSync, type DecodedAudio, type DecodedChunk } from "./audio-sync";
 
 interface FakeGain {
-  gain: { value: number };
+  gain: {
+    value: number;
+    setValueAtTime: ReturnType<typeof vi.fn>;
+    linearRampToValueAtTime: ReturnType<typeof vi.fn>;
+    cancelScheduledValues: ReturnType<typeof vi.fn>;
+  };
   connect: ReturnType<typeof vi.fn>;
   disconnect: ReturnType<typeof vi.fn>;
 }
@@ -37,7 +42,16 @@ class FakeContext {
   }));
 
   createGain(): FakeGain {
-    const gain = { gain: { value: 1 }, connect: vi.fn(), disconnect: vi.fn() };
+    const gain = {
+      gain: {
+        value: 1,
+        setValueAtTime: vi.fn(),
+        linearRampToValueAtTime: vi.fn(),
+        cancelScheduledValues: vi.fn(),
+      },
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+    };
     this.gains.push(gain);
     return gain;
   }
@@ -193,7 +207,18 @@ describe("AudioSync", () => {
     expect(offset).toBeCloseTo(0.08);
   });
 
-  it("stops every scheduled source and suspends on pause, and resumes on play", async () => {
+  it("fades a run in from its first source", async () => {
+    const audio = sync(decodedOf().decoded);
+    audio.decode(0);
+    media.playing(3);
+    await vi.waitFor(() => expect(context.sources).toHaveLength(1));
+    const run = context.gains[2];
+    expect(run?.gain.value).toBe(0);
+    expect(run?.gain.setValueAtTime).toHaveBeenCalledWith(0, 10);
+    expect(run?.gain.linearRampToValueAtTime).toHaveBeenCalledWith(1, 10.025);
+  });
+
+  it("fades out and stops every source on pause, then suspends", async () => {
     const { decoded, runs } = decodedOf();
     const audio = sync(decoded);
     audio.decode(0);
@@ -201,12 +226,38 @@ describe("AudioSync", () => {
     await vi.waitFor(() => expect(context.sources).toHaveLength(1));
 
     media.pause();
-    expect(context.sources[0]?.stop).toHaveBeenCalled();
-    expect(context.suspend).toHaveBeenCalled();
+    expect(context.gains[2]?.gain.linearRampToValueAtTime).toHaveBeenLastCalledWith(0, 10.025);
+    expect(context.sources[0]?.stop).toHaveBeenCalledWith(10.025);
+    // Suspending waits for the fade.
+    expect(context.suspend).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(context.suspend).toHaveBeenCalled());
 
     media.playing(3);
     expect(context.resume).toHaveBeenCalled();
     await vi.waitFor(() => expect(runs).toHaveLength(2));
+  });
+
+  it("keeps running when playback starts again during the fade", async () => {
+    const audio = sync(decodedOf().decoded);
+    audio.decode(0);
+    media.playing(3);
+    await vi.waitFor(() => expect(context.sources).toHaveLength(1));
+    media.pause();
+    media.playing(3);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(context.suspend).not.toHaveBeenCalled();
+  });
+
+  it("starts once for play and playing", async () => {
+    const { decoded, runs } = decodedOf();
+    const audio = sync(decoded);
+    audio.decode(0);
+    media.playing(3);
+    // The element is no longer paused when `play` fires.
+    media.dispatchEvent(new Event("play"));
+    await vi.waitFor(() => expect(runs).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(runs).toHaveLength(1);
   });
 
   it("does not decode a seek while paused, and restarts at a seek while playing", async () => {
