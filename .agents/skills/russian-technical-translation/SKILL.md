@@ -112,6 +112,10 @@ English message.
 | Audio track | Звуковая дорожка | `Дорожка` alone once the context is clear; not `аудиотрек`. Menus label a track by its language from `Intl.DisplayNames`, capitalized at the start: `Английский (AC-3, 5.1)` |
 | Mono / Stereo / channels | Моно / Стерео / `6 каналов` | Surround layouts stay `5.1` and `7.1` |
 | Unknown language | Язык не указан | A track whose container names no language |
+| Subtitles / Subtitle track | Субтитры / дорожка субтитров | Plural, as the menu's name; `титры` are credits |
+| Off (a menu choice) | Выкл. | Subtitles that are off |
+| Forced / SDH / Commentary | форсированные / для слабослышащих / комментарии | Lowercase after the language in a label: `Русский, форсированные (SRT)` |
+| Not supported | не поддерживается | After a dash in a menu: `Английский (PGS) — не поддерживается` |
 
 ### Torrents and Storage
 
@@ -328,7 +332,8 @@ A faithful translation of a wrong English message is still wrong.
 - Protocol and format names: BitTorrent, DLNA, UPnP, Stremio, MCP, HTTP,
   Matroska, WebVTT.
 - `TorrPlay` and other product names.
-- Codec names: AAC, AC-3, E-AC-3, DTS, FLAC, MP3, Opus, Vorbis, PCM.
+- Codec and subtitle format names: AAC, AC-3, E-AC-3, DTS, FLAC, MP3, Opus,
+  Vorbis, PCM, SRT, ASS, SSA, PGS, VobSub.
 - Episode codes inside file names, such as `S01E02`; the client's own short form is `С1 Е2`.
 
 ---

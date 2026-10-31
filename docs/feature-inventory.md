@@ -131,7 +131,7 @@ document that schedules it.
 |---|---|---|---|
 | Web interface: torrent grid, filters, sorting, and search | Next.js client | Planned | A Svelte client of its own pages, as [ADR 11](adr/0011-web-client.md) decides; `torrplay` serves its bundle (WEB-01 to WEB-03) |
 | Player with native and demuxed audio tracks | Vidstack and Mediabunny | Implemented | The player page in `client/src/pages/WatchPage.svelte`, on Video.js 10, which replaces the deprecated Vidstack, plays natively, resumes, saves progress, and offers the next episode; `client/src/lib/player/audio*.ts` lists a file's audio tracks and plays a track the browser cannot play or switch to through Mediabunny's decoders, kept in sync with the video |
-| Subtitle tracks from Matroska and WebVTT | `mkv-subtitles` | Planned | Client reuse, with bounded ranges |
+| Subtitle tracks from Matroska and WebVTT | `mkv-subtitles` | Implemented | `client/src/lib/player/subtitle*.ts` offers a file's Matroska text tracks, read through bounded ranges and the seek index as playback approaches, and the SubRip, WebVTT, and ASS files that belong to it, decoded from UTF-8 or the likely legacy encoding; subtitles start off, and each device remembers the language chosen last |
 | Settings, statistics, and logs dialogs | Client | Planned | Client reuse, after their resources |
 | Standalone demo with fixtures | `/demo` | Planned | Client reuse |
 | Light and dark themes, following the system or chosen per device | Not present | Planned | Tokens per theme, native controls and the browser bar matching, no flash on load, and a contrast test of each text and surface pair in both themes |

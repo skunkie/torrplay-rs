@@ -10,6 +10,7 @@ import type { Backend, Progress, Torrent, TorrentFile } from "../lib/backend";
 import { navigate } from "../lib/navigation.svelte";
 import type * as Audio from "../lib/player/audio";
 import type { AudioTrack } from "../lib/player/audio";
+import type * as Media from "../lib/player/media";
 import { resetProfiles } from "../lib/profile.svelte";
 import { watchPath } from "../lib/routes";
 import { fakeBackend, file, profile, progress, torrent } from "../testing";
@@ -37,6 +38,33 @@ vi.mock("../lib/player/audio-sync", () => ({
     native = () => {};
     destroy = () => {};
   },
+}));
+
+const hosted = vi.hoisted(() => ({ tracks: [] as { label: string; shown: boolean }[] }));
+
+// jsdom's text tracks are not event targets, so the page's subtitles
+// play on a fake element.
+vi.mock("../lib/player/media", async (original) => ({
+  ...(await original<typeof Media>()),
+  subtitleHost: () => ({
+    add(label: string) {
+      const track = { label, shown: false };
+      hosted.tracks.push(track);
+      return {
+        get showing() {
+          return track.shown;
+        },
+        show: (shown: boolean) => (track.shown = shown),
+        addCue: () => {},
+        remove: () => {},
+      };
+    },
+    onChange: () => () => {},
+    onSeek: () => () => {},
+    currentTime: () => 0,
+    waitForTimeChange: () => new Promise(() => {}),
+    dispose: () => {},
+  }),
 }));
 
 function audioTrack(language: string, overrides: Partial<AudioTrack> = {}): AudioTrack {
@@ -101,6 +129,7 @@ beforeEach(() => {
   probed.tracks = [];
   decoding.tracks = [];
   decoding.works = true;
+  hosted.tracks = [];
   // jsdom plays no codec; this browser plays AAC, as every one does.
   vi.spyOn(HTMLMediaElement.prototype, "canPlayType").mockImplementation((type) =>
     type.includes("mp4a.40.2") ? "probably" : "",
@@ -193,4 +222,29 @@ it("offers no menu for a file with one audio track", async () => {
   await video();
   await Promise.resolve();
   expect(screen.queryByRole("combobox", { name: "Audio track" })).not.toBeInTheDocument();
+});
+
+it("offers the episode's subtitle files and shows the one chosen", async () => {
+  const subtitles = [file(show, "S01E01.rus.srt"), file(show, "S01E02.eng.srt")];
+  navigate(watchPath(show.id, e1.id));
+  render(App, { backend: backend(show, [e1, e2, ...subtitles]) });
+  await video();
+  const menu = await screen.findByRole("combobox", { name: "Subtitles" });
+  expect([...menu.querySelectorAll("option")].map((option) => option.textContent)).toEqual([
+    "Off",
+    "Russian (SRT)",
+  ]);
+  expect((menu as HTMLSelectElement).value).toBe("-1");
+  await fireEvent.change(menu, { target: { value: "0" } });
+  expect(hosted.tracks).toEqual([{ label: "Russian (SRT)", shown: true }]);
+  await fireEvent.change(menu, { target: { value: "-1" } });
+  expect(hosted.tracks[0]?.shown).toBe(false);
+});
+
+it("offers no subtitle menu for a file without subtitles", async () => {
+  navigate(watchPath(show.id, e1.id));
+  render(App, { backend: backend(show, [e1, e2]) });
+  await video();
+  await Promise.resolve();
+  expect(screen.queryByRole("combobox", { name: "Subtitles" })).not.toBeInTheDocument();
 });

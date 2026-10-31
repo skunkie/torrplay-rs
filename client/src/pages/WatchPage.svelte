@@ -12,7 +12,10 @@ SPDX-License-Identifier: MIT
   import { PlaybackGrants, withGrant } from "../lib/playback";
   import { trackLabel } from "../lib/player/audio";
   import { AudioTracks } from "../lib/player/audio-tracks.svelte";
+  import { subtitleHost } from "../lib/player/media";
   import { ProgressSaver, type Sample, startPosition } from "../lib/player/progress";
+  import { subtitleFiles } from "../lib/player/subtitle-files";
+  import { subtitleLabel, Subtitles } from "../lib/player/subtitles.svelte";
   import { profiles } from "../lib/profile.svelte";
   import { titlePath, watchPath } from "../lib/routes";
   import WatchView from "./WatchView.svelte";
@@ -39,6 +42,7 @@ SPDX-License-Identifier: MIT
 
   let media = $state<HTMLMediaElement>();
   let audio = $state<AudioTracks>();
+  let subtitles = $state<Subtitles>();
 
   const file = $derived(files?.find((candidate) => candidate.id === fileId));
   const profileId = $derived(profiles.current?.id);
@@ -110,6 +114,23 @@ SPDX-License-Identifier: MIT
     };
   });
 
+  $effect(() => {
+    const video = file;
+    const held = grant;
+    if (!media || !url || !video || !files || held === null) return;
+    const shown = new Subtitles({
+      files: subtitleFiles(video, files),
+      urlOf: (subtitle) => withGrant(subtitle.links.content, held),
+      matroska: ["video/x-matroska", "video/webm"].includes(video.media_type) ? url : undefined,
+      host: subtitleHost(media),
+    });
+    subtitles = shown;
+    return () => {
+      shown.destroy();
+      subtitles = undefined;
+    };
+  });
+
   const items = $derived(files ? playables(files, []) : []);
   const next = $derived.by(() => {
     if (torrent?.kind !== "series") return undefined;
@@ -144,5 +165,12 @@ SPDX-License-Identifier: MIT
   track={audio?.selected ?? 0}
   trackFailed={audio?.failed ?? false}
   ontrack={(index) => audio?.select(index)}
+  subtitleTracks={subtitles?.tracks.map((track) => ({
+    label: subtitleLabel(track),
+    unsupported: track.unsupported !== undefined,
+  })) ?? []}
+  subtitleTrack={subtitles?.tracks.findIndex((track) => track.id === subtitles?.selected) ?? -1}
+  subtitlesFailed={subtitles?.failed ?? false}
+  onsubtitles={(index) => subtitles?.select(subtitles.tracks[index]?.id ?? null)}
   onmedia={(element) => (media = element)}
 />

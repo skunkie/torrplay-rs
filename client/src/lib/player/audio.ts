@@ -2,8 +2,9 @@
 //
 // SPDX-License-Identifier: MIT
 
-import { i18n, t } from "../i18n/index.svelte";
+import { t } from "../i18n/index.svelte";
 import type { DecodedAudio } from "./audio-sync";
+import { languageName } from "./languages";
 
 /** One of a media file's audio tracks, as its container describes it. */
 export interface AudioTrack {
@@ -122,18 +123,6 @@ function channelsName(channels: number): string {
   if (channels === 6) return "5.1";
   if (channels === 8) return "7.1";
   return messages.channels(channels);
-}
-
-function languageName(code: string): string {
-  let name: string | undefined;
-  try {
-    name = new Intl.DisplayNames([i18n.locale], { type: "language" }).of(code);
-  } catch {
-    // A code Intl rejects is shown as it is.
-  }
-  if (!name || name === code) return code;
-  // Russian names languages in lowercase, as in the middle of a sentence.
-  return name.charAt(0).toLocaleUpperCase(i18n.locale) + name.slice(1);
 }
 
 const CODEC_NAMES: Partial<Record<string, string>> = {

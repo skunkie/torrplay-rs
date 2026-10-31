@@ -44,3 +44,13 @@
     @apply outline-focus outline-2 outline-offset-2;
   }
 }
+
+@layer components {
+  /* The skin lifts subtitles above its controls only for a video in its
+   * own shadow tree; ours sits in its slot, which inherits the offsets. */
+  video-skin video::-webkit-media-text-track-container {
+    translate: 0 var(--media-caption-track-y, 0);
+    transition: translate var(--media-caption-track-duration, 0) ease-out;
+    transition-delay: var(--media-caption-track-delay, 0);
+  }
+}
