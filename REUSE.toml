@@ -59,3 +59,10 @@ path = [
 ]
 SPDX-FileCopyrightText = "2026 TorrPlay"
 SPDX-License-Identifier = "MIT"
+
+# openapi-typescript generates the client's API types from api/openapi.yaml,
+# and CI fails when they differ from its output.
+[[annotations]]
+path = "client/src/lib/api/schema.d.ts"
+SPDX-FileCopyrightText = "2026 TorrPlay"
+SPDX-License-Identifier = "MIT"

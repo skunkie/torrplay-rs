@@ -4,4 +4,7 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <h1 class="text-2xl font-semibold">Home</h1>
-<p class="text-text-muted mt-2">Up next and recently added titles will appear here.</p>
+<p class="text-text-muted mt-2">
+  Up next and recently added titles will appear here. Meanwhile, browse the
+  <a href="/library" class="text-accent underline">library</a>.
+</p>

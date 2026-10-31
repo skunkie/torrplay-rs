@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { match } from "./routes";
+import { match, returnPath } from "./routes";
 
 const table = {
   home: "/",
@@ -35,4 +35,16 @@ describe("match", () => {
       expect(match(path, table)).toBeUndefined();
     },
   );
+});
+
+describe("returnPath", () => {
+  it.each([
+    ["?next=%2Flibrary%3Fq%3Dshow", "/library?q=show"],
+    ["", "/"],
+    ["?next=https%3A%2F%2Fexample.test%2F", "/"],
+    ["?next=%2F%2Fexample.test", "/"],
+    ["?next=%2F%5Cexample.test", "/"],
+  ])("goes from %j to %s", (search, expected) => {
+    expect(returnPath(search)).toBe(expected);
+  });
 });
