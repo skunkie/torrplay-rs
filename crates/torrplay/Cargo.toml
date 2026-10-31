@@ -18,7 +18,8 @@ workspace = true
 [features]
 default = ["client"]
 # Serves the web client from client/dist, which `pnpm build` writes; a
-# release build embeds it and fails without it.
+# release build embeds it and fails without it, and a debug build reads it
+# at runtime.
 client = ["dep:rust-embed"]
 
 [dependencies]
