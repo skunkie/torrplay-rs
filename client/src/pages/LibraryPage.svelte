@@ -14,7 +14,7 @@ SPDX-License-Identifier: MIT
   import { failureMessage } from "../lib/i18n/index.svelte";
   import { formatQuery, parseQuery } from "../lib/library-query";
   import { location, replaceQuery } from "../lib/navigation.svelte";
-  import { PlaybackGrants, withGrant } from "../lib/playback";
+  import { playbackGrants, withGrant } from "../lib/playback";
   import { poll } from "../lib/poll";
   import LibraryView from "./LibraryView.svelte";
 
@@ -23,7 +23,7 @@ SPDX-License-Identifier: MIT
   const SEARCH_DELAY_MS = 250;
 
   const backend = useBackend();
-  const grants = new PlaybackGrants(backend);
+  const grants = playbackGrants(backend);
 
   const query = $derived(parseQuery(location.search));
   let pages = $state<TorrentPage[]>([]);

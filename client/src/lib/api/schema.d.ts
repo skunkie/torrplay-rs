@@ -1062,7 +1062,7 @@ export interface paths {
         put?: never;
         /**
          * Issue a playback token
-         * @description Issues a signed playback token for URLs that cannot carry an Authorization header, such as a media element's source or a link a player opens. Nothing is stored: the token holds its scope and expiry and is valid until it expires, until the access token that issued it is revoked, or until the password is removed. Only an access token of the api scope may issue one. While no password is set content URLs need no token, and this is lifecycle-conflict.
+         * @description Issues a signed playback token for URLs that cannot carry an Authorization header, such as a media element's source or a link a player opens. Nothing is stored: the token holds its scope and expiry and is valid until it expires, until the access token that issued it is revoked, or until the password is removed. Only an access token of the api scope may issue one. While no password is set content URLs need no token, so none is issued and this is 204, which a client takes as leaving its URLs as they are.
          */
         post: operations["createPlaybackToken"];
         delete?: never;
@@ -7011,9 +7011,15 @@ export interface operations {
                     "application/json": components["schemas"]["PlaybackToken"];
                 };
             };
+            /** @description No password is set, so content URLs need no token. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             400: components["responses"]["MalformedRequest"];
             408: components["responses"]["RequestTimeout"];
-            409: components["responses"]["LifecycleConflict"];
             413: components["responses"]["ContentTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationFailed"];

@@ -115,6 +115,7 @@ async fn json_records_name_the_run_and_the_request() {
 
 /// Starts torrplay on `data` with `args`, and returns it with its API's
 /// base URL once it answers.
+#[cfg(unix)]
 async fn start(data: &std::path::Path, args: &[&str]) -> (std::process::Child, String) {
     let port = free_port().expect("a port");
     let child = Command::new(env!("CARGO_BIN_EXE_torrplay"))
@@ -141,6 +142,7 @@ async fn start(data: &std::path::Path, args: &[&str]) -> (std::process::Child, S
     (child, base)
 }
 
+#[cfg(unix)]
 async fn json(url: &str) -> Value {
     let response = reqwest::get(url).await.expect("an answer");
     serde_json::from_slice(&response.bytes().await.expect("a body")).expect("JSON")

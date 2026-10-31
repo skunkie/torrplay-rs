@@ -11,7 +11,7 @@ SPDX-License-Identifier: MIT
   import { useBackend } from "../lib/context";
   import { playables } from "../lib/episodes";
   import { failureMessage } from "../lib/i18n/index.svelte";
-  import { PlaybackGrants, withGrant } from "../lib/playback";
+  import { playbackGrants, withGrant } from "../lib/playback";
   import { poll } from "../lib/poll";
   import { profiles } from "../lib/profile.svelte";
   import TitleView from "./TitleView.svelte";
@@ -25,7 +25,7 @@ SPDX-License-Identifier: MIT
   let { torrentId }: Props = $props();
 
   const backend = useBackend();
-  const grants = new PlaybackGrants(backend);
+  const grants = playbackGrants(backend);
 
   let torrent = $state<Torrent>();
   let files = $state<TorrentFile[]>();

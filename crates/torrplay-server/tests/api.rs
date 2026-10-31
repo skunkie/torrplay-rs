@@ -6713,17 +6713,15 @@ mod scenario {
             StatusCode::CONFLICT,
             "lifecycle-conflict",
         );
-        assert_problem(
-            &server
-                .send(json_request(
-                    Method::POST,
-                    "/api/v1/playback-tokens",
-                    &json!({}),
-                ))
-                .await,
-            StatusCode::CONFLICT,
-            "lifecycle-conflict",
-        );
+        let issued = server
+            .send(json_request(
+                Method::POST,
+                "/api/v1/playback-tokens",
+                &json!({}),
+            ))
+            .await;
+        assert_eq!(issued.status, StatusCode::NO_CONTENT, "no token is needed");
+        assert!(issued.body.is_empty());
         let tokens = server.get("/api/v1/access-tokens").await;
         assert_eq!(tokens.json()["items"], json!([]));
         assert_problem(

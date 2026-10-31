@@ -78,8 +78,9 @@ semantics can be verified with a fake engine and controlled payloads.
 `scripts/render-logo.py` draws the logo from one geometry in a dark and a
 light palette: `brand/logo-dark.svg`, `brand/logo-light.svg`, the adaptive
 `brand/logo.svg` that follows the viewer's color scheme, and the DLNA media
-server's PNG and JPEG icons in `crates/torrplay-server/assets/dlna/`. Never
-edit those files by hand. After changing the script, run it from the
+server's PNG and JPEG icons in `crates/torrplay-server/assets/dlna/`, and
+the adaptive logo again as the web client's `client/public/favicon.svg`.
+Never edit those files by hand. After changing the script, run it from the
 repository root with Pillow 11.3.0 and commit what it writes; it writes the
 same bytes on every run.
 
@@ -171,9 +172,9 @@ weeks old.
 `torrplay` serves the bundle at `/`, outside the API's paths, through its
 default `client` feature. A debug build reads `client/dist` as it is, so a
 rebuilt client shows on reload, and before the first `pnpm build` the
-client's paths are `not-found`; a release build embeds it and fails to
-compile without it, and `--no-default-features` builds the server without the
-client. While developing, `pnpm dev` serves the client with hot reloading and
+client's paths are `not-found`; a release build embeds it and, without it,
+stops with a message saying to build it, and `--no-default-features` builds
+the server without the client. While developing, `pnpm dev` serves the client with hot reloading and
 passes `/api`, `/livez`, and `/readyz` to a running TorrPlay at
 `TORRPLAY_URL`, by default `http://127.0.0.1:8642`.
 

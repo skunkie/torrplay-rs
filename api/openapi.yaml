@@ -3534,7 +3534,8 @@ paths:
         and is valid until it expires, until the access token that issued it
         is revoked, or until the password is removed. Only an access token of
         the api scope may issue one. While no password is set content URLs
-        need no token, and this is lifecycle-conflict.
+        need no token, so none is issued and this is 204, which a client takes
+        as leaving its URLs as they are.
       tags: [Authentication]
       requestBody:
         description: >-
@@ -3572,12 +3573,12 @@ paths:
                     token: tpp_ahvtehy5upsff6pxalsrmdnkd66qaaaaabvn332a7ndq4m2kzb6hxw3rjpt5yc4uldc5yngltp3n5kqniwnganjy3goa
                     torrent_id: trr_7ndq4m2kzb6hxw3rjpt5yc4ula
                     expires_at: '2026-10-25T12:00:00Z'
+        '204':
+          description: No password is set, so content URLs need no token.
         '400':
           $ref: '#/components/responses/MalformedRequest'
         '408':
           $ref: '#/components/responses/RequestTimeout'
-        '409':
-          $ref: '#/components/responses/LifecycleConflict'
         '413':
           $ref: '#/components/responses/ContentTooLarge'
         '415':

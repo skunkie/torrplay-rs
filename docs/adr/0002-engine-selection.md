@@ -646,6 +646,7 @@ The fork's `torrplay/patches` branch holds twenty-three commits on upstream
 | `bb76ca3e` | P13 | On a steal, release only the old owner's chunk claims, so a shared piece's joiners are not handed chunks they already requested (milestone 7) |
 | `2419e0c5` | P14 | Count downloaded pieces that pass and fail their hash check in the session's counters, for the hash check metric (milestone 7) |
 | `5c3c360d` | Fix | End a torrent's speed estimator without an error when a pause takes its chunk tracker first, so shutdown and pauses log no false errors (milestone 7) |
+| `e6df504e` | Fix | End a dead peer's reconnect wait without an error when the torrent paused or stopped meanwhile, so shutdowns and pauses log no false errors (milestone 7) |
 
 Two more patches remain candidates. Setting `TCP_NODELAY` on peer sockets
 cut the time to first byte after a reconnect from about 43 ms to about

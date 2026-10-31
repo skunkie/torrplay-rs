@@ -41,7 +41,7 @@ argon2 = { version = "0.6", default-features = false, features = ["alloc", "pass
 axum = { version = "0.8", default-features = false, features = ["http1", "http2", "matched-path", "tokio"] }
 # librqbit's bencode, from the same fork commit, to recognize v2-only
 # torrents librqbit cannot parse.
-bencode = { package = "librqbit-bencode", git = "https://github.com/skunkie/rqbit", rev = "5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c" }
+bencode = { package = "librqbit-bencode", git = "https://github.com/skunkie/rqbit", rev = "e6df504ef7c5d1a97daa1369171e80e4b120ef54" }
 bytes = "1"
 # Without default features it does not read the system clock or time zone.
 chrono = { version = "0.4", default-features = false, features = ["serde", "std"] }
@@ -83,8 +83,8 @@ jsonschema = { version = "0.59", default-features = false }
 # each. docs/adr/0002-engine-selection.md records why, and
 # docs/development.md how to update it. TLS uses rustls so builds do not
 # depend on a system OpenSSL.
-librqbit = { git = "https://github.com/skunkie/rqbit", rev = "5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c", default-features = false, features = ["rust-tls"] }
-librqbit-core = { git = "https://github.com/skunkie/rqbit", rev = "5c3c360d6fd1de0ea553c2b644a7d5e172dfbc2c", default-features = false }
+librqbit = { git = "https://github.com/skunkie/rqbit", rev = "e6df504ef7c5d1a97daa1369171e80e4b120ef54", default-features = false, features = ["rust-tls"] }
+librqbit-core = { git = "https://github.com/skunkie/rqbit", rev = "e6df504ef7c5d1a97daa1369171e80e4b120ef54", default-features = false }
 memchr = "2"
 # Reading the DLNA media server's SOAP requests; librqbit already depends on
 # it.

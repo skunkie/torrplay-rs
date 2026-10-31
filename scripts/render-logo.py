@@ -12,7 +12,8 @@ bitmaps cannot drift:
 - brand/logo-dark.svg and brand/logo-light.svg, a rounded tile on a
   transparent background, for dark and light surroundings;
 - brand/logo.svg, the light variant that turns dark where the viewer
-  prefers a dark color scheme, for favicons and web pages;
+  prefers a dark color scheme, for favicons and web pages, and the same
+  as client/public/favicon.svg, the web client's favicon;
 - crates/torrplay-server/assets/dlna/icon-{48,120}.png, the dark tile,
   since televisions cannot say which they prefer and their menus are
   mostly dark;
@@ -48,6 +49,7 @@ SUPERSAMPLE = 8
 
 ICONS = Path("crates/torrplay-server/assets/dlna")
 BRAND = Path("brand")
+CLIENT = Path("client/public")
 
 HEADER = """<!--
 SPDX-FileCopyrightText: 2026 TorrPlay
@@ -129,6 +131,8 @@ def main():
     (BRAND / "logo-dark.svg").write_text(fixed(DARK), encoding="utf-8")
     (BRAND / "logo-light.svg").write_text(fixed(LIGHT), encoding="utf-8")
     (BRAND / "logo.svg").write_text(adaptive(), encoding="utf-8")
+    CLIENT.mkdir(parents=True, exist_ok=True)
+    (CLIENT / "favicon.svg").write_text(adaptive(), encoding="utf-8")
     ICONS.mkdir(parents=True, exist_ok=True)
     for size in (48, 120):
         bitmap(size, rounded=True).save(ICONS / f"icon-{size}.png", optimize=True)
