@@ -8,9 +8,18 @@ importers:
 
   .:
     dependencies:
+      '@mediabunny/ac3':
+        specifier: 1.61.6
+        version: 1.61.6(mediabunny@1.61.6)
+      '@mediabunny/dts':
+        specifier: 1.61.6
+        version: 1.61.6(mediabunny@1.61.6)
       '@videojs/html':
         specifier: 10.1.0
         version: 10.1.0(react@19.3.1)
+      mediabunny:
+        specifier: 1.61.6
+        version: 1.61.6
       openapi-fetch:
         specifier: 0.17.0
         version: 0.17.0
@@ -273,6 +282,16 @@ packages:
 
   '@lit/reactive-element@2.1.2':
     resolution: {integrity: sha512-pbCDiVMnne1lYUIaYNN5wrwQXDtHaYtg7YEFPeW+hws6U47WeFvISGUWekPGKWOP1ygrs0ef0o1VJMk1exos5A==}
+
+  '@mediabunny/ac3@1.61.6':
+    resolution: {integrity: sha512-APLHtzRuKu3UQFgUreenV1yDGUROVuMae9wJYfTEuNGgXVdR41FXkO4szg8S9ZV59HhHw2MxNg/XX4dp0RBVsw==}
+    peerDependencies:
+      mediabunny: ^1.0.0
+
+  '@mediabunny/dts@1.61.6':
+    resolution: {integrity: sha512-08UnZDiPX9UeJIzOI2TzYGdhGfKtUruWwxANgJQfkT16HNmz8lfo1xAsL/efTCsWKBJwweF0fjoTeOYkbjp3AQ==}
+    peerDependencies:
+      mediabunny: ^1.0.0
 
   '@napi-rs/wasm-runtime@1.2.6':
     resolution: {integrity: sha512-mRyDmEw9/fCDXCGfL1sbgIw/GUK0PVxRW4YwgPN61F3LQ+fSyoBFarJVzgGyhF6kRzEQZ0FejDqm4WLXSeqQmw==}
@@ -779,6 +798,12 @@ packages:
 
   '@types/deep-eql@4.0.2':
     resolution: {integrity: sha512-c9h9dVVMigMPc4bwTvC5dxqtqJZwQPePsWjPlpSOnojbor6pGqdk541lfA7AqFQr5pB1BRdq0juY9db81BwyFw==}
+
+  '@types/dom-mediacapture-transform@0.1.12':
+    resolution: {integrity: sha512-d7/QsLRwF864A5mgIM/YrfiglHoYn7zgCcAoJgW404r+2DwnNr7EBbLnCWpmOMgH8y0te73L1AV6H1bmauaWFw==}
+
+  '@types/dom-webcodecs@0.1.13':
+    resolution: {integrity: sha512-O5hkiFIcjjszPIYyUSyvScyvrBoV3NOEEZx/pMlsu44TKzWNkLVBBxnxJz42in5n3QIolYOcBYFCPZZ0h8SkwQ==}
 
   '@types/esrecurse@4.3.1':
     resolution: {integrity: sha512-xJBAbDifo5hpffDBuHl0Y8ywswbiAp/Wi7Y/GtAgSlZyIABppyurxVueOPE8LUQOxdlgi6Zqce7uoEpqNTeiUw==}
@@ -1581,6 +1606,9 @@ packages:
   mdn-data@2.37.2:
     resolution: {integrity: sha512-rz9YOBGItdSbe7HcSArUbhiAv4SB/4DKRYg96CSFS2CcIYMbUvBtZlzA1NCbk2AdgbmYwMqwNblLpR441lLeiQ==}
 
+  mediabunny@1.61.6:
+    resolution: {integrity: sha512-VHEZ53/7jGl4dQ+uOdndsZufFYwEUFWv9UXgvrGun3OapyzoqI9iaPOD7z3xxY/nAttLZBNwswgJzMtGJAquOQ==}
+
   min-indent@1.0.1:
     resolution: {integrity: sha512-I9jwMn07Sy/IwOj3zVkVik2JTvgpaykDZEigL6Rx6N9LbMywwUSMtxET+7lVoDLLd3O3IXwJwvuuns8UB/HeAg==}
     engines: {node: '>=4'}
@@ -2303,6 +2331,14 @@ snapshots:
     dependencies:
       '@lit-labs/ssr-dom-shim': 1.6.0
 
+  '@mediabunny/ac3@1.61.6(mediabunny@1.61.6)':
+    dependencies:
+      mediabunny: 1.61.6
+
+  '@mediabunny/dts@1.61.6(mediabunny@1.61.6)':
+    dependencies:
+      mediabunny: 1.61.6
+
   '@napi-rs/wasm-runtime@1.2.6(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)':
     dependencies:
       '@emnapi/core': 1.11.2
@@ -2636,6 +2672,12 @@ snapshots:
       assertion-error: 2.0.1
 
   '@types/deep-eql@4.0.2': {}
+
+  '@types/dom-mediacapture-transform@0.1.12':
+    dependencies:
+      '@types/dom-webcodecs': 0.1.13
+
+  '@types/dom-webcodecs@0.1.13': {}
 
   '@types/esrecurse@4.3.1': {}
 
@@ -3374,6 +3416,11 @@ snapshots:
   mdn-data@2.27.1: {}
 
   mdn-data@2.37.2: {}
+
+  mediabunny@1.61.6:
+    dependencies:
+      '@types/dom-mediacapture-transform': 0.1.12
+      '@types/dom-webcodecs': 0.1.13
 
   min-indent@1.0.1: {}
 

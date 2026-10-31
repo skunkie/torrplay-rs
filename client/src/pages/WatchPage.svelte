@@ -10,6 +10,8 @@ SPDX-License-Identifier: MIT
   import { nextEpisode, playables } from "../lib/episodes";
   import { failureMessage, t } from "../lib/i18n/index.svelte";
   import { PlaybackGrants, withGrant } from "../lib/playback";
+  import { trackLabel } from "../lib/player/audio";
+  import { AudioTracks } from "../lib/player/audio-tracks.svelte";
   import { ProgressSaver, type Sample, startPosition } from "../lib/player/progress";
   import { profiles } from "../lib/profile.svelte";
   import { titlePath, watchPath } from "../lib/routes";
@@ -34,6 +36,9 @@ SPDX-License-Identifier: MIT
   /** Whether the file is viewed, which every save keeps. */
   let viewed = false;
   let saver: ProgressSaver | undefined;
+
+  let media = $state<HTMLMediaElement>();
+  let audio = $state<AudioTracks>();
 
   const file = $derived(files?.find((candidate) => candidate.id === fileId));
   const profileId = $derived(profiles.current?.id);
@@ -91,6 +96,20 @@ SPDX-License-Identifier: MIT
     saver = new ProgressSaver(save, startAt);
   });
 
+  const url = $derived(
+    file && grant !== null && progress !== null ? withGrant(file.links.content, grant) : undefined,
+  );
+
+  $effect(() => {
+    if (!media || !url) return;
+    const tracks = new AudioTracks(media, url);
+    audio = tracks;
+    return () => {
+      tracks.destroy();
+      audio = undefined;
+    };
+  });
+
   const items = $derived(files ? playables(files, []) : []);
   const next = $derived.by(() => {
     if (torrent?.kind !== "series") return undefined;
@@ -112,9 +131,7 @@ SPDX-License-Identifier: MIT
 </script>
 
 <WatchView
-  url={file && grant !== null && progress !== null
-    ? withGrant(file.links.content, grant)
-    : undefined}
+  {url}
   title={torrent ? torrentTitle(torrent) : ""}
   {subtitle}
   {startAt}
@@ -123,4 +140,9 @@ SPDX-License-Identifier: MIT
   {error}
   onplayed={(sample) => saver?.played(sample)}
   onflush={(sample, closing) => saver?.flush(sample, closing)}
+  tracks={audio?.tracks.map(trackLabel) ?? []}
+  track={audio?.selected ?? 0}
+  trackFailed={audio?.failed ?? false}
+  ontrack={(index) => audio?.select(index)}
+  onmedia={(element) => (media = element)}
 />

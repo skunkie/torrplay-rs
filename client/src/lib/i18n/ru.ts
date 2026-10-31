@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import type { Messages } from "./en";
+import { plural } from "./plural";
 
 /** The client's messages in Russian, written by the Russian translation
  * skill in `.agents/skills/russian-technical-translation`. */
@@ -41,6 +42,15 @@ export const ru: Messages = {
     fileNotFound: "В торренте нет такого файла.",
     finished: "Просмотр завершён",
     playNext: "Смотреть",
+  },
+  audio: {
+    track: "Звуковая дорожка",
+    mono: "Моно",
+    stereo: "Стерео",
+    channels: (count: number) =>
+      `${count}\u00A0${plural("ru", count, { one: "канал", few: "канала", many: "каналов", other: "канала" })}`,
+    unknownLanguage: "Язык не указан",
+    failed: "Не удалось воспроизвести эту звуковую дорожку.",
   },
   home: {
     upNext: "Продолжить просмотр",

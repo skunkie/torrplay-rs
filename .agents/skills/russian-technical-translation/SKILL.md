@@ -109,6 +109,9 @@ English message.
 | Recently added | Недавно добавленные | |
 | Search | Поиск | `Найти` for the action |
 | Player | Плеер | Inanimate: `выберите плеер` |
+| Audio track | Звуковая дорожка | `Дорожка` alone once the context is clear; not `аудиотрек`. Menus label a track by its language from `Intl.DisplayNames`, capitalized at the start: `Английский (AC-3, 5.1)` |
+| Mono / Stereo / channels | Моно / Стерео / `6 каналов` | Surround layouts stay `5.1` and `7.1` |
+| Unknown language | Язык не указан | A track whose container names no language |
 
 ### Torrents and Storage
 
@@ -253,9 +256,9 @@ fractions use `other`.
 
 ### I. Library Data Stays as Stored
 
-Titles, descriptions, genres, categories, file names, and the names people
-give profiles are data, shown exactly as stored. Do not translate,
-transliterate, or re-capitalize them.
+Titles, descriptions, genres, categories, file names, audio track names, and
+the names people give profiles are data, shown exactly as stored. Do not
+translate, transliterate, or re-capitalize them.
 
 The two profiles the server creates are the exception: the device profile,
 named `Devices`, and the first person profile, named `Default` until someone
@@ -325,6 +328,7 @@ A faithful translation of a wrong English message is still wrong.
 - Protocol and format names: BitTorrent, DLNA, UPnP, Stremio, MCP, HTTP,
   Matroska, WebVTT.
 - `TorrPlay` and other product names.
+- Codec names: AAC, AC-3, E-AC-3, DTS, FLAC, MP3, Opus, Vorbis, PCM.
 - Episode codes inside file names, such as `S01E02`; the client's own short form is `С1 Е2`.
 
 ---
