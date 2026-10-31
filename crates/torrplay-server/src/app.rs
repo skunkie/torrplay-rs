@@ -24,7 +24,7 @@ use tokio::sync::watch;
 use torrplay_core::credentials::{AllowedHosts, AttemptLimiter, Credentials};
 use torrplay_core::engine::{CacheStatistics, Engine, EngineError, Source};
 use torrplay_core::id::{FileId, ProfileId, TorrentId, random_torrent_id_bytes};
-use torrplay_core::lifecycle::{Configuration, Failure, ObservedState, Readiness, StorageMode};
+use torrplay_core::lifecycle::{Failure, ObservedState, Readiness, StorageMode};
 use torrplay_core::metadata::Metadata;
 use torrplay_core::profiles::{
     self, DEVICE_PROFILE_NAME, DURATION_MAX_MS, PROFILE_NAME_DEFAULT, Profile, ProfileKind,
@@ -826,26 +826,7 @@ impl<E: Engine> App<E> {
             .max()
             .unwrap_or(0)
             + 1;
-        let mut torrents = Vec::with_capacity(restored.torrents.len());
-        for torrent in restored.torrents {
-            let configuration = Configuration::from_stored(
-                torrent.desired_state,
-                torrent.storage_mode,
-                torrent.library,
-                version,
-            )
-            .ok_or_else(Problem::internal)?;
-            torrents.push(StoredTorrent {
-                id: torrent.id,
-                info_hash: torrent.info_hash,
-                created_at: torrent.created_at,
-                configuration,
-                storage_mode: torrent.storage_mode,
-                magnet_uri: torrent.magnet_uri,
-                metainfo: torrent.metainfo,
-                poster: torrent.poster,
-            });
-        }
+        let torrents = crate::backup::stored_torrents(restored.torrents, version)?;
         let settings = StoredSettings {
             explicit: restored.explicit,
             version: self.settings().version + 1,

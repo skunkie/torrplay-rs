@@ -157,7 +157,10 @@ command line of the stopped application:
 printf '%s\n' 'a long passphrase' | cargo run -p torrplay -- password set
 ```
 
-`torrplay password remove` turns it off again and revokes every token. The
+`torrplay password remove` turns it off again and revokes every token.
+`torrplay backup create [--output <FILE>]` and `torrplay backup restore
+<FILE>` back up and restore the stopped application's records, as
+[the lifecycle](lifecycle.md#backup-and-restore) describes. The
 engine uses ADR 2's network configuration, so a running instance reaches the
 public swarm through DHT and trackers.
 

@@ -305,6 +305,11 @@ impl Problem {
         &self.0.detail
     }
 
+    /// The invalid values the problem lists.
+    pub(crate) fn errors(&self) -> &[InvalidValue] {
+        &self.0.errors
+    }
+
     /// Returns the pointers of the body members the problem names.
     #[cfg(test)]
     pub(crate) fn pointers(&self) -> Vec<&str> {

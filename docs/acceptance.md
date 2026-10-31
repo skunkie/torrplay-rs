@@ -270,6 +270,8 @@ These scenarios accept the lifecycle's
 | BAK-10 | Kill the process at moments spread across a restore's write, and during a download, then start | The database holds either the records before the restore or the backup's, whole, and no `backup-*.tmp` file remains |
 | BAK-11 | Restore a backup with `dlna_enabled` and another cache capacity while the media server is off, with `--log-level debug` given | The media server announces itself, the cache statistics report the capacity at once, and `overrides` still lists the log level |
 | BAK-12 | Restore a backup another zip tool unpacked and wrote again, with directory entries and other compression levels | `204`, with the same records as the original archive gives |
+| BAK-13 | Run `torrplay backup create` on a stopped application, again to the same file, then `torrplay backup restore` with an invalid archive and with the first one after adding a disk torrent | The archive's `backup.json` matches the download's but for its time, and the second run fails without touching the file; the invalid restore names the member at fault and changes nothing; after the restore the next start lists the backup's torrents alone and deletes the added torrent's directory |
+| BAK-14 | Run `torrplay backup create` on a data directory without a database, and both commands while the application holds the database | Each fails; no database or archive is created |
 
 ### Settings
 

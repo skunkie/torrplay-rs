@@ -31,6 +31,7 @@ pub use adapter::{
     CACHE_CAPACITY_BYTES_DEFAULT, EngineConfig, LibrqbitEngine, NetworkConfig, PEER_LIMIT_DEFAULT,
     PEER_PORT_DEFAULT, PIECE_WAIT_DEFAULT, REQUEST_WINDOW_BLOCKS_DEFAULT,
 };
+pub use inspect::source as inspect_source;
 pub use reader::RangeReader;
 
 /// Raises the process's soft limit on open files as far as the system

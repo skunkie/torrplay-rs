@@ -11,9 +11,11 @@
 //! `meta version`. A piece longer than the cache capacity is unsupported, as
 //! ADR 5 decides.
 
+use std::sync::Arc;
+
 use librqbit::{Magnet, ValidatedTorrentMetaV1Info, torrent_from_bytes};
 use serde::Deserialize;
-use torrplay_core::engine::SourceRejection;
+use torrplay_core::engine::{EngineError, Inspection, Source, SourceRejection};
 use torrplay_core::id::InfoHashV1;
 use torrplay_core::metadata::{ReportedFile, ReportedMetadata};
 
@@ -165,6 +167,26 @@ fn is_v2_only(bytes: &[u8]) -> bool {
 
     bencode::from_bytes::<Probe>(bytes)
         .is_ok_and(|probe| probe.info.meta_version == Some(2) && probe.info.pieces.is_none())
+}
+
+/// Inspects `source` as the engine does before adding it, without a
+/// session, so a stopped application can check a backup's torrents.
+pub fn source(source: &Source) -> Result<Inspection, EngineError> {
+    match source {
+        Source::Metainfo(bytes) => {
+            let inspected = metainfo(bytes)?;
+            Ok(Inspection {
+                info_hash: inspected.info_hash,
+                metadata: Some(Arc::new(inspected.metadata)),
+                trackers: inspected.trackers,
+            })
+        }
+        Source::MagnetUri(uri) => Ok(Inspection {
+            info_hash: magnet_uri(uri)?,
+            metadata: None,
+            trackers: magnet_trackers(uri),
+        }),
+    }
 }
 
 #[cfg(test)]

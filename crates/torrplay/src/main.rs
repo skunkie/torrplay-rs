@@ -5,8 +5,9 @@
 //! The `torrplay` executable: parses the command line, starts logging and
 //! the runtime, opens the store in the data directory, binds the API's
 //! listener, and serves until a termination signal. `torrplay password`
-//! changes a stopped application's password instead, and `torrplay mcp`
-//! serves a running application's API to an MCP client.
+//! changes a stopped application's password instead, `torrplay backup`
+//! backs it up or restores it, and `torrplay mcp` serves a running
+//! application's API to an MCP client.
 
 use std::io::IsTerminal;
 use std::process::ExitCode;
@@ -14,7 +15,8 @@ use std::time::Duration;
 
 use anyhow::Context;
 use torrplay::{
-    Command, Config, McpConfig, PasswordChange, PasswordChanged, ShutdownTimings, USAGE,
+    BackupAction, Command, Config, LogLevel, McpConfig, PasswordChange, PasswordChanged,
+    ShutdownTimings, USAGE,
 };
 use torrplay_core::credentials::AllowedHosts;
 use torrplay_engine::LibrqbitEngine;
@@ -29,6 +31,7 @@ fn main() -> ExitCode {
     let config = match torrplay::parse_args(std::env::args().skip(1), listen_variable) {
         Ok(Command::Run(config)) => config,
         Ok(Command::Password(change, config)) => return password(change, &config),
+        Ok(Command::Backup(action, config)) => return backup(action, &config),
         Ok(Command::Mcp(config)) => return mcp(config),
         Ok(Command::Help) => {
             print!("{USAGE}");
@@ -192,6 +195,60 @@ fn password(change: PasswordChange, config: &Config) -> ExitCode {
                     PasswordChanged::NoneSet => "no password is set; authentication is off",
                 }
             );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("torrplay: {error:#}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Backs up or restores a stopped application, logging warnings and errors
+/// to standard error, where a failure's cause appears.
+fn backup(action: BackupAction, config: &Config) -> ExitCode {
+    let format = if std::io::stderr().is_terminal() {
+        torrplay::LogFormat::Text
+    } else {
+        torrplay::LogFormat::Json
+    };
+    torrplay::init_logging(LogLevel::Warn, None, format, &torrplay::Run::draw(), None);
+    let result = config.data_dir().and_then(|data_dir| {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            match &action {
+                BackupAction::Create { output } => {
+                    let (path, counts) = torrplay::create_backup(
+                        &data_dir,
+                        output.as_deref(),
+                        std::time::SystemTime::now(),
+                    )
+                    .await?;
+                    Ok(format!(
+                        "wrote {} with {} torrents and {} profiles",
+                        path.display(),
+                        counts.torrents,
+                        counts.profiles
+                    ))
+                }
+                BackupAction::Restore { archive } => {
+                    let counts = torrplay::restore_backup(&data_dir, archive).await?;
+                    Ok(format!(
+                        "restored {} torrents and {} profiles from {}; the next start adds the \
+                         torrents",
+                        counts.torrents,
+                        counts.profiles,
+                        archive.display()
+                    ))
+                }
+            }
+        })
+    });
+    match result {
+        Ok(done) => {
+            eprintln!("torrplay: {done}");
             ExitCode::SUCCESS
         }
         Err(error) => {

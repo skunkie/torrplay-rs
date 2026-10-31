@@ -51,7 +51,7 @@ document that schedules it.
 | Posters uploaded and served by the server | `poster` URL or data URI | Verified | LIB-07 to LIB-10 |
 | Preview a torrent file without adding it | `POST /api/v1/torrent-previews` | Verified | API-24, `torrent_previews` |
 | Preview a torrent from a URL or a magnet URI | `POST /api/v1/torrent-resolutions` | Deferred | A URL needs an outbound request policy first; a magnet URI's metadata comes from peers |
-| Back up and restore the library, profiles, and settings | `/api/v1/torrents/backup`, `/restore` | Verified | `GET` and `PUT /api/v1/backup`, a zip archive without credentials or torrent data, restored in place of the records; BAK-01 to BAK-12 |
+| Back up and restore the library, profiles, and settings | `/api/v1/torrents/backup`, `/restore` | Verified | `GET` and `PUT /api/v1/backup`, a zip archive without credentials or torrent data, restored in place of the records, or on a stopped application's command line with `torrplay backup create` and `restore`; BAK-01 to BAK-14 |
 | Posters and metadata from TheTVDB | `internal/metadata` | Deferred | Needs credentials and a provider decision |
 
 ## Files and streaming

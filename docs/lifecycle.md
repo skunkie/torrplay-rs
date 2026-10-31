@@ -1010,6 +1010,14 @@ peers can supply again.
   a crash leaves are deleted at the next startup.
 - A restore reads every earlier format version and refuses later ones, so a
   newer release restores an older release's backup.
+- A stopped application backs up and restores on the command line, through
+  its database alone. `torrplay backup create` writes the archive a
+  download would to a file that must not exist yet, and refuses a data
+  directory without a database. `torrplay backup restore` checks an
+  archive as the API does, then replaces the records in one transaction;
+  the next start adds the restored torrents and deletes the download
+  directory's entries of torrents not kept on disk, as at any startup.
+  Both fail while the application runs, since it holds the database.
 
 ## Settings
 
