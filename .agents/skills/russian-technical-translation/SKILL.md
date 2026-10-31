@@ -226,17 +226,19 @@ fractions use `other`.
   for the current locale; never assemble them from strings. Russian uses a
   decimal comma and a space between thousands, which `Intl` provides.
 - Put a non-breaking space between a number and its unit: `100 мс`,
-  `15 Мбит/с`, `700 МБ`.
-- **Sizes are decimal** in both languages, as phones, macOS, and players
-  show them: `kB`, `MB`, `GB`, `TB` and `кБ`, `МБ`, `ГБ`, `ТБ`, with
-  1 MB = 1,000,000 bytes. Format them with `Intl.NumberFormat` and its
-  `kilobyte` … `terabyte` units. Never show binary units (`MiB`, `МиБ`), and
-  never label a binary value `MB`. Settings that take a size are entered in
-  the same decimal units, and their defaults are round in them.
-- **Rates** are bits per second: `15 Мбит/с`, `15 Mbit/s`. Do not use
-  `Intl`'s `megabit-per-second` for Russian as it is: its text ends in a
-  Latin `c` (`Мбит/c`). Format rates through the client's helper, which
-  writes Cyrillic `с` and a non-breaking space, and test it.
+  `256 МиБ`.
+- **Sizes are binary**, with IEC symbols, in both languages: `B`, `KiB`,
+  `MiB`, `GiB`, `TiB` and `Б`, `КиБ`, `МиБ`, `ГиБ`, `ТиБ`, with
+  1 MiB = 1,048,576 bytes. They match the settings' values (`256 МиБ`), the
+  documentation, and what torrent clients such as qBittorrent show. Never
+  show decimal units (`MB`, `МБ`), and never label a binary value `MB`.
+- **Rates** are binary bytes per second, like sizes: `12,5 МиБ/с`,
+  `12.5 MiB/s`, never bits (`Мбит/с`).
+- `Intl` has no binary units, so sizes and rates go through the client's
+  formatting helper: it formats the number with `Intl.NumberFormat` for the
+  locale, chooses the unit, and joins the localized symbol with a
+  non-breaking space. Do not use `Intl`'s byte or bit units; its Russian
+  rates also end in a Latin `c` (`Мбит/c`).
 - Grep for units and labels built in code (such as `` `${n} min left` ``)
   that bypass the messages, and move them into messages.
 
