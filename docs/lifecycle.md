@@ -492,6 +492,10 @@ resource shows the new values with a new state ETag.
     1 or 2 digits, `x`, and 2 or 3 digits, as in `1x02`; and `episode`, an
     optional space, dot, underscore, or hyphen, and 1 to 4 digits, as in
     `episode 2`.
+  - Each file, and each file a preview lists, reports as `episode` the
+    season and episode its name's first episode pattern numbers, a pattern
+    without a season numbering season 1, or `null` without one. Up next
+    orders a series' episodes by them.
 - The torrents collection filters by `category`, `uncategorized`, `genre`,
   the reported `kind`, and `info_hash`, as the contract describes. Filter
   values are normalized like the members they match; one that is invalid

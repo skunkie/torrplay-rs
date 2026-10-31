@@ -287,6 +287,10 @@ of each.
 : A part of a file name that numbers an episode, such as `S01E02`, `1x02`,
   or `episode 2`.
 
+**Episode**
+: The season and number a file's episode pattern gives it, season 1 for a
+  pattern without one. A series' episodes are ordered by them.
+
 **Category**
 : A user-chosen group of torrents, such as a menu entry. A torrent belongs
   to any number of categories, and a category exists while a torrent has it.

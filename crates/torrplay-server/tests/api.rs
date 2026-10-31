@@ -4588,6 +4588,36 @@ mod scenario {
         server.engine.add_fixture(&show);
         let series = server.upload(&show.metainfo().bytes, None).await.json();
         assert_eq!(series["kind"], "series");
+        // Files, and the files a preview lists, report their episodes.
+        let episodes = |files: &Value| -> Vec<(Value, Value)> {
+            files
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|file| {
+                    let path = file["path"].as_array().unwrap();
+                    (path[path.len() - 1].clone(), file["episode"].clone())
+                })
+                .collect()
+        };
+        let expected = vec![
+            (
+                json!("Show.S01E01.mkv"),
+                json!({ "season": 1, "number": 1 }),
+            ),
+            (
+                json!("Show.S01E02.mkv"),
+                json!({ "season": 1, "number": 2 }),
+            ),
+            (json!("notes.txt"), Value::Null),
+        ];
+        let files = server
+            .get(series["links"]["files"].as_str().unwrap())
+            .await
+            .json();
+        assert_eq!(episodes(&files["items"]), expected);
+        let previewed = server.send(preview_of(&show.metainfo().bytes)).await.json();
+        assert_eq!(episodes(&previewed["files"]), expected);
         let series_path = series["links"]["self"].as_str().unwrap().to_owned();
         let series_configuration = format!("{series_path}/configuration");
         let tag = server

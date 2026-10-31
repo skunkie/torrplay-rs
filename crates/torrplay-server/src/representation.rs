@@ -272,9 +272,20 @@ pub(crate) fn file_name(file: &MetadataFile) -> String {
     file.display_path().pop().unwrap_or_default()
 }
 
+/// The season and episode a file's name numbers.
+fn episode(file: &MetadataFile) -> Option<api::Episode> {
+    let (season, number) = library::episode_number(&file_name(file))?;
+    // Patterns hold at most 2 digits of season and 4 of episode.
+    Some(api::Episode {
+        season: i32::try_from(season).ok()?,
+        number: i32::try_from(number).ok()?,
+    })
+}
+
 /// A file as a torrent preview lists it: as the torrent would, without links.
 pub(crate) fn preview_file(file: &MetadataFile) -> api::PreviewFile {
     api::PreviewFile {
+        episode: episode(file),
         id: file.id().to_string(),
         media_type: content::media_type(&file_name(file)).0.to_owned(),
         path: file.display_path(),
@@ -292,6 +303,7 @@ pub(crate) fn info_hashes(info_hash: &InfoHashV1) -> Vec<api::InfoHash> {
 pub(crate) fn file(torrent: &TorrentId, file: &MetadataFile) -> api::TorrentFile {
     let path = file_path(torrent, file);
     api::TorrentFile {
+        episode: episode(file),
         id: file.id().to_string(),
         links: api::TorrentFileLinks {
             content: format!("{path}/content"),

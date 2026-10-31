@@ -224,20 +224,6 @@ pub struct TorrentPreviewLinks {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub torrent: Option<String>,
 }
-///A file a torrent file lists, as the torrent would list it.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct PreviewFile {
-    ///The ID the file would have in the torrent.
-    pub id: String,
-    ///The media type the file's content would be served with.
-    pub media_type: String,
-    ///The path components the file would have, in order.
-    ///Constraint: minItems=1
-    pub path: Vec<String>,
-    ///The file's size, from the metadata.
-    ///Constraint: minimum=0
-    pub size_bytes: i64,
-}
 ///A page of torrents.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TorrentPage {
@@ -281,6 +267,8 @@ pub struct TorrentFilePageLinks {
 ///A file listed in a torrent's metadata.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TorrentFile {
+    ///The season and episode the file's name, its last path component, numbers with an episode pattern, as docs/lifecycle.md describes, or null when it has none. A series' episodes are ordered by it, as up next orders them.
+    pub episode: Option<Episode>,
     ///The file's ID, stable within its torrent.
     pub id: String,
     ///Links from a file.
@@ -1478,6 +1466,32 @@ pub struct ProfileAvatar {
     pub size_bytes: i64,
     ///When the avatar was uploaded, in UTC.
     pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+///A file a torrent file lists, as the torrent would list it.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PreviewFile {
+    ///The season and episode the file's name numbers, as the torrent's file would report it.
+    pub episode: Option<Episode>,
+    ///The ID the file would have in the torrent.
+    pub id: String,
+    ///The media type the file's content would be served with.
+    pub media_type: String,
+    ///The path components the file would have, in order.
+    ///Constraint: minItems=1
+    pub path: Vec<String>,
+    ///The file's size, from the metadata.
+    ///Constraint: minimum=0
+    pub size_bytes: i64,
+}
+///A season and an episode an episode pattern numbers. A pattern without a season, such as episode 2, numbers season 1.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Episode {
+    ///The episode's number within its season.
+    ///Constraint: minimum=0, maximum=9999
+    pub number: i32,
+    ///The season.
+    ///Constraint: minimum=0, maximum=99
+    pub season: i32,
 }
 ///A file's preloads.
 #[derive(Debug, Clone, Deserialize, Serialize)]
