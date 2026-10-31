@@ -7,6 +7,7 @@ SPDX-License-Identifier: MIT
   import Poster from "../components/Poster.svelte";
   import type { Torrent, UpNextEntry } from "../lib/backend";
   import { entryReason, entrySubject, torrentDetails, torrentTitle } from "../lib/describe";
+  import { titlePath } from "../lib/routes";
 
   interface Props {
     /** What the profile can resume or watch next, or `undefined` before
@@ -46,15 +47,17 @@ SPDX-License-Identifier: MIT
         {#each entries as entry (entry.id)}
           {@const subject = entrySubject(entry)}
           <li class={card}>
-            <Poster
-              url={poster(entry.torrent)}
-              title={torrentTitle(entry.torrent)}
-              progress={entry.progress?.completion_ratio}
-            />
-            <span class="line-clamp-2 font-medium">{torrentTitle(entry.torrent)}</span>
-            {#if subject}
-              <span class="line-clamp-1 text-sm">{subject}</span>
-            {/if}
+            <a href={titlePath(entry.torrent.id)} class="flex flex-col gap-1 rounded-md">
+              <Poster
+                url={poster(entry.torrent)}
+                title={torrentTitle(entry.torrent)}
+                progress={entry.progress?.completion_ratio}
+              />
+              <span class="line-clamp-2 font-medium">{torrentTitle(entry.torrent)}</span>
+              {#if subject}
+                <span class="line-clamp-1 text-sm">{subject}</span>
+              {/if}
+            </a>
             <span class="text-text-muted flex items-center justify-between gap-2 text-sm">
               {entryReason(entry)}
               <button
@@ -86,9 +89,11 @@ SPDX-License-Identifier: MIT
       <ul class={row}>
         {#each recent as torrent (torrent.id)}
           <li class={card}>
-            <Poster url={poster(torrent)} title={torrentTitle(torrent)} />
-            <span class="line-clamp-2 font-medium">{torrentTitle(torrent)}</span>
-            <span class="text-text-muted text-sm">{torrentDetails(torrent)}</span>
+            <a href={titlePath(torrent.id)} class="flex flex-col gap-1 rounded-md">
+              <Poster url={poster(torrent)} title={torrentTitle(torrent)} />
+              <span class="line-clamp-2 font-medium">{torrentTitle(torrent)}</span>
+              <span class="text-text-muted text-sm">{torrentDetails(torrent)}</span>
+            </a>
           </li>
         {/each}
       </ul>

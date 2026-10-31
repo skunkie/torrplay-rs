@@ -15,6 +15,7 @@ SPDX-License-Identifier: MIT
   import LibraryPage from "./pages/LibraryPage.svelte";
   import NotFound from "./pages/NotFound.svelte";
   import SignInPage from "./pages/SignInPage.svelte";
+  import TitlePage from "./pages/TitlePage.svelte";
 
   interface Props {
     /** The backend the pages use; the API's by default. */
@@ -95,6 +96,10 @@ SPDX-License-Identifier: MIT
     <HomePage />
   {:else if page?.name === "library"}
     <LibraryPage />
+  {:else if page?.name === "title"}
+    {#key page.params.torrent_id}
+      <TitlePage torrentId={page.params.torrent_id ?? ""} />
+    {/key}
   {:else if page?.name === "signIn"}
     <SignInPage />
   {:else}

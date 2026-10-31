@@ -7,6 +7,7 @@
 export const routes = {
   home: "/",
   library: "/library",
+  title: "/titles/:torrent_id",
   signIn: "/sign-in",
 } as const;
 
@@ -56,6 +57,11 @@ function split(path: string): string[] {
     // The leading slash, and a trailing one, separate nothing.
     return !(segment === "" && (index === 0 || index === all.length - 1));
   });
+}
+
+/** The title page of a torrent. */
+export function titlePath(torrentId: string): string {
+  return `/titles/${encodeURIComponent(torrentId)}`;
 }
 
 /** Where to go after signing in: the `next` path of `search`, a page's

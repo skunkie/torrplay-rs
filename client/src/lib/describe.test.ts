@@ -4,8 +4,8 @@
 
 import { expect, it } from "vitest";
 
-import { torrent, upNext } from "../testing";
-import { entryReason, entrySubject } from "./describe";
+import { file, progress, torrent, upNext } from "../testing";
+import { entryReason, entrySubject, progressLabel } from "./describe";
 
 it.each([
   ["a resumed file by the minutes left", upNext(torrent(1), 0.5), "30 min left"],
@@ -21,4 +21,19 @@ it.each([
   ["nothing for a single file", upNext(torrent(1), 0.5), undefined],
 ])("names %s", (_, entry, expected) => {
   expect(entrySubject(entry)).toBe(expected);
+});
+
+const video = file(torrent(1), "a.mkv");
+
+it.each([
+  ["nothing before the file starts", undefined, undefined],
+  ["a viewed file", progress(video, "viewed"), "Viewed"],
+  [
+    "a viewed file watched again by the minutes left",
+    { ...progress(video, "viewed"), position_seconds: 600 },
+    "50 min left",
+  ],
+  ["a file in progress by the minutes left", progress(video, 0.75), "15 min left"],
+])("labels %s", (_, held, expected) => {
+  expect(progressLabel(held)).toBe(expected);
 });
