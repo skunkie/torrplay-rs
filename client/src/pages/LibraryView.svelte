@@ -6,6 +6,8 @@ SPDX-License-Identifier: MIT
 <script lang="ts">
   import type { Schemas } from "../lib/api/http";
   import type { Torrent, TorrentKind, TorrentQuery } from "../lib/backend";
+  import { torrentDetails, torrentTitle } from "../lib/describe";
+  import Poster from "../components/Poster.svelte";
 
   interface Props {
     torrents: Torrent[];
@@ -55,17 +57,6 @@ SPDX-License-Identifier: MIT
     paused: "Paused",
     failed: "Failed",
   };
-
-  function title(torrent: Torrent): string {
-    return torrent.title ?? torrent.name ?? "Untitled";
-  }
-
-  function details(torrent: Torrent): string {
-    const kind = { movie: "Movie", series: "Series", other: "Other" };
-    return [torrent.year, torrent.kind ? kind[torrent.kind] : undefined]
-      .filter((part) => part !== null && part !== undefined)
-      .join(" · ");
-  }
 
   function category(value: string): void {
     const { category: _, uncategorized: __, ...rest } = query;
@@ -173,25 +164,9 @@ SPDX-License-Identifier: MIT
     {#each torrents as torrent (torrent.id)}
       {@const url = poster(torrent)}
       <li class="flex flex-col gap-1">
-        <div
-          class="bg-surface-raised relative aspect-[2/3] overflow-hidden rounded-md"
-          aria-hidden="true"
-        >
-          {#if url}
-            <img src={url} alt="" loading="lazy" class="h-full w-full object-cover" />
-          {:else}
-            <div class="text-text-muted flex h-full items-center justify-center text-4xl">
-              {title(torrent).slice(0, 1).toUpperCase()}
-            </div>
-          {/if}
-          {#if states[torrent.observed_state]}
-            <span class="bg-surface/80 absolute top-2 left-2 rounded px-2 py-0.5 text-xs">
-              {states[torrent.observed_state]}
-            </span>
-          {/if}
-        </div>
-        <span class="line-clamp-2 font-medium">{title(torrent)}</span>
-        <span class="text-text-muted text-sm">{details(torrent)}</span>
+        <Poster {url} title={torrentTitle(torrent)} badge={states[torrent.observed_state]} />
+        <span class="line-clamp-2 font-medium">{torrentTitle(torrent)}</span>
+        <span class="text-text-muted text-sm">{torrentDetails(torrent)}</span>
         {#if states[torrent.observed_state]}
           <span class="sr-only">{states[torrent.observed_state]}</span>
         {/if}

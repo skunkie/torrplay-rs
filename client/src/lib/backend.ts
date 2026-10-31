@@ -14,6 +14,9 @@ import {
 export type Torrent = Schemas["Torrent"];
 export type TorrentPage = Schemas["TorrentPage"];
 export type TorrentKind = Schemas["TorrentKind"];
+export type Profile = Schemas["Profile"];
+export type UpNextEntry = Schemas["UpNextEntry"];
+export type UpNextPage = Schemas["UpNextPage"];
 
 /** What the library lists: torrents matching every given filter. */
 export interface TorrentQuery {
@@ -42,6 +45,12 @@ export interface PlaybackGrant {
 export interface Backend {
   /** A page of the library's persisted torrents. */
   listTorrents(query: TorrentQuery, page: PageRequest): Promise<Conditional<TorrentPage>>;
+  /** Every profile, person and device, oldest first. */
+  listProfiles(): Promise<Profile[]>;
+  /** The first page of what `profileId` can resume or watch next. */
+  listUpNext(profileId: string, page: PageRequest): Promise<Conditional<UpNextPage>>;
+  /** Stops listing an up next entry until its progress changes again. */
+  dismissUpNext(profileId: string, entryId: string): Promise<void>;
   /** Signs in with the password, returning an access token's secret. */
   signIn(password: string, name: string): Promise<string>;
   /** A playback token for media and poster URLs, or `undefined` while no
@@ -80,6 +89,45 @@ export function httpBackend(http: Http): Backend {
           },
         }),
       );
+    },
+
+    async listProfiles() {
+      const profiles: Profile[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = unwrap(
+          await http.GET("/api/v1/profiles", {
+            params: { query: { page_size: 200, ...(cursor ? { cursor } : {}) } },
+          }),
+        );
+        profiles.push(...page.items);
+        cursor = cursorOf(page.links.next);
+      } while (cursor);
+      return profiles;
+    },
+
+    async listUpNext(profileId, page) {
+      return conditional(
+        await http.GET("/api/v1/profiles/{profile_id}/up-next", {
+          params: {
+            path: { profile_id: profileId },
+            query: {
+              ...(page.cursor ? { cursor: page.cursor } : {}),
+              ...(page.pageSize ? { page_size: page.pageSize } : {}),
+            },
+            ...(page.etag ? { header: { "If-None-Match": page.etag } } : {}),
+          },
+        }),
+      );
+    },
+
+    async dismissUpNext(profileId, entryId) {
+      const result = await http.DELETE("/api/v1/profiles/{profile_id}/up-next/{up_next_entry_id}", {
+        params: { path: { profile_id: profileId, up_next_entry_id: entryId } },
+      });
+      if (!result.response.ok) {
+        unwrap(result);
+      }
     },
 
     async signIn(password, name) {
