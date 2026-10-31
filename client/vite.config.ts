@@ -14,9 +14,6 @@ const application = process.env.TORRPLAY_URL ?? "http://127.0.0.1:8642";
 export default defineConfig({
   // svelteTesting resolves Svelte for the browser under Vitest only.
   plugins: [tailwindcss(), svelte(), svelteTesting()],
-  // The brand's logos are served at the root; the adaptive one is the
-  // favicon.
-  publicDir: "../brand",
   build: {
     // Vite names these files by content, so the server may cache them.
     assetsDir: "assets",
