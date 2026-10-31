@@ -1259,7 +1259,16 @@ mod scenario {
             StatusCode::PAYLOAD_TOO_LARGE,
             "content-too-large",
         );
+        // A torrent file built from metadata peers sent may pass 10 MiB, so
+        // an upload that large is read and judged as a torrent file.
         let large_file = vec![b'd'; 10 * 1024 * 1024 + 1];
+        let invalid = server.send_unchecked(form_request(&large_file, None)).await;
+        assert_problem(
+            &invalid,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation-failed",
+        );
+        let large_file = vec![b'd'; 33 * 1024 * 1024 + 1];
         let too_large = server.send_unchecked(form_request(&large_file, None)).await;
         assert_problem(
             &too_large,
@@ -2567,7 +2576,7 @@ mod scenario {
         let mut form =
             format!("--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"metainfo\"\r\n\r\n")
                 .into_bytes();
-        form.resize(form.len() + 11 * 1024 * 1024, b'd');
+        form.resize(form.len() + 34 * 1024 * 1024, b'd');
         let upload = server
             .send_before_body_ends(
                 Method::POST,
@@ -2580,7 +2589,7 @@ mod scenario {
         let mut form =
             format!("--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"metainfo\"\r\n\r\n")
                 .into_bytes();
-        form.resize(form.len() + 11 * 1024 * 1024, b'd');
+        form.resize(form.len() + 34 * 1024 * 1024, b'd');
         let previewed = server
             .send_before_body_ends(
                 Method::POST,

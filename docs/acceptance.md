@@ -83,7 +83,7 @@ milestones. Later milestones keep every scenario passing.
 | API-04 | Create from a magnet URI, then from the uploaded `single-small` file | `201` with `Location` and a representation; magnet starts `retrieving_metadata`, upload starts `downloading` |
 | API-05 | Create a torrent whose v1 info hash already exists, by either input | `409 duplicate-torrent` whose `torrent` member is the existing URI |
 | API-06 | Create from `invalid-metainfo`, an unparsable magnet URI, and `v2-only` | `422 validation-failed` with `pointer`, twice; `422 unsupported-torrent` |
-| API-07 | JSON body over 16384 bytes; torrent file over 10485760 bytes | `413 content-too-large`, rejected before the body is fully buffered |
+| API-07 | JSON body over 16384 bytes; torrent file over 34603008 bytes, and one over 10485760 bytes | `413 content-too-large`, rejected before the body is fully buffered; the last read and judged as a torrent file |
 | API-08 | Unknown and read-only members in creation and PATCH bodies | `422 validation-failed` naming each member |
 | API-09 | `page_size` 0 and 201, unknown query parameter, malformed cursor, cursor reused with other filters | `400 malformed-request` with `parameter` |
 | API-10 | List torrents across pages while torrents are created and deleted | No item repeats or is skipped among torrents that existed throughout; `next` absent on the last page |
