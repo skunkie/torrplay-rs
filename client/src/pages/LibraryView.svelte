@@ -4,11 +4,11 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import Poster from "../components/Poster.svelte";
   import type { Schemas } from "../lib/api/http";
   import type { Torrent, TorrentKind, TorrentQuery } from "../lib/backend";
   import { torrentDetails, torrentTitle } from "../lib/describe";
   import { titlePath } from "../lib/routes";
-  import Poster from "../components/Poster.svelte";
 
   interface Props {
     torrents: Torrent[];
@@ -91,7 +91,7 @@ SPDX-License-Identifier: MIT
         placeholder="Search titles"
         value={query.search ?? ""}
         oninput={(event) => onsearch(event.currentTarget.value)}
-        class="bg-surface-raised w-64 max-w-full rounded-md px-3 py-2"
+        class="w-64 max-w-full rounded-md bg-surface-raised px-3 py-2"
       />
     </label>
   </div>
@@ -116,7 +116,7 @@ SPDX-License-Identifier: MIT
         <select
           value={query.uncategorized ? UNCATEGORIZED : (query.category ?? "")}
           onchange={(event) => category(event.currentTarget.value)}
-          class="bg-surface-raised rounded-md px-2 py-1"
+          class="rounded-md bg-surface-raised px-2 py-1"
         >
           <option value="">All ({facets.total_count})</option>
           {#each facets.categories as label (label.name)}
@@ -135,7 +135,7 @@ SPDX-License-Identifier: MIT
         <select
           value={query.genre ?? ""}
           onchange={(event) => genre(event.currentTarget.value)}
-          class="bg-surface-raised rounded-md px-2 py-1"
+          class="rounded-md bg-surface-raised px-2 py-1"
         >
           <option value="">All</option>
           {#each facets.genres as label (label.name)}
@@ -147,7 +147,7 @@ SPDX-License-Identifier: MIT
   </div>
 
   {#if error}
-    <div role="alert" class="bg-surface-raised flex items-center gap-3 rounded-md p-3">
+    <div role="alert" class="flex items-center gap-3 rounded-md bg-surface-raised p-3">
       <span>{error}</span>
       <button type="button" class="text-accent underline" onclick={onretry}>Try again</button>
     </div>
@@ -168,7 +168,7 @@ SPDX-License-Identifier: MIT
         <a href={titlePath(torrent.id)} class="flex flex-col gap-1 rounded-md">
           <Poster {url} title={torrentTitle(torrent)} badge={states[torrent.observed_state]} />
           <span class="line-clamp-2 font-medium">{torrentTitle(torrent)}</span>
-          <span class="text-text-muted text-sm">{torrentDetails(torrent)}</span>
+          <span class="text-sm text-text-muted">{torrentDetails(torrent)}</span>
           {#if states[torrent.observed_state]}
             <span class="sr-only">{states[torrent.observed_state]}</span>
           {/if}
@@ -183,7 +183,7 @@ SPDX-License-Identifier: MIT
     <button
       type="button"
       onclick={onloadmore}
-      class="bg-surface-raised self-center rounded-md px-4 py-2"
+      class="self-center rounded-md bg-surface-raised px-4 py-2"
     >
       Show more
     </button>

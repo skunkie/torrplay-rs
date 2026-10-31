@@ -117,7 +117,7 @@ SPDX-License-Identifier: MIT
 {:else if profiles.people && profiles.people.length > 0}
   <ProfileChooser people={profiles.people} onchoose={chooseProfile} />
 {:else if profiles.error}
-  <div role="alert" class="bg-surface-raised flex items-center gap-3 rounded-md p-3">
+  <div role="alert" class="flex items-center gap-3 rounded-md bg-surface-raised p-3">
     <span>{profiles.error}</span>
     <button type="button" class="text-accent underline" onclick={() => loadProfiles(backend)}>
       Try again

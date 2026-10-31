@@ -37,20 +37,20 @@ SPDX-License-Identifier: MIT
 
 {#snippet row(item: Playable, label: string, detail: string | undefined)}
   {@const status = progressLabel(item.progress)}
-  <li class="bg-surface-raised flex flex-col gap-1 rounded-md px-3 py-2">
+  <li class="flex flex-col gap-1 rounded-md bg-surface-raised px-3 py-2">
     <div class="flex items-baseline gap-3">
       <span class="font-medium">{label}</span>
       {#if detail}
-        <span class="text-text-muted min-w-0 truncate text-sm">{detail}</span>
+        <span class="min-w-0 truncate text-sm text-text-muted">{detail}</span>
       {/if}
       {#if status}
-        <span class="text-text-muted ml-auto shrink-0 text-sm">{status}</span>
+        <span class="ml-auto shrink-0 text-sm text-text-muted">{status}</span>
       {/if}
     </div>
     {#if item.progress && !(item.progress.viewed && item.progress.position_seconds === 0)}
-      <div class="bg-surface h-1 overflow-hidden rounded" aria-hidden="true">
+      <div class="h-1 overflow-hidden rounded-sm bg-surface" aria-hidden="true">
         <div
-          class="bg-accent h-full"
+          class="h-full bg-accent"
           style:width="{Math.round(item.progress.completion_ratio * 100)}%"
         ></div>
       </div>
@@ -70,7 +70,7 @@ SPDX-License-Identifier: MIT
 {:else}
   <div class="flex flex-col gap-6">
     {#if error}
-      <div role="alert" class="bg-surface-raised flex items-center gap-3 rounded-md p-3">
+      <div role="alert" class="flex items-center gap-3 rounded-md bg-surface-raised p-3">
         <span>{error}</span>
         <button type="button" class="text-accent underline" onclick={onretry}>Try again</button>
       </div>
@@ -99,7 +99,7 @@ SPDX-License-Identifier: MIT
                 <li>
                   <a
                     href="/library?{new URLSearchParams({ genre })}"
-                    class="bg-surface-raised rounded-full px-3 py-1 text-sm">{genre}</a
+                    class="rounded-full bg-surface-raised px-3 py-1 text-sm">{genre}</a
                   >
                 </li>
               {/each}
@@ -109,7 +109,7 @@ SPDX-License-Identifier: MIT
             <p class="max-w-prose whitespace-pre-line">{torrent.description}</p>
           {/if}
           {#if torrent.title && torrent.name && torrent.title !== torrent.name}
-            <p class="text-text-muted text-sm break-all">{torrent.name}</p>
+            <p class="text-sm break-all text-text-muted">{torrent.name}</p>
           {/if}
         </div>
       </div>

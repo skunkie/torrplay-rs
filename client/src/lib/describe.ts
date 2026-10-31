@@ -19,7 +19,7 @@ export function torrentDetails(torrent: Torrent): string {
 }
 
 /** An episode's short label, such as "S1 E2". */
-export function episodeLabel(episode: Schemas["Episode"]): string {
+function episodeLabel(episode: Schemas["Episode"]): string {
   return `S${episode.season} E${episode.number}`;
 }
 

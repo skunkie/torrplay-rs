@@ -10,6 +10,8 @@
    themes change in one place. Dark is the default; light follows the
    system's preference. */
 @theme {
+  /* Only these colors exist: Tailwind's palette is removed. */
+  --color-*: initial;
   --color-surface: oklch(0.18 0.01 260);
   --color-surface-raised: oklch(0.23 0.01 260);
   --color-text: oklch(0.95 0.005 260);
