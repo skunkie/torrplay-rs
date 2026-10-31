@@ -548,10 +548,12 @@ paths:
                         path: [Example Collection, part-1.mkv]
                         size_bytes: 1073740800
                         media_type: video/x-matroska
+                        episode: null
                       - id: fil_3ngq2wvukdllyvbbvfw5yglt7q
                         path: [Example Collection, part-2.mkv]
                         size_bytes: 1073740800
                         media_type: video/x-matroska
+                        episode: null
                     files_truncated: false
                     trackers: ['udp://tracker.test:6969']
                     links: {}
@@ -569,6 +571,7 @@ paths:
                         path: [file.bin]
                         size_bytes: 1024
                         media_type: application/octet-stream
+                        episode: null
                     files_truncated: false
                     trackers: ['http://tracker.test']
                     links:
@@ -1119,6 +1122,7 @@ paths:
                         path: [Example Collection, part-1.mkv]
                         size_bytes: 1073740800
                         media_type: video/x-matroska
+                        episode: null
                         links:
                           self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
                           content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
@@ -1165,6 +1169,7 @@ paths:
                     path: [Example Collection, part-1.mkv]
                     size_bytes: 1073740800
                     media_type: video/x-matroska
+                    episode: null
                     links:
                       self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
                       content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
@@ -2763,6 +2768,7 @@ paths:
                       path: [Example Show, Example.Show.S01E02.mkv]
                       size_bytes: 1073740800
                       media_type: video/x-matroska
+                      episode: { season: 1, number: 2 }
                       links:
                         self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
                         torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
@@ -5038,6 +5044,7 @@ components:
                 path: [Example Collection, part-1.mkv]
                 size_bytes: 1073740800
                 media_type: video/x-matroska
+                episode: null
         files_truncated:
           type: boolean
           description: Whether the torrent has more files than files lists.
@@ -5069,7 +5076,7 @@ components:
     PreviewFile:
       type: object
       description: A file a torrent file lists, as the torrent would list it.
-      required: [id, path, size_bytes, media_type]
+      required: [id, path, size_bytes, media_type, episode]
       properties:
         id:
           type: string
@@ -5093,6 +5100,37 @@ components:
           type: string
           description: The media type the file's content would be served with.
           examples: [video/x-matroska]
+        episode:
+          description: >-
+            The season and episode the file's name numbers, as the torrent's
+            file would report it.
+          anyOf:
+            - $ref: '#/components/schemas/Episode'
+            - type: 'null'
+          examples: [null]
+
+    Episode:
+      type: object
+      description: >-
+        A season and an episode an episode pattern numbers. A pattern without
+        a season, such as episode 2, numbers season 1.
+      required: [season, number]
+      additionalProperties: false
+      properties:
+        season:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 99
+          description: The season.
+          examples: [1]
+        number:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 9999
+          description: The episode's number within its season.
+          examples: [2]
 
     TorrentCreationUpload:
       type: object
@@ -6485,7 +6523,7 @@ components:
     TorrentFile:
       type: object
       description: A file listed in a torrent's metadata.
-      required: [id, path, size_bytes, media_type, links]
+      required: [id, path, size_bytes, media_type, episode, links]
       properties:
         id:
           type: string
@@ -6512,6 +6550,16 @@ components:
             name; application/octet-stream unless the file is audio, video, a
             raster image, or WebVTT.
           examples: [video/x-matroska]
+        episode:
+          description: >-
+            The season and episode the file's name, its last path component,
+            numbers with an episode pattern, as docs/lifecycle.md describes,
+            or null when it has none. A series' episodes are ordered by it,
+            as up next orders them.
+          anyOf:
+            - $ref: '#/components/schemas/Episode'
+            - type: 'null'
+          examples: [null]
         links:
           type: object
           description: Links from a file.
