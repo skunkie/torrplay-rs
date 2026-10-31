@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
   import type { Torrent, UpNextEntry } from "../lib/backend";
   import { entryReason, entrySubject, torrentDetails, torrentTitle } from "../lib/describe";
   import { t } from "../lib/i18n/index.svelte";
-  import { titlePath } from "../lib/routes";
+  import { titlePath, watchPath } from "../lib/routes";
 
   interface Props {
     /** What the profile can resume or watch next, or `undefined` before
@@ -50,7 +50,10 @@ SPDX-License-Identifier: MIT
         {#each entries as entry (entry.id)}
           {@const subject = entrySubject(entry)}
           <li class={card}>
-            <a href={titlePath(entry.torrent.id)} class="flex flex-col gap-1 rounded-md">
+            <a
+              href={watchPath(entry.torrent.id, entry.file.id)}
+              class="flex flex-col gap-1 rounded-md"
+            >
               <Poster
                 url={poster(entry.torrent)}
                 title={torrentTitle(entry.torrent)}

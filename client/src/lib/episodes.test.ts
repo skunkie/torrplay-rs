@@ -5,7 +5,7 @@
 import { expect, it } from "vitest";
 
 import { file, progress, torrent } from "../testing";
-import { playables, seasons } from "./episodes";
+import { nextEpisode, playables, seasons } from "./episodes";
 
 const show = torrent(1, { kind: "series" });
 
@@ -40,4 +40,21 @@ it("groups episodes by season in episode order and keeps the rest apart", () => 
     [2, ["s02e01.mkv"]],
   ]);
   expect(grouped.extras.map((item) => item.file.path.at(-1))).toEqual(["trailer.mkv"]);
+});
+
+it("follows an episode with the next in season order", () => {
+  const items = playables(
+    [
+      file(show, "s02e01.mkv", { season: 2, number: 1 }),
+      file(show, "s01e02.mkv", { season: 1, number: 2 }),
+      file(show, "trailer.mkv"),
+      file(show, "s01e01.mkv", { season: 1, number: 1 }),
+    ],
+    [],
+  );
+  const id = (name: string) => items.find((item) => item.file.path.at(-1) === name)?.file.id ?? "";
+  expect(nextEpisode(items, id("s01e01.mkv"))?.file.path.at(-1)).toBe("s01e02.mkv");
+  expect(nextEpisode(items, id("s01e02.mkv"))?.file.path.at(-1)).toBe("s02e01.mkv");
+  expect(nextEpisode(items, id("s02e01.mkv"))).toBeUndefined();
+  expect(nextEpisode(items, id("trailer.mkv"))).toBeUndefined();
 });

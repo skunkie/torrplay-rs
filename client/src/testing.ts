@@ -13,6 +13,7 @@ export function fakeBackend(members: Partial<Backend> = {}): Backend {
     getTorrent: vi.fn(),
     listFiles: vi.fn(async () => []),
     listProgress: vi.fn(async () => []),
+    setProgress: vi.fn(),
     listProfiles: vi.fn(async () => []),
     listUpNext: vi.fn(),
     dismissUpNext: vi.fn(async () => {}),

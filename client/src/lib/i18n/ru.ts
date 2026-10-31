@@ -34,6 +34,13 @@ export const ru: Messages = {
     episode: (episode: number) => `${episode}\u00A0серия`,
     season: (season: number) => `${season}\u00A0сезон`,
     specials: "Спецвыпуски",
+    long: (season: number, episode: number) => `${season}\u00A0сезон, ${episode}\u00A0серия`,
+  },
+  player: {
+    back: "Назад",
+    fileNotFound: "В торренте нет такого файла.",
+    finished: "Просмотр завершён",
+    playNext: "Смотреть",
   },
   home: {
     upNext: "Продолжить просмотр",

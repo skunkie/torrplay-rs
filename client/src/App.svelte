@@ -123,6 +123,13 @@ SPDX-License-Identifier: MIT
     {#key page.params.torrent_id}
       <TitlePage torrentId={page.params.torrent_id ?? ""} />
     {/key}
+  {:else if page?.name === "watch"}
+    <!-- The player and its library load only when a file is played. -->
+    {#await import("./pages/WatchPage.svelte") then { default: WatchPage }}
+      {#key `${page.params.torrent_id}/${page.params.file_id}`}
+        <WatchPage torrentId={page.params.torrent_id ?? ""} fileId={page.params.file_id ?? ""} />
+      {/key}
+    {/await}
   {:else if page?.name === "signIn"}
     <SignInPage />
   {:else}

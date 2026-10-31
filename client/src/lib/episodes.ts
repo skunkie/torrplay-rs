@@ -27,6 +27,15 @@ export function playables(
     .map((file) => ({ file, progress: byFile.get(file.id) }));
 }
 
+/** The episode after `fileId` in a series' order, the order up next
+ * follows, or `undefined` after the last one or for a file no episode
+ * pattern numbers. */
+export function nextEpisode(items: readonly Playable[], fileId: string): Playable | undefined {
+  const episodes = seasons(items).seasons.flatMap((season) => season.episodes);
+  const index = episodes.findIndex((item) => item.file.id === fileId);
+  return index === -1 ? undefined : episodes[index + 1];
+}
+
 /** A series' episodes by season, in the order up next follows, and the
  * video files no episode pattern numbers, in metadata order. */
 export function seasons(items: readonly Playable[]): { seasons: Season[]; extras: Playable[] } {

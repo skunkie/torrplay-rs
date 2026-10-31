@@ -48,6 +48,7 @@
     "printWidth": 100
   },
   "dependencies": {
+    "@videojs/html": "10.1.0",
     "openapi-fetch": "0.17.0"
   }
 }
