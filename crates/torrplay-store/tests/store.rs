@@ -1814,7 +1814,9 @@ fn generation(generation: u32) -> Vec<StoredTorrent> {
             let n = generation * 100 + n;
             StoredTorrent {
                 metainfo: Some(vec![(n % 251) as u8; 64 * 1024]),
-                ..torrent(n, u64::from(n))
+                // Microseconds apart, since Windows keeps system times to
+                // 100 ns and equal times would list by ID instead.
+                ..torrent(n, u64::from(n) * 1000)
             }
         })
         .collect()
