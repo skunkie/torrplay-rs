@@ -1173,7 +1173,7 @@ pub struct SettingsPatch {
         default,
         deserialize_with = "tri_state_serde::deserialize"
     )]
-    pub log_level: Option<Option<SettingsPatchLogLevel>>,
+    pub log_level: Option<Option<LogLevel>>,
     ///The new value, or null for the default, 50.
     ///Constraint: minimum=1, maximum=500
     #[serde(
@@ -1214,45 +1214,6 @@ pub struct SettingsPatch {
         deserialize_with = "tri_state_serde::deserialize"
     )]
     pub temporary_torrent_limit: Option<Option<i32>>,
-}
-///The new value, or null for the default, info.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
-pub enum SettingsPatchLogLevel {
-    #[default]
-    #[serde(rename = "error")]
-    Error,
-    #[serde(rename = "warn")]
-    Warn,
-    #[serde(rename = "info")]
-    Info,
-    #[serde(rename = "debug")]
-    Debug,
-    #[serde(rename = "trace")]
-    Trace,
-    #[serde(rename = "null")]
-    NullValue,
-}
-impl SettingsPatchLogLevel {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Error => "error",
-            Self::Warn => "warn",
-            Self::Info => "info",
-            Self::Debug => "debug",
-            Self::Trace => "trace",
-            Self::NullValue => "null",
-        }
-    }
-}
-impl ::std::fmt::Display for SettingsPatchLogLevel {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-impl AsRef<str> for SettingsPatchLogLevel {
-    fn as_ref(&self) -> &str {
-        self.as_str()
-    }
 }
 ///The application's settings. Each value is the one set, or its default while it is unset. Command-line options may override some of them for one run, which overrides lists.
 #[derive(Debug, Clone, Deserialize, Serialize)]

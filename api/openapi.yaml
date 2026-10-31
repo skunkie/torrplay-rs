@@ -6012,8 +6012,9 @@ components:
           description: The new value, or null for the default, true, which turns the DHT on.
           examples: [false, null]
         log_level:
-          type: [string, 'null']
-          enum: [error, warn, info, debug, trace, null]
+          anyOf:
+            - $ref: '#/components/schemas/LogLevel'
+            - type: 'null'
           description: The new value, or null for the default, info.
           examples: [debug, null]
 
