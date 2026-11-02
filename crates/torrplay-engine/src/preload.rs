@@ -365,8 +365,10 @@ impl Preloads {
 
     /// Starts queued preloads of torrents in memory storage, in creation
     /// order, while their pins fit in the preloads' share of the readahead
-    /// budget, or while no preload pins anything.
-    fn admit(&self, state: &mut State, now: Instant) {
+    /// budget, or while no preload pins anything. Returns the schedulers
+    /// of the preloads it started, which need their plans again.
+    fn admit(&self, state: &mut State, now: Instant) -> HashSet<*const TorrentScheduler> {
+        let mut admitted = HashSet::new();
         let share = self.playback.readahead_bytes() / 2;
         let mut pinned: u64 = state
             .entries
@@ -385,7 +387,11 @@ impl Preloads {
             pinned += entry.pin_bytes;
             entry.status.state = PreloadState::Downloading;
             entry.progress_at = now;
+            if let Some(scheduler) = entry.scheduler.upgrade() {
+                admitted.insert(Arc::as_ptr(&scheduler));
+            }
         }
+        admitted
     }
 
     /// Publishes the bytes preloads pin, which readers' readahead leaves
@@ -526,7 +532,9 @@ impl Preloads {
                     .ended
                     .is_none_or(|ended| now.duration_since(ended) < preload::ENDED_LIFETIME)
             });
-            self.admit(&mut state, now);
+            // An ending preload can start another torrent's queued one,
+            // whose scheduler has not changed otherwise.
+            changed.extend(self.admit(&mut state, now));
             next_due(&state, now)
         };
         self.reschedule(Some(&changed));
