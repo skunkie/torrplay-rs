@@ -467,3 +467,47 @@ async fn a_disk_preload_pins_nothing_and_survives_a_transition() -> anyhow::Resu
     seeder.stop().await;
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn another_torrent_preload_downloads_after_the_previous_one_expires() -> anyhow::Result<()> {
+    let first = catalog::large(8 * MIB);
+    let second = catalog::large(9 * MIB);
+    let first_seeder = Seeder::start(&first, &first.metainfo().bytes).await?;
+    let second_seeder = Seeder::start(&second, &second.metainfo().bytes).await?;
+    let started = start(
+        vec![first_seeder.addr, second_seeder.addr],
+        8 * MIB,
+        Duration::from_secs(30),
+    )
+    .await?;
+    let engine = &started.engine;
+    engine
+        .add(&id(1), &upload(&first), DesiredState::Started)
+        .await?;
+    engine
+        .add(&id(2), &upload(&second), DesiredState::Started)
+        .await?;
+    engine
+        .create_preload(
+            &id(1),
+            FileIndex(0),
+            preload_id(1),
+            PreloadRequest {
+                offset_bytes: None,
+                expires_in: Duration::from_secs(10),
+            },
+        )
+        .await?;
+    reaches(engine, &id(1), 1, PreloadState::Ready).await?;
+    engine
+        .create_preload(&id(2), FileIndex(0), preload_id(2), request(None))
+        .await?;
+    assert_eq!(status(engine, &id(2), 2).await?.state, PreloadState::Queued);
+    reaches(engine, &id(1), 1, PreloadState::Expired).await?;
+    let result = reaches(engine, &id(2), 2, PreloadState::Ready).await;
+    engine.shutdown().await?;
+    first_seeder.stop().await;
+    second_seeder.stop().await;
+    result?;
+    Ok(())
+}
