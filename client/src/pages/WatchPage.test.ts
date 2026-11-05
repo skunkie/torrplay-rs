@@ -293,6 +293,77 @@ it("offers the player's own controls", async () => {
   expect(document.querySelector("media-container media-fullscreen-button")).not.toBeNull();
 });
 
+const temporary = torrent(2, { title: "Harbor Lights", retention: "temporary" });
+const film = file(temporary, "Harbor Lights.mkv");
+
+it("adds a temporary torrent to the library without disturbing playback", async () => {
+  const fake = backend(temporary, [film]);
+  navigate(watchPath(temporary.id, film.id));
+  render(App, { backend: fake });
+  const playing = await video();
+
+  await fireEvent.click(await screen.findByRole("button", { name: "Add to library" }));
+
+  await waitFor(() => {
+    expect(fake.keepTorrent).toHaveBeenCalledWith(temporary.id, "memory");
+  });
+  expect(await screen.findByText("In the library")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Add to library" })).not.toBeInTheDocument();
+  expect(document.querySelector("video")).toBe(playing);
+  expect(fake.listProgress).toHaveBeenCalledTimes(1);
+  expect(fake.createPreload).toHaveBeenCalledTimes(1);
+});
+
+it("holds the button back while the torrent is being added", async () => {
+  const fake = backend(temporary, [film]);
+  fake.keepTorrent = vi.fn(() => new Promise<void>(() => {}));
+  navigate(watchPath(temporary.id, film.id));
+  render(App, { backend: fake });
+  await video();
+
+  const add = await screen.findByRole("button", { name: "Add to library" });
+  await fireEvent.click(add);
+
+  await waitFor(() => {
+    expect(add).toBeDisabled();
+  });
+});
+
+it("says why a torrent could not be added, and offers it again", async () => {
+  const fake = backend(temporary, [film]);
+  fake.keepTorrent = vi.fn(async () => {
+    throw new TypeError("offline");
+  });
+  navigate(watchPath(temporary.id, film.id));
+  render(App, { backend: fake });
+  await video();
+
+  await fireEvent.click(await screen.findByRole("button", { name: "Add to library" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("TorrPlay could not be reached.");
+  expect(screen.getByRole("button", { name: "Add to library" })).toBeEnabled();
+  expect(screen.queryByText("In the library")).not.toBeInTheDocument();
+});
+
+it("still offers the library when the video ends", async () => {
+  navigate(watchPath(temporary.id, film.id));
+  render(App, { backend: backend(temporary, [film]) });
+
+  await fireEvent.ended(await video());
+
+  expect(await screen.findByText("Finished")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Add to library" })).toBeEnabled();
+});
+
+it("offers nothing for a torrent already in the library", async () => {
+  navigate(watchPath(show.id, e1.id));
+  render(App, { backend: backend(show, [e1, e2]) });
+  await video();
+
+  expect(screen.queryByRole("button", { name: "Add to library" })).not.toBeInTheDocument();
+  expect(screen.queryByText("In the library")).not.toBeInTheDocument();
+});
+
 it("says when the file is not in the torrent", async () => {
   navigate(watchPath(show.id, "fil_gone"));
   render(App, { backend: backend(show, [e1]) });
