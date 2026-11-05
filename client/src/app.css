@@ -156,6 +156,19 @@
 }
 
 /* Numbers and short states. */
+/* Posters and rows gain columns with the window rather than stretching, and
+ * grow a little on the way, so a large screen shows more titles at a size
+ * still readable from further away. */
+@utility poster-grid {
+  @apply grid gap-3 md:gap-4;
+  grid-template-columns: repeat(auto-fill, minmax(clamp(6rem, 4rem + 6vw, 13rem), 1fr));
+}
+
+@utility row-grid {
+  @apply grid gap-2 md:gap-4;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, clamp(20rem, 20vw, 28rem)), 1fr));
+}
+
 @utility mono {
   @apply font-mono text-xs font-medium;
 }

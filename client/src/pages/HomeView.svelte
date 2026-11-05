@@ -112,7 +112,7 @@ SPDX-License-Identifier: MIT
     {#if rest.length > 0}
       <section aria-labelledby="up-next" class="flex flex-col gap-3">
         <h2 id="up-next" class="text-lg font-bold">{t().home.upNext}</h2>
-        <ul class="grid gap-2 md:grid-cols-2 md:gap-4 xl:grid-cols-3">
+        <ul class="row-grid">
           {#each rest as entry (entry.id)}
             {@const url = poster(entry.torrent)}
             {@const subject = entrySubject(entry)}
@@ -164,7 +164,7 @@ SPDX-License-Identifier: MIT
     {:else if recent.length === 0}
       <p class="text-text-muted">{t().home.libraryEmpty}</p>
     {:else}
-      <ul class="grid grid-cols-3 gap-3 sm:grid-cols-4 md:gap-4 lg:grid-cols-6 xl:grid-cols-8">
+      <ul class="poster-grid max-md:[&>li:nth-child(n+13)]:hidden">
         {#each recent as torrent (torrent.id)}
           <li>
             <a href={titlePath(torrent.id)} class="flex flex-col gap-2 rounded-button">

@@ -15,7 +15,7 @@ SPDX-License-Identifier: MIT
   import ProfileChooser from "./ProfileChooser.svelte";
 
   const UP_NEXT_SIZE = 20;
-  const RECENT_SIZE = 12;
+  const RECENT_SIZE = 24;
   const POLL_MS = 5000;
 
   const backend = useBackend();
