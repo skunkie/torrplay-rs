@@ -43,9 +43,14 @@ export const en = {
     fileNotFound: "This file is not in the torrent.",
     finished: "Finished",
     playNext: "Play",
+    playNow: "Play now",
+    stay: "Stay here",
+    nextIn: (seconds: number) =>
+      `Plays in ${seconds}\u00A0${plural("en-US", seconds, { one: "second", other: "seconds" })}`,
   },
   audio: {
     track: "Audio track",
+    short: "Audio",
     mono: "Mono",
     stereo: "Stereo",
     channels: (count: number) =>

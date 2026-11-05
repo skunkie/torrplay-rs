@@ -115,17 +115,17 @@ seek index. The plan keeps them.
 
 ### Pages
 
-| Path | Page | What it shows |
-|---|---|---|
-| `/` | Home | Up next for the profile, recently added titles, and a way to add |
-| `/library` | Library | The library's posters, with search, kind, category, and genre filters from the facets; the filters live in the URL |
-| `/titles/{torrent_id}` | Title | Poster, title, year, description, and genres; for a series, its episodes by season with each one's progress, from the episodes the contract reports on files; otherwise its video files. A **Download** section holds the files, storage mode, preloads, and statistics; **Edit** changes the library members and poster |
-| `/watch/{torrent_id}/{file_id}` | Player | The player, full window; resume, audio and subtitle tracks, and the next episode at the end |
-| `/add` | Add | A magnet URI or torrent file; a torrent file is previewed first. **Play** creates a temporary torrent; **Add to library** a persisted one |
-| `/settings/…` | Settings | Playback and cache, network and DLNA, profiles, security (password and access tokens), and backup |
-| `/system` | System | Version and run, the engine's and cache's statistics, and log records with filters |
-| `/sign-in` | Sign-in | The password, only while one is set |
-| `/demo/…` | Demo | The same pages over the demo backend |
+| Path                            | Page     | What it shows                                                                                                                                                                                                                                                                                                            |
+| ------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/`                             | Home     | Up next for the profile, recently added titles, and a way to add                                                                                                                                                                                                                                                         |
+| `/library`                      | Library  | The library's posters, with search, kind, category, and genre filters from the facets; the filters live in the URL                                                                                                                                                                                                       |
+| `/titles/{torrent_id}`          | Title    | Poster, title, year, description, and genres; for a series, its episodes by season with each one's progress, from the episodes the contract reports on files; otherwise its video files. A **Download** section holds the files, storage mode, preloads, and statistics; **Edit** changes the library members and poster |
+| `/watch/{torrent_id}/{file_id}` | Player   | The player, full window; resume, audio and subtitle tracks, and the next episode at the end                                                                                                                                                                                                                              |
+| `/add`                          | Add      | A magnet URI or torrent file; a torrent file is previewed first. **Play** creates a temporary torrent; **Add to library** a persisted one                                                                                                                                                                                |
+| `/settings/…`                   | Settings | Playback and cache, network and DLNA, profiles, security (password and access tokens), and backup                                                                                                                                                                                                                        |
+| `/system`                       | System   | Version and run, the engine's and cache's statistics, and log records with filters                                                                                                                                                                                                                                       |
+| `/sign-in`                      | Sign-in  | The password, only while one is set                                                                                                                                                                                                                                                                                      |
+| `/demo/…`                       | Demo     | The same pages over the demo backend                                                                                                                                                                                                                                                                                     |
 
 ### Look
 
@@ -133,20 +133,20 @@ The look grows from the logo: a grid of tiles, where blue pieces are
 downloaded and pink ones are arriving. A large banner on the home page leads
 with what to watch.
 
-| Token | Dark | Light | Use |
-|---|---|---|---|
-| `surface` | `#0F172A` | `#F8FAFC` | The page |
-| `tile` | `#1E293B` | `#EEF2F7` | Rows, panels, fields, and segmented controls |
-| `raised` | `#334155` | `#FFFFFF` | Secondary buttons and the selected segment |
-| `empty` | `#334155` | `#CBD5E1` | The empty part of a bar or of tiles |
-| `text` | `#F1F5F9` | `#0F172A` | Text |
-| `text-muted` | `#94A3B8` | `#475569` | Secondary text |
-| `accent` | `#38BDF8` | `#0284C7` | Primary buttons, watched, and downloaded |
-| `accent-text` | `#7DD3FC` | `#0369A1` | Links and "ready" as text |
-| `on-accent` | `#082F49` | `#FFFFFF` | Text on `accent` |
-| `arriving` | `#F472B6` | `#DB2777` | Data arriving |
-| `arriving-text` | `#F9A8D4` | `#BE185D` | Arriving as text, and destructive actions |
-| `focus` | `#FBBF24` | `#B45309` | The focus ring |
+| Token           | Dark      | Light     | Use                                          |
+| --------------- | --------- | --------- | -------------------------------------------- |
+| `surface`       | `#0F172A` | `#F8FAFC` | The page                                     |
+| `tile`          | `#1E293B` | `#EEF2F7` | Rows, panels, fields, and segmented controls |
+| `raised`        | `#334155` | `#FFFFFF` | Secondary buttons and the selected segment   |
+| `empty`         | `#334155` | `#CBD5E1` | The empty part of a bar or of tiles          |
+| `text`          | `#F1F5F9` | `#0F172A` | Text                                         |
+| `text-muted`    | `#94A3B8` | `#475569` | Secondary text                               |
+| `accent`        | `#38BDF8` | `#0284C7` | Primary buttons, watched, and downloaded     |
+| `accent-text`   | `#7DD3FC` | `#0369A1` | Links and "ready" as text                    |
+| `on-accent`     | `#082F49` | `#FFFFFF` | Text on `accent`                             |
+| `arriving`      | `#F472B6` | `#DB2777` | Data arriving                                |
+| `arriving-text` | `#F9A8D4` | `#BE185D` | Arriving as text, and destructive actions    |
+| `focus`         | `#FBBF24` | `#B45309` | The focus ring                               |
 
 - **Dark everywhere video is.** Heroes and the player keep the dark theme's
   accent and focus tokens in both themes, since a picture sits behind them.
@@ -177,6 +177,15 @@ with what to watch.
   viewed. Seasons are tabs that open on that episode's season, and its row is
   outlined. The rest of the mockup's actions arrive with their pages: Add and
   the global rate in the header; Edit and the Download panel on the title.
+- **Player.** The video fills the window. A top bar with Back and the title,
+  centre buttons that move 10 seconds back and forward and play or pause, and a
+  full-width bottom bar fade together while playback runs. The bottom bar holds
+  the seek bar, volume, times, fullscreen, and an Audio and a Subtitles menu.
+  These are the client's own composition of Video.js's parts rather than its
+  skin, inside its fullscreen element, because the audio menu lists the tracks
+  the client decodes itself. Picture-in-picture and playback speed have no
+  buttons. At the end of an episode, the next one plays after 10 seconds unless
+  the viewer stays, and the countdown holds while the page is hidden.
 
 The mockups are at
 <https://claude.ai/artifact/QbM6NmQ5j8Tm3KGpDqU2xa>; `client/src/app.css` holds
