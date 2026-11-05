@@ -1512,7 +1512,7 @@ pub struct PreloadPageLinks {
 ///A preload of part of a file, as docs/lifecycle.md describes. In memory storage its pieces are pinned while it downloads or is ready.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Preload {
-    ///The bytes of the ranges the torrent's storage holds now, at most target_bytes, which it reaches when the preload is ready.
+    ///The bytes of the ranges received so far, counted by chunk, at most target_bytes, which it has reached when the preload is ready. It falls again if a piece fails its hash check.
     ///Constraint: minimum=0
     pub completed_bytes: i64,
     ///When the preload was created, in UTC.

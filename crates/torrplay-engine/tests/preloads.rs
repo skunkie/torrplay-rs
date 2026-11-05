@@ -347,7 +347,7 @@ async fn preloads_fail_when_paused_or_stalled() -> anyhow::Result<()> {
     let stalled = reaches(engine, &id(1), 1, PreloadState::Failed).await?;
     assert_eq!(
         stalled.failure.map(|failure| failure.detail).as_deref(),
-        Some("No piece of the preload arrived within the piece wait bound.")
+        Some("No data of the preload arrived within the piece wait bound.")
     );
 
     engine

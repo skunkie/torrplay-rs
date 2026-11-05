@@ -279,12 +279,15 @@ only until the application restarts.
   its ranges; readers share what preload pins leave of the readahead
   budget. In disk storage, a preload pins nothing; its pieces stay in the
   torrent's files.
+- A preload's `completed_bytes` counts the data received, chunk by chunk,
+  so it moves within a large piece, and falls again if a piece fails its
+  hash check. A preload is `ready` only once all its pieces pass.
 - A preload expires at its `expires_at`, `expires_in_seconds` after its
   creation: 120 seconds by default, from 10 to 3600. Expiry is the end of a
   preload that nothing else ends, whether or not its file was read; to keep
   its pieces longer, a client creates another preload.
 - A preload fails, with a `failure` that says why, when its torrent is
-  paused or fails, when no piece of its ranges arrives within the piece
+  paused or fails, when no data of its ranges arrives within the piece
   wait bound while it is downloading, or when the piece cache's bounded
   fallback needs its pins. The fallback ends preloads, newest first, one
   at a time, after it releases idle readers, refining
