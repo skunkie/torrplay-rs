@@ -160,11 +160,43 @@ describe("the Download panel", () => {
 
     const found = await screen.findByRole("region", { name: "Download" });
     expect(await within(found).findByText("50%")).toBeInTheDocument();
-    expect(within(found).getByRole("img", { name: "50% downloaded" })).toBeInTheDocument();
     expect(within(found).getByText(/512(\.0)?\sMiB \/ 1(\.0)?\sGiB/)).toBeInTheDocument();
     expect(within(found).getByText(/^2(\.0)?\sMiB\/s$/)).toBeInTheDocument();
     expect(within(found).getByText("7")).toBeInTheDocument();
     expect(within(found).getByText("Memory")).toBeInTheDocument();
+  });
+
+  it("shows the torrent's real pieces and its readers", async () => {
+    const shown = torrent(1);
+    navigate(titlePath(shown.id));
+    render(App, {
+      backend: {
+        ...backend(() => shown, []),
+        getStatistics: vi.fn(async () =>
+          statistics(0.25, {
+            pieces: { piece_count: 8, verified: "c0", partial: "20" },
+            readers: [
+              { file_id: "fil_a", offset_bytes: 0, piece_index: 1, state: "active" },
+              { file_id: "fil_a", offset_bytes: 9, piece_index: 7, state: "idle" },
+            ],
+          }),
+        ),
+      },
+    });
+
+    const found = await screen.findByRole("region", { name: "Download" });
+    const map = await within(found).findByRole("img", { name: "25% downloaded" });
+    expect(map.children).toHaveLength(8);
+    expect(within(found).getByText("1 active, 1 idle")).toBeInTheDocument();
+  });
+
+  it("leaves readers out while there are none", async () => {
+    const shown = torrent(1);
+    navigate(titlePath(shown.id));
+    render(App, { backend: backend(() => shown, []) });
+
+    const found = await screen.findByRole("region", { name: "Download" });
+    expect(within(found).queryByText("Readers")).not.toBeInTheDocument();
   });
 
   it("pauses with the configuration's current ETag, then shows the result", async () => {

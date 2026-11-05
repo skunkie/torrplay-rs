@@ -7,8 +7,9 @@ SPDX-License-Identifier: MIT
   import type { Torrent, TorrentStatistics } from "../lib/backend";
   import { formatBytes } from "../lib/format";
   import { t } from "../lib/i18n/index.svelte";
+  import { pieceTiles } from "../lib/pieces";
 
-  const TILES = 48;
+  const TILES = 96;
 
   interface Props {
     torrent: Torrent;
@@ -43,9 +44,10 @@ SPDX-License-Identifier: MIT
   const percent = $derived(Math.floor(ratio * 100));
   const state = $derived(torrent.observed_state);
   const rate = $derived(statistics?.download_rate_bytes_per_second ?? 0);
-  /** Tiles fill from the overall completion: the contract reports no pieces. */
-  const filled = $derived(Math.floor(ratio * TILES));
-  const arriving = $derived(state === "downloading" && rate > 0 && filled < TILES);
+  /** The torrent's real pieces; none while the server cannot tell. */
+  const tiles = $derived(statistics ? pieceTiles(statistics, TILES) : []);
+  const readers = $derived(statistics?.readers ?? []);
+  const activeReaders = $derived(readers.filter((reader) => reader.state === "active").length);
   const moving = $derived(torrent.storage_transition?.target_storage_mode);
 
   const storageLabel = $derived.by(() => {
@@ -68,19 +70,43 @@ SPDX-License-Identifier: MIT
     {/if}
   </div>
 
-  <div role="img" aria-label={t().download.downloaded(percent)} class="grid grid-cols-16 gap-0.75">
-    {#each { length: TILES }, index (index)}
-      <span
-        class="aspect-square rounded-[3px] {index < filled
-          ? state === 'paused'
-            ? 'bg-text-muted'
-            : 'bg-accent'
-          : index === filled && arriving
+  {#if tiles.length > 0}
+    <div
+      role="img"
+      aria-label={t().download.downloaded(percent)}
+      class="grid grid-cols-16 gap-0.75"
+    >
+      {#each tiles as tile, index (index)}
+        <span
+          class="aspect-square rounded-[3px] {tile.reading
+            ? 'outline-2 -outline-offset-1 outline-focus'
+            : ''} {tile.state === 'arriving'
             ? 'bg-arriving'
-            : 'bg-empty'}"
-      ></span>
-    {/each}
-  </div>
+            : tile.state === 'downloaded'
+              ? state === 'paused'
+                ? 'bg-text-muted'
+                : 'bg-accent'
+              : tile.state === 'partial'
+                ? 'bg-accent/40'
+                : 'bg-empty'}"
+        ></span>
+      {/each}
+    </div>
+    <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted" aria-hidden="true">
+      <span class="flex items-center gap-1.5"
+        ><span class="size-2.5 rounded-[3px] bg-accent"></span>{t().download.tileDownloaded}</span
+      >
+      <span class="flex items-center gap-1.5"
+        ><span class="size-2.5 rounded-[3px] bg-arriving"></span>{t().download.tileArriving}</span
+      >
+      {#if readers.length > 0}
+        <span class="flex items-center gap-1.5"
+          ><span class="size-2.5 rounded-[3px] outline-2 -outline-offset-1 outline-focus"
+          ></span>{t().download.tileReading}</span
+        >
+      {/if}
+    </div>
+  {/if}
 
   {#if failure}
     <p role="alert" class="text-meta text-arriving-text">{failure}</p>
@@ -101,6 +127,12 @@ SPDX-License-Identifier: MIT
     <dd class="text-right mono">{speedLabel}</dd>
     <dt class="text-text-muted">{t().download.peers}</dt>
     <dd class="text-right mono">{statistics?.peer_count ?? "—"}</dd>
+    {#if readers.length > 0}
+      <dt class="text-text-muted">{t().download.readers}</dt>
+      <dd class="text-right mono">
+        {t().download.readerCounts(activeReaders, readers.length - activeReaders)}
+      </dd>
+    {/if}
     <dt class="text-text-muted">{t().download.storage}</dt>
     <dd class="text-right mono">{storageLabel}</dd>
   </dl>

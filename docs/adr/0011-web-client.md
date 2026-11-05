@@ -119,7 +119,7 @@ seek index. The plan keeps them.
 | ------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `/`                             | Home     | Up next for the profile, recently added titles, and a way to add                                                                                                                                                                                                                                                         |
 | `/library`                      | Library  | The library's posters, with search, kind, category, and genre filters from the facets; the filters live in the URL                                                                                                                                                                                                       |
-| `/titles/{torrent_id}`          | Title    | Poster, title, year, description, and genres; for a series, its episodes by season with each one's progress, from the episodes the contract reports on files; otherwise its video files. A **Download** section holds the files, storage mode, preloads, and statistics; **Edit** changes the library members and poster |
+| `/titles/{torrent_id}`          | Title    | Poster, title, year, description, and genres; for a series, its episodes by season with each one's progress, from the episodes the contract reports on files; otherwise its video files. A **Download** section holds the storage mode, preloads, and statistics; **Edit** changes the library members and poster |
 | `/watch/{torrent_id}/{file_id}` | Player   | The player, full window; resume, audio and subtitle tracks, and the next episode at the end                                                                                                                                                                                                                              |
 | `/add`                          | Add      | A magnet URI or torrent file; a torrent file is previewed first. **Play** creates a temporary torrent; **Add to library** a persisted one                                                                                                                                                                                |
 | `/settings/…`                   | Settings | Playback and cache, network and DLNA, profiles, security (password and access tokens), and backup                                                                                                                                                                                                                        |
@@ -227,8 +227,9 @@ the tokens.
   shows how much is downloaded, the speed, the peers, and the storage mode, and
   offers to pause or resume, keep the torrent on disk or in memory, and delete
   it. Going back to memory confirms first, since it deletes the files. Its tiles
-  fill from the torrent's overall completion, since the contract reports no
-  pieces; they do not say which pieces are held.
+  are the torrent's real pieces, spread over the tiles when there are more of
+  them: arriving, downloaded, or only partly downloaded, with an outline where a
+  reader is. A count of active and idle readers appears while there are any.
 - **Editing.** Edit is a page of its own, because the library members and poster
   are too long a form for a dialog. It sends only what changed, with the ETag it
   read, so a change made elsewhere meanwhile is reported rather than overwritten.

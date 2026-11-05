@@ -99,6 +99,7 @@ English message.
 | Category | Категория | |
 | Genre | Жанр | |
 | Poster | Постер | |
+| Reader (of a torrent) | Чтение | State counts: `активно`, `ожидает` |
 | Up next | Продолжить просмотр | The row and its entries; resuming and next episodes both belong to it |
 | Viewed | Просмотрено | Status of a file |
 | Next episode | Следующая серия | |
