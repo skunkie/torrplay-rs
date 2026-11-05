@@ -78,7 +78,7 @@ SPDX-License-Identifier: MIT
 
 <div class="flex flex-col gap-4">
   <div class="flex flex-wrap items-center gap-3">
-    <h1 class="mr-auto text-2xl font-semibold">{t().library.title}</h1>
+    <h1 class="mr-auto text-2xl font-bold">{t().library.title}</h1>
     <label class="flex items-center gap-2">
       <span class="sr-only">{t().library.search}</span>
       <input
@@ -86,24 +86,24 @@ SPDX-License-Identifier: MIT
         placeholder={t().library.searchPlaceholder}
         value={query.search ?? ""}
         oninput={(event) => onsearch(event.currentTarget.value)}
-        class="w-64 max-w-full rounded-md bg-surface-raised px-3 py-2"
+        class="field w-64 max-w-full"
       />
     </label>
   </div>
 
-  <div class="flex flex-wrap items-center gap-2" role="group" aria-label={t().library.kind}>
-    {#each kinds as option (option.value ?? "")}
-      <button
-        type="button"
-        aria-pressed={query.kind === option.value}
-        onclick={() => kind(option.value)}
-        class="rounded-full px-3 py-1 text-sm {query.kind === option.value
-          ? 'bg-accent text-surface'
-          : 'bg-surface-raised'}"
-      >
-        {option.label}
-      </button>
-    {/each}
+  <div class="flex flex-wrap items-center gap-3">
+    <div class="segments max-w-full overflow-x-auto" role="group" aria-label={t().library.kind}>
+      {#each kinds as option (option.value ?? "")}
+        <button
+          type="button"
+          aria-pressed={query.kind === option.value}
+          onclick={() => kind(option.value)}
+          class="segment shrink-0"
+        >
+          {option.label}
+        </button>
+      {/each}
+    </div>
 
     {#if facets && (facets.categories.length > 0 || facets.uncategorized > 0)}
       <label class="flex items-center gap-2 text-sm">
@@ -111,7 +111,7 @@ SPDX-License-Identifier: MIT
         <select
           value={query.uncategorized ? UNCATEGORIZED : (query.category ?? "")}
           onchange={(event) => category(event.currentTarget.value)}
-          class="rounded-md bg-surface-raised px-2 py-1"
+          class="field"
         >
           <option value="">{t().library.allCount(facets.total_count)}</option>
           {#each facets.categories as label (label.name)}
@@ -130,7 +130,7 @@ SPDX-License-Identifier: MIT
         <select
           value={query.genre ?? ""}
           onchange={(event) => genre(event.currentTarget.value)}
-          class="rounded-md bg-surface-raised px-2 py-1"
+          class="field"
         >
           <option value="">{t().library.all}</option>
           {#each facets.genres as label (label.name)}
@@ -142,9 +142,9 @@ SPDX-License-Identifier: MIT
   </div>
 
   {#if error}
-    <div role="alert" class="flex items-center gap-3 rounded-md bg-surface-raised p-3">
+    <div role="alert" class="alert">
       <span>{error}</span>
-      <button type="button" class="text-accent underline" onclick={onretry}
+      <button type="button" class="font-semibold text-accent-text underline" onclick={onretry}
         >{t().common.retry}</button
       >
     </div>
@@ -162,13 +162,9 @@ SPDX-License-Identifier: MIT
     {#each torrents as torrent (torrent.id)}
       {@const url = poster(torrent)}
       <li>
-        <a href={titlePath(torrent.id)} class="flex flex-col gap-1 rounded-md">
+        <a href={titlePath(torrent.id)} class="flex flex-col gap-2 rounded-button">
           <Poster {url} title={torrentTitle(torrent)} badge={stateLabel(torrent)} />
-          <span class="line-clamp-2 font-medium">{torrentTitle(torrent)}</span>
-          <span class="text-sm text-text-muted">{torrentDetails(torrent)}</span>
-          {#if stateLabel(torrent)}
-            <span class="sr-only">{stateLabel(torrent)}</span>
-          {/if}
+          <span class="text-xs text-text-muted">{torrentDetails(torrent)}</span>
         </a>
       </li>
     {/each}
@@ -177,11 +173,7 @@ SPDX-License-Identifier: MIT
   {#if loading}
     <p class="text-text-muted" role="status">{t().common.loading}</p>
   {:else if hasMore}
-    <button
-      type="button"
-      onclick={onloadmore}
-      class="self-center rounded-md bg-surface-raised px-4 py-2"
-    >
+    <button type="button" onclick={onloadmore} class="btn self-center btn-secondary">
       {t().library.showMore}
     </button>
   {/if}

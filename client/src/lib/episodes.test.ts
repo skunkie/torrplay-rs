@@ -5,7 +5,7 @@
 import { expect, it } from "vitest";
 
 import { file, progress, torrent } from "../testing";
-import { nextEpisode, playables, seasons } from "./episodes";
+import { nextEpisode, playables, resumeItem, seasons } from "./episodes";
 
 const show = torrent(1, { kind: "series" });
 
@@ -57,4 +57,29 @@ it("follows an episode with the next in season order", () => {
   expect(nextEpisode(items, id("s01e02.mkv"))?.file.path.at(-1)).toBe("s02e01.mkv");
   expect(nextEpisode(items, id("s02e01.mkv"))).toBeUndefined();
   expect(nextEpisode(items, id("trailer.mkv"))).toBeUndefined();
+});
+
+it.each([
+  { name: "the file last in progress", ratios: ["viewed", 0.5, 0.2, null], latest: 2, expected: 2 },
+  { name: "the one after the last viewed", ratios: ["viewed", "viewed", null], expected: 2 },
+  { name: "the first without progress", ratios: [null, null], expected: 0 },
+  { name: "the first again when all are viewed", ratios: ["viewed", "viewed"], expected: 0 },
+] as const)("resumes $name", ({ ratios, expected, ...rest }) => {
+  const show = torrent(1, { kind: "series" });
+  const items = ratios.map((ratio, index) => {
+    const one = file(show, `S01E0${index + 1}.mkv`, { season: 1, number: index + 1 });
+    const held = ratio === null ? undefined : progress(one, ratio);
+    return {
+      file: one,
+      progress:
+        held && "latest" in rest && rest.latest === index
+          ? { ...held, updated_at: "2026-11-01T00:00:00Z" }
+          : held,
+    };
+  });
+  expect(resumeItem(items)).toBe(items[expected]);
+});
+
+it("has nothing to resume without files", () => {
+  expect(resumeItem([])).toBeUndefined();
 });

@@ -61,12 +61,12 @@ it("lists the library's torrents with their posters and loads more", async () =>
       : { unchanged: false, data: page(first, "/api/v1/torrents?cursor=c2"), etag: '"1"' },
   );
   const { container } = render(LibraryPage, { context: backendContext(fake) });
-  expect(await screen.findByText("Title 1")).toBeInTheDocument();
   await waitFor(() =>
     expect(container.querySelector("img")?.getAttribute("src")).toBe(
       `${first[0]?.links.poster}?token=tpk_test`,
     ),
   );
+  expect(screen.getByText("Title 1")).toBeInTheDocument();
   await fireEvent.click(screen.getByRole("button", { name: "Show more" }));
   expect(await screen.findByText("Title 2")).toBeInTheDocument();
   expect(calls.at(-1)?.[1].cursor).toBe("c2");

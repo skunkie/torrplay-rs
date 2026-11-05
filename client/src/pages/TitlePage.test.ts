@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-import { render, screen, within } from "@testing-library/svelte";
+import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import App from "../App.svelte";
@@ -10,7 +10,7 @@ import { ApiError } from "../lib/api/http";
 import type { Backend, Torrent, TorrentFile } from "../lib/backend";
 import { navigate } from "../lib/navigation.svelte";
 import { resetProfiles } from "../lib/profile.svelte";
-import { titlePath } from "../lib/routes";
+import { titlePath, watchPath } from "../lib/routes";
 import { fakeBackend, file, profile, progress, torrent } from "../testing";
 
 const ana = profile(1, "Ana");
@@ -51,17 +51,55 @@ it("lists a series' episodes by season with the profile's progress", async () =>
   const headings = (await screen.findAllByRole("heading", { level: 2 })).map((h) =>
     h.textContent?.trim(),
   );
-  expect(headings).toEqual(["Season 1", "Season 2", "Other videos"]);
-  const season1 = within(screen.getByRole("region", { name: "Season 1" }));
-  const rows = season1
+  expect(headings).toEqual(["Other videos"]);
+  expect(screen.getByRole("tab", { name: "Season 1" })).toHaveAttribute("aria-selected", "true");
+  const panel = within(screen.getByRole("tabpanel", { name: "Season 1" }));
+  const rows = panel
     .getAllByRole("listitem")
     .map((row) => row.textContent?.replace(/\s+/g, " ").trim());
-  expect(rows).toEqual(["Episode 1 S01E01.mkv Viewed", "Episode 2 S01E02.mkv 30 min left"]);
+  expect(rows).toEqual(["1 Episode 1 S01E01.mkv Viewed", "2 Episode 2 S01E02.mkv 30 min left"]);
+  expect(screen.getByRole("link", { name: /^Resume S1\sE2$/ })).toHaveAttribute(
+    "href",
+    watchPath(show.id, e2.id),
+  );
+
+  await fireEvent.click(screen.getByRole("tab", { name: "Season 2" }));
+  expect(
+    within(screen.getByRole("tabpanel", { name: "Season 2" })).getByText("S02E01.mkv"),
+  ).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Drama" })).toHaveAttribute(
     "href",
     "/library?genre=Drama",
   );
   expect(fake.listProgress).toHaveBeenCalledWith(ana.id, show.id);
+});
+
+it("opens on the season of the episode to play, and moves with the arrow keys", async () => {
+  const show = torrent(5, { kind: "series" });
+  const e1 = file(show, "S01E01.mkv", { season: 1, number: 1 });
+  const s2 = file(show, "S02E01.mkv", { season: 2, number: 1 });
+  const fake = backend(() => show, [e1, s2]);
+  fake.listProgress = vi.fn(async () => [progress(s2, 0.5)]);
+  navigate(titlePath(show.id));
+  render(App, { backend: fake });
+  expect(await screen.findByRole("link", { name: /^Resume S2\sE1$/ })).toBeInTheDocument();
+  const second = screen.getByRole("tab", { name: "Season 2" });
+  expect(second).toHaveAttribute("aria-selected", "true");
+  await fireEvent.keyDown(second, { key: "ArrowLeft" });
+  const first = screen.getByRole("tab", { name: "Season 1" });
+  expect(first).toHaveAttribute("aria-selected", "true");
+  expect(first).toHaveFocus();
+});
+
+it("offers the first file of a title not started", async () => {
+  const movie = torrent(6);
+  const only = file(movie, "Only.mkv");
+  navigate(titlePath(movie.id));
+  render(App, { backend: backend(() => movie, [only]) });
+  expect(await screen.findByRole("link", { name: "Play" })).toHaveAttribute(
+    "href",
+    watchPath(movie.id, only.id),
+  );
 });
 
 it("lists a movie's video files only", async () => {

@@ -6,43 +6,151 @@
 
 @import "tailwindcss";
 
-/* Design tokens: components use these names, never raw colors, so the
-   themes change in one place. Dark is the default; light follows the
-   system's preference. */
+/* Design tokens, as ADR 11 lists them: components use these names, never
+   raw colors, so the themes change in one place. Dark is the default; light
+   follows the system's preference. */
 @theme {
   /* Only these colors exist: Tailwind's palette is removed. */
   --color-*: initial;
-  --color-surface: oklch(0.18 0.01 260);
-  --color-surface-raised: oklch(0.23 0.01 260);
-  --color-text: oklch(0.95 0.005 260);
-  --color-text-muted: oklch(0.72 0.01 260);
-  --color-accent: oklch(0.72 0.16 250);
-  --color-focus: oklch(0.82 0.16 85);
-  /* The player stays dark in both themes, as video does. */
-  --color-player: oklch(0 0 0);
-  --color-player-text: oklch(0.95 0.005 260);
+  --color-surface: #0f172a;
+  --color-tile: #1e293b;
+  --color-raised: #334155;
+  --color-empty: #334155;
+  --color-text: #f1f5f9;
+  --color-text-muted: #94a3b8;
+  --color-accent: #38bdf8;
+  --color-accent-text: #7dd3fc;
+  --color-on-accent: #082f49;
+  --color-arriving: #f472b6;
+  --color-arriving-text: #f9a8d4;
+  --color-focus: #fbbf24;
+  /* Heroes and the player stay dark in both themes, as video does. */
+  --color-hero: #12324a;
+  --color-hero-text: #f8fafc;
+  --color-hero-muted: #cbd5e1;
+  --color-scrim: #050c14;
+  --color-player: #000000;
+
+  --font-sans: "Onest Variable", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --text-display: 3.25rem;
+  --text-display--line-height: 1;
+  --text-display-small: 1.75rem;
+  --text-display-small--line-height: 1.05;
+  --text-body: 0.9375rem;
+  --text-meta: 0.8125rem;
+
+  --radius-inner: 0.625rem;
+  --radius-button: 0.875rem;
+  --radius-panel: 1.25rem;
 }
 
 @media (prefers-color-scheme: light) {
   :root {
-    --color-surface: oklch(0.98 0.003 260);
-    --color-surface-raised: oklch(1 0 0);
-    --color-text: oklch(0.2 0.01 260);
-    --color-text-muted: oklch(0.45 0.01 260);
-    --color-accent: oklch(0.5 0.18 250);
-    --color-focus: oklch(0.6 0.18 60);
+    --color-surface: #f8fafc;
+    --color-tile: #eef2f7;
+    --color-raised: #ffffff;
+    --color-empty: #cbd5e1;
+    --color-text: #0f172a;
+    --color-text-muted: #475569;
+    --color-accent: #0284c7;
+    --color-accent-text: #0369a1;
+    --color-on-accent: #ffffff;
+    --color-arriving: #db2777;
+    --color-arriving-text: #be185d;
+    --color-focus: #b45309;
   }
+}
+
+/* The colors of a title without a poster, in both themes; see lib/tone.ts. */
+:root {
+  --tone-0: #9a3412;
+  --tone-0-text: #fed7aa;
+  --tone-1: #312e81;
+  --tone-1-text: #c7d2fe;
+  --tone-2: #115e59;
+  --tone-2-text: #99f6e4;
+  --tone-3: #52525b;
+  --tone-3-text: #fde68a;
+  --tone-4: #3f6212;
+  --tone-4-text: #d9f99d;
+  --tone-5: #1e3a8a;
+  --tone-5-text: #bfdbfe;
+  --tone-6: #9f1239;
+  --tone-6-text: #fecdd3;
+  --tone-7: #57534e;
+  --tone-7-text: #e7e5e4;
+}
+
+/* A hero or the player is dark in both themes, so what sits on it keeps the
+   dark theme's accent, focus color, and native menus. */
+[data-hero] {
+  --color-accent: #38bdf8;
+  --color-accent-text: #7dd3fc;
+  --color-on-accent: #082f49;
+  --color-focus: #fbbf24;
+  color-scheme: dark;
 }
 
 @layer base {
   body {
-    @apply bg-surface text-text min-h-dvh antialiased;
+    @apply bg-surface text-body text-text min-h-dvh font-sans antialiased;
   }
 
   /* Every focusable element shows focus, for keyboards and remotes. */
   :focus-visible {
-    @apply outline-focus outline-2 outline-offset-2;
+    @apply outline-focus outline-3 outline-offset-2;
   }
+}
+
+@utility btn {
+  @apply inline-flex h-11 shrink-0 cursor-pointer items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold hover:opacity-85 disabled:cursor-default disabled:opacity-50;
+}
+
+@utility btn-primary {
+  @apply bg-accent text-on-accent font-bold;
+}
+
+@utility btn-secondary {
+  @apply bg-raised text-text;
+}
+
+/* A hero's primary action is taller than a control. */
+@utility btn-hero {
+  @apply rounded-button bg-accent text-on-accent h-12 px-6 text-base font-bold;
+}
+
+@utility btn-glass {
+  @apply bg-hero-text/15 text-hero-text;
+}
+
+@utility field {
+  @apply bg-tile text-text placeholder:text-text-muted h-11 rounded-xl px-3.5 text-sm;
+}
+
+/* A segmented control: tabs, filters, and the header's navigation. */
+@utility segments {
+  @apply rounded-button bg-tile flex gap-1 p-1;
+}
+
+@utility segment {
+  @apply rounded-inner text-text-muted flex h-9 cursor-pointer items-center px-4 text-sm font-semibold;
+
+  &[aria-current="page"],
+  &[aria-pressed="true"],
+  &[aria-selected="true"] {
+    @apply bg-raised text-text;
+  }
+}
+
+@utility alert {
+  @apply bg-tile flex min-h-13 items-center gap-3 rounded-button px-4 py-2.5 text-sm;
+}
+
+/* Numbers and short states. */
+@utility mono {
+  @apply font-mono text-xs font-medium;
 }
 
 @layer components {

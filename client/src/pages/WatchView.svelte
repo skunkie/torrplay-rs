@@ -98,11 +98,11 @@ SPDX-License-Identifier: MIT
   });
 </script>
 
-<div class="fixed inset-0 z-50 flex flex-col bg-player text-player-text">
+<div data-hero class="fixed inset-0 z-50 flex flex-col bg-player text-hero-text">
   <div class="flex items-center gap-4 px-4 py-3">
-    <a href={backHref} class="rounded-md px-2 py-1">← {t().player.back}</a>
+    <a href={backHref} class="btn btn-glass">← {t().player.back}</a>
     <div class="flex min-w-0 flex-col">
-      <h1 class="truncate font-semibold">{title}</h1>
+      <h1 class="truncate font-bold">{title}</h1>
       {#if subtitle}
         <p class="truncate text-sm opacity-80">{subtitle}</p>
       {/if}
@@ -118,7 +118,7 @@ SPDX-License-Identifier: MIT
           // changing `track`, which the menu would not show.
           event.currentTarget.value = String(track);
         }}
-        class="max-w-1/3 truncate rounded-md bg-player px-2 py-1"
+        class="h-11 max-w-1/3 truncate rounded-xl bg-hero-text/15 px-3 text-sm"
       >
         {#each tracks as label, index (index)}
           <option value={index}>{label}</option>
@@ -130,7 +130,7 @@ SPDX-License-Identifier: MIT
         aria-label={t().subtitles.track}
         value={subtitleTrack}
         onchange={(event) => onsubtitles(Number(event.currentTarget.value))}
-        class="max-w-1/3 truncate rounded-md bg-player px-2 py-1"
+        class="h-11 max-w-1/3 truncate rounded-xl bg-hero-text/15 px-3 text-sm"
       >
         <option value={-1}>{t().subtitles.off}</option>
         {#each subtitleTracks as subtitle, index (index)}
@@ -181,17 +181,10 @@ SPDX-License-Identifier: MIT
             <p class="text-sm opacity-80">{t().progress.nextEpisode}</p>
             <p class="text-xl font-semibold">{next.label}</p>
             <!-- svelte-ignore a11y_autofocus -->
-            <a
-              href={next.href}
-              autofocus
-              class="rounded-md bg-accent px-4 py-2 font-medium text-surface"
-              >{t().player.playNext}</a
-            >
+            <a href={next.href} autofocus class="btn btn-hero">{t().player.playNext}</a>
           {:else}
             <p class="text-xl font-semibold">{t().player.finished}</p>
-            <a href={backHref} class="rounded-md bg-accent px-4 py-2 font-medium text-surface"
-              >{t().player.back}</a
-            >
+            <a href={backHref} class="btn btn-hero">{t().player.back}</a>
           {/if}
         </div>
       {/if}
