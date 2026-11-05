@@ -1734,7 +1734,9 @@ paths:
     get:
       operationId: getTorrentStatistics
       summary: Read a torrent's statistics
-      description: Returns transfer and peer measurements for a torrent.
+      description: >-
+        Returns transfer and peer measurements for a torrent, which of its
+        pieces are held, and its readers.
       tags: [Statistics]
       responses:
         '200':
@@ -1756,6 +1758,15 @@ paths:
                     upload_rate_bytes_per_second: 0
                     peer_count: 12
                     completion_ratio: 0.5
+                    pieces:
+                      piece_count: 16
+                      verified: ff00
+                      partial: '0100'
+                    readers:
+                      - file_id: fil_xfuperelxpqq4qhvgmtq62qwv4
+                        offset_bytes: 8388608
+                        piece_index: 8
+                        state: active
                     links:
                       self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/statistics
                       torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
@@ -6887,7 +6898,7 @@ components:
 
     TorrentStatistics:
       type: object
-      description: Transfer and peer measurements for a torrent.
+      description: Transfer and peer measurements, pieces, and readers for a torrent.
       required:
         - downloaded_bytes
         - uploaded_bytes
@@ -6895,6 +6906,8 @@ components:
         - upload_rate_bytes_per_second
         - peer_count
         - completion_ratio
+        - pieces
+        - readers
         - links
       properties:
         downloaded_bytes:
@@ -6938,6 +6951,49 @@ components:
             The fraction of the torrent's pieces currently held, from 0.0 to
             1.0, or null until metadata is available.
           examples: [0.5]
+        pieces:
+          type: [object, 'null']
+          description: >-
+            Which of the torrent's pieces are held, or null while the engine
+            cannot tell: before metadata is available, during the torrent's
+            first check or a storage mode transition's swap, and while it has
+            failed. Its bitfields follow the order of the BEP 3 bitfield message,
+            the high bit of the first byte being piece 0, and are written in
+            lowercase hexadecimal, rounded up to whole bytes with the spare low
+            bits 0. In memory storage, an evicted piece counts as not held.
+          required: [piece_count, verified, partial]
+          properties:
+            piece_count:
+              type: integer
+              format: int64
+              minimum: 1
+              description: The number of pieces in the torrent.
+              examples: [16]
+            verified:
+              type: string
+              pattern: '^([0-9a-f]{2})+$'
+              description: The pieces held that have passed their hash checks.
+              examples: [ff00]
+            partial:
+              type: string
+              pattern: '^([0-9a-f]{2})+$'
+              description: >-
+                The pieces not yet verified of which some bytes have been
+                received. A piece is never in both bitfields.
+              examples: ['0100']
+        readers:
+          type: array
+          description: >-
+            The torrent's readers, in no particular order: its streams in
+            progress and the idle readers kept between range requests, at most
+            the idle_reader_limit_per_torrent setting of those.
+          items:
+            $ref: '#/components/schemas/TorrentReader'
+          examples:
+            - - file_id: fil_xfuperelxpqq4qhvgmtq62qwv4
+                offset_bytes: 8388608
+                piece_index: 8
+                state: active
         links:
           type: object
           description: Links from a torrent's statistics.
@@ -6954,6 +7010,35 @@ components:
               description: The torrent these statistics measure.
               examples: [/api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula]
 
+
+    TorrentReader:
+      type: object
+      description: A reader of one of a torrent's files.
+      required: [file_id, offset_bytes, piece_index, state]
+      properties:
+        file_id:
+          type: string
+          description: The file being read.
+          examples: [fil_xfuperelxpqq4qhvgmtq62qwv4]
+        offset_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The reader's offset in the file.
+          examples: [8388608]
+        piece_index:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The index of the torrent's piece at that offset.
+          examples: [8]
+        state:
+          type: string
+          description: >-
+            Whether a stream is reading, or the reader waits for a stream to
+            continue it. Clients must handle values added later.
+          enum: [active, idle]
+          examples: [active]
     CacheStatistics:
       type: object
       description: >-

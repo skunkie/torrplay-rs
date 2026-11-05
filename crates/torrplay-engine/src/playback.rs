@@ -232,6 +232,11 @@ impl Playback {
         }
     }
 
+    /// The files and offsets of a scheduler's idle readers.
+    pub(crate) fn idle_positions(&self, scheduler: u64) -> Vec<(usize, u64)> {
+        self.lock().idle.positions(scheduler)
+    }
+
     /// Releases every idle reader, as shutdown does.
     pub fn release_idle_readers(&self) {
         let released = self.lock().idle.drain();
@@ -466,6 +471,15 @@ impl<T> IdlePool<T> {
             per_torrent: config.idle_reader_limit_per_torrent,
             total: config.idle_reader_limit,
         }
+    }
+
+    /// The files and offsets of `scheduler`'s entries.
+    pub(crate) fn positions(&self, scheduler: u64) -> Vec<(usize, u64)> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.scheduler == scheduler)
+            .map(|entry| (entry.file, entry.offset))
+            .collect()
     }
 
     pub(crate) fn len(&self) -> usize {

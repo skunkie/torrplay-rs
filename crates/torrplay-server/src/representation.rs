@@ -15,7 +15,7 @@ use torrplay_core::id::{FileId, InfoHashV1, ProfileId, TorrentId};
 use torrplay_core::image::{ImageInfo, ImageType};
 use torrplay_core::library::{self, Kind, Library};
 use torrplay_core::lifecycle::{self, Configuration, EntityTag, ObservedState, Retention};
-use torrplay_core::metadata::{Metadata, MetadataFile};
+use torrplay_core::metadata::{FileIndex, Metadata, MetadataFile};
 use torrplay_core::profiles::{Profile, ProfileKind, Progress};
 
 use crate::app::TorrentView;
@@ -318,12 +318,43 @@ pub(crate) fn file(torrent: &TorrentId, file: &MetadataFile) -> api::TorrentFile
     }
 }
 
+/// A bitfield in lowercase hexadecimal, as the contract writes one.
+fn bitfield_hex(bits: &[u8]) -> String {
+    bits.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// A torrent's statistics. `file_id` names a reader's file by its position in
+/// the engine's list; a reader of a file it cannot name is left out.
 pub(crate) fn torrent_statistics(
     id: &TorrentId,
     value: &engine::TorrentStatistics,
+    file_id: impl Fn(FileIndex) -> Option<String>,
 ) -> api::TorrentStatistics {
     let torrent = torrent_path(id);
     api::TorrentStatistics {
+        pieces: value
+            .pieces
+            .as_ref()
+            .map(|pieces| api::TorrentStatisticsPieces {
+                partial: bitfield_hex(&pieces.partial),
+                piece_count: count(u64::from(pieces.piece_count)),
+                verified: bitfield_hex(&pieces.verified),
+            }),
+        readers: value
+            .readers
+            .iter()
+            .filter_map(|reader| {
+                Some(api::TorrentReader {
+                    file_id: file_id(reader.file_index)?,
+                    offset_bytes: count(reader.offset_bytes),
+                    piece_index: count(u64::from(reader.piece_index)),
+                    state: match reader.state {
+                        engine::ReaderState::Active => api::TorrentReaderState::Active,
+                        engine::ReaderState::Idle => api::TorrentReaderState::Idle,
+                    },
+                })
+            })
+            .collect(),
         completion_ratio: value.completion_ratio.map(engine::Ratio::get),
         download_rate_bytes_per_second: count(value.download_rate_bytes_per_second),
         downloaded_bytes: count(value.downloaded_bytes),

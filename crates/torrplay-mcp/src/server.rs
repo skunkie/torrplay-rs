@@ -85,11 +85,16 @@ impl Server {
             Err(Failure::Problem { status, .. }) if status.as_u16() == 409 => None,
             Err(failure) => return Err(failure),
         };
-        let statistics = self
+        let mut statistics = self
             .client
             .get(&format!("{path}/statistics"), &[])
             .await?
             .body;
+        // Bitfields tell a model nothing the completion ratio does not, at a
+        // cost in tokens that grows with the torrent.
+        if let Some(members) = statistics.as_object_mut() {
+            members.remove("pieces");
+        }
         let truncated = files
             .as_ref()
             .is_some_and(|page| !page["links"]["next"].is_null());

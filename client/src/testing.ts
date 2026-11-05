@@ -74,6 +74,8 @@ export function statistics(
     upload_rate_bytes_per_second: 0,
     peer_count: 23,
     completion_ratio: ratio,
+    pieces: null,
+    readers: [],
     links: { self: "", torrent: "" },
     ...members,
   };

@@ -55,8 +55,8 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use torrplay_core::engine::{
     ByteRange, CacheStatistics, ConnectionOutcomes, Engine, EngineError, EngineStatistics,
-    HashChecks, Inspection, PeerConnections, Ratio, Source, SourceRejection, TorrentStatistics,
-    TorrentStatus,
+    HashChecks, Inspection, PeerConnections, PieceMap, Ratio, Source, SourceRejection,
+    TorrentStatistics, TorrentStatus,
 };
 use torrplay_core::id::{InfoHashV1, PreloadId, TorrentId};
 use torrplay_core::lifecycle::{DesiredState, Failure, Readiness, StorageMode};
@@ -400,6 +400,34 @@ impl AddFailure {
             Self::Engine(_) => None,
         }
     }
+}
+
+/// Which of `handle`'s pieces are held and arriving, or `None` until its first
+/// check has finished. It looks at every piece not held, which is bounded by
+/// the torrent's size and only done when a client asks.
+fn piece_map(handle: &ManagedTorrent, layout: &Layout) -> Option<PieceMap> {
+    let verified = handle.have_pieces().ok()?;
+    let piece_count = layout.lengths.total_pieces();
+    let held = |piece: u32| {
+        verified
+            .get((piece / 8) as usize)
+            .is_some_and(|byte| byte & (0x80 >> (piece % 8)) != 0)
+    };
+    let missing: Vec<u32> = (0..piece_count).filter(|&piece| !held(piece)).collect();
+    let received = handle.received_piece_bytes(&missing).ok()?;
+    let mut partial = vec![0; verified.len()];
+    for (&piece, &bytes) in missing.iter().zip(&received) {
+        if bytes > 0
+            && let Some(byte) = partial.get_mut((piece / 8) as usize)
+        {
+            *byte |= 0x80 >> (piece % 8);
+        }
+    }
+    Some(PieceMap {
+        piece_count,
+        verified,
+        partial,
+    })
 }
 
 /// The resume bitfield a torrent file in disk storage starts from: the
@@ -2054,6 +2082,15 @@ impl Engine for LibrqbitEngine {
                 statistics.downloaded_bytes += live_stats.snapshot.fetched_bytes;
                 statistics.download_rate_bytes_per_second = live_stats.download_speed.as_bytes();
                 statistics.peer_count = u64::from(live_stats.snapshot.peer_stats.live);
+            }
+            if state.metadata.is_some()
+                && let Some(layout) = live.scheduler.layout()
+            {
+                statistics.pieces = piece_map(&live.handle, &layout);
+                statistics.readers = live
+                    .scheduler
+                    .reader_statistics(&layout)
+                    .map_err(internal)?;
             }
         }
         Ok(statistics)

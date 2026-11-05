@@ -1263,7 +1263,23 @@ pub(crate) async fn get_statistics<E: Engine>(
     let record = app.registry()?.get(&id).ok_or_else(not_found)?;
     app.require_engine_ready()?;
     let statistics = app.engine().torrent_statistics(&record.id).await?;
-    let body = representation::torrent_statistics(&record.id, &statistics);
+    // Only readers need the file IDs, and a torrent with readers has metadata.
+    let metadata = if statistics.readers.is_empty() {
+        None
+    } else {
+        crate::files::with_metadata(&app, &id)
+            .await
+            .ok()
+            .map(|(_, metadata)| metadata)
+    };
+    let body = representation::torrent_statistics(&record.id, &statistics, |file| {
+        metadata
+            .as_ref()?
+            .files()
+            .iter()
+            .find(|held| held.index() == file)
+            .map(|held| held.id().as_str().to_owned())
+    });
     let mut response = json(StatusCode::OK, &body)?;
     response
         .headers_mut()

@@ -116,6 +116,11 @@ of each.
 
 ## Pieces and the cache
 
+**Bitfield**
+: One bit per piece, the high bit of the first byte being piece 0, as BEP 3's
+  `bitfield` message orders it. Torrent statistics write one in lowercase
+  hexadecimal.
+
 **Piece**
 : The fixed-length unit of torrent data verified against a hash (BEP 3). In v1
   torrents a piece may span file boundaries; in v2 torrents pieces are

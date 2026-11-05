@@ -27,11 +27,12 @@ use common::{
 use http::{Method, StatusCode, header};
 use serde_json::{Value, json};
 use torrplay_core::engine::{
-    CacheStatistics, ConnectionOutcomes, EngineStatistics, HashChecks, PeerConnections, Ratio,
-    TorrentStatistics,
+    CacheStatistics, ConnectionOutcomes, EngineStatistics, HashChecks, PeerConnections, PieceMap,
+    Ratio, ReaderState, TorrentReader, TorrentStatistics,
 };
 use torrplay_core::id::FileId;
 use torrplay_core::lifecycle::{Readiness, StorageMode};
+use torrplay_core::metadata::FileIndex;
 use torrplay_core::preload::PreloadState;
 use torrplay_core::settings::{Explicit, LogLevel, LogOverride, Overrides, Settings};
 use torrplay_fixtures::{FixtureSpec, catalog, generator, hex};
@@ -2043,6 +2044,59 @@ mod scenario {
         assert_eq!(body["downloaded_bytes"], 4096);
         assert_eq!(body["completion_ratio"], 0.25);
         assert_eq!(body["uploaded_bytes"], 0);
+        assert_eq!(body["pieces"], Value::Null, "the fake reports none");
+        assert_eq!(body["readers"], json!([]));
+
+        let files = server.get(&format!("{path}/files")).await.json();
+        let file_id = files["items"][0]["id"].as_str().unwrap().to_owned();
+        server
+            .engine
+            .set_torrent_statistics(
+                &id,
+                TorrentStatistics {
+                    pieces: Some(PieceMap {
+                        piece_count: 10,
+                        verified: vec![0xf0, 0x00],
+                        partial: vec![0x08, 0x40],
+                    }),
+                    readers: vec![
+                        TorrentReader {
+                            file_index: FileIndex(0),
+                            offset_bytes: 1024,
+                            piece_index: 4,
+                            state: ReaderState::Active,
+                        },
+                        TorrentReader {
+                            file_index: FileIndex(0),
+                            offset_bytes: 0,
+                            piece_index: 0,
+                            state: ReaderState::Idle,
+                        },
+                        // A file the metadata does not name is left out.
+                        TorrentReader {
+                            file_index: FileIndex(99),
+                            offset_bytes: 0,
+                            piece_index: 0,
+                            state: ReaderState::Active,
+                        },
+                    ],
+                    ..TorrentStatistics::default()
+                },
+            )
+            .unwrap();
+        let mapped = server.get(&format!("{path}/statistics")).await.json();
+        assert_eq!(
+            mapped["pieces"],
+            json!({ "piece_count": 10, "verified": "f000", "partial": "0840" }),
+        );
+        assert_eq!(
+            mapped["readers"],
+            json!([
+                { "file_id": file_id, "offset_bytes": 1024, "piece_index": 4, "state": "active" },
+                { "file_id": file_id, "offset_bytes": 0, "piece_index": 0, "state": "idle" },
+            ]),
+        );
+
         server.engine.set_cache_statistics(CacheStatistics {
             capacity_bytes: 1 << 28,
             usage_bytes: 1 << 20,
