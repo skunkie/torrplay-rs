@@ -223,6 +223,15 @@ the tokens.
   progress when the player returns.
 - **Deleting.** Deleting a title confirms in a dialog that names what goes,
   including disk data when the torrent keeps it.
+- **Download panel.** Beside a title's episodes, above them on a phone, a panel
+  shows how much is downloaded, the speed, the peers, and the storage mode, and
+  offers to pause or resume, keep the torrent on disk or in memory, and delete
+  it. Going back to memory confirms first, since it deletes the files. Its tiles
+  fill from the torrent's overall completion, since the contract reports no
+  pieces; they do not say which pieces are held.
+- **Editing.** Edit is a page of its own, because the library members and poster
+  are too long a form for a dialog. It sends only what changed, with the ETag it
+  read, so a change made elsewhere meanwhile is reported rather than overwritten.
 
 ### Carried over
 

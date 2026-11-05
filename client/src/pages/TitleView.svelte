@@ -4,9 +4,11 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import ConfirmDialog from "../components/ConfirmDialog.svelte";
+  import DownloadPanel from "../components/DownloadPanel.svelte";
   import Hero from "../components/Hero.svelte";
   import WatchedBar from "../components/WatchedBar.svelte";
-  import type { Torrent } from "../lib/backend";
+  import type { Torrent, TorrentStatistics } from "../lib/backend";
   import {
     fileName,
     progressLabel,
@@ -15,8 +17,9 @@ SPDX-License-Identifier: MIT
     torrentTitle,
   } from "../lib/describe";
   import { type Playable, resumeItem, seasons } from "../lib/episodes";
+  import { formatBytes } from "../lib/format";
   import { t } from "../lib/i18n/index.svelte";
-  import { watchPath } from "../lib/routes";
+  import { editPath, watchPath } from "../lib/routes";
 
   interface Props {
     /** The torrent, or `undefined` before it is read. */
@@ -27,11 +30,50 @@ SPDX-License-Identifier: MIT
     /** Whether the torrent does not exist. */
     missing: boolean;
     error: string | undefined;
+    /** Why the last change failed. */
+    actionError: string | undefined;
     poster: string | undefined;
+    /** Its measurements, or `undefined` until they are read. */
+    statistics: TorrentStatistics | undefined;
+    /** Whether a change is being made. */
+    busy: boolean;
     onretry: () => void;
+    onpause: () => void;
+    onresume: () => void;
+    /** Starts a failed torrent again. */
+    onrestart: () => void;
+    onkeepondisk: () => void;
+    onkeepinmemory: () => void;
+    onaddtolibrary: () => void;
+    ondelete: () => void;
   }
 
-  let { torrent, items, missing, error, poster, onretry }: Props = $props();
+  let {
+    torrent,
+    items,
+    missing,
+    error,
+    actionError,
+    poster,
+    statistics,
+    busy,
+    onretry,
+    onpause,
+    onresume,
+    onrestart,
+    onkeepondisk,
+    onkeepinmemory,
+    onaddtolibrary,
+    ondelete,
+  }: Props = $props();
+
+  let confirming = $state(false);
+  let confirmingMemory = $state(false);
+  /** Whether deleting takes files with it, in disk storage or on the way to or
+   * from it. */
+  const withFiles = $derived(
+    torrent?.storage_mode === "disk" || Boolean(torrent?.storage_transition),
+  );
 
   const grouped = $derived(
     torrent?.kind === "series" && items ? seasons(items) : { seasons: [], extras: items ?? [] },
@@ -87,9 +129,13 @@ SPDX-License-Identifier: MIT
       {/if}
       <span class="flex min-w-0 grow flex-col gap-0.5">
         <span class="truncate font-semibold">{label}</span>
-        {#if detail}
-          <span class="truncate text-xs text-text-muted">{detail}</span>
-        {/if}
+        <span class="flex gap-1.5 text-xs text-text-muted">
+          {#if detail}
+            <span class="truncate">{detail}</span>
+            <span aria-hidden="true">·</span>
+          {/if}
+          <span class="shrink-0">{formatBytes(item.file.size_bytes)}</span>
+        </span>
       </span>
       {#if item.progress && !(item.progress.viewed && item.progress.position_seconds === 0)}
         <WatchedBar
@@ -153,9 +199,9 @@ SPDX-License-Identifier: MIT
       {#if torrent.description}
         <p class="max-w-prose whitespace-pre-line text-hero-muted">{torrent.description}</p>
       {/if}
-      {#if resume}
-        {@const episode = resume.file.episode}
-        <div class="mt-1 flex flex-wrap gap-2.5">
+      <div class="mt-1 flex flex-wrap gap-2.5 empty:hidden">
+        {#if resume}
+          {@const episode = resume.file.episode}
           <a href={watchPath(torrent.id, resume.file.id)} class="btn btn-hero">
             <svg class="size-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
               ><path d="M7 4.5v15l13-7.5z" /></svg
@@ -165,8 +211,13 @@ SPDX-License-Identifier: MIT
               {t().episodes.short(episode.season, episode.number)}
             {/if}
           </a>
-        </div>
-      {/if}
+        {/if}
+        {#if torrent.retention !== "temporary"}
+          <a href={editPath(torrent.id)} class="btn h-12 rounded-button btn-glass px-5">
+            {t().edit.edit}
+          </a>
+        {/if}
+      </div>
     {/if}
   </Hero>
 
@@ -180,82 +231,159 @@ SPDX-License-Identifier: MIT
       </div>
     {/if}
 
-    {#if torrent}
-      {#if torrent.genres.length > 0}
-        <ul class="flex flex-wrap gap-2" aria-label={t().title.genres}>
-          {#each torrent.genres as genre (genre)}
-            <li>
-              <a
-                href="/library?{new URLSearchParams({ genre })}"
-                class="flex h-9 items-center rounded-inner bg-tile px-3 text-sm font-semibold"
-                >{genre}</a
-              >
-            </li>
-          {/each}
-        </ul>
-      {/if}
-      {#if torrent.title && torrent.name && torrent.title !== torrent.name}
-        <p class="text-meta break-all text-text-muted">{torrent.name}</p>
-      {/if}
+    {#if actionError}
+      <p role="alert" class="alert">{actionError}</p>
+    {/if}
 
-      {#if items === undefined}
-        <p class="text-text-muted" role="status">
-          {torrent.observed_state === "retrieving_metadata"
-            ? t().title.findingFiles
-            : t().common.loading}
-        </p>
-      {:else if items.length === 0}
-        <p class="text-text-muted">{t().title.noVideos}</p>
-      {:else}
-        {#if grouped.seasons.length > 1 && openSeason}
-          <div class="flex flex-col gap-3.5">
-            <div
-              role="tablist"
-              aria-label={t().title.seasons}
-              class="segments max-w-full self-start overflow-x-auto"
-            >
-              {#each grouped.seasons as season, index (season.season)}
-                {@const selected = season === openSeason}
-                <button
-                  type="button"
-                  role="tab"
-                  id="season-tab-{season.season}"
-                  aria-selected={selected}
-                  aria-controls="season-panel"
-                  tabindex={selected ? 0 : -1}
-                  class="segment shrink-0"
-                  onclick={() => (picked = season.season)}
-                  onkeydown={(event) => moveTab(event, index)}
-                >
-                  {seasonLabel(season.season)}
-                </button>
-              {/each}
-            </div>
-            <div role="tabpanel" id="season-panel" aria-labelledby="season-tab-{openSeason.season}">
-              {@render episodes(openSeason)}
-            </div>
-          </div>
-        {:else if openSeason}
-          <section aria-labelledby="season-{openSeason.season}" class="flex flex-col gap-3">
-            <h2 id="season-{openSeason.season}" class="text-lg font-bold">
-              {seasonLabel(openSeason.season)}
-            </h2>
-            {@render episodes(openSeason)}
-          </section>
-        {/if}
-        {#if grouped.extras.length > 0}
-          <section aria-labelledby="videos" class="flex flex-col gap-3">
-            <h2 id="videos" class="text-lg font-bold">
-              {grouped.seasons.length > 0 ? t().title.otherVideos : t().title.videos}
-            </h2>
-            <ul class="list-grid">
-              {#each grouped.extras as item (item.file.id)}
-                {@render row(item, fileName(item.file), undefined)}
+    {#if torrent}
+      <div class="flex flex-col gap-6 lg:flex-row lg:items-start">
+        <div class="lg:order-last lg:w-85 lg:shrink-0">
+          <DownloadPanel
+            {torrent}
+            {statistics}
+            {busy}
+            {onpause}
+            {onresume}
+            onretry={onrestart}
+            {onkeepondisk}
+            onkeepinmemory={() => (confirmingMemory = true)}
+            {onaddtolibrary}
+            ondelete={() => (confirming = true)}
+          />
+        </div>
+        <div class="flex min-w-0 grow flex-col gap-6">
+          {#if torrent.genres.length > 0}
+            <ul class="flex flex-wrap gap-2" aria-label={t().title.genres}>
+              {#each torrent.genres as genre (genre)}
+                <li>
+                  <a
+                    href="/library?{new URLSearchParams({ genre })}"
+                    class="flex h-9 items-center rounded-inner bg-tile px-3 text-sm font-semibold"
+                    >{genre}</a
+                  >
+                </li>
               {/each}
             </ul>
-          </section>
+          {/if}
+          {#if torrent.title && torrent.name && torrent.title !== torrent.name}
+            <p class="text-meta break-all text-text-muted">{torrent.name}</p>
+          {/if}
+
+          {#if items === undefined}
+            <p class="text-text-muted" role="status">
+              {torrent.observed_state === "retrieving_metadata"
+                ? t().title.findingFiles
+                : t().common.loading}
+            </p>
+          {:else if items.length === 0}
+            <p class="text-text-muted">{t().title.noVideos}</p>
+          {:else}
+            {#if grouped.seasons.length > 1 && openSeason}
+              <div class="flex flex-col gap-3.5">
+                <div
+                  role="tablist"
+                  aria-label={t().title.seasons}
+                  class="segments max-w-full self-start overflow-x-auto"
+                >
+                  {#each grouped.seasons as season, index (season.season)}
+                    {@const selected = season === openSeason}
+                    <button
+                      type="button"
+                      role="tab"
+                      id="season-tab-{season.season}"
+                      aria-selected={selected}
+                      aria-controls="season-panel"
+                      tabindex={selected ? 0 : -1}
+                      class="segment shrink-0"
+                      onclick={() => (picked = season.season)}
+                      onkeydown={(event) => moveTab(event, index)}
+                    >
+                      {seasonLabel(season.season)}
+                    </button>
+                  {/each}
+                </div>
+                <div
+                  role="tabpanel"
+                  id="season-panel"
+                  aria-labelledby="season-tab-{openSeason.season}"
+                >
+                  {@render episodes(openSeason)}
+                </div>
+              </div>
+            {:else if openSeason}
+              <section aria-labelledby="season-{openSeason.season}" class="flex flex-col gap-3">
+                <h2 id="season-{openSeason.season}" class="text-lg font-bold">
+                  {seasonLabel(openSeason.season)}
+                </h2>
+                {@render episodes(openSeason)}
+              </section>
+            {/if}
+            {#if grouped.extras.length > 0}
+              <section aria-labelledby="videos" class="flex flex-col gap-3">
+                <h2 id="videos" class="text-lg font-bold">
+                  {grouped.seasons.length > 0 ? t().title.otherVideos : t().title.videos}
+                </h2>
+                <ul class="list-grid">
+                  {#each grouped.extras as item (item.file.id)}
+                    {@render row(item, fileName(item.file), undefined)}
+                  {/each}
+                </ul>
+              </section>
+            {/if}
+          {/if}
+        </div>
+      </div>
+
+      <ConfirmDialog
+        open={confirmingMemory}
+        title={t().download.moveToMemoryTitle(torrentTitle(torrent))}
+        confirm={t().download.moveToMemory}
+        cancel={t().download.stayOnDisk}
+        {busy}
+        onconfirm={() => {
+          confirmingMemory = false;
+          onkeepinmemory();
+        }}
+        oncancel={() => (confirmingMemory = false)}
+      >
+        <p class="text-sm">
+          {t().download.moveToMemoryBody(
+            formatBytes((statistics?.completion_ratio ?? 0) * (torrent.size_bytes ?? 0)),
+          )}
+        </p>
+        <p class="text-sm text-text-muted">{t().download.moveToMemoryAfter}</p>
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={confirming}
+        title={withFiles
+          ? t().download.deleteWithFiles(torrentTitle(torrent))
+          : t().download.deleteTitle(torrentTitle(torrent))}
+        confirm={t().download.delete}
+        cancel={t().download.keepIt}
+        {busy}
+        onconfirm={() => {
+          // A failure is reported on the page behind the dialog.
+          confirming = false;
+          ondelete();
+        }}
+        oncancel={() => (confirming = false)}
+      >
+        {#if torrent.retention === "temporary"}
+          <p class="text-sm text-text-muted">{t().download.deleteTemporary}</p>
+        {:else}
+          <p class="text-sm text-text-muted">{t().download.deleteBody}</p>
+          {#if withFiles}
+            <p class="text-sm">
+              {t().download.deleteFiles(
+                formatBytes((statistics?.completion_ratio ?? 0) * (torrent.size_bytes ?? 0)),
+              )}
+            </p>
+          {:else}
+            <p class="text-sm text-text-muted">{t().download.deleteNoFiles}</p>
+          {/if}
         {/if}
-      {/if}
+      </ConfirmDialog>
     {:else if !error}
       <p class="text-text-muted" role="status">{t().common.loading}</p>
     {/if}

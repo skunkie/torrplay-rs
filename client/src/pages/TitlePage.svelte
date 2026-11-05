@@ -7,10 +7,19 @@ SPDX-License-Identifier: MIT
   import { untrack } from "svelte";
 
   import { ApiError } from "../lib/api/http";
-  import type { PlaybackGrant, Progress, Torrent, TorrentFile } from "../lib/backend";
+  import {
+    type Backend,
+    changeTorrent,
+    type PlaybackGrant,
+    type Progress,
+    type Torrent,
+    type TorrentFile,
+    type TorrentStatistics,
+  } from "../lib/backend";
   import { useBackend } from "../lib/context";
   import { playables } from "../lib/episodes";
   import { failureMessage } from "../lib/i18n/index.svelte";
+  import { navigate } from "../lib/navigation.svelte";
   import { playbackGrants, withGrant } from "../lib/playback";
   import { poll } from "../lib/poll";
   import { profiles } from "../lib/profile.svelte";
@@ -32,12 +41,42 @@ SPDX-License-Identifier: MIT
   let progress = $state<Progress[]>([]);
   let missing = $state(false);
   let error = $state<string>();
+  /** Why the last change failed. Polling clears `error`, but this stays until
+   * the next change, so it can be read. */
+  let actionError = $state<string>();
+  let statistics = $state<TorrentStatistics>();
+  let busy = $state(false);
   /** The grant poster URLs carry; `null` until it is known. */
   let grant = $state<PlaybackGrant | undefined | null>(null);
   let etag: string | undefined;
   /** Counts torrent and profile changes, so a response for an earlier
    * one is ignored. */
   let generation = 0;
+
+  /** Reads the measurements, whose absence only leaves the panel's old ones. */
+  async function readStatistics(id: string, mine: number): Promise<void> {
+    try {
+      const read = await backend.getStatistics(id);
+      if (mine === generation) statistics = read;
+    } catch {
+      // The engine may be starting or stopping; the next run tries again.
+    }
+  }
+
+  /** Makes a change to the torrent and shows the result. */
+  async function act(change: (backend: Backend, id: string) => Promise<void>): Promise<void> {
+    busy = true;
+    actionError = undefined;
+    try {
+      await change(backend, torrentId);
+      etag = undefined;
+      await refresh(torrentId, profiles.current?.id, generation);
+    } catch (failure) {
+      actionError = failureMessage(failure);
+    } finally {
+      busy = false;
+    }
+  }
 
   /** Reads the torrent when it changed, its files once its metadata is
    * known, and the profile's progress, which playback elsewhere changes. */
@@ -50,6 +89,7 @@ SPDX-License-Identifier: MIT
         torrent = read.data;
         etag = read.etag;
       }
+      await readStatistics(id, mine);
       if (torrent?.observed_state === "retrieving_metadata") return;
       const [listed, held] = await Promise.all([
         files ?? backend.listFiles(id),
@@ -79,6 +119,7 @@ SPDX-License-Identifier: MIT
       if (torrent?.id !== id) {
         torrent = undefined;
         files = undefined;
+        statistics = undefined;
         missing = false;
         etag = undefined;
       }
@@ -104,8 +145,35 @@ SPDX-License-Identifier: MIT
   {missing}
   {error}
   poster={torrent?.poster && grant !== null ? withGrant(torrent.links.poster, grant) : undefined}
+  {actionError}
+  {statistics}
+  {busy}
   onretry={() => {
     etag = undefined;
     void refresh(torrentId, profiles.current?.id, generation);
+  }}
+  onpause={() => act((api, id) => changeTorrent(api, id, { desired_state: "paused" }))}
+  onresume={() => act((api, id) => changeTorrent(api, id, { desired_state: "started" }))}
+  onrestart={() =>
+    act(async (api, id) => {
+      // Pausing and then starting is what restarts a failed torrent.
+      await changeTorrent(api, id, { desired_state: "paused" });
+      await changeTorrent(api, id, { desired_state: "started" });
+    })}
+  onkeepondisk={() => act((api, id) => changeTorrent(api, id, { storage_mode: "disk" }))}
+  onkeepinmemory={() => act((api, id) => changeTorrent(api, id, { storage_mode: "memory" }))}
+  onaddtolibrary={() => act((api, id) => api.keepTorrent(id, "memory"))}
+  ondelete={async () => {
+    busy = true;
+    actionError = undefined;
+    try {
+      await backend.deleteTorrent(torrentId);
+      navigate("/library");
+    } catch (failure) {
+      if (failure instanceof ApiError && failure.type === "not-found") navigate("/library");
+      else actionError = failureMessage(failure);
+    } finally {
+      busy = false;
+    }
   }}
 />

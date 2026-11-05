@@ -17,6 +17,7 @@ SPDX-License-Identifier: MIT
   import { match } from "./lib/routes";
   import { session, signOut } from "./lib/session.svelte";
   import AddPage from "./pages/AddPage.svelte";
+  import EditPage from "./pages/EditPage.svelte";
   import HomePage from "./pages/HomePage.svelte";
   import LibraryPage from "./pages/LibraryPage.svelte";
   import NotFound from "./pages/NotFound.svelte";
@@ -241,6 +242,10 @@ SPDX-License-Identifier: MIT
     <LibraryPage />
   {:else if page?.name === "add"}
     <AddPage />
+  {:else if page?.name === "edit"}
+    {#key page.params.torrent_id}
+      <EditPage torrentId={page.params.torrent_id ?? ""} />
+    {/key}
   {:else if page?.name === "title"}
     {#key page.params.torrent_id}
       <TitlePage torrentId={page.params.torrent_id ?? ""} />
