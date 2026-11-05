@@ -22,8 +22,10 @@ export const en = {
     library: "Library",
     profile: "Profile",
     language: "Language",
+    theme: "Theme",
     signOut: "Sign out",
   },
+  themes: { system: "System", light: "Light", dark: "Dark" },
   kinds: { movie: "Movie", series: "Series", other: "Other" },
   states: { retrieving_metadata: "Finding files", paused: "Paused", failed: "Failed" },
   progress: {

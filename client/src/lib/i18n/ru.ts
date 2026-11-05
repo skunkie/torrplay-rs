@@ -23,8 +23,10 @@ export const ru: Messages = {
     library: "Библиотека",
     profile: "Профиль",
     language: "Язык",
+    theme: "Тема",
     signOut: "Выйти",
   },
+  themes: { system: "Как в системе", light: "Светлая", dark: "Тёмная" },
   kinds: { movie: "Фильм", series: "Сериал", other: "Другое" },
   states: { retrieving_metadata: "Поиск файлов", paused: "Приостановлен", failed: "Ошибка" },
   progress: {

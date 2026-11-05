@@ -7,8 +7,9 @@
 @import "tailwindcss";
 
 /* Design tokens, as ADR 11 lists them: components use these names, never
-   raw colors, so the themes change in one place. Dark is the default; light
-   follows the system's preference. */
+   raw colors, so the themes change in one place. Dark is the default; the
+   root's data-theme, which public/theme.js sets before the first paint, picks
+   light. contrast.test.ts checks every pair in both themes. */
 @theme {
   /* Only these colors exist: Tailwind's palette is removed. */
   --color-*: initial;
@@ -46,21 +47,19 @@
   --radius-panel: 1.25rem;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    --color-surface: #f8fafc;
-    --color-tile: #eef2f7;
-    --color-raised: #ffffff;
-    --color-empty: #cbd5e1;
-    --color-text: #0f172a;
-    --color-text-muted: #475569;
-    --color-accent: #0284c7;
-    --color-accent-text: #0369a1;
-    --color-on-accent: #ffffff;
-    --color-arriving: #db2777;
-    --color-arriving-text: #be185d;
-    --color-focus: #b45309;
-  }
+:root[data-theme="light"] {
+  --color-surface: #f8fafc;
+  --color-tile: #eef2f7;
+  --color-raised: #ffffff;
+  --color-empty: #cbd5e1;
+  --color-text: #0f172a;
+  --color-text-muted: #475569;
+  --color-accent: #0277b6;
+  --color-accent-text: #0369a1;
+  --color-on-accent: #ffffff;
+  --color-arriving: #db2777;
+  --color-arriving-text: #be185d;
+  --color-focus: #b45309;
 }
 
 /* The colors of a title without a poster, in both themes; see lib/tone.ts. */
@@ -96,6 +95,7 @@
   --color-accent-text: #7dd3fc;
   --color-on-accent: #082f49;
   --color-arriving: #f472b6;
+  --color-arriving-text: #f9a8d4;
   --color-focus: #fbbf24;
   color-scheme: dark;
 }

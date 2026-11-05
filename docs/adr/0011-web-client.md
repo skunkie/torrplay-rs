@@ -38,7 +38,9 @@ seek index. The plan keeps them.
 - Bits UI for accessible headless components: dialogs, menus, selects,
   sliders, tabs, and toasts, with focus trapping and restoration.
 - Tailwind CSS 4 for styling, through design tokens for color, spacing, and
-  type, with a dark and a light theme.
+  type, with a dark and a light theme. Each device follows the system or keeps
+  its own choice from the menu; a small script runs before the first paint, so
+  the page never flashes the other theme.
 - Video.js 10's framework-free web components (`@videojs/html`) for the
   player, wrapping a native `<video>` element, and Mediabunny with its AC-3
   and DTS decoders for the audio path. Vidstack, which the Go client uses,
