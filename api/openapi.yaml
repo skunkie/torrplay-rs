@@ -7024,7 +7024,9 @@ components:
           type: integer
           format: int64
           minimum: 0
-          description: The reader's offset in the file.
+          description: >-
+            The reader's offset in the file, as of the last piece it reached,
+            so it moves in steps of about a piece.
           examples: [8388608]
         piece_index:
           type: integer

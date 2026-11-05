@@ -803,9 +803,20 @@ async fn statistics_map_pieces_and_readers() -> anyhow::Result<()> {
     );
 
     drop(response);
-    eventually("the reader going idle", async || {
+    // A range ending inside a piece leaves its reader at an exact position, not
+    // the offset recorded when it reached that piece; it still counts as idle.
+    let inside_a_piece = client
+        .get(running.url(content))
+        .header(RANGE, "bytes=5242888-5242987")
+        .send()
+        .await?;
+    assert_eq!(inside_a_piece.bytes().await?.len(), 100);
+    eventually("the readers going idle", async || {
         let torrent = statistics(&running, &client, &path).await?;
-        Ok((torrent["readers"][0]["state"] == "idle").then_some(()))
+        let idle = torrent["readers"].as_array().is_some_and(|readers| {
+            !readers.is_empty() && readers.iter().all(|reader| reader["state"] == "idle")
+        });
+        Ok(idle.then_some(()))
     })
     .await?;
     eventually("a verified piece", async || {

@@ -2943,7 +2943,7 @@ export interface components {
             file_id: string;
             /**
              * Format: int64
-             * @description The reader's offset in the file.
+             * @description The reader's offset in the file, as of the last piece it reached, so it moves in steps of about a piece.
              * @example 8388608
              */
             offset_bytes: number;

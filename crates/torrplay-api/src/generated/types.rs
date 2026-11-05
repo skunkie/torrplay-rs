@@ -215,7 +215,7 @@ pub struct TorrentStatisticsLinks {
 pub struct TorrentReader {
     ///The file being read.
     pub file_id: String,
-    ///The reader's offset in the file.
+    ///The reader's offset in the file, as of the last piece it reached, so it moves in steps of about a piece.
     ///Constraint: minimum=0
     pub offset_bytes: i64,
     ///The index of the torrent's piece at that offset.

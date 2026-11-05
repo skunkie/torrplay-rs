@@ -538,32 +538,31 @@ impl TorrentScheduler {
     /// active once, because the scheduler's and the playback's locks are not
     /// held together.
     pub(crate) fn reader_statistics(&self, layout: &Layout) -> anyhow::Result<Vec<TorrentReader>> {
-        let positions: Vec<_> = self.lock()?.readers.values().copied().collect();
-        let mut idle = self.playback.idle_positions(self.id);
+        let readers: Vec<_> = self
+            .lock()?
+            .readers
+            .iter()
+            .map(|(&id, &position)| (id, position))
+            .collect();
+        let idle = self.playback.idle_reader_ids(self.id);
         let piece_length = u64::from(layout.lengths.default_piece_length()).max(1);
         let last_piece = layout.lengths.total_pieces().saturating_sub(1);
-        Ok(positions
+        Ok(readers
             .into_iter()
-            .map(|position| {
+            .map(|(id, position)| {
                 let start = layout.files.get(position.file).map_or(0, |file| file.0);
                 let piece_index = u32::try_from((start + position.offset) / piece_length)
                     .unwrap_or(u32::MAX)
                     .min(last_piece);
-                let parked = idle
-                    .iter()
-                    .position(|held| *held == (position.file, position.offset));
-                let state = match parked {
-                    Some(found) => {
-                        idle.swap_remove(found);
-                        ReaderState::Idle
-                    }
-                    None => ReaderState::Active,
-                };
                 TorrentReader {
                     file_index: FileIndex(position.file),
                     offset_bytes: position.offset,
                     piece_index,
-                    state,
+                    state: if idle.contains(&id) {
+                        ReaderState::Idle
+                    } else {
+                        ReaderState::Active
+                    },
                 }
             })
             .collect())
@@ -769,6 +768,11 @@ impl Reader {
         if !self.is_canceled() {
             self.scheduler.playback.clone().park(self);
         }
+    }
+
+    /// The reader's ID in its scheduler.
+    pub(crate) fn id(&self) -> u64 {
+        self.id
     }
 
     pub(crate) fn scheduler_id(&self) -> u64 {

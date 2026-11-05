@@ -238,7 +238,7 @@ pub enum ReaderState {
 pub struct TorrentReader {
     /// The file being read.
     pub file_index: FileIndex,
-    /// The reader's offset in the file.
+    /// The reader's offset in the file, as of the last piece it reached.
     pub offset_bytes: u64,
     /// The index of the torrent's piece at that offset.
     pub piece_index: u32,
