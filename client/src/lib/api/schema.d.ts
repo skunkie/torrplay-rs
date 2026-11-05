@@ -2686,7 +2686,7 @@ export interface components {
             target_bytes: number;
             /**
              * Format: int64
-             * @description The bytes of the ranges the torrent's storage holds now, at most target_bytes, which it reaches when the preload is ready.
+             * @description The bytes of the ranges received so far, counted by chunk, at most target_bytes, which it has reached when the preload is ready. It falls again if a piece fails its hash check.
              * @example 8388608
              */
             completed_bytes: number;

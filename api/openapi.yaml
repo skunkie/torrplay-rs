@@ -6697,8 +6697,9 @@ components:
           format: int64
           minimum: 0
           description: >-
-            The bytes of the ranges the torrent's storage holds now, at most
-            target_bytes, which it reaches when the preload is ready.
+            The bytes of the ranges received so far, counted by chunk, at most
+            target_bytes, which it has reached when the preload is ready. It
+            falls again if a piece fails its hash check.
           examples: [8388608]
         created_at:
           type: string

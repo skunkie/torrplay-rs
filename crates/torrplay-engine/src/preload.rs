@@ -42,7 +42,7 @@ const PAUSED: &str = "The torrent was paused.";
 const TORRENT_FAILED: &str = "The torrent failed.";
 
 /// The failure of a preload whose pieces stopped arriving.
-const STALLED: &str = "No piece of the preload arrived within the piece wait bound.";
+const STALLED: &str = "No data of the preload arrived within the piece wait bound.";
 
 /// The failure of a preload the cache's bounded fallback ended.
 const CACHE_NEEDED_ROOM: &str = "The piece cache needed the preload's pins for active readers.";
@@ -149,6 +149,23 @@ impl Entry {
             self.status.state,
             PreloadState::Downloading | PreloadState::Ready
         )
+    }
+
+    /// Records what has arrived. Progress is counted by chunk, so a large piece
+    /// arriving slowly does not count as a stall, and readiness by verified
+    /// pieces, so a reader finds what it was promised.
+    fn observe_progress(&mut self, received: u64, verified: u64, now: Instant) {
+        if received > self.status.completed_bytes {
+            self.progress_at = now;
+        }
+        self.status.completed_bytes = received;
+        if self.is_scheduled() {
+            self.status.state = if verified >= self.status.target_bytes {
+                PreloadState::Ready
+            } else {
+                PreloadState::Downloading
+            };
+        }
     }
 
     fn end(&mut self, state: PreloadState, failure: Option<&str>, now: Instant) {
@@ -488,7 +505,11 @@ impl Preloads {
                         entry.end(PreloadState::Failed, Some(TORRENT_FAILED), now);
                     }
                     Observation::Swapping => {}
-                    Observation::Live { cached, completed } => {
+                    Observation::Live {
+                        cached,
+                        received,
+                        verified,
+                    } => {
                         if cached != entry.cached {
                             // A storage mode transition: memory storage
                             // queues it for room, disk storage pins nothing.
@@ -501,17 +522,7 @@ impl Preloads {
                                 };
                             }
                         }
-                        if completed > entry.status.completed_bytes {
-                            entry.progress_at = now;
-                        }
-                        entry.status.completed_bytes = completed;
-                        if entry.is_scheduled() {
-                            entry.status.state = if completed >= entry.status.target_bytes {
-                                PreloadState::Ready
-                            } else {
-                                PreloadState::Downloading
-                            };
-                        }
+                        entry.observe_progress(received, verified, now);
                     }
                 }
                 if entry.is_active() && now >= entry.expires {
@@ -580,9 +591,14 @@ enum Observation {
     Failed,
     /// The torrent is being added again with other storage.
     Swapping,
-    /// The torrent runs, in memory storage if `cached`, holding `completed`
-    /// bytes of the preload's ranges.
-    Live { cached: bool, completed: u64 },
+    /// The torrent runs, in memory storage if `cached`, having received
+    /// `received` bytes of the preload's ranges, of which it holds `verified`
+    /// in pieces that passed their hash checks.
+    Live {
+        cached: bool,
+        received: u64,
+        verified: u64,
+    },
 }
 
 fn observe(scheduler: &Weak<TorrentScheduler>, coverage: &Coverage) -> Observation {
@@ -601,16 +617,37 @@ fn observe(scheduler: &Weak<TorrentScheduler>, coverage: &Coverage) -> Observati
     let Ok(have) = torrent.have_pieces() else {
         return Observation::Swapping;
     };
+    let Ok(pieces) = torrent.received_piece_bytes(&coverage.pieces) else {
+        return Observation::Swapping;
+    };
+    let verified = verified_bytes(&layout, coverage, &have);
     Observation::Live {
         cached: scheduler.is_cached(),
-        completed: completed_bytes(&layout, coverage, &have),
+        // The two reads are not atomic: a piece can pass its check between them.
+        received: received_bytes(&layout, coverage, &pieces).max(verified),
+        verified,
     }
+}
+
+/// The bytes of `coverage`'s ranges received, given the bytes received of
+/// each of its pieces, in their order. A piece's received chunks count in
+/// proportion, since they arrive in no particular order within it.
+fn received_bytes(layout: &Layout, coverage: &Coverage, received: &[u64]) -> u64 {
+    let piece_length = u64::from(layout.lengths.default_piece_length());
+    coverage
+        .pieces
+        .iter()
+        .zip(received)
+        .map(|(&piece, &received)| {
+            let covered = covered_bytes(layout, coverage, piece);
+            (u128::from(covered) * u128::from(received) / u128::from(piece_length)) as u64
+        })
+        .sum()
 }
 
 /// The bytes of `coverage`'s ranges in the pieces `have` marks, a bitfield
 /// in BEP 3's order.
-fn completed_bytes(layout: &Layout, coverage: &Coverage, have: &[u8]) -> u64 {
-    let piece_length = u64::from(layout.lengths.default_piece_length());
+fn verified_bytes(layout: &Layout, coverage: &Coverage, have: &[u8]) -> u64 {
     coverage
         .pieces
         .iter()
@@ -618,16 +655,20 @@ fn completed_bytes(layout: &Layout, coverage: &Coverage, have: &[u8]) -> u64 {
             have.get((piece / 8) as usize)
                 .is_some_and(|byte| byte & (0x80 >> (piece % 8)) != 0)
         })
-        .map(|&piece| {
-            // The piece's span relative to the file, as the ranges are.
-            let start = (u64::from(piece) * piece_length).saturating_sub(coverage.file_start);
-            let end = ((u64::from(piece) + 1) * piece_length).saturating_sub(coverage.file_start);
-            coverage
-                .ranges
-                .iter()
-                .map(|range| overlap(start, end, range))
-                .sum::<u64>()
-        })
+        .map(|&piece| covered_bytes(layout, coverage, piece))
+        .sum()
+}
+
+/// The bytes of `piece` within `coverage`'s ranges.
+fn covered_bytes(layout: &Layout, coverage: &Coverage, piece: u32) -> u64 {
+    let piece_length = u64::from(layout.lengths.default_piece_length());
+    // The piece's span relative to the file, as the ranges are.
+    let start = (u64::from(piece) * piece_length).saturating_sub(coverage.file_start);
+    let end = ((u64::from(piece) + 1) * piece_length).saturating_sub(coverage.file_start);
+    coverage
+        .ranges
+        .iter()
+        .map(|range| overlap(start, end, range))
         .sum()
 }
 
@@ -838,11 +879,51 @@ mod tests {
     }
 
     #[test]
-    fn completed_bytes_count_held_pieces_within_the_ranges() {
+    fn chunks_arriving_are_progress_but_only_verified_pieces_are_ready() {
+        let mut entry = entry(1, 0, 1, PreloadState::Downloading);
+        entry.status.target_bytes = 100;
+        let start = entry.progress_at;
+        let later = start + Duration::from_secs(30);
+
+        entry.observe_progress(40, 0, later);
+        assert_eq!(entry.progress_at, later, "a chunk is not a stall");
+        assert_eq!(entry.status.completed_bytes, 40);
+
+        let much_later = later + Duration::from_secs(30);
+        entry.observe_progress(40, 0, much_later);
+        assert_eq!(entry.progress_at, later, "nothing new arrived");
+
+        entry.observe_progress(100, 0, much_later);
+        assert_eq!(
+            entry.status.state,
+            PreloadState::Downloading,
+            "every chunk arrived, but no piece has passed its check"
+        );
+
+        entry.observe_progress(100, 100, much_later);
+        assert_eq!(entry.status.state, PreloadState::Ready);
+    }
+
+    #[test]
+    fn received_bytes_count_chunks_in_proportion_within_the_ranges() {
+        let layout = layout(&[PIECE / 2, 3 * PIECE]);
+        let covered = coverage(&layout, 1, None, 32 * PIECE).unwrap();
+        // Half of piece 0 lies in the file, and a quarter of it has arrived.
+        let mut received = vec![0; covered.pieces.len()];
+        received[0] = PIECE / 4;
+        received[1] = PIECE / 2;
+        assert_eq!(
+            received_bytes(&layout, &covered, &received),
+            PIECE / 8 + PIECE / 2
+        );
+    }
+
+    #[test]
+    fn verified_bytes_count_held_pieces_within_the_ranges() {
         let layout = layout(&[PIECE / 2, 3 * PIECE]);
         let covered = coverage(&layout, 1, None, 32 * PIECE).unwrap();
         // Pieces 0 and 2 held: half of piece 0 lies in the file.
         let have = [0b1010_0000];
-        assert_eq!(completed_bytes(&layout, &covered, &have), PIECE / 2 + PIECE);
+        assert_eq!(verified_bytes(&layout, &covered, &have), PIECE / 2 + PIECE);
     }
 }

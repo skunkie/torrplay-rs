@@ -648,6 +648,7 @@ The fork's `torrplay/patches` branch holds twenty-three commits on upstream
 | `5c3c360d` | Fix | End a torrent's speed estimator without an error when a pause takes its chunk tracker first, so shutdown and pauses log no false errors (milestone 7) |
 | `e6df504e` | Fix | End a dead peer's reconnect wait without an error when the torrent paused or stopped meanwhile, so shutdowns and pauses log no false errors (milestone 7) |
 | `27b6c6ec` | Fix | Log a failure at debug level when its task's token is already cancelled, so a task running through a pause, such as a peer finding the chunk tracker gone, logs no false error (milestone 7) |
+| `fb2e14e9` | P15 | Read the bytes received of pieces still in progress, counted by chunk, so a preload's progress moves within a large piece (milestone 7) |
 
 Two more patches remain candidates. Setting `TCP_NODELAY` on peer sockets
 cut the time to first byte after a reconnect from about 43 ms to about
