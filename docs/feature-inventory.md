@@ -135,7 +135,7 @@ document that schedules it.
 | Subtitle tracks from Matroska and WebVTT | `mkv-subtitles` | Implemented | `client/src/lib/player/subtitle*.ts` offers a file's Matroska text tracks, read through bounded ranges and the seek index as playback approaches, and the SubRip, WebVTT, and ASS files that belong to it, decoded from UTF-8 or the likely legacy encoding; subtitles start off, and each device remembers the language chosen last |
 | Settings, statistics, and logs dialogs | Client | Planned | Client reuse, after their resources |
 | Standalone demo with fixtures | `/demo` | Planned | Client reuse |
-| Light and dark themes, following the system or chosen per device | Not present | Planned | Tokens per theme, native controls and the browser bar matching, no flash on load, and a contrast test of each text and surface pair in both themes |
+| Light and dark themes, following the system or chosen per device | Not present | Implemented | Tokens per theme in `client/src/app.css`, chosen in the menu; `client/public/theme.js` sets the theme, native controls, and the browser bar before the first paint; `client/src/lib/contrast.test.ts` checks each text and surface pair in both themes |
 | Client in American English and Russian, following the browser or chosen per device | Not present | Implemented | Typed message catalogs in `client/src/lib/i18n`, with Vitest tests of language detection, problem messages, and a Russian catalog checked for completeness and typography; problems are shown by their type rather than the server's English detail, and library data as stored |
 | Desktop application | Tauri | Deferred | After standalone backend behavior is stable |
 | Android application | Capacitor | Deferred | After the desktop application, on Tauri |

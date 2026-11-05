@@ -15,6 +15,14 @@ globalThis.ResizeObserver = class {
   disconnect = vi.fn();
 };
 
+// jsdom has no media queries; this system prefers neither theme.
+window.matchMedia = ((query: string) => ({
+  matches: false,
+  media: query,
+  addEventListener: vi.fn(),
+  removeEventListener: vi.fn(),
+})) as never;
+
 // jsdom has no canvas, and complains when asked for one.
 HTMLCanvasElement.prototype.getContext = (() => null) as never;
 

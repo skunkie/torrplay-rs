@@ -8,6 +8,7 @@ SPDX-License-Identifier: MIT
   import { navigate } from "../lib/navigation.svelte";
   import { chooseProfile, profiles, resetProfiles } from "../lib/profile.svelte";
   import { session, signOut } from "../lib/session.svelte";
+  import { chooseTheme, isTheme, theme, themes } from "../lib/theme.svelte";
   import { toneOf } from "../lib/tone";
 
   interface Props {
@@ -80,6 +81,21 @@ SPDX-License-Identifier: MIT
     >
       {#each Object.entries(locales) as [locale, { name: language }] (locale)}
         <option value={locale} lang={locale}>{language}</option>
+      {/each}
+    </select>
+  </label>
+  <label class="flex flex-col gap-1.5 text-meta font-semibold">
+    {t().nav.theme}
+    <select
+      value={theme.choice}
+      onchange={(event) => {
+        const chosen = event.currentTarget.value;
+        if (isTheme(chosen)) chooseTheme(chosen);
+      }}
+      class="field bg-surface font-normal"
+    >
+      {#each themes as value (value)}
+        <option {value}>{t().themes[value]}</option>
       {/each}
     </select>
   </label>

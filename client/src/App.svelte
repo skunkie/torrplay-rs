@@ -21,6 +21,7 @@ SPDX-License-Identifier: MIT
   import { loadProfiles, profiles, resetProfiles } from "./lib/profile.svelte";
   import { match } from "./lib/routes";
   import { session, signOut } from "./lib/session.svelte";
+  import { followSystem } from "./lib/theme.svelte";
   import AddPage from "./pages/AddPage.svelte";
   import EditPage from "./pages/EditPage.svelte";
   import HomePage from "./pages/HomePage.svelte";
@@ -54,6 +55,7 @@ SPDX-License-Identifier: MIT
   provideBackend(backend);
 
   $effect(() => startNavigation());
+  $effect(() => followSystem());
 
   $effect(() => {
     // Sooner while something is wrong, so the banner goes as soon as it can.
