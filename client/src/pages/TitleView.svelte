@@ -105,7 +105,7 @@ SPDX-License-Identifier: MIT
 {/snippet}
 
 {#snippet episodes(season: { episodes: Playable[] })}
-  <ol class="flex flex-col gap-2">
+  <ol class="list-grid">
     {#each season.episodes as item (item.file.id)}
       {@render row(
         item,
@@ -170,7 +170,7 @@ SPDX-License-Identifier: MIT
     {/if}
   </Hero>
 
-  <div class="mx-auto flex max-w-screen-2xl flex-col gap-6 px-4 py-6 md:px-10">
+  <div class="flex flex-col gap-6 px-4 py-6 md:px-10">
     {#if error}
       <div role="alert" class="alert">
         <span>{error}</span>
@@ -248,7 +248,7 @@ SPDX-License-Identifier: MIT
             <h2 id="videos" class="text-lg font-bold">
               {grouped.seasons.length > 0 ? t().title.otherVideos : t().title.videos}
             </h2>
-            <ul class="flex flex-col gap-2">
+            <ul class="list-grid">
               {#each grouped.extras as item (item.file.id)}
                 {@render row(item, fileName(item.file), undefined)}
               {/each}
