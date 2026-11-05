@@ -111,6 +111,8 @@ English message.
 | Menu | Меню | The button holding profile, language, and sign-out |
 | Episodes (button) | Серии | Opens a series' title page |
 | Details (button) | Подробнее | Opens the title page of anything else |
+| Audio (button) | Звук | The player's menu button; the menu's items are audio tracks |
+| Play now / Stay here | Смотреть сейчас / Остаться | The end of an episode; `Начнётся через 8 секунд` counts down |
 | Search | Поиск | `Найти` for the action |
 | Player | Плеер | Inanimate: `выберите плеер` |
 | Audio track | Звуковая дорожка | `Дорожка` alone once the context is clear; not `аудиотрек`. Menus label a track by its language from `Intl.DisplayNames`, capitalized at the start: `Английский (AC-3, 5.1)` |

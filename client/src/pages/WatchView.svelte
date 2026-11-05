@@ -6,9 +6,10 @@ SPDX-License-Identifier: MIT
 <script lang="ts">
   import "@videojs/html/i18n";
   import "@videojs/html/video/player";
-  import "@videojs/html/video/skin";
+  import "@videojs/html/video/ui";
   import "../lib/player/labels";
 
+  import TrackMenu from "../components/TrackMenu.svelte";
   import { t } from "../lib/i18n/index.svelte";
   import { sampleOf, seekWhenReady } from "../lib/player/media";
   import type { Sample } from "../lib/player/progress";
@@ -46,6 +47,8 @@ SPDX-License-Identifier: MIT
     onsubtitles: (index: number) => void;
     /** The media element appeared, or left with `undefined`. */
     onmedia: (media: HTMLMediaElement | undefined) => void;
+    /** The countdown at the end of an episode finished. */
+    onplaynext: (href: string) => void;
   }
 
   let {
@@ -67,13 +70,38 @@ SPDX-License-Identifier: MIT
     subtitlesFailed,
     onsubtitles,
     onmedia,
+    onplaynext,
   }: Props = $props();
+
+  /** How long the end of an episode waits before playing the next one. */
+  const NEXT_SECONDS = 10;
+  /** How far the seek buttons and arrow keys move. */
+  const SEEK_SECONDS = 10;
 
   let video = $state<HTMLVideoElement>();
   let ended = $state(false);
+  let secondsLeft = $state(NEXT_SECONDS);
+  /** Whether the viewer chose to stay at the end of this episode. */
+  let staying = $state(false);
 
   $effect(() => {
     onmedia(video);
+  });
+
+  $effect(() => {
+    if (!ended || !next || staying) return;
+    const { href } = next;
+    secondsLeft = NEXT_SECONDS;
+    const timer = setInterval(() => {
+      // An episode does not start in a page nobody is looking at.
+      if (document.visibilityState !== "visible") return;
+      secondsLeft -= 1;
+      if (secondsLeft <= 0) {
+        clearInterval(timer);
+        onplaynext(href);
+      }
+    }, 1000);
+    return () => clearInterval(timer);
   });
 
   $effect(() => {
@@ -98,98 +126,302 @@ SPDX-License-Identifier: MIT
   });
 </script>
 
-<div data-hero class="fixed inset-0 z-50 flex flex-col bg-player text-hero-text">
-  <div class="flex items-center gap-4 px-4 py-3">
-    <a href={backHref} class="btn btn-glass">← {t().player.back}</a>
-    <div class="flex min-w-0 flex-col">
-      <h1 class="truncate font-bold">{title}</h1>
+{#snippet topBar()}
+  <div class="flex items-center gap-4 player-gutter pt-4 md:pt-6">
+    <a href={backHref} aria-label={t().player.back} class="btn size-11 btn-glass px-0">
+      <svg
+        class="size-5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.2"
+        aria-hidden="true"><path d="M15 6l-6 6 6 6" /></svg
+      >
+    </a>
+    <div class="flex min-w-0 flex-col gap-0.5">
+      <h1 class="truncate font-bold md:text-lg">{title}</h1>
       {#if subtitle}
-        <p class="truncate text-sm opacity-80">{subtitle}</p>
+        <p class="truncate text-meta text-hero-muted">{subtitle}</p>
       {/if}
     </div>
-    <div class="ml-auto"></div>
-    {#if tracks.length > 1}
-      <select
-        aria-label={t().audio.track}
-        value={track}
-        onchange={(event) => {
-          ontrack(Number(event.currentTarget.value));
-          // A track that fails at once returns to the one before without
-          // changing `track`, which the menu would not show.
-          event.currentTarget.value = String(track);
-        }}
-        class="h-11 max-w-1/3 truncate rounded-xl bg-hero-text/15 px-3 text-sm"
-      >
-        {#each tracks as label, index (index)}
-          <option value={index}>{label}</option>
-        {/each}
-      </select>
-    {/if}
-    {#if subtitleTracks.length}
-      <select
-        aria-label={t().subtitles.track}
-        value={subtitleTrack}
-        onchange={(event) => onsubtitles(Number(event.currentTarget.value))}
-        class="h-11 max-w-1/3 truncate rounded-xl bg-hero-text/15 px-3 text-sm"
-      >
-        <option value={-1}>{t().subtitles.off}</option>
-        {#each subtitleTracks as subtitle, index (index)}
-          <option value={index} disabled={subtitle.unsupported}
-            >{subtitle.unsupported
-              ? `${subtitle.label} — ${t().subtitles.unsupported}`
-              : subtitle.label}</option
-          >
-        {/each}
-      </select>
-    {/if}
   </div>
-  {#if subtitlesFailed}
-    <p role="status" class="px-4 pb-2 text-sm opacity-80">{t().subtitles.failed}</p>
-  {/if}
-  {#if trackFailed}
-    <p role="status" class="px-4 pb-2 text-sm opacity-80">{t().audio.failed}</p>
-  {/if}
+{/snippet}
 
+{#snippet seekIcon(forward: boolean)}
+  <svg
+    class="size-7 md:size-8"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.8"
+    aria-hidden="true"
+  >
+    {#if forward}
+      <path d="M20 12a8 8 0 1 1-2.6-5.9" /><path d="M20 4v4h-4" />
+    {:else}
+      <path d="M4 12a8 8 0 1 0 2.6-5.9" /><path d="M4 4v4h4" />
+    {/if}
+    <text
+      x="12"
+      y="15"
+      font-size="7"
+      font-weight="700"
+      text-anchor="middle"
+      fill="currentColor"
+      stroke="none">{SEEK_SECONDS}</text
+    >
+  </svg>
+{/snippet}
+
+<div data-hero class="fixed inset-0 z-50 flex flex-col bg-player text-hero-text">
   {#if error}
+    {@render topBar()}
     <p role="alert" class="m-auto p-4">{error}</p>
   {:else if url}
-    <div class="relative min-h-0 flex-1 overflow-hidden">
-      <media-i18n class="block size-full">
-        <video-player class="block size-full">
-          <video-skin class="block size-full">
-            <!-- svelte-ignore a11y_media_has_caption -->
-            <video
-              bind:this={video}
-              src={url}
-              autoplay
-              playsinline
-              class="size-full object-contain"
-              ontimeupdate={(event) => onplayed(sampleOf(event.currentTarget))}
-              onpause={(event) => onflush(sampleOf(event.currentTarget), false)}
-              onplay={() => (ended = false)}
-              onended={(event) => {
-                ended = true;
-                onflush(sampleOf(event.currentTarget), false);
-              }}
-            ></video>
-          </video-skin>
-        </video-player>
-      </media-i18n>
-      {#if ended}
-        <div class="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-player/80">
-          {#if next}
-            <p class="text-sm opacity-80">{t().progress.nextEpisode}</p>
-            <p class="text-xl font-semibold">{next.label}</p>
-            <!-- svelte-ignore a11y_autofocus -->
-            <a href={next.href} autofocus class="btn btn-hero">{t().player.playNext}</a>
-          {:else}
-            <p class="text-xl font-semibold">{t().player.finished}</p>
-            <a href={backHref} class="btn btn-hero">{t().player.back}</a>
+    <media-i18n class="block size-full">
+      <video-player class="block size-full">
+        <media-container class="relative block size-full overflow-hidden">
+          <!-- svelte-ignore a11y_media_has_caption -->
+          <video
+            bind:this={video}
+            src={url}
+            autoplay
+            playsinline
+            class="size-full object-contain"
+            ontimeupdate={(event) => onplayed(sampleOf(event.currentTarget))}
+            onpause={(event) => onflush(sampleOf(event.currentTarget), false)}
+            onplay={() => {
+              ended = false;
+              staying = false;
+            }}
+            onended={(event) => {
+              ended = true;
+              onflush(sampleOf(event.currentTarget), false);
+            }}
+          ></video>
+
+          <media-gesture type="tap" action="toggleControls" pointer="touch"></media-gesture>
+          <media-gesture type="tap" action="togglePaused" pointer="mouse" region="center"
+          ></media-gesture>
+          <media-gesture type="doubletap" action="toggleFullscreen" region="center"></media-gesture>
+          <media-hotkey keys="Space" action="togglePaused"></media-hotkey>
+          <media-hotkey keys="k" action="togglePaused"></media-hotkey>
+          <media-hotkey keys="ArrowLeft" action="seekStep" value={-SEEK_SECONDS}></media-hotkey>
+          <media-hotkey keys="ArrowRight" action="seekStep" value={SEEK_SECONDS}></media-hotkey>
+          <media-hotkey keys="ArrowUp" action="volumeStep" value={0.05}></media-hotkey>
+          <media-hotkey keys="ArrowDown" action="volumeStep" value={-0.05}></media-hotkey>
+          <media-hotkey keys="m" action="toggleMuted"></media-hotkey>
+          <media-hotkey keys="f" action="toggleFullscreen"></media-hotkey>
+          <media-hotkey keys="c" action="toggleSubtitles"></media-hotkey>
+
+          <media-buffering-indicator class="player-spinner">
+            <svg
+              class="size-12 animate-spin"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              stroke-linecap="round"
+              aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9" /></svg
+            >
+          </media-buffering-indicator>
+
+          {#if !ended}
+            <media-controls class="player-controls">
+              <div class="bg-linear-to-b from-scrim/85 to-transparent pb-10">
+                {@render topBar()}
+              </div>
+
+              <div class="flex items-center justify-center gap-6">
+                <media-seek-button seconds={-SEEK_SECONDS} class="player-seek">
+                  {@render seekIcon(false)}
+                </media-seek-button>
+                <media-play-button
+                  class="group flex size-16 cursor-pointer items-center justify-center rounded-panel bg-accent text-on-accent hover:opacity-85 md:size-18"
+                >
+                  <svg
+                    class="hidden size-7 group-data-paused:block md:size-8"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    aria-hidden="true"><path d="M7 4.5v15l13-7.5z" /></svg
+                  >
+                  <svg
+                    class="size-7 group-data-paused:hidden md:size-8"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    aria-hidden="true"
+                    ><rect x="6" y="4" width="4" height="16" rx="1" /><rect
+                      x="14"
+                      y="4"
+                      width="4"
+                      height="16"
+                      rx="1"
+                    /></svg
+                  >
+                </media-play-button>
+                <media-seek-button seconds={SEEK_SECONDS} class="player-seek">
+                  {@render seekIcon(true)}
+                </media-seek-button>
+              </div>
+
+              <div
+                class="flex flex-col bg-linear-to-t from-scrim/90 to-transparent player-gutter pt-12 pb-2 md:pb-5"
+              >
+                <media-time-slider class="player-slider">
+                  <media-slider-track class="player-track">
+                    <media-slider-buffer class="player-buffer"></media-slider-buffer>
+                    <media-slider-fill class="player-fill bg-accent"></media-slider-fill>
+                  </media-slider-track>
+                  <media-slider-thumb class="player-thumb bg-accent"></media-slider-thumb>
+                </media-time-slider>
+                <div class="flex items-center gap-1 md:gap-2">
+                  <media-mute-button class="group btn size-11 px-0">
+                    <svg
+                      class="size-5"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      aria-hidden="true"
+                    >
+                      <path d="M4 10v4h4l5 4V6L8 10z" />
+                      <path class="group-data-muted:hidden" d="M17 9a4 4 0 0 1 0 6" />
+                      <path class="hidden group-data-muted:block" d="M17 10l4 4M21 10l-4 4" />
+                    </svg>
+                  </media-mute-button>
+                  <media-volume-slider class="player-slider hidden w-24 md:flex">
+                    <media-slider-track class="player-track">
+                      <media-slider-fill class="player-fill bg-hero-text"></media-slider-fill>
+                    </media-slider-track>
+                    <media-slider-thumb class="player-thumb bg-hero-text"></media-slider-thumb>
+                  </media-volume-slider>
+                  <span class="ml-1 flex gap-1.5 mono md:text-meta">
+                    <media-time type="current"></media-time>
+                    <span aria-hidden="true">/</span>
+                    <media-time type="duration"></media-time>
+                  </span>
+                  <div class="grow"></div>
+                  {#if tracks.length > 1}
+                    <TrackMenu
+                      id="audio-menu"
+                      label={t().audio.short}
+                      options={tracks.map((label, value) => ({ value, label }))}
+                      selected={track}
+                      onselect={ontrack}
+                    />
+                  {/if}
+                  {#if subtitleTracks.length}
+                    <TrackMenu
+                      id="subtitles-menu"
+                      label={t().subtitles.track}
+                      options={[
+                        { value: -1, label: t().subtitles.off },
+                        ...subtitleTracks.map((subtitle, value) => ({
+                          value,
+                          label: subtitle.unsupported
+                            ? `${subtitle.label} — ${t().subtitles.unsupported}`
+                            : subtitle.label,
+                          disabled: subtitle.unsupported,
+                        })),
+                      ]}
+                      selected={subtitleTrack}
+                      onselect={onsubtitles}
+                    />
+                  {/if}
+                  <media-fullscreen-button class="group btn size-11 px-0">
+                    <svg
+                      class="size-5"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      aria-hidden="true"
+                    >
+                      <path
+                        class="group-data-fullscreen:hidden"
+                        d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"
+                      />
+                      <path
+                        class="hidden group-data-fullscreen:block"
+                        d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"
+                      />
+                    </svg>
+                  </media-fullscreen-button>
+                </div>
+              </div>
+            </media-controls>
           {/if}
-        </div>
-      {/if}
-    </div>
+
+          {#if subtitlesFailed || trackFailed}
+            <div class="absolute inset-x-0 top-20 flex flex-col items-center gap-2 px-4 md:top-24">
+              {#if subtitlesFailed}
+                <p role="status" class="alert bg-surface">{t().subtitles.failed}</p>
+              {/if}
+              {#if trackFailed}
+                <p role="status" class="alert bg-surface">{t().audio.failed}</p>
+              {/if}
+            </div>
+          {/if}
+
+          {#if ended}
+            <div class="absolute inset-0 flex flex-col bg-scrim/70">
+              {@render topBar()}
+              <section
+                aria-labelledby="after-episode"
+                class="mx-4 mt-auto mb-4 flex flex-col gap-3 rounded-panel bg-surface p-5 sm:ml-auto sm:w-100 md:mr-12 md:mb-12 md:p-6"
+              >
+                {#if next}
+                  <p class="mono text-accent-text uppercase">{t().progress.nextEpisode}</p>
+                  <h2 id="after-episode" class="text-display-small font-bold">{next.label}</h2>
+                  {#if !staying}
+                    <p role="status" class="text-text-muted">{t().player.nextIn(secondsLeft)}</p>
+                    <span class="h-1.5 overflow-hidden rounded-full bg-empty" aria-hidden="true">
+                      <span
+                        class="block h-full rounded-full bg-accent"
+                        style:width="{(secondsLeft / NEXT_SECONDS) * 100}%"
+                      ></span>
+                    </span>
+                  {/if}
+                  <div class="mt-1 flex gap-2.5">
+                    <!-- svelte-ignore a11y_autofocus -->
+                    <a href={next.href} autofocus class="btn btn-hero grow">
+                      {staying ? t().player.playNext : t().player.playNow}
+                    </a>
+                    {#if !staying}
+                      <button
+                        type="button"
+                        class="btn h-12 rounded-button btn-secondary px-5"
+                        onclick={() => (staying = true)}
+                      >
+                        {t().player.stay}
+                      </button>
+                    {/if}
+                  </div>
+                {:else}
+                  <h2 id="after-episode" class="text-display-small font-bold">
+                    {t().player.finished}
+                  </h2>
+                  <a href={backHref} class="btn btn-hero">{t().player.back}</a>
+                {/if}
+              </section>
+            </div>
+          {/if}
+
+          <media-error-dialog class="player-error">
+            <media-dialog-backdrop class="absolute inset-0 bg-scrim/70"></media-dialog-backdrop>
+            <media-dialog-popup
+              class="relative flex max-w-md flex-col gap-3 rounded-panel bg-surface p-6"
+            >
+              <media-dialog-title class="text-lg font-bold"></media-dialog-title>
+              <media-dialog-description class="text-text-muted"></media-dialog-description>
+              <media-dialog-close class="btn self-end btn-secondary"></media-dialog-close>
+            </media-dialog-popup>
+          </media-error-dialog>
+        </media-container>
+      </video-player>
+    </media-i18n>
   {:else}
-    <p class="m-auto opacity-80" role="status">{t().common.loading}</p>
+    {@render topBar()}
+    <p class="m-auto text-hero-muted" role="status">{t().common.loading}</p>
   {/if}
 </div>

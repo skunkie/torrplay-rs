@@ -3,11 +3,11 @@
 // SPDX-License-Identifier: MIT
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
-import { beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 
 import App from "../App.svelte";
 import type { Backend, Progress, Torrent, TorrentFile } from "../lib/backend";
-import { navigate } from "../lib/navigation.svelte";
+import { location, navigate } from "../lib/navigation.svelte";
 import type * as Audio from "../lib/player/audio";
 import type { AudioTrack } from "../lib/player/audio";
 import type * as Media from "../lib/player/media";
@@ -165,16 +165,92 @@ it("saves the position when playback pauses and keeps the viewed mark", async ()
   );
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+/** The radio group of the player's menu named `label`, once it shows. */
+function trackMenu(label: string): Promise<HTMLElement & { value: string }> {
+  return waitFor(() => {
+    const group = document.querySelector(`media-menu-radio-group[aria-label="${label}"]`);
+    if (!group) throw new Error(`no menu named ${label}`);
+    return group as HTMLElement & { value: string };
+  });
+}
+
+function optionsOf(group: HTMLElement): (string | undefined)[] {
+  return [...group.querySelectorAll("media-menu-radio-item")].map((item) =>
+    item.textContent?.trim(),
+  );
+}
+
+function choose(group: HTMLElement, value: string): Promise<boolean> {
+  return fireEvent(group, new CustomEvent("value-change", { detail: { value } }));
+}
+
+function menuNamed(label: string): Element | null {
+  return document.querySelector(`media-menu-radio-group[aria-label="${label}"]`);
+}
+
 it("offers the next episode at the end", async () => {
   navigate(watchPath(show.id, e1.id));
   render(App, { backend: backend(show, [e1, e2]) });
   const media = await video();
   await fireEvent.ended(media);
   expect(await screen.findByText("Season 1, Episode 2")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Play now" })).toHaveAttribute(
+    "href",
+    watchPath(show.id, e2.id),
+  );
+});
+
+it("plays the next episode when the countdown ends", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  navigate(watchPath(show.id, e1.id));
+  render(App, { backend: backend(show, [e1, e2]) });
+  await fireEvent.ended(await video());
+  expect(await screen.findByText(/^Plays in 10/)).toBeInTheDocument();
+  await vi.advanceTimersByTimeAsync(9000);
+  expect(location.path).toBe(watchPath(show.id, e1.id));
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(location.path).toBe(watchPath(show.id, e2.id));
+});
+
+it("stays on the episode when asked, keeping a way to play the next", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  navigate(watchPath(show.id, e1.id));
+  render(App, { backend: backend(show, [e1, e2]) });
+  await fireEvent.ended(await video());
+  await fireEvent.click(await screen.findByRole("button", { name: "Stay here" }));
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(location.path).toBe(watchPath(show.id, e1.id));
   expect(screen.getByRole("link", { name: "Play" })).toHaveAttribute(
     "href",
     watchPath(show.id, e2.id),
   );
+});
+
+it("holds the countdown while the page is hidden", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const hidden = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  navigate(watchPath(show.id, e1.id));
+  render(App, { backend: backend(show, [e1, e2]) });
+  await fireEvent.ended(await video());
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(location.path).toBe(watchPath(show.id, e1.id));
+  hidden.mockRestore();
+});
+
+it("offers the player's own controls", async () => {
+  navigate(watchPath(show.id, e1.id));
+  render(App, { backend: backend(show, [e1, e2]) });
+  await video();
+  const seconds = [
+    ...document.querySelectorAll<HTMLElement & { seconds: number }>("media-seek-button"),
+  ].map((button) => button.seconds);
+  expect(seconds).toEqual([-10, 10]);
+  expect(document.querySelector("media-container media-play-button")).not.toBeNull();
+  expect(document.querySelector("media-container media-fullscreen-button")).not.toBeNull();
 });
 
 it("says when the file is not in the torrent", async () => {
@@ -193,12 +269,9 @@ it("offers the file's audio tracks and decodes the one chosen", async () => {
   navigate(watchPath(show.id, e1.id));
   render(App, { backend: backend(show, [e1, e2]) });
   await video();
-  const menu = await screen.findByRole("combobox", { name: "Audio track" });
-  expect([...menu.querySelectorAll("option")].map((option) => option.textContent)).toEqual([
-    "English (AAC, Stereo)",
-    "Russian (AC-3, 5.1)",
-  ]);
-  await fireEvent.change(menu, { target: { value: "1" } });
+  const menu = await trackMenu("Audio");
+  expect(optionsOf(menu)).toEqual(["English (AAC, Stereo)", "Russian (AC-3, 5.1)"]);
+  await choose(menu, "1");
   expect(decoding.tracks).toEqual([1]);
   expect(screen.queryByText("This audio track could not be played.")).not.toBeInTheDocument();
 });
@@ -209,10 +282,10 @@ it("says when a chosen audio track cannot be played", async () => {
   navigate(watchPath(show.id, e1.id));
   render(App, { backend: backend(show, [e1, e2]) });
   await video();
-  const menu = await screen.findByRole("combobox", { name: "Audio track" });
-  await fireEvent.change(menu, { target: { value: "1" } });
+  const menu = await trackMenu("Audio");
+  await choose(menu, "1");
   expect(await screen.findByText("This audio track could not be played.")).toBeInTheDocument();
-  expect((menu as HTMLSelectElement).value).toBe("0");
+  expect(menu.value).toBe("0");
 });
 
 it("offers no menu for a file with one audio track", async () => {
@@ -221,7 +294,7 @@ it("offers no menu for a file with one audio track", async () => {
   render(App, { backend: backend(show, [e1, e2]) });
   await video();
   await Promise.resolve();
-  expect(screen.queryByRole("combobox", { name: "Audio track" })).not.toBeInTheDocument();
+  expect(menuNamed("Audio")).toBeNull();
 });
 
 it("offers the episode's subtitle files and shows the one chosen", async () => {
@@ -229,15 +302,12 @@ it("offers the episode's subtitle files and shows the one chosen", async () => {
   navigate(watchPath(show.id, e1.id));
   render(App, { backend: backend(show, [e1, e2, ...subtitles]) });
   await video();
-  const menu = await screen.findByRole("combobox", { name: "Subtitles" });
-  expect([...menu.querySelectorAll("option")].map((option) => option.textContent)).toEqual([
-    "Off",
-    "Russian (SRT)",
-  ]);
-  expect((menu as HTMLSelectElement).value).toBe("-1");
-  await fireEvent.change(menu, { target: { value: "0" } });
+  const menu = await trackMenu("Subtitles");
+  expect(optionsOf(menu)).toEqual(["Off", "Russian (SRT)"]);
+  expect(menu.value).toBe("-1");
+  await choose(menu, "0");
   expect(hosted.tracks).toEqual([{ label: "Russian (SRT)", shown: true }]);
-  await fireEvent.change(menu, { target: { value: "-1" } });
+  await choose(menu, "-1");
   expect(hosted.tracks[0]?.shown).toBe(false);
 });
 
@@ -246,5 +316,5 @@ it("offers no subtitle menu for a file without subtitles", async () => {
   render(App, { backend: backend(show, [e1, e2]) });
   await video();
   await Promise.resolve();
-  expect(screen.queryByRole("combobox", { name: "Subtitles" })).not.toBeInTheDocument();
+  expect(menuNamed("Subtitles")).toBeNull();
 });

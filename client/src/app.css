@@ -84,8 +84,14 @@
 }
 
 /* A hero or the player is dark in both themes, so what sits on it keeps the
-   dark theme's accent, focus color, and native menus. */
+   dark theme's colors and native menus. */
 [data-hero] {
+  --color-surface: #0f172a;
+  --color-tile: #1e293b;
+  --color-raised: #334155;
+  --color-empty: #334155;
+  --color-text: #f1f5f9;
+  --color-text-muted: #94a3b8;
   --color-accent: #38bdf8;
   --color-accent-text: #7dd3fc;
   --color-on-accent: #082f49;
@@ -153,12 +159,107 @@
   @apply font-mono text-xs font-medium;
 }
 
+/* The side gutters of the player's bars, clear of a phone's notch. */
+@utility player-gutter {
+  padding-inline: max(1rem, env(safe-area-inset-left), env(safe-area-inset-right));
+
+  @media (width >= 48rem) {
+    padding-inline: 2rem;
+  }
+}
+
+/* The player's own composition of Video.js's parts; ADR 11 describes it. The
+   bars and centre buttons fill the player and fade together, and only their
+   own controls take pointer input while they show. */
+@utility player-controls {
+  @apply absolute inset-0 flex flex-col justify-between transition-opacity duration-200;
+  pointer-events: none;
+
+  &:not([data-visible]) {
+    @apply opacity-0;
+  }
+
+  &[data-visible]
+    :is(a, button, media-menu, media-time-slider, media-volume-slider, [role="button"]) {
+    pointer-events: auto;
+  }
+}
+
+@utility player-seek {
+  @apply bg-scrim/60 text-hero-text flex size-12 cursor-pointer items-center justify-center rounded-2xl hover:opacity-85 md:size-14;
+}
+
+@utility player-slider {
+  @apply relative flex h-6 cursor-pointer items-center;
+}
+
+@utility player-track {
+  @apply bg-hero-text/25 relative block h-1.5 w-full overflow-hidden rounded-full;
+}
+
+@utility player-buffer {
+  @apply bg-hero-text/25 absolute inset-y-0 left-0 block;
+  width: var(--media-slider-buffer, 0%);
+}
+
+@utility player-fill {
+  @apply absolute inset-y-0 left-0 block;
+  width: var(--media-slider-fill, 0%);
+}
+
+@utility player-thumb {
+  @apply absolute top-1/2 block size-4 -translate-x-1/2 -translate-y-1/2 rounded-full;
+  left: var(--media-slider-fill, 0%);
+}
+
+@utility player-spinner {
+  @apply text-hero-text absolute inset-0 hidden items-center justify-center;
+  pointer-events: none;
+
+  &[data-visible] {
+    @apply flex;
+  }
+}
+
+@utility player-menu {
+  @apply rounded-panel bg-surface text-text w-75 max-w-[calc(100vw-2rem)] p-2;
+}
+
+@utility player-menu-item {
+  @apply rounded-inner flex min-h-11 cursor-pointer items-center gap-2.5 px-3 text-sm;
+
+  &[aria-checked="true"] {
+    @apply bg-raised font-semibold;
+  }
+
+  &[data-highlighted]:not([aria-checked="true"]) {
+    @apply bg-tile;
+  }
+
+  &[data-disabled] {
+    @apply text-text-muted cursor-default;
+  }
+}
+
+@utility player-error {
+  @apply absolute inset-0 flex items-center justify-center p-4;
+
+  &:not([data-open]) {
+    @apply hidden;
+  }
+}
+
 @layer components {
-  /* The skin lifts subtitles above its controls only for a video in its
-   * own shadow tree; ours sits in its slot, which inherits the offsets. */
-  video-skin video::-webkit-media-text-track-container {
-    translate: 0 var(--media-caption-track-y, 0);
-    transition: translate var(--media-caption-track-duration, 0) ease-out;
-    transition-delay: var(--media-caption-track-delay, 0);
+  media-container:not(:has(media-controls[data-visible])) {
+    cursor: none;
+  }
+
+  /* Subtitles rise above the bars while those show. */
+  video::-webkit-media-text-track-container {
+    transition: translate 200ms ease-out;
+  }
+
+  media-container:has(media-controls[data-visible]) video::-webkit-media-text-track-container {
+    translate: 0 -6rem;
   }
 }

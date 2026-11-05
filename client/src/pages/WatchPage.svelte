@@ -9,6 +9,7 @@ SPDX-License-Identifier: MIT
   import { fileName, torrentTitle } from "../lib/describe";
   import { nextEpisode, playables } from "../lib/episodes";
   import { failureMessage, t } from "../lib/i18n/index.svelte";
+  import { navigate } from "../lib/navigation.svelte";
   import { playbackGrants, withGrant } from "../lib/playback";
   import { trackLabel } from "../lib/player/audio";
   import { AudioTracks } from "../lib/player/audio-tracks.svelte";
@@ -173,4 +174,5 @@ SPDX-License-Identifier: MIT
   subtitlesFailed={subtitles?.failed ?? false}
   onsubtitles={(index) => subtitles?.select(subtitles.tracks[index]?.id ?? null)}
   onmedia={(element) => (media = element)}
+  onplaynext={navigate}
 />

@@ -44,9 +44,14 @@ export const ru: Messages = {
     fileNotFound: "В торренте нет такого файла.",
     finished: "Просмотр завершён",
     playNext: "Смотреть",
+    playNow: "Смотреть сейчас",
+    stay: "Остаться",
+    nextIn: (seconds: number) =>
+      `Начнётся через ${seconds}\u00A0${plural("ru", seconds, { one: "секунду", few: "секунды", many: "секунд", other: "секунды" })}`,
   },
   audio: {
     track: "Звуковая дорожка",
+    short: "Звук",
     mono: "Моно",
     stereo: "Стерео",
     channels: (count: number) =>
