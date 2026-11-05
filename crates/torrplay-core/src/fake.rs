@@ -816,7 +816,7 @@ impl Engine for FakeEngine {
     }
 
     async fn torrent_statistics(&self, id: &TorrentId) -> Result<TorrentStatistics, EngineError> {
-        Ok(self.ready()?.torrent(id)?.statistics)
+        Ok(self.ready()?.torrent(id)?.statistics.clone())
     }
 
     async fn cache_statistics(&self) -> Result<CacheStatistics, EngineError> {
@@ -1411,7 +1411,9 @@ mod tests {
             completion_ratio: Ratio::new(0.5),
             ..TorrentStatistics::default()
         };
-        engine.set_torrent_statistics(&id(1), statistics).unwrap();
+        engine
+            .set_torrent_statistics(&id(1), statistics.clone())
+            .unwrap();
         assert_eq!(engine.torrent_statistics(&id(1)).await.unwrap(), statistics);
 
         let cache = CacheStatistics {

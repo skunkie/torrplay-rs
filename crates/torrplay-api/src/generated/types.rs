@@ -160,7 +160,7 @@ pub struct UpNextEntryLinks {
     #[serde(rename = "self")]
     pub self_field: String,
 }
-///Transfer and peer measurements for a torrent.
+///Transfer and peer measurements, pieces, and readers for a torrent.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TorrentStatistics {
     ///The fraction of the torrent's pieces currently held, from 0.0 to 1.0, or null until metadata is available.
@@ -177,12 +177,29 @@ pub struct TorrentStatistics {
     ///The number of connected peers.
     ///Constraint: minimum=0
     pub peer_count: i64,
+    ///Which of the torrent's pieces are held, or null while the engine cannot tell: before metadata is available, during the torrent's first check or a storage mode transition's swap, and while it has failed. Its bitfields follow the order of the BEP 3 bitfield message, the high bit of the first byte being piece 0, and are written in lowercase hexadecimal, rounded up to whole bytes with the spare low bits 0. In memory storage, an evicted piece counts as not held.
+    pub pieces: Option<TorrentStatisticsPieces>,
+    ///The torrent's readers, in no particular order: its streams in progress and the idle readers kept between range requests, at most the idle_reader_limit_per_torrent setting of those.
+    pub readers: Vec<TorrentReader>,
     ///The current upload rate, always 0 in memory storage mode.
     ///Constraint: minimum=0
     pub upload_rate_bytes_per_second: i64,
     ///Bytes uploaded to peers since the torrent was created. Always 0 in memory storage mode, which does not upload.
     ///Constraint: minimum=0
     pub uploaded_bytes: i64,
+}
+///Which of the torrent's pieces are held, or null while the engine cannot tell: before metadata is available, during the torrent's first check or a storage mode transition's swap, and while it has failed. Its bitfields follow the order of the BEP 3 bitfield message, the high bit of the first byte being piece 0, and are written in lowercase hexadecimal, rounded up to whole bytes with the spare low bits 0. In memory storage, an evicted piece counts as not held.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TorrentStatisticsPieces {
+    ///The pieces not yet verified of which some bytes have been received. A piece is never in both bitfields.
+    ///Constraint: pattern=`^([0-9a-f]{2})+$`
+    pub partial: String,
+    ///The number of pieces in the torrent.
+    ///Constraint: minimum=1
+    pub piece_count: i64,
+    ///The pieces held that have passed their hash checks.
+    ///Constraint: pattern=`^([0-9a-f]{2})+$`
+    pub verified: String,
 }
 ///Links from a torrent's statistics.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -192,6 +209,47 @@ pub struct TorrentStatisticsLinks {
     pub self_field: String,
     ///The torrent these statistics measure.
     pub torrent: String,
+}
+///A reader of one of a torrent's files.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TorrentReader {
+    ///The file being read.
+    pub file_id: String,
+    ///The reader's offset in the file, as of the last piece it reached, so it moves in steps of about a piece.
+    ///Constraint: minimum=0
+    pub offset_bytes: i64,
+    ///The index of the torrent's piece at that offset.
+    ///Constraint: minimum=0
+    pub piece_index: i64,
+    ///Whether a stream is reading, or the reader waits for a stream to continue it. Clients must handle values added later.
+    pub state: TorrentReaderState,
+}
+///Whether a stream is reading, or the reader waits for a stream to continue it. Clients must handle values added later.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub enum TorrentReaderState {
+    #[default]
+    #[serde(rename = "active")]
+    Active,
+    #[serde(rename = "idle")]
+    Idle,
+}
+impl TorrentReaderState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Idle => "idle",
+        }
+    }
+}
+impl ::std::fmt::Display for TorrentReaderState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl AsRef<str> for TorrentReaderState {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
 }
 ///What adding a torrent file would create. Its files carry the IDs the torrent's files would have, but no links, since no torrent exists.
 #[derive(Debug, Clone, Deserialize, Serialize)]

@@ -739,3 +739,96 @@ async fn exit_criterion_streams_stay_correct_and_release_everything() -> anyhow:
     seeder.stop().await;
     Ok(())
 }
+
+/// API-28: a torrent's statistics map its pieces and name its readers, active
+/// during a stream and idle once the stream ends.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn statistics_map_pieces_and_readers() -> anyhow::Result<()> {
+    let spec = catalog::large(16 << 20);
+    let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
+    let running = Running::start(vec![seeder.addr], ShutdownTimings::default(), |_| {}).await?;
+    let client = Client::new();
+    let created = upload(&running, &client, &spec).await?;
+    let path = format!("{}/statistics", created.path);
+    let content = &created.content[0];
+    let file_id = content
+        .split('/')
+        .rev()
+        .nth(1)
+        .expect("a file in the content path");
+
+    let mut response = client
+        .get(running.url(content))
+        .header(RANGE, "bytes=3145728-")
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    response.chunk().await?.expect("the first bytes");
+
+    let reading = eventually("a reader in the statistics", async || {
+        let torrent = statistics(&running, &client, &path).await?;
+        let found = torrent["readers"]
+            .as_array()
+            .is_some_and(|all| all.len() == 1)
+            && torrent["pieces"].is_object();
+        Ok(found.then_some(torrent))
+    })
+    .await?;
+    let reader = &reading["readers"][0];
+    assert_eq!(reader["file_id"], file_id);
+    assert_eq!(reader["state"], "active");
+    let offset = reader["offset_bytes"].as_u64().expect("an offset");
+    assert!(offset >= 3 << 20, "{reader}");
+    assert_eq!(
+        reader["piece_index"].as_u64(),
+        Some(offset >> 20),
+        "{reader}"
+    );
+
+    let pieces = &reading["pieces"];
+    let piece_count = spec.total_size_bytes().div_ceil(1 << 20);
+    assert_eq!(pieces["piece_count"].as_u64(), Some(piece_count));
+    let bits = |name: &str| -> Vec<u8> {
+        let text = pieces[name].as_str().expect("a bitfield");
+        assert_eq!(text.len() as u64, piece_count.div_ceil(8) * 2, "{name}");
+        (0..text.len())
+            .step_by(2)
+            .map(|at| u8::from_str_radix(&text[at..at + 2], 16).expect("hexadecimal"))
+            .collect()
+    };
+    let (verified, partial) = (bits("verified"), bits("partial"));
+    assert!(
+        verified.iter().zip(&partial).all(|(a, b)| a & b == 0),
+        "a piece is never in both: {pieces}"
+    );
+
+    drop(response);
+    // A range ending inside a piece leaves its reader at an exact position, not
+    // the offset recorded when it reached that piece; it still counts as idle.
+    let inside_a_piece = client
+        .get(running.url(content))
+        .header(RANGE, "bytes=5242888-5242987")
+        .send()
+        .await?;
+    assert_eq!(inside_a_piece.bytes().await?.len(), 100);
+    eventually("the readers going idle", async || {
+        let torrent = statistics(&running, &client, &path).await?;
+        let idle = torrent["readers"].as_array().is_some_and(|readers| {
+            !readers.is_empty() && readers.iter().all(|reader| reader["state"] == "idle")
+        });
+        Ok(idle.then_some(()))
+    })
+    .await?;
+    eventually("a verified piece", async || {
+        let torrent = statistics(&running, &client, &path).await?;
+        let held = torrent["pieces"]["verified"]
+            .as_str()
+            .is_some_and(|text| text.bytes().any(|digit| digit != b'0'));
+        Ok(held.then_some(()))
+    })
+    .await?;
+
+    running.stop().await?;
+    seeder.stop().await;
+    Ok(())
+}

@@ -61,6 +61,8 @@ use librqbit::{FileStream, ManagedTorrent, PieceSelector};
 use librqbit_core::lengths::ValidPieceIndex;
 use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
+use torrplay_core::engine::{ReaderState, TorrentReader};
+use torrplay_core::metadata::FileIndex;
 
 use crate::cache::{CacheError, PieceCache, TorrentKey};
 use crate::playback::Playback;
@@ -531,6 +533,41 @@ impl TorrentScheduler {
         Ok(self.lock()?.readers.len())
     }
 
+    /// The torrent's readers, each with the piece at its offset, for the
+    /// torrent's statistics. A reader that goes idle in between may count as
+    /// active once, because the scheduler's and the playback's locks are not
+    /// held together.
+    pub(crate) fn reader_statistics(&self, layout: &Layout) -> anyhow::Result<Vec<TorrentReader>> {
+        let readers: Vec<_> = self
+            .lock()?
+            .readers
+            .iter()
+            .map(|(&id, &position)| (id, position))
+            .collect();
+        let idle = self.playback.idle_reader_ids(self.id);
+        let piece_length = u64::from(layout.lengths.default_piece_length()).max(1);
+        let last_piece = layout.lengths.total_pieces().saturating_sub(1);
+        Ok(readers
+            .into_iter()
+            .map(|(id, position)| {
+                let start = layout.files.get(position.file).map_or(0, |file| file.0);
+                let piece_index = u32::try_from((start + position.offset) / piece_length)
+                    .unwrap_or(u32::MAX)
+                    .min(last_piece);
+                TorrentReader {
+                    file_index: FileIndex(position.file),
+                    offset_bytes: position.offset,
+                    piece_index,
+                    state: if idle.contains(&id) {
+                        ReaderState::Idle
+                    } else {
+                        ReaderState::Active
+                    },
+                }
+            })
+            .collect())
+    }
+
     /// Moves reader `id` to `offset`, starting a new run there if
     /// `restart`.
     fn move_reader(&self, id: u64, offset: u64, restart: bool) -> anyhow::Result<()> {
@@ -731,6 +768,11 @@ impl Reader {
         if !self.is_canceled() {
             self.scheduler.playback.clone().park(self);
         }
+    }
+
+    /// The reader's ID in its scheduler.
+    pub(crate) fn id(&self) -> u64 {
+        self.id
     }
 
     pub(crate) fn scheduler_id(&self) -> u64 {

@@ -325,6 +325,10 @@ async fn torrents_are_added_found_and_streamed() {
     assert_eq!(torrent["torrent"]["id"], torrent_id.as_str());
     assert_eq!(torrent["files_truncated"], false);
     assert!(torrent["statistics"].is_object(), "{torrent}");
+    assert!(
+        torrent["statistics"].get("pieces").is_none(),
+        "bitfields are left out, as they tell a model nothing: {torrent}"
+    );
 
     let found = session
         .ok("list_torrents", json!({ "search": "sintl" }))

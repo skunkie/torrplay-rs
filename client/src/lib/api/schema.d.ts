@@ -533,7 +533,7 @@ export interface paths {
         };
         /**
          * Read a torrent's statistics
-         * @description Returns transfer and peer measurements for a torrent.
+         * @description Returns transfer and peer measurements for a torrent, which of its pieces are held, and its readers.
          */
         get: operations["getTorrentStatistics"];
         put?: never;
@@ -2849,7 +2849,7 @@ export interface components {
                 self: string;
             };
         };
-        /** @description Transfer and peer measurements for a torrent. */
+        /** @description Transfer and peer measurements, pieces, and readers for a torrent. */
         TorrentStatistics: {
             /**
              * Format: int64
@@ -2887,6 +2887,37 @@ export interface components {
              * @example 0.5
              */
             completion_ratio: number | null;
+            /** @description Which of the torrent's pieces are held, or null while the engine cannot tell: before metadata is available, during the torrent's first check or a storage mode transition's swap, and while it has failed. Its bitfields follow the order of the BEP 3 bitfield message, the high bit of the first byte being piece 0, and are written in lowercase hexadecimal, rounded up to whole bytes with the spare low bits 0. In memory storage, an evicted piece counts as not held. */
+            pieces: {
+                /**
+                 * Format: int64
+                 * @description The number of pieces in the torrent.
+                 * @example 16
+                 */
+                piece_count: number;
+                /**
+                 * @description The pieces held that have passed their hash checks.
+                 * @example ff00
+                 */
+                verified: string;
+                /**
+                 * @description The pieces not yet verified of which some bytes have been received. A piece is never in both bitfields.
+                 * @example 0100
+                 */
+                partial: string;
+            } | null;
+            /**
+             * @description The torrent's readers, in no particular order: its streams in progress and the idle readers kept between range requests, at most the idle_reader_limit_per_torrent setting of those.
+             * @example [
+             *       {
+             *         "file_id": "fil_xfuperelxpqq4qhvgmtq62qwv4",
+             *         "offset_bytes": 8388608,
+             *         "piece_index": 8,
+             *         "state": "active"
+             *       }
+             *     ]
+             */
+            readers: components["schemas"]["TorrentReader"][];
             /** @description Links from a torrent's statistics. */
             links: {
                 /**
@@ -2902,6 +2933,32 @@ export interface components {
                  */
                 torrent: string;
             };
+        };
+        /** @description A reader of one of a torrent's files. */
+        TorrentReader: {
+            /**
+             * @description The file being read.
+             * @example fil_xfuperelxpqq4qhvgmtq62qwv4
+             */
+            file_id: string;
+            /**
+             * Format: int64
+             * @description The reader's offset in the file, as of the last piece it reached, so it moves in steps of about a piece.
+             * @example 8388608
+             */
+            offset_bytes: number;
+            /**
+             * Format: int64
+             * @description The index of the torrent's piece at that offset.
+             * @example 8
+             */
+            piece_index: number;
+            /**
+             * @description Whether a stream is reading, or the reader waits for a stream to continue it. Clients must handle values added later.
+             * @example active
+             * @enum {string}
+             */
+            state: "active" | "idle";
         };
         /** @description The global piece cache's capacity and usage. Cache usage is reported separately from process memory and does not bound it. */
         CacheStatistics: {

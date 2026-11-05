@@ -211,9 +211,44 @@ impl Ratio {
     }
 }
 
-/// Transfer and peer measurements for a torrent, the contract's
-/// `TorrentStatistics` without links.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// A torrent's pieces as BEP 3 bitfields, the contract's `pieces` member of
+/// `TorrentStatistics`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PieceMap {
+    /// The number of pieces in the torrent.
+    pub piece_count: u32,
+    /// The pieces held that have passed their hash checks.
+    pub verified: Vec<u8>,
+    /// The pieces not yet verified of which some bytes have been received.
+    pub partial: Vec<u8>,
+}
+
+/// Whether a stream is using a reader, or it waits for one to continue it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReaderState {
+    /// A stream is reading.
+    Active,
+    /// The reader waits for a stream to continue it.
+    Idle,
+}
+
+/// A reader of one of a torrent's files, the contract's `TorrentReader` with
+/// the file's position in the engine's list in place of its ID.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TorrentReader {
+    /// The file being read.
+    pub file_index: FileIndex,
+    /// The reader's offset in the file, as of the last piece it reached.
+    pub offset_bytes: u64,
+    /// The index of the torrent's piece at that offset.
+    pub piece_index: u32,
+    /// Whether a stream is reading.
+    pub state: ReaderState,
+}
+
+/// Transfer and peer measurements, pieces, and readers for a torrent, the
+/// contract's `TorrentStatistics` without links.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct TorrentStatistics {
     /// Bytes downloaded from peers since the torrent was created.
     pub downloaded_bytes: u64,
@@ -229,6 +264,12 @@ pub struct TorrentStatistics {
     /// The fraction of the torrent's pieces currently held, or `None` until
     /// metadata is available.
     pub completion_ratio: Option<Ratio>,
+    /// Which pieces are held, or `None` while the engine cannot tell: before
+    /// metadata is available, during the first check or a storage mode
+    /// transition's swap, and while the torrent has failed.
+    pub pieces: Option<PieceMap>,
+    /// The torrent's active and idle readers.
+    pub readers: Vec<TorrentReader>,
 }
 
 /// The global piece cache's capacity and usage, the contract's

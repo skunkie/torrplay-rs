@@ -149,10 +149,29 @@ or a value outside an enumeration, are tool errors as well, titled
 `Invalid argument`, as the protocol recommends for input the model can
 correct.
 
+`get_torrent` leaves out the statistics' `pieces`, whose bitfields tell a model
+nothing the completion ratio does not, at a cost in tokens that grows with the
+torrent.
+
 Not offered: posters and avatars, profiles' management, progress writes,
 settings changes, backups and their restore, the password, and access
 tokens. These change the application's security or need a person's
 judgment, and the web client covers them.
+
+### Planned: posters
+
+`update_torrent` already lets an agent fill in a title from a source of its
+choice, such as TMDB, so the application needs no provider credentials and
+makes no outbound requests for it. Only the poster is missing, which a planned
+`set_torrent_poster` tool would add, leaving avatars out as above.
+
+The tool takes an image URL. The MCP process, not the server, downloads the
+image and uploads it through `setTorrentPoster`, so the server still never
+fetches one. Because a model chooses the URL, the download is bounded: `https`
+only, no loopback, link-local, or private addresses, after each redirect too,
+at most the poster's 1048576 bytes, a bounded time, and one of the contract's
+image types. Taking the image's bytes as base64 instead would need no such
+bounds, but many agents cannot get an image's bytes, and they cost tokens.
 
 ## Resources
 

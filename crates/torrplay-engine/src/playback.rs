@@ -21,7 +21,7 @@
 //! through a [`watch`] channel as soon as reader counts change, so
 //! background work can react without polling.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
@@ -230,6 +230,15 @@ impl Playback {
             idle_readers: self.lock().idle.len() as u64,
             opened_readers: self.opened.load(Ordering::Acquire),
         }
+    }
+
+    /// The IDs of a scheduler's idle readers.
+    pub(crate) fn idle_reader_ids(&self, scheduler: u64) -> HashSet<u64> {
+        self.lock()
+            .idle
+            .items_of(scheduler)
+            .map(Reader::id)
+            .collect()
     }
 
     /// Releases every idle reader, as shutdown does.
@@ -468,6 +477,14 @@ impl<T> IdlePool<T> {
         }
     }
 
+    /// The items of `scheduler`'s entries.
+    pub(crate) fn items_of(&self, scheduler: u64) -> impl Iterator<Item = &T> {
+        self.entries
+            .iter()
+            .filter(move |entry| entry.scheduler == scheduler)
+            .map(|entry| &entry.item)
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }
@@ -613,6 +630,18 @@ mod tests {
     }
 
     /// RDR-03: the oldest idle reader in the exceeded scope goes first.
+    #[test]
+    fn items_of_a_scheduler_leave_out_the_others() {
+        let start = Instant::now();
+        let mut pool = pool(4, 6);
+        assert!(pool.park(later(start, 0), 1, 0, 0, "a1").is_empty());
+        assert!(pool.park(later(start, 1), 2, 0, 0, "b1").is_empty());
+        assert!(pool.park(later(start, 2), 1, 3, 9, "a2").is_empty());
+
+        assert_eq!(pool.items_of(1).copied().collect::<Vec<_>>(), ["a1", "a2"]);
+        assert_eq!(pool.items_of(3).count(), 0);
+    }
+
     #[test]
     fn limits_release_the_oldest_idle_reader_in_their_scope() {
         let start = Instant::now();
