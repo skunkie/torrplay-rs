@@ -99,6 +99,10 @@ export const ru: Messages = {
     empty: "Библиотека пуста.",
     showMore: "Показать ещё",
   },
+  engine: {
+    unavailable: "TorrPlay запускается или останавливается. Действия подождут.",
+    unreachable: "Не удалось подключиться к TorrPlay. Повторная попытка…",
+  },
   add: {
     action: "Добавить",
     heading: "Добавить торрент",

@@ -19,6 +19,7 @@ import type {
 /** A backend whose operations are mocks, with `members` replacing them. */
 export function fakeBackend(members: Partial<Backend> = {}): Backend {
   return {
+    getReadiness: vi.fn(async () => true),
     listTorrents: vi.fn(),
     getTorrent: vi.fn(),
     createTorrent: vi.fn(),

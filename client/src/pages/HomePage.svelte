@@ -7,6 +7,7 @@ SPDX-License-Identifier: MIT
   import { ApiError } from "../lib/api/http";
   import type { PlaybackGrant, Torrent, UpNextEntry } from "../lib/backend";
   import { useBackend } from "../lib/context";
+  import { pollFailure } from "../lib/engine.svelte";
   import { failureMessage, t } from "../lib/i18n/index.svelte";
   import { playbackGrants, withGrant } from "../lib/playback";
   import { poll } from "../lib/poll";
@@ -62,7 +63,7 @@ SPDX-License-Identifier: MIT
         await loadProfiles(backend);
         return;
       }
-      error = failureMessage(failure);
+      error = pollFailure(failure);
     }
   }
 

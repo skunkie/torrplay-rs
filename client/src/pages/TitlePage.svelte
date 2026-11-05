@@ -17,6 +17,7 @@ SPDX-License-Identifier: MIT
     type TorrentStatistics,
   } from "../lib/backend";
   import { useBackend } from "../lib/context";
+  import { engine, pollFailure } from "../lib/engine.svelte";
   import { playables } from "../lib/episodes";
   import { failureMessage } from "../lib/i18n/index.svelte";
   import { navigate } from "../lib/navigation.svelte";
@@ -105,7 +106,7 @@ SPDX-License-Identifier: MIT
         missing = true;
       } else if (!(failure instanceof ApiError && failure.type === "lifecycle-conflict")) {
         // A lifecycle conflict means the metadata is not known yet.
-        error = failureMessage(failure);
+        error = pollFailure(failure);
       }
     }
   }
@@ -147,7 +148,7 @@ SPDX-License-Identifier: MIT
   poster={torrent?.poster && grant !== null ? withGrant(torrent.links.poster, grant) : undefined}
   {actionError}
   {statistics}
-  {busy}
+  busy={busy || engine.status !== "ready"}
   onretry={() => {
     etag = undefined;
     void refresh(torrentId, profiles.current?.id, generation);

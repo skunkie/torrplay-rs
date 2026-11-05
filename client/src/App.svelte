@@ -4,15 +4,20 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import { untrack } from "svelte";
+
   import AppMenu from "./components/AppMenu.svelte";
+  import EngineBanner from "./components/EngineBanner.svelte";
   import Logo from "./components/Logo.svelte";
   import { addFromTransfer, addition, clearAddition } from "./lib/addition.svelte";
   import { createHttp } from "./lib/api/http";
   import { type Backend, httpBackend } from "./lib/backend";
   import { provideBackend } from "./lib/context";
+  import { checkEngine, engine } from "./lib/engine.svelte";
   import { i18n, t } from "./lib/i18n/index.svelte";
   import { formatQuery } from "./lib/library-query";
   import { here, location, navigate, startNavigation } from "./lib/navigation.svelte";
+  import { poll } from "./lib/poll";
   import { loadProfiles, profiles, resetProfiles } from "./lib/profile.svelte";
   import { match } from "./lib/routes";
   import { session, signOut } from "./lib/session.svelte";
@@ -23,6 +28,9 @@ SPDX-License-Identifier: MIT
   import NotFound from "./pages/NotFound.svelte";
   import SignInPage from "./pages/SignInPage.svelte";
   import TitlePage from "./pages/TitlePage.svelte";
+
+  const ENGINE_POLL_MS = 5000;
+  const ENGINE_DOWN_POLL_MS = 2000;
 
   interface Props {
     /** The backend the pages use; the API's by default. */
@@ -46,6 +54,12 @@ SPDX-License-Identifier: MIT
   provideBackend(backend);
 
   $effect(() => startNavigation());
+
+  $effect(() => {
+    // Sooner while something is wrong, so the banner goes as soon as it can.
+    const interval = engine.status === "ready" ? ENGINE_POLL_MS : ENGINE_DOWN_POLL_MS;
+    return untrack(() => poll(() => checkEngine(backend), interval));
+  });
 
   const page = $derived(match(location.path));
   /** Whether the page offers the main navigation and search. */
@@ -272,6 +286,10 @@ SPDX-License-Identifier: MIT
   >
     {@render navigation("segment justify-center")}
   </nav>
+{/if}
+
+{#if page?.name !== "watch"}
+  <EngineBanner />
 {/if}
 
 {#if dropping}

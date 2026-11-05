@@ -11,6 +11,7 @@ SPDX-License-Identifier: MIT
     type TorrentQuery,
   } from "../lib/backend";
   import { useBackend } from "../lib/context";
+  import { pollFailure } from "../lib/engine.svelte";
   import { failureMessage } from "../lib/i18n/index.svelte";
   import { formatQuery, parseQuery } from "../lib/library-query";
   import { location, replaceQuery } from "../lib/navigation.svelte";
@@ -63,7 +64,7 @@ SPDX-License-Identifier: MIT
         etag = tag;
       }
     } catch (failure) {
-      if (mine === generation) error = failureMessage(failure);
+      if (mine === generation) error = pollFailure(failure);
     } finally {
       if (mine === generation) loading = false;
     }

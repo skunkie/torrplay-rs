@@ -98,6 +98,10 @@ export const en = {
     empty: "The library is empty.",
     showMore: "Show more",
   },
+  engine: {
+    unavailable: "TorrPlay is starting or stopping. Actions will wait for it.",
+    unreachable: "TorrPlay could not be reached. Trying again…",
+  },
   add: {
     action: "Add",
     heading: "Add a torrent",
