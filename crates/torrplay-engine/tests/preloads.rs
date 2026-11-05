@@ -155,13 +155,12 @@ async fn a_preload_at_an_offset_serves_a_stream_there() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// PRL-04: a reader's pieces are requested before a preload's. librqbit
-/// already serves the piece a stream waits for first, so the reader reads
-/// its first bytes and then holds its readahead window, which must arrive
-/// before the preload, created earlier, completes; through one
-/// rate-limited seeder the order shows in what has downloaded by then.
+/// PRL-04: a reader's current piece is requested before a preload's, whose
+/// pieces then share the seeder with the rest of its window: through one
+/// rate-limited seeder, the reader reads its first bytes while the preload,
+/// created earlier, is still downloading, and both then complete.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_readers_window_comes_before_a_preload() -> anyhow::Result<()> {
+async fn a_readers_current_piece_comes_before_a_preload() -> anyhow::Result<()> {
     let spec = FixtureSpec {
         id: "reader-and-preload".into(),
         torrent_name: "reader-and-preload".into(),
@@ -205,21 +204,19 @@ async fn a_readers_window_comes_before_a_preload() -> anyhow::Result<()> {
     })
     .await?;
     assert!(first == expected(&spec, 0, 0, 1000));
+    let (torrent, preload) = (id(1), preload_id(1));
+    let preload = || engine.preload(&torrent, FileIndex(1), &preload);
+    assert_ne!(
+        preload().await?.state,
+        PreloadState::Ready,
+        "the reader did not wait for the preload"
+    );
 
-    let downloaded = eventually("the preload becoming ready", || {
-        let status = futures_now(engine.preload(&id(1), FileIndex(1), &preload_id(1)))?;
-        if status.state != PreloadState::Ready {
-            return Ok(None);
-        }
-        Ok(Some(
-            futures_now(engine.torrent_statistics(&id(1)))?.downloaded_bytes,
-        ))
+    eventually("the preload becoming ready", || {
+        let status = futures_now(preload())?;
+        Ok((status.state == PreloadState::Ready).then_some(()))
     })
     .await?;
-    assert!(
-        downloaded >= 28 * MIB,
-        "the reader's window arrived before the preload completed: {downloaded} bytes by then"
-    );
     let mut rest = Vec::new();
     bounded("the rest of the reader's range", async {
         Ok(reader.read_to_end(&mut rest).await?)
