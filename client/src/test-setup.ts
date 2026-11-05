@@ -4,9 +4,19 @@
 
 import "@testing-library/jest-dom/vitest";
 
-import { beforeEach } from "vitest";
+import { beforeEach, vi } from "vitest";
 
 import { i18n } from "./lib/i18n/index.svelte";
+
+// jsdom has no layout, which Svelte's width bindings observe.
+globalThis.ResizeObserver = class {
+  observe = vi.fn();
+  unobserve = vi.fn();
+  disconnect = vi.fn();
+};
+
+// jsdom has no canvas, and complains when asked for one.
+HTMLCanvasElement.prototype.getContext = (() => null) as never;
 
 // jsdom does not implement modal dialogs.
 HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {

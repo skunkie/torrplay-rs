@@ -144,6 +144,7 @@ English message.
 | Pause / resume (a torrent) | Приостановить / продолжить | State label: `Приостановлено` |
 | Edit (a torrent) | Изменить | Page heading: `Изменение` |
 | Transfer rate | Скорость, `МиБ/с` | |
+| Piece | Часть | `Кусок` is informal |
 | Piece cache / cache | Кеш | Dictionary spelling, like `хеш`; never `кэш` |
 | Peer / seed | Пир / сид | Standard BitTorrent usage |
 | Background download | Фоновая загрузка | |
