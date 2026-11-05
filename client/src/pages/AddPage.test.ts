@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App.svelte";
 import { clearAddition } from "../lib/addition.svelte";
@@ -194,56 +194,210 @@ it("returns to choosing when a torrent file cannot be read", async () => {
   expect(screen.getByLabelText("Magnet link")).toBeInTheDocument();
 });
 
-it("takes a pasted magnet link at once and adds it to the library", async () => {
-  const fake = backend();
-  open(fake);
-  await pasteMagnet();
+describe("a magnet link", () => {
+  const retrieving = { ...created, observed_state: "retrieving_metadata" as const };
+  const episode = file(created, "e1.mkv", { season: 1, number: 1 });
 
-  expect(
-    await screen.findByRole("heading", { level: 1, name: "Harbor Lights" }),
-  ).toBeInTheDocument();
-  expect(fake.previewTorrent).not.toHaveBeenCalled();
-  expect(screen.getByText("Peers send the file list once the torrent starts")).toBeInTheDocument();
+  /** A backend whose temporary torrent gets its metadata when `arrived` says. */
+  function peers(arrived: () => boolean, members: Partial<Backend> = {}): Backend {
+    return backend({
+      createTorrent: vi.fn(async () => ({ ...created, retention: "temporary" as const })),
+      getTorrent: vi.fn(async () => ({
+        unchanged: false as const,
+        etag: '"t"',
+        data: arrived()
+          ? { ...created, retention: "temporary" as const }
+          : { ...retrieving, retention: "temporary" as const },
+      })),
+      listFiles: vi.fn(async () => [episode]),
+      ...members,
+    });
+  }
 
-  await fireEvent.click(screen.getByRole("button", { name: "Add to library" }));
+  it("starts as a temporary torrent at once, and shows its files when they arrive", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let known = false;
+    const fake = peers(() => known);
+    open(fake);
+    await pasteMagnet();
 
-  await waitFor(() => {
-    expect(location.path).toBe(titlePath(created.id));
+    expect(await screen.findByText("Waiting for peers to send the file list")).toBeInTheDocument();
+    expect(fake.createTorrent).toHaveBeenCalledWith(
+      { magnetUri: MAGNET },
+      { retention: "temporary" },
+    );
+    expect(screen.queryByText("e1.mkv")).not.toBeInTheDocument();
+
+    known = true;
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(await screen.findByText("e1.mkv")).toBeInTheDocument();
+    expect(screen.queryByText("Waiting for peers to send the file list")).not.toBeInTheDocument();
+    expect(fake.previewTorrent).not.toHaveBeenCalled();
   });
-  expect(fake.createTorrent).toHaveBeenCalledWith(
-    { magnetUri: MAGNET },
-    { retention: "persisted", storageMode: "memory" },
-  );
-});
 
-it("plays a magnet link's first video once peers send its metadata", async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  let known = false;
-  const movie = file(created, "Movie.mkv");
-  const fake = backend({
-    getTorrent: vi.fn(async () => ({
-      unchanged: false as const,
-      etag: '"t"',
-      data: known ? created : { ...created, observed_state: "retrieving_metadata" as const },
-    })),
-    listFiles: vi.fn(async () => [movie]),
+  it("adds that same torrent to the library, in the chosen storage mode", async () => {
+    const fake = peers(() => true);
+    open(fake);
+    await pasteMagnet();
+
+    await fireEvent.click(await screen.findByRole("button", { name: "On disk" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Add to library" }));
+
+    await waitFor(() => {
+      expect(location.path).toBe(titlePath(created.id));
+    });
+    expect(fake.keepTorrent).toHaveBeenCalledWith(created.id, "disk");
+    expect(fake.createTorrent).toHaveBeenCalledTimes(1);
+    expect(fake.deleteTorrent).not.toHaveBeenCalled();
   });
-  open(fake);
-  await pasteMagnet();
 
-  await fireEvent.click(await screen.findByRole("button", { name: /^Play/ }));
-  expect(await screen.findByText("Waiting for peers to send the file list…")).toBeInTheDocument();
-  expect(fake.createTorrent).toHaveBeenCalledWith(
-    { magnetUri: MAGNET },
-    { retention: "temporary" },
-  );
-  expect(fake.listFiles).not.toHaveBeenCalled();
+  it("can be added before its files arrive", async () => {
+    const fake = peers(() => false);
+    open(fake);
+    await pasteMagnet();
 
-  known = true;
-  await vi.advanceTimersByTimeAsync(2000);
+    await screen.findByText("Waiting for peers to send the file list");
+    await fireEvent.click(screen.getByRole("button", { name: "Add to library" }));
 
-  await waitFor(() => {
-    expect(location.path).toBe(watchPath(created.id, movie.id));
+    await waitFor(() => {
+      expect(location.path).toBe(titlePath(created.id));
+    });
+    expect(fake.keepTorrent).toHaveBeenCalledWith(created.id, "memory");
+  });
+
+  it("plays a file a row names, from that same torrent", async () => {
+    const fake = peers(() => true);
+    open(fake);
+    await pasteMagnet();
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Play e1.mkv" }));
+
+    await waitFor(() => {
+      expect(location.path).toBe(watchPath(created.id, episode.id));
+    });
+    expect(fake.createTorrent).toHaveBeenCalledTimes(1);
+    expect(fake.deleteTorrent).not.toHaveBeenCalled();
+  });
+
+  it("makes Play wait for the first video when the files are not known yet", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let known = false;
+    const fake = peers(() => known);
+    open(fake);
+    await pasteMagnet();
+
+    await screen.findByText("Waiting for peers to send the file list");
+    await fireEvent.click(screen.getByRole("button", { name: /^Play/ }));
+    expect(await screen.findByText("Waiting for peers to send the file list…")).toBeInTheDocument();
+    expect(location.path).toBe("/add");
+
+    known = true;
+    await vi.advanceTimersByTimeAsync(2000);
+
+    await waitFor(() => {
+      expect(location.path).toBe(watchPath(created.id, episode.id));
+    });
+    expect(fake.deleteTorrent).not.toHaveBeenCalled();
+  });
+
+  it("deletes the torrent it started when going back", async () => {
+    const fake = peers(() => false);
+    open(fake);
+    await pasteMagnet();
+    await screen.findByText("Waiting for peers to send the file list");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Back" }));
+
+    await waitFor(() => {
+      expect(fake.deleteTorrent).toHaveBeenCalledWith(created.id);
+    });
+  });
+
+  it("deletes the torrent it started when leaving the page", async () => {
+    const fake = peers(() => false);
+    open(fake);
+    await pasteMagnet();
+    await screen.findByText("Waiting for peers to send the file list");
+
+    navigate("/library");
+
+    await waitFor(() => {
+      expect(fake.deleteTorrent).toHaveBeenCalledWith(created.id);
+    });
+  });
+
+  it("leaves a temporary torrent that was already there", async () => {
+    const fake = peers(() => true, {
+      createTorrent: vi.fn(async () => {
+        throw duplicate(created.id);
+      }),
+    });
+    open(fake);
+    await pasteMagnet();
+    await screen.findByText("e1.mkv");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Back" }));
+
+    await screen.findByLabelText("Magnet link");
+    expect(fake.deleteTorrent).not.toHaveBeenCalled();
+  });
+
+  it("offers a torrent already in the library, found only when starting it", async () => {
+    const fake = backend({
+      createTorrent: vi.fn(async () => {
+        throw duplicate("trr_held");
+      }),
+      getTorrent: vi.fn(async () => ({
+        unchanged: false as const,
+        etag: '"t"',
+        data: torrent(3, { id: "trr_held", title: "Harbor Lights" }),
+      })),
+    });
+    open(fake);
+    await pasteMagnet("magnet:?xt=urn:btih:ABCDEFGHIJKLMNOPQRSTUVWXYZ234567&dn=Harbor");
+
+    expect(await screen.findByRole("link", { name: "Open the title" })).toHaveAttribute(
+      "href",
+      titlePath("trr_held"),
+    );
+    expect(fake.deleteTorrent).not.toHaveBeenCalled();
+  });
+
+  it("reports a link the server refuses, and goes back to choosing", async () => {
+    const fake = backend({
+      createTorrent: vi.fn(async () => {
+        throw new ApiError(422, {
+          type: "tag:skunkie.github.io,2026:torrplay/problems/validation-failed",
+          title: "Validation failed",
+          status: 422,
+          detail: "The magnet URI is not valid.",
+        });
+      }),
+    });
+    open(fake);
+    await pasteMagnet();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("This magnet link could not be read.");
+    await fireEvent.click(within(alert).getByRole("button", { name: "Try another" }));
+
+    expect(await screen.findByLabelText("Magnet link")).toBeInTheDocument();
+    expect(fake.deleteTorrent).not.toHaveBeenCalled();
+  });
+
+  it("reports a torrent that fails while waiting for its files", async () => {
+    const fake = peers(() => false, {
+      getTorrent: vi.fn(async () => ({
+        unchanged: false as const,
+        etag: '"t"',
+        data: { ...created, observed_state: "failed" as const, failure: { detail: "No tracker." } },
+      })) as unknown as Backend["getTorrent"],
+    });
+    open(fake);
+    await pasteMagnet();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("No tracker.");
   });
 });
 
@@ -258,23 +412,6 @@ it("refuses a magnet link it cannot read only when it is submitted", async () =>
   await fireEvent.submit(input.closest("form") as HTMLFormElement);
   expect(screen.getByRole("alert")).toHaveTextContent("This magnet link could not be read.");
   expect(fake.createTorrent).not.toHaveBeenCalled();
-});
-
-it("opens the torrent the application already has", async () => {
-  const fake = backend({
-    createTorrent: vi.fn(async () => {
-      throw duplicate("trr_held");
-    }),
-  });
-  open(fake);
-  await pasteMagnet();
-
-  await fireEvent.click(await screen.findByRole("button", { name: "Add to library" }));
-
-  await waitFor(() => {
-    expect(location.path).toBe(titlePath("trr_held"));
-  });
-  expect(fake.keepTorrent).toHaveBeenCalledWith("trr_held", "memory");
 });
 
 it("keeps a torrent already playing temporarily, in the chosen storage mode", async () => {
@@ -333,28 +470,6 @@ it("stays on the page when a temporary torrent cannot be kept", async () => {
 
   expect(await screen.findByRole("alert")).toHaveTextContent("The download directory is full.");
   expect(location.path).toBe("/add");
-});
-
-it("reports a creation that fails and goes back to choosing", async () => {
-  const fake = backend({
-    createTorrent: vi.fn(async () => {
-      throw new ApiError(422, {
-        type: "tag:skunkie.github.io,2026:torrplay/problems/validation-failed",
-        title: "Validation failed",
-        status: 422,
-        detail: "The magnet URI is not valid.",
-      });
-    }),
-  });
-  open(fake);
-  await pasteMagnet();
-
-  await fireEvent.click(await screen.findByRole("button", { name: "Add to library" }));
-  const alert = await screen.findByRole("alert");
-  expect(alert).toHaveTextContent("This magnet link could not be read.");
-  await fireEvent.click(within(alert).getByRole("button", { name: "Try another" }));
-
-  expect(await screen.findByLabelText("Magnet link")).toBeInTheDocument();
 });
 
 it("goes back from a torrent to choosing, staying on the page", async () => {

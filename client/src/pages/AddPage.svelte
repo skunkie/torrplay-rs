@@ -12,14 +12,14 @@ SPDX-License-Identifier: MIT
     duplicateOf,
     type StorageMode,
     type Torrent,
+    type TorrentContents,
     type TorrentKeeping,
-    type TorrentPreview,
     type TorrentSource,
   } from "../lib/backend";
   import { useBackend } from "../lib/context";
   import { firstVideo } from "../lib/episodes";
   import { failureMessage, t } from "../lib/i18n/index.svelte";
-  import { parseMagnet } from "../lib/magnet";
+  import { type Magnet, parseMagnet } from "../lib/magnet";
   import { navigate } from "../lib/navigation.svelte";
   import { poll } from "../lib/poll";
   import { titlePath, watchPath } from "../lib/routes";
@@ -30,7 +30,7 @@ SPDX-License-Identifier: MIT
 
   const backend = useBackend();
 
-  let preview = $state<TorrentPreview>();
+  let preview = $state<TorrentContents>();
   let existing = $state<Torrent>();
   let storage = $state<StorageMode>("memory");
   let busy = $state(false);
@@ -40,6 +40,11 @@ SPDX-License-Identifier: MIT
   /** Counts what is being added, so a response for an earlier one is ignored. */
   let generation = 0;
   let stopWaiting: (() => void) | undefined;
+  /** The temporary torrent a magnet URI runs in to get its files, and whether
+   * this page created it, and so may delete it if it goes unused. */
+  let temporary: { id: string; owned: boolean } | undefined;
+  /** Whether Play waits for the files to open the first video. */
+  let playWhenKnown = false;
 
   /** Whether the server could not read what it was given, for which its
    * own message speaks of the request rather than the torrent. */
@@ -58,10 +63,120 @@ SPDX-License-Identifier: MIT
     }
   }
 
+  /** What `torrentId` holds, known once it has its metadata. */
+  async function contentsOf(torrent: Torrent): Promise<TorrentContents> {
+    const files = await backend.listFiles(torrent.id);
+    return {
+      name: torrent.title ?? torrent.name ?? "",
+      size_bytes: files.reduce((total, file) => total + file.size_bytes, 0),
+      file_count: files.length,
+      files,
+      files_truncated: false,
+    };
+  }
+
+  /** Starts a magnet URI as a temporary torrent, the only way to learn its
+   * files, which come from peers, unless the application has it already. */
+  async function readMagnet(magnet: Magnet, mine: number): Promise<void> {
+    if (magnet.infoHash) await findExisting(magnet.infoHash, mine);
+    if (mine !== generation) return;
+    if (existing) {
+      preview = await contentsOf(existing).catch(() => undefined);
+      return;
+    }
+    busy = true;
+    try {
+      let id: string;
+      let owned = true;
+      try {
+        id = (await backend.createTorrent({ magnetUri: magnet.uri }, { retention: "temporary" }))
+          .id;
+      } catch (failure) {
+        const duplicate = duplicateOf(failure);
+        if (!duplicate) throw failure;
+        id = duplicate;
+        owned = false;
+      }
+      // Left already: whatever it created goes with it.
+      if (mine !== generation) {
+        if (owned) void discard(id);
+        return;
+      }
+      temporary = { id, owned };
+      if (!owned) {
+        const held = await backend.getTorrent(id);
+        if (mine !== generation) return;
+        if (!held.unchanged && held.data.retention !== "temporary") {
+          temporary = undefined;
+          existing = held.data;
+          preview = await contentsOf(held.data).catch(() => undefined);
+          return;
+        }
+      }
+      watchForFiles(id, mine);
+    } catch (failure) {
+      if (mine !== generation) return;
+      error = refused(failure) ? t().add.magnetInvalid : failureMessage(failure);
+    } finally {
+      if (mine === generation) busy = false;
+    }
+  }
+
+  /** Reads `torrentId` until its metadata arrives, then shows its files, and
+   * opens the first video if Play is waiting for it. */
+  function watchForFiles(torrentId: string, mine: number): void {
+    const fail = (message: string) => {
+      error = message;
+      waiting = false;
+      stopWaiting?.();
+      stopWaiting = undefined;
+    };
+    stopWaiting = poll(async () => {
+      try {
+        const read = await backend.getTorrent(torrentId);
+        if (mine !== generation || read.unchanged) return;
+        if (read.data.observed_state === "failed") {
+          fail(read.data.failure?.detail ?? t().states.failed);
+          return;
+        }
+        if (read.data.observed_state === "retrieving_metadata") return;
+        const contents = await contentsOf(read.data);
+        if (mine !== generation) return;
+        preview = contents;
+        stopWaiting?.();
+        stopWaiting = undefined;
+        if (!playWhenKnown) return;
+        const file = firstVideo(contents.files);
+        if (file) open(watchPath(torrentId, file.id));
+        else fail(t().title.noVideos);
+      } catch (failure) {
+        if (mine === generation) fail(failureMessage(failure));
+      }
+    }, WAIT_MS);
+  }
+
+  /** Deletes a temporary torrent that went unused. Its idle timeout removes it
+   * anyway if this fails. */
+  async function discard(torrentId: string): Promise<void> {
+    await backend.deleteTorrent(torrentId).catch(() => undefined);
+  }
+
+  /** Deletes the temporary torrent this page created, if nothing took it. */
+  function abandon(): void {
+    if (temporary?.owned) void discard(temporary.id);
+    temporary = undefined;
+  }
+
+  /** Goes to a page that uses the temporary torrent, which then stays. */
+  function open(path: string): void {
+    temporary = undefined;
+    navigate(path);
+  }
+
   /** Reads what is being added, as far as it can be read before adding it. */
   async function read(source: NonNullable<typeof addition.source>, mine: number): Promise<void> {
     if (source.kind === "magnet") {
-      if (source.magnet.infoHash) await findExisting(source.magnet.infoHash, mine);
+      await readMagnet(source.magnet, mine);
       return;
     }
     try {
@@ -83,6 +198,8 @@ SPDX-License-Identifier: MIT
     untrack(() => {
       stopWaiting?.();
       stopWaiting = undefined;
+      abandon();
+      playWhenKnown = false;
       preview = undefined;
       existing = undefined;
       busy = false;
@@ -98,6 +215,7 @@ SPDX-License-Identifier: MIT
   onDestroy(() => {
     generation++;
     stopWaiting?.();
+    abandon();
     clearAddition();
   });
 
@@ -145,36 +263,6 @@ SPDX-License-Identifier: MIT
       if (mine === generation) busy = false;
     }
   }
-
-  /** Opens the first video of `torrentId` once its metadata has arrived. */
-  function playWhenKnown(torrentId: string): void {
-    const mine = generation;
-    waiting = true;
-    const stop = poll(async () => {
-      try {
-        const read = await backend.getTorrent(torrentId);
-        if (mine !== generation || read.unchanged) return;
-        if (read.data.observed_state === "failed") {
-          fail(read.data.failure?.detail ?? t().states.failed);
-          return;
-        }
-        if (read.data.observed_state === "retrieving_metadata") return;
-        const file = firstVideo(await backend.listFiles(torrentId));
-        if (mine !== generation) return;
-        if (file) navigate(watchPath(torrentId, file.id));
-        else fail(t().title.noVideos);
-      } catch (failure) {
-        if (mine === generation) fail(failureMessage(failure));
-      }
-    }, WAIT_MS);
-    const fail = (message: string) => {
-      error = message;
-      waiting = false;
-      stop();
-      stopWaiting = undefined;
-    };
-    stopWaiting = stop;
-  }
 </script>
 
 <AddView
@@ -195,12 +283,46 @@ SPDX-License-Identifier: MIT
   }}
   onstorage={(mode) => (storage = mode)}
   onplay={async (fileId) => {
+    if (temporary) {
+      if (fileId) {
+        open(watchPath(temporary.id, fileId));
+        return;
+      }
+      const first = preview ? firstVideo(preview.files) : undefined;
+      if (first) open(watchPath(temporary.id, first.id));
+      else {
+        playWhenKnown = true;
+        waiting = true;
+      }
+      return;
+    }
     const id = await create({ retention: "temporary" });
     if (!id) return;
-    if (fileId) navigate(watchPath(id, fileId));
-    else playWhenKnown(id);
+    if (fileId) {
+      navigate(watchPath(id, fileId));
+    } else {
+      // Starting the magnet URI failed when it was pasted; this tried again.
+      temporary = { id, owned: false };
+      playWhenKnown = true;
+      waiting = true;
+      watchForFiles(id, generation);
+    }
   }}
   onadd={async () => {
+    if (temporary) {
+      const { id } = temporary;
+      busy = true;
+      error = undefined;
+      try {
+        await backend.keepTorrent(id, storage);
+        open(titlePath(id));
+      } catch (failure) {
+        error = failureMessage(failure);
+      } finally {
+        busy = false;
+      }
+      return;
+    }
     const id = await create({ retention: "persisted", storageMode: storage });
     if (id) navigate(titlePath(id));
   }}

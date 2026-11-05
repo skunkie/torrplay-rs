@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT
 <script lang="ts">
   import Hero from "../components/Hero.svelte";
   import type { AdditionSource } from "../lib/addition.svelte";
-  import type { PreviewFile, StorageMode, Torrent, TorrentPreview } from "../lib/backend";
+  import type { PreviewFile, StorageMode, Torrent, TorrentContents } from "../lib/backend";
   import { torrentTitle } from "../lib/describe";
   import { firstVideo } from "../lib/episodes";
   import { formatBytes } from "../lib/format";
@@ -15,9 +15,9 @@ SPDX-License-Identifier: MIT
 
   interface Props {
     source: AdditionSource | undefined;
-    /** What the torrent file holds, or `undefined` while it is being read,
-     * and for a magnet URI. */
-    preview: TorrentPreview | undefined;
+    /** What the torrent holds, or `undefined` while it is being read, and for
+     * a magnet URI until peers send its metadata. */
+    preview: TorrentContents | undefined;
     /** The library's torrent with this info hash, if it has one. */
     existing: Torrent | undefined;
     storage: StorageMode;
@@ -199,7 +199,7 @@ SPDX-License-Identifier: MIT
       <p class="text-meta text-hero-muted">{t().add.notTwice}</p>
     {:else if known}
       <div class="mt-1 flex flex-wrap items-center gap-2.5">
-        {#if source.kind === "magnet" || first}
+        {#if (source.kind === "magnet" && !preview) || first}
           <button
             type="button"
             class="btn btn-hero"
@@ -253,7 +253,7 @@ SPDX-License-Identifier: MIT
     {/if}
     {#if waiting}
       <p role="status" class="text-text-muted">{t().add.waitingForFiles}</p>
-    {:else if source.kind === "magnet" && !existing}
+    {:else if source.kind === "magnet" && !existing && !preview}
       <div class="flex flex-col gap-1 rounded-2xl bg-tile px-5 py-4">
         <p class="font-semibold">{t().add.peersTitle}</p>
         <p class="text-meta text-text-muted">{t().add.peersHint}</p>
