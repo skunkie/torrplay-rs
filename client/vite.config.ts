@@ -19,6 +19,9 @@ export default defineConfig({
     assetsDir: "assets",
     outDir: "dist",
     emptyOutDir: true,
+    // The content security policy refuses fonts from data URLs, and the
+    // smallest would become those.
+    assetsInlineLimit: 0,
     // The AC-3 and DTS decoders, about 1.1 and 1.6 MB, load only for a
     // track that needs them.
     chunkSizeWarningLimit: 2048,
