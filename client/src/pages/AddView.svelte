@@ -242,7 +242,7 @@ SPDX-License-Identifier: MIT
     {/if}
   </Hero>
 
-  <div class="mx-auto flex max-w-screen-2xl flex-col gap-3 px-4 pt-6 pb-24 md:px-10 md:pb-6">
+  <div class="flex flex-col gap-3 px-4 pt-6 pb-24 md:px-10 md:pb-6">
     {#if error}
       <div role="alert" class="alert">
         <span>{error}</span>
@@ -260,7 +260,7 @@ SPDX-License-Identifier: MIT
       </div>
     {/if}
     {#if preview}
-      <ul class="flex flex-col gap-2">
+      <ul class="list-grid">
         {#each preview.files as file (file.id)}
           {@const episode = episodeLabel(file)}
           {@const fileName = file.path.at(-1) ?? ""}
