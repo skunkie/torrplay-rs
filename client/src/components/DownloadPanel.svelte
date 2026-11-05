@@ -17,6 +17,9 @@ SPDX-License-Identifier: MIT
     statistics: TorrentStatistics | undefined;
     /** Whether a change is being made. */
     busy: boolean;
+    /** Whether every piece shows on the page. */
+    expanded: boolean;
+    ontogglepieces: () => void;
     onpause: () => void;
     onresume: () => void;
     /** Starts a failed torrent again. */
@@ -31,6 +34,8 @@ SPDX-License-Identifier: MIT
     torrent,
     statistics,
     busy,
+    expanded,
+    ontogglepieces,
     onpause,
     onresume,
     onretry,
@@ -71,27 +76,34 @@ SPDX-License-Identifier: MIT
   </div>
 
   {#if tiles.length > 0}
-    <div
-      role="img"
-      aria-label={t().download.downloaded(percent)}
-      class="grid grid-cols-16 gap-0.75"
+    <button
+      type="button"
+      id="pieces-toggle"
+      aria-expanded={expanded}
+      aria-label={expanded ? t().download.hidePieces(percent) : t().download.showPieces(percent)}
+      class="-m-1.5 block cursor-pointer rounded-inner p-1.5 hover:bg-raised/40 {expanded
+        ? 'bg-raised/40'
+        : ''}"
+      onclick={ontogglepieces}
     >
-      {#each tiles as tile, index (index)}
-        <span
-          class="aspect-square rounded-[3px] {tile.reading
-            ? 'outline-2 -outline-offset-1 outline-focus'
-            : ''} {tile.state === 'arriving'
-            ? 'bg-arriving'
-            : tile.state === 'downloaded'
-              ? state === 'paused'
-                ? 'bg-text-muted'
-                : 'bg-accent'
-              : tile.state === 'partial'
-                ? 'bg-accent/40'
-                : 'bg-empty'}"
-        ></span>
-      {/each}
-    </div>
+      <span class="grid grid-cols-16 gap-0.75">
+        {#each tiles as tile, index (index)}
+          <span
+            class="aspect-square rounded-[3px] {tile.reading
+              ? 'outline-2 -outline-offset-1 outline-focus'
+              : ''} {tile.state === 'arriving'
+              ? 'bg-arriving'
+              : tile.state === 'downloaded'
+                ? state === 'paused'
+                  ? 'bg-text-muted'
+                  : 'bg-accent'
+                : tile.state === 'partial'
+                  ? 'bg-accent/40'
+                  : 'bg-empty'}"
+          ></span>
+        {/each}
+      </span>
+    </button>
     <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted" aria-hidden="true">
       <span class="flex items-center gap-1.5"
         ><span class="size-2.5 rounded-[3px] bg-accent"></span>{t().download.tileDownloaded}</span

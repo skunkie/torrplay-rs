@@ -4,6 +4,7 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import AllPieces from "../components/AllPieces.svelte";
   import ConfirmDialog from "../components/ConfirmDialog.svelte";
   import DownloadPanel from "../components/DownloadPanel.svelte";
   import Hero from "../components/Hero.svelte";
@@ -37,6 +38,11 @@ SPDX-License-Identifier: MIT
     statistics: TorrentStatistics | undefined;
     /** Whether a change is being made. */
     busy: boolean;
+    /** Whether every piece shows on the page. */
+    piecesOpen: boolean;
+    ontogglepieces: () => void;
+    /** A file's name by its ID. */
+    fileNameOf: (fileId: string) => string | undefined;
     onretry: () => void;
     onpause: () => void;
     onresume: () => void;
@@ -57,6 +63,9 @@ SPDX-License-Identifier: MIT
     poster,
     statistics,
     busy,
+    piecesOpen,
+    ontogglepieces,
+    fileNameOf,
     onretry,
     onpause,
     onresume,
@@ -67,6 +76,8 @@ SPDX-License-Identifier: MIT
     ondelete,
   }: Props = $props();
 
+  /** Open only while there are pieces to show. */
+  const showingPieces = $derived(piecesOpen && Boolean(statistics?.pieces));
   let confirming = $state(false);
   let confirmingMemory = $state(false);
   /** Whether deleting takes files with it, in disk storage or on the way to or
@@ -236,8 +247,10 @@ SPDX-License-Identifier: MIT
     {/if}
 
     {#if torrent}
-      <div class="flex flex-col gap-6 lg:flex-row lg:items-start">
-        <div class="lg:order-last lg:w-85 lg:shrink-0">
+      <!-- The panel, then every piece, then the episodes; on a large window every
+           piece spans the top, with the episodes and the panel side by side below. -->
+      <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_21.25rem] lg:items-start">
+        <div class="lg:col-start-2 {showingPieces ? 'lg:row-start-2' : 'lg:row-start-1'}">
           <DownloadPanel
             {torrent}
             {statistics}
@@ -249,9 +262,28 @@ SPDX-License-Identifier: MIT
             onkeepinmemory={() => (confirmingMemory = true)}
             {onaddtolibrary}
             ondelete={() => (confirming = true)}
+            expanded={showingPieces}
+            {ontogglepieces}
           />
         </div>
-        <div class="flex min-w-0 grow flex-col gap-6">
+        {#if showingPieces && statistics}
+          <div class="lg:col-span-2 lg:row-start-1">
+            <AllPieces
+              {statistics}
+              muted={torrent.observed_state === "paused"}
+              fileName={fileNameOf}
+              onhide={() => {
+                ontogglepieces();
+                document.getElementById("pieces-toggle")?.focus();
+              }}
+            />
+          </div>
+        {/if}
+        <div
+          class="flex min-w-0 flex-col gap-6 lg:col-start-1 {showingPieces
+            ? 'lg:row-start-2'
+            : 'lg:row-start-1'}"
+        >
           {#if torrent.genres.length > 0}
             <ul class="flex flex-wrap gap-2" aria-label={t().title.genres}>
               {#each torrent.genres as genre (genre)}

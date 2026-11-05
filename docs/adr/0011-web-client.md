@@ -230,6 +230,9 @@ the tokens.
   are the torrent's real pieces, spread over the tiles when there are more of
   them: arriving, downloaded, or only partly downloaded, with an outline where a
   reader is. A count of active and idle readers appears while there are any.
+  Clicking them expands every piece above the episodes, on a canvas since a
+  torrent can have tens of thousands, with the readers listed by file; it
+  refreshes every 2 seconds while open.
 - **Editing.** Edit is a page of its own, because the library members and poster
   are too long a form for a dialog. It sends only what changed, with the ETag it
   read, so a change made elsewhere meanwhile is reported rather than overwritten.
