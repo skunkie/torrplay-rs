@@ -347,7 +347,7 @@ async fn log_response<E: Engine>(
             )
         };
     }
-    if response_level(status) == Level::WARN {
+    if response_level(&response) == Level::WARN {
         log!(Level::WARN);
     } else {
         log!(Level::DEBUG);
@@ -360,9 +360,13 @@ async fn log_response<E: Engine>(
 /// responses are debug messages unless the server failed them, which are
 /// warnings beside the error that names the cause. A `503` reports the
 /// lifecycle, as `/readyz` does while the engine starts, rather than a
-/// failure.
-fn response_level(status: StatusCode) -> Level {
-    if status.is_server_error() && status != StatusCode::SERVICE_UNAVAILABLE {
+/// failure, and a SOAP fault answers the request rather than failing it.
+fn response_level(response: &Response) -> Level {
+    let status = response.status();
+    if status.is_server_error()
+        && status != StatusCode::SERVICE_UNAVAILABLE
+        && response.extensions().get::<dlna::SoapFault>().is_none()
+    {
         Level::WARN
     } else {
         Level::DEBUG
@@ -422,7 +426,14 @@ mod tests {
         ];
         for (status, level) in cases {
             let status = StatusCode::from_u16(status).unwrap();
-            assert_eq!(response_level(status), level, "{status}");
+            assert_eq!(response_level(&status.into_response()), level, "{status}");
         }
+    }
+
+    #[test]
+    fn soap_faults_are_debug_messages() {
+        let mut fault = StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        fault.extensions_mut().insert(dlna::SoapFault);
+        assert_eq!(response_level(&fault), Level::DEBUG);
     }
 }

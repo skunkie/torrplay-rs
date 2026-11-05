@@ -328,10 +328,20 @@ async fn action<E: Engine>(
     Ok(Action::parse(soap_action, &bytes))
 }
 
+/// Marks a response as a SOAP fault. UPnP sends every fault as a `500`,
+/// including a bad request and a library still being restored, so the status
+/// alone does not say that the server failed.
+#[derive(Clone, Copy)]
+pub(crate) struct SoapFault;
+
 fn answered(result: Result<String, Fault>) -> Response {
     match result {
         Ok(body) => xml(StatusCode::OK, body),
-        Err(fault) => xml(StatusCode::INTERNAL_SERVER_ERROR, fault.envelope()),
+        Err(fault) => {
+            let mut response = xml(StatusCode::INTERNAL_SERVER_ERROR, fault.envelope());
+            response.extensions_mut().insert(SoapFault);
+            response
+        }
     }
 }
 
