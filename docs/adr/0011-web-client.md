@@ -127,6 +127,61 @@ seek index. The plan keeps them.
 | `/sign-in` | Sign-in | The password, only while one is set |
 | `/demo/…` | Demo | The same pages over the demo backend |
 
+### Look
+
+The look grows from the logo: a grid of tiles, where blue pieces are
+downloaded and pink ones are arriving. A large banner on the home page leads
+with what to watch.
+
+| Token | Dark | Light | Use |
+|---|---|---|---|
+| `surface` | `#0F172A` | `#F8FAFC` | The page |
+| `tile` | `#1E293B` | `#EEF2F7` | Rows, panels, fields, and segmented controls |
+| `raised` | `#334155` | `#FFFFFF` | Secondary buttons and the selected segment |
+| `empty` | `#334155` | `#CBD5E1` | The empty part of a bar or of tiles |
+| `text` | `#F1F5F9` | `#0F172A` | Text |
+| `text-muted` | `#94A3B8` | `#475569` | Secondary text |
+| `accent` | `#38BDF8` | `#0284C7` | Primary buttons, watched, and downloaded |
+| `accent-text` | `#7DD3FC` | `#0369A1` | Links and "ready" as text |
+| `on-accent` | `#082F49` | `#FFFFFF` | Text on `accent` |
+| `arriving` | `#F472B6` | `#DB2777` | Data arriving |
+| `arriving-text` | `#F9A8D4` | `#BE185D` | Arriving as text, and destructive actions |
+| `focus` | `#FBBF24` | `#B45309` | The focus ring |
+
+- **Dark everywhere video is.** Heroes and the player keep the dark theme's
+  accent and focus tokens in both themes, since a picture sits behind them.
+  A title without a poster gets one of eight color pairs, the
+  same one everywhere, chosen from its name.
+- **Type.** Onest, which has Cyrillic, for text; JetBrains Mono for numbers,
+  rates, and short states. Both ship in the bundle, so the client needs no
+  other origin. Sizes are 52 pixels for a hero's title, 28 on a phone; 18 for
+  a section; 15 for body text; 13 for secondary text; 12 for mono.
+- **Shape.** Corners of 24 pixels for heroes, 20 for panels, 16 for rows, 14
+  for large buttons, 12 for controls, and 10 inside a segmented control.
+  Surfaces differ by color rather than by borders or shadows.
+- **Targets.** Controls are at least 44 pixels high, 48 for a hero's primary
+  action. Focus is a 3-pixel ring with a 2-pixel offset, for keyboards and
+  remotes.
+- **Two kinds of progress.** A bar is what the profile watched. Tiles are what
+  the torrent downloaded, in the logo's colors. A page shows them only where
+  it has the data, so the listing's posters have no tiles until the contract
+  reports each torrent's download.
+- **Navigation.** From 768 pixels wide, the header holds the logo, a segmented
+  Home and Library, search, and the menu. Narrower, a bar at the bottom holds
+  Home and Library. The menu, under the profile's initial, switches profile
+  and language and signs out. The title page replaces the header with a back
+  link and the menu over its hero.
+- **Home.** The first up next entry is a banner that resumes it; the others
+  are rows under it, and recently added titles are posters.
+- **Title.** The hero offers the episode to resume, or the one after the last
+  viewed. Seasons are tabs that open on that episode's season, and its row is
+  outlined. The rest of the mockup's actions arrive with their pages: Add and
+  the global rate in the header; Edit and the Download panel on the title.
+
+The mockups are at
+<https://claude.ai/artifact/QbM6NmQ5j8Tm3KGpDqU2xa>; `client/src/app.css` holds
+the tokens.
+
 ### Flows
 
 - **Adding.** A magnet URI or torrent file can be pasted or dropped on any

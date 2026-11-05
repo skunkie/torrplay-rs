@@ -36,6 +36,19 @@ export function nextEpisode(items: readonly Playable[], fileId: string): Playabl
   return index === -1 ? undefined : episodes[index + 1];
 }
 
+/** What a title offers to play from `items`, given in playing order: the
+ * file last in progress, or else the one after the last viewed, or else the
+ * first again. */
+export function resumeItem(items: readonly Playable[]): Playable | undefined {
+  const started = items.filter((item) => (item.progress?.position_seconds ?? 0) > 0);
+  if (started.length > 0) {
+    return started.reduce((latest, item) =>
+      (item.progress?.updated_at ?? "") > (latest.progress?.updated_at ?? "") ? item : latest,
+    );
+  }
+  return items[items.findLastIndex((item) => item.progress?.viewed) + 1] ?? items[0];
+}
+
 /** A series' episodes by season, in the order up next follows, and the
  * video files no episode pattern numbers, in metadata order. */
 export function seasons(items: readonly Playable[]): { seasons: Season[]; extras: Playable[] } {

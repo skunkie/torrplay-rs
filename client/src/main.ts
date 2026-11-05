@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
+import "@fontsource-variable/onest/wght.css";
+import "@fontsource/jetbrains-mono/500.css";
 import "./app.css";
 
 import { mount } from "svelte";

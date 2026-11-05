@@ -107,6 +107,10 @@ English message.
 | Profile | Профиль | The chooser's heading is `Выберите профиль`; not `Кто смотрит?`, a calque, nor `Кто будет смотреть?` |
 | Device profile | Устройства | The client's label for it; never offered as someone to watch as |
 | Recently added | Недавно добавленные | |
+| Home | Главная | The page, in navigation |
+| Menu | Меню | The button holding profile, language, and sign-out |
+| Episodes (button) | Серии | Opens a series' title page |
+| Details (button) | Подробнее | Opens the title page of anything else |
 | Search | Поиск | `Найти` for the action |
 | Player | Плеер | Inanimate: `выберите плеер` |
 | Audio track | Звуковая дорожка | `Дорожка` alone once the context is clear; not `аудиотрек`. Menus label a track by its language from `Intl.DisplayNames`, capitalized at the start: `Английский (AC-3, 5.1)` |

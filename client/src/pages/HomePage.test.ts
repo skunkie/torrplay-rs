@@ -8,8 +8,9 @@ import { beforeEach, expect, it, vi } from "vitest";
 import App from "../App.svelte";
 import { ApiError, type Conditional } from "../lib/api/http";
 import type { Backend, Profile, UpNextEntry, UpNextPage } from "../lib/backend";
-import { navigate } from "../lib/navigation.svelte";
+import { location, navigate } from "../lib/navigation.svelte";
 import { resetProfiles } from "../lib/profile.svelte";
+import { titlePath } from "../lib/routes";
 import { fakeBackend, profile, torrent, upNext } from "../testing";
 
 const ana = profile(1, "Ana");
@@ -54,15 +55,24 @@ it("shows up next and recently added for the only person profile", async () => {
     upNext(torrent(2), 0.25),
   ]);
   render(App, { backend: fake });
-  const upNextList = within(
-    (await screen.findByRole("heading", { name: "Up next" })).closest("section") as HTMLElement,
+  const banner = within(await screen.findByRole("region", { name: "Title 1" }));
+  expect(banner.getByRole("heading", { level: 1, name: "Title 1" })).toBeInTheDocument();
+  expect(banner.getByText("S1 E3")).toBeInTheDocument();
+  expect(banner.getByText("Next episode")).toBeInTheDocument();
+  expect(banner.getByRole("link", { name: "Play" })).toHaveAttribute(
+    "href",
+    expect.stringMatching(/^\/watch\//),
   );
-  expect(await upNextList.findByText("S1 E3")).toBeInTheDocument();
-  expect(upNextList.getByText("Next episode")).toBeInTheDocument();
+  expect(banner.getByRole("link", { name: "Episodes" })).toHaveAttribute(
+    "href",
+    titlePath(series.id),
+  );
+  const upNextList = within(screen.getByRole("region", { name: "Up next" }));
+  expect(upNextList.getByText("Title 2")).toBeInTheDocument();
   expect(upNextList.getByText("45 min left")).toBeInTheDocument();
   expect(await screen.findByText("Title 7")).toBeInTheDocument();
   expect(fake.listUpNext).toHaveBeenCalledWith(ana.id, expect.anything());
-  expect(screen.queryByRole("combobox", { name: "Profile" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("combobox", { name: "Profile", hidden: true })).not.toBeInTheDocument();
 });
 
 it("asks who is watching once, then remembers the choice", async () => {
@@ -87,7 +97,7 @@ it("switches profiles from the header", async () => {
   const fake = backend([ana, ben], (id) => [upNext(torrent(id === ana.id ? 5 : 6), 0.5)]);
   render(App, { backend: fake });
   expect(await screen.findByText("Title 5")).toBeInTheDocument();
-  await fireEvent.change(screen.getByRole("combobox", { name: "Profile" }), {
+  await fireEvent.change(screen.getByRole("combobox", { name: "Profile", hidden: true }), {
     target: { value: ben.id },
   });
   expect(await screen.findByText("Title 6")).toBeInTheDocument();
@@ -110,6 +120,24 @@ it("removes a dismissed entry from up next", async () => {
     await screen.findByText("Nothing to resume. What you start watching appears here."),
   ).toBeInTheDocument();
   expect(fake.dismissUpNext).toHaveBeenCalledWith(ana.id, entry.id);
+});
+
+it("leads with the only entry and lists no row under it", async () => {
+  render(App, { backend: backend([ana], () => [upNext(torrent(1), 0.5)]) });
+  const banner = within(await screen.findByRole("region", { name: "Title 1" }));
+  expect(banner.getByRole("link", { name: "Resume" })).toBeInTheDocument();
+  expect(banner.getByRole("link", { name: "Details" })).toBeInTheDocument();
+  expect(banner.getByText("30 min left")).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Up next" })).not.toBeInTheDocument();
+});
+
+it("searches the library from the header", async () => {
+  render(App, { backend: backend([ana]) });
+  const search = await screen.findByRole("searchbox", { name: "Search" });
+  await fireEvent.input(search, { target: { value: " harbor " } });
+  await fireEvent.submit(search.closest("form") as HTMLFormElement);
+  expect(location.path).toBe("/library");
+  expect(location.search).toContain("q=harbor");
 });
 
 it("chooses again when the chosen profile was deleted elsewhere", async () => {
@@ -136,10 +164,11 @@ it("chooses again when the chosen profile was deleted elsewhere", async () => {
 it("switches to Russian from the header and remembers it", async () => {
   const fake = backend([ana], () => [
     upNext(torrent(1, { kind: "series" }), null, { season: 1, number: 2 }),
+    upNext(torrent(2), 0.5),
   ]);
   render(App, { backend: fake });
   expect(await screen.findByRole("heading", { name: "Up next" })).toBeInTheDocument();
-  await fireEvent.change(screen.getByRole("combobox", { name: "Language" }), {
+  await fireEvent.change(screen.getByRole("combobox", { name: "Language", hidden: true }), {
     target: { value: "ru" },
   });
   expect(await screen.findByRole("heading", { name: "Продолжить просмотр" })).toBeInTheDocument();

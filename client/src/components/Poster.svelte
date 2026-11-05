@@ -4,33 +4,37 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import { toneOf } from "../lib/tone";
+
   interface Props {
-    /** The poster's URL, or `undefined` to show the title's initial. */
+    /** The poster's URL, or `undefined` to write the title on its color. */
     url: string | undefined;
     title: string;
     /** A short state shown over the poster, such as "Paused". */
     badge?: string | undefined;
-    /** How far through the title the profile is, from 0 to 1. */
-    progress?: number | undefined;
   }
 
-  let { url, title, badge, progress }: Props = $props();
+  let { url, title, badge }: Props = $props();
+
+  const tone = $derived(toneOf(title));
 </script>
 
-<div class="relative aspect-2/3 overflow-hidden rounded-md bg-surface-raised" aria-hidden="true">
+<span
+  class="relative flex aspect-2/3 items-end overflow-hidden rounded-button p-3 text-sm/tight font-bold"
+  style:background={tone.background}
+  style:color={tone.color}
+>
   {#if url}
-    <img src={url} alt="" loading="lazy" class="size-full object-cover" />
+    <img src={url} alt="" loading="lazy" class="absolute inset-0 size-full object-cover" />
   {:else}
-    <div class="flex h-full items-center justify-center text-4xl text-text-muted">
-      {title.slice(0, 1).toUpperCase()}
-    </div>
+    <span class="line-clamp-4 wrap-break-word">{title}</span>
   {/if}
   {#if badge}
-    <span class="absolute top-2 left-2 rounded-sm bg-surface/80 px-2 py-0.5 text-xs">{badge}</span>
+    <span class="absolute top-2 left-2 rounded-lg bg-scrim/80 px-2 py-1 mono text-hero-text">
+      {badge}
+    </span>
   {/if}
-  {#if progress !== undefined}
-    <div class="absolute inset-x-0 bottom-0 h-1 bg-surface/80">
-      <div class="h-full bg-accent" style:width="{Math.round(progress * 100)}%"></div>
-    </div>
-  {/if}
-</div>
+</span>
+{#if url}
+  <span class="line-clamp-2 text-sm font-semibold">{title}</span>
+{/if}

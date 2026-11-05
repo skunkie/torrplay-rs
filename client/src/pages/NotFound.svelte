@@ -9,6 +9,6 @@ SPDX-License-Identifier: MIT
   let { path }: { path: string } = $props();
 </script>
 
-<h1 class="text-2xl font-semibold">{t().notFound.title}</h1>
+<h1 class="text-2xl font-bold">{t().notFound.title}</h1>
 <p class="mt-2 text-text-muted">{t().notFound.body(path)}</p>
-<a href="/" class="mt-4 inline-block text-accent underline">{t().notFound.home}</a>
+<a href="/" class="mt-4 inline-block font-semibold text-accent-text">{t().notFound.home}</a>

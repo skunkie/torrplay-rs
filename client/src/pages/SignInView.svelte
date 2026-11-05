@@ -16,14 +16,14 @@ SPDX-License-Identifier: MIT
 </script>
 
 <form
-  class="mx-auto mt-16 flex max-w-sm flex-col gap-4 rounded-lg bg-surface-raised p-6"
+  class="mx-auto mt-8 flex max-w-sm flex-col gap-4 rounded-panel bg-tile p-6 md:mt-16"
   onsubmit={(event) => {
     event.preventDefault();
     onsubmit(password);
   }}
 >
-  <h1 class="text-2xl font-semibold">{t().signIn.title}</h1>
-  <label class="flex flex-col gap-1">
+  <h1 class="text-2xl font-bold">{t().signIn.title}</h1>
+  <label class="flex flex-col gap-1.5 text-meta font-semibold">
     <span>{t().signIn.password}</span>
     <!-- svelte-ignore a11y_autofocus -->
     <input
@@ -34,17 +34,13 @@ SPDX-License-Identifier: MIT
       bind:value={password}
       aria-invalid={error !== undefined}
       aria-describedby={error ? "sign-in-error" : undefined}
-      class="rounded-md bg-surface px-3 py-2"
+      class="field bg-surface font-normal"
     />
   </label>
   {#if error}
     <p id="sign-in-error" role="alert" class="text-sm">{error}</p>
   {/if}
-  <button
-    type="submit"
-    disabled={busy || password === ""}
-    class="rounded-md bg-accent px-4 py-2 font-medium text-surface disabled:opacity-50"
-  >
+  <button type="submit" disabled={busy || password === ""} class="btn btn-primary">
     {busy ? t().signIn.busy : t().signIn.submit}
   </button>
 </form>
