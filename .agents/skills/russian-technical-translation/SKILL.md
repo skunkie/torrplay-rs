@@ -139,6 +139,10 @@ English message.
 | Temporary torrent | Временный торрент | |
 | Storage mode: memory / disk | Оперативная память / Диск | Never bare `RAM` or `ОЗУ` |
 | Preload | Предзагрузка | |
+| IMDb ID | ID в IMDb | Stays in Latin letters; an example ID stays as `tt0000000` |
+| Pause / resume (a torrent) | Приостановить / продолжить | State label: `Приостановлено` |
+| Edit (a torrent) | Изменить | Page heading: `Изменение` |
+| Transfer rate | Скорость, `МиБ/с` | |
 | Piece cache / cache | Кеш | Dictionary spelling, like `хеш`; never `кэш` |
 | Peer / seed | Пир / сид | Standard BitTorrent usage |
 | Background download | Фоновая загрузка | |

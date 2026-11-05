@@ -11,6 +11,7 @@ const table = {
   library: "/library",
   add: "/add",
   title: "/titles/:torrent_id",
+  edit: "/titles/:torrent_id/edit",
   watch: "/watch/:torrent_id/:file_id",
 };
 
@@ -20,6 +21,7 @@ describe("match", () => {
     ["/library", "library", {}],
     ["/library/", "library", {}],
     ["/add", "add", {}],
+    ["/titles/trr_a/edit", "edit", { torrent_id: "trr_a" }],
     [
       "/titles/trr_7ndq4m2kzb6hxw3rjpt5yc4ula",
       "title",

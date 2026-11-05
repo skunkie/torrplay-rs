@@ -9,6 +9,7 @@ const routes = {
   library: "/library",
   add: "/add",
   title: "/titles/:torrent_id",
+  edit: "/titles/:torrent_id/edit",
   watch: "/watch/:torrent_id/:file_id",
   signIn: "/sign-in",
 } as const;
@@ -64,6 +65,11 @@ function split(path: string): string[] {
 /** The title page of a torrent. */
 export function titlePath(torrentId: string): string {
   return `/titles/${encodeURIComponent(torrentId)}`;
+}
+
+/** The page that edits a torrent's library members and poster. */
+export function editPath(torrentId: string): string {
+  return `${titlePath(torrentId)}/edit`;
 }
 
 /** The player page of a torrent's file. */

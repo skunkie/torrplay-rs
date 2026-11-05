@@ -60,8 +60,8 @@ function texts(messages: object, path = ""): [string, string][] {
 
 it("has every message in Russian, in Russian typography", () => {
   for (const [at, text] of texts(ru)) {
-    // The translation skill keeps these two in Latin letters.
-    const words = text.replaceAll("TorrPlay", "").replaceAll(/magnet/gi, "");
+    // The translation skill keeps these names, and the IMDb ID's form, in Latin letters.
+    const words = text.replaceAll(/TorrPlay|magnet|\bID\b|IMDb|tt0000000/gi, "");
     expect(words, at).not.toMatch(/[A-Za-z]/);
     expect(text, at).not.toMatch(/["']/);
     expect(text, at).not.toContain("...");

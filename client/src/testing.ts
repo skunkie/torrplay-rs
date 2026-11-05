@@ -10,7 +10,9 @@ import type {
   Profile,
   Progress,
   Torrent,
+  TorrentConfiguration,
   TorrentFile,
+  TorrentStatistics,
   UpNextEntry,
 } from "./lib/backend";
 
@@ -21,6 +23,12 @@ export function fakeBackend(members: Partial<Backend> = {}): Backend {
     getTorrent: vi.fn(),
     createTorrent: vi.fn(),
     keepTorrent: vi.fn(async () => {}),
+    deleteTorrent: vi.fn(async () => {}),
+    getStatistics: vi.fn(async () => statistics(0.34)),
+    getConfiguration: vi.fn(async () => ({ data: configuration(), etag: '"c"' })),
+    updateConfiguration: vi.fn(async () => {}),
+    setPoster: vi.fn(async () => {}),
+    deletePoster: vi.fn(async () => {}),
     previewTorrent: vi.fn(),
     listFiles: vi.fn(async () => []),
     listProgress: vi.fn(async () => []),
@@ -51,6 +59,41 @@ export function preload(state: Preload["state"], completed: number): Preload {
     ended_at: null,
     failure: null,
     links: { self: "", file: "", content: "", torrent: "" },
+  };
+}
+
+/** A torrent's measurements at `ratio`, downloading from 23 peers. */
+export function statistics(
+  ratio: number | null,
+  members: Partial<TorrentStatistics> = {},
+): TorrentStatistics {
+  return {
+    downloaded_bytes: 0,
+    uploaded_bytes: 0,
+    download_rate_bytes_per_second: 2 * 1024 * 1024,
+    upload_rate_bytes_per_second: 0,
+    peer_count: 23,
+    completion_ratio: ratio,
+    links: { self: "", torrent: "" },
+    ...members,
+  };
+}
+
+/** The configuration of a persisted movie in memory storage. */
+export function configuration(members: Partial<TorrentConfiguration> = {}): TorrentConfiguration {
+  return {
+    desired_state: "started",
+    storage_mode: "memory",
+    retention: "persisted",
+    title: "Harbor Lights",
+    kind: "series",
+    year: 2024,
+    imdb_id: null,
+    description: "Two keepers.",
+    categories: ["Family"],
+    genres: ["Drama"],
+    links: { self: "", torrent: "" },
+    ...members,
   };
 }
 

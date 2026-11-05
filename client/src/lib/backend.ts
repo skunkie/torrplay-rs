@@ -18,6 +18,9 @@ export type TorrentFile = Schemas["TorrentFile"];
 export type TorrentPreview = Schemas["TorrentPreview"];
 export type PreviewFile = Schemas["PreviewFile"];
 export type StorageMode = Schemas["CreationStorageMode"];
+export type TorrentStatistics = Schemas["TorrentStatistics"];
+export type TorrentConfiguration = Schemas["TorrentConfiguration"];
+export type TorrentConfigurationPatch = Schemas["TorrentConfigurationPatch"];
 export type Progress = Schemas["Progress"];
 type ProgressUpdate = Schemas["ProgressUpdate"];
 export type Preload = Schemas["Preload"];
@@ -70,6 +73,22 @@ export interface Backend {
   /** Moves a temporary torrent into the library in a storage mode. A torrent
    * already there is left as it is. */
   keepTorrent(torrentId: string, storageMode: StorageMode): Promise<void>;
+  /** Deletes a torrent and, in disk storage, its files. */
+  deleteTorrent(torrentId: string): Promise<void>;
+  /** A torrent's transfer measurements. */
+  getStatistics(torrentId: string): Promise<TorrentStatistics>;
+  /** A torrent's writable configuration and the ETag changing it needs. */
+  getConfiguration(torrentId: string): Promise<{ data: TorrentConfiguration; etag: string }>;
+  /** Changes a torrent's configuration, if `etag` is still its ETag. */
+  updateConfiguration(
+    torrentId: string,
+    patch: TorrentConfigurationPatch,
+    etag: string,
+  ): Promise<void>;
+  /** Stores an image as a torrent's poster. */
+  setPoster(torrentId: string, image: File): Promise<void>;
+  /** Removes a torrent's poster. */
+  deletePoster(torrentId: string): Promise<void>;
   /** What adding a torrent file would create, without adding it. */
   previewTorrent(file: File): Promise<TorrentPreview>;
   /** Every file of a torrent whose metadata is known, in metadata order. */
@@ -124,6 +143,17 @@ export function duplicateOf(failure: unknown): string | undefined {
   if (!(failure instanceof ApiError) || failure.type !== "duplicate-torrent") return undefined;
   const link = (failure.problem as Schemas["CreationConflictProblem"] | undefined)?.torrent;
   return link?.split("/").pop();
+}
+
+/** Applies `patch` to a torrent's configuration as it is now, for a change
+ * that does not depend on what the rest of it holds. */
+export async function changeTorrent(
+  backend: Backend,
+  torrentId: string,
+  patch: TorrentConfigurationPatch,
+): Promise<void> {
+  const { etag } = await backend.getConfiguration(torrentId);
+  await backend.updateConfiguration(torrentId, patch, etag);
 }
 
 /** A multipart form holding a torrent file, as the API reads one. */
@@ -181,25 +211,77 @@ export function httpBackend(http: Http): Backend {
     },
 
     async keepTorrent(torrentId, storageMode) {
-      const path = { torrent_id: torrentId };
-      const read = await http.GET("/api/v1/torrents/{torrent_id}/configuration", {
-        params: { path },
+      const { data, etag } = await this.getConfiguration(torrentId);
+      if (data.retention !== "temporary") return;
+      await this.updateConfiguration(
+        torrentId,
+        {
+          retention: "persisted",
+          // A temporary torrent is in memory, so only disk is a change.
+          ...(storageMode === "disk" ? { storage_mode: storageMode } : {}),
+        },
+        etag,
+      );
+    },
+
+    async deleteTorrent(torrentId) {
+      const result = await http.DELETE("/api/v1/torrents/{torrent_id}", {
+        params: { path: { torrent_id: torrentId } },
       });
-      const configuration = unwrap(read);
-      const etag = read.response.headers.get("ETag");
-      if (configuration.retention !== "temporary") return;
-      if (!etag) throw new ApiError(read.response.status, undefined);
-      unwrap(
-        await http.PATCH("/api/v1/torrents/{torrent_id}/configuration", {
-          params: { path, header: { "If-Match": etag } },
-          headers: { "Content-Type": "application/merge-patch+json" },
-          body: {
-            retention: "persisted",
-            // A temporary torrent is in memory, so only disk is a change.
-            ...(storageMode === "disk" ? { storage_mode: storageMode } : {}),
-          },
+      if (!result.response.ok) {
+        unwrap(result);
+      }
+    },
+
+    async getStatistics(torrentId) {
+      return unwrap(
+        await http.GET("/api/v1/torrents/{torrent_id}/statistics", {
+          params: { path: { torrent_id: torrentId } },
         }),
       );
+    },
+
+    async getConfiguration(torrentId) {
+      const read = await http.GET("/api/v1/torrents/{torrent_id}/configuration", {
+        params: { path: { torrent_id: torrentId } },
+      });
+      const data = unwrap(read);
+      const etag = read.response.headers.get("ETag");
+      if (!etag) throw new ApiError(read.response.status, undefined);
+      return { data, etag };
+    },
+
+    async updateConfiguration(torrentId, patch, etag) {
+      unwrap(
+        await http.PATCH("/api/v1/torrents/{torrent_id}/configuration", {
+          params: { path: { torrent_id: torrentId }, header: { "If-Match": etag } },
+          headers: { "Content-Type": "application/merge-patch+json" },
+          body: patch,
+        }),
+      );
+    },
+
+    async setPoster(torrentId, image) {
+      const result = await http.PUT("/api/v1/torrents/{torrent_id}/poster", {
+        params: { path: { torrent_id: torrentId } },
+        headers: { "Content-Type": image.type },
+        // The image is the body; the contract types it as a string.
+        body: {} as never,
+        bodySerializer: () => image,
+      });
+      // A stored poster answers with no body, which `unwrap` would refuse.
+      if (!result.response.ok) {
+        unwrap(result);
+      }
+    },
+
+    async deletePoster(torrentId) {
+      const result = await http.DELETE("/api/v1/torrents/{torrent_id}/poster", {
+        params: { path: { torrent_id: torrentId } },
+      });
+      if (!result.response.ok) {
+        unwrap(result);
+      }
     },
 
     async previewTorrent(file) {
