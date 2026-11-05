@@ -181,7 +181,10 @@ with what to watch.
 - **Player.** The video fills the window. A top bar with Back and the title,
   centre buttons that move 10 seconds back and forward and play or pause, and a
   full-width bottom bar fade together while playback runs. The bottom bar holds
-  the seek bar, volume, times, fullscreen, and an Audio and a Subtitles menu.
+  the seek bar, volume, times, fullscreen, and an Audio and a Subtitles menu,
+  shown as icons on a narrow window. While the video buffers, a highlight
+  crosses the seek bar, or the video's bottom edge while the bars are hidden,
+  so it never covers the picture or the buttons.
   These are the client's own composition of Video.js's parts rather than its
   skin, inside its fullscreen element, because the audio menu lists the tracks
   the client decodes itself. Picture-in-picture and playback speed have no

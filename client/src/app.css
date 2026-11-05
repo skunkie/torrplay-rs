@@ -226,12 +226,43 @@
   left: var(--media-slider-fill, 0%);
 }
 
-@utility player-spinner {
-  @apply text-hero-text absolute inset-0 hidden items-center justify-center;
+@keyframes player-sweep {
+  from {
+    left: -30%;
+  }
+
+  to {
+    left: 100%;
+  }
+}
+
+/* A highlight crossing its element while the video buffers. */
+@utility player-sweep {
+  @apply absolute hidden overflow-hidden;
   pointer-events: none;
 
   &[data-visible] {
-    @apply flex;
+    @apply block;
+  }
+
+  &::after {
+    @apply absolute inset-y-0 w-[30%];
+    content: "";
+    background: linear-gradient(90deg, transparent, currentcolor, transparent);
+    animation: player-sweep 1.3s ease-in-out infinite;
+
+    @media (prefers-reduced-motion: reduce) {
+      animation-duration: 6s;
+    }
+  }
+}
+
+/* The seek bar shows buffering in its place while the bars show. */
+@utility player-buffering-edge {
+  @apply inset-x-0 bottom-0 z-10 h-0.75;
+
+  media-container:has(media-controls[data-visible]) &[data-visible] {
+    display: none;
   }
 }
 

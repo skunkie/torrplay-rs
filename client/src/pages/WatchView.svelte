@@ -235,17 +235,10 @@ SPDX-License-Identifier: MIT
           <media-hotkey keys="f" action="toggleFullscreen"></media-hotkey>
           <media-hotkey keys="c" action="toggleSubtitles"></media-hotkey>
 
-          <media-buffering-indicator class="player-spinner">
-            <svg
-              class="size-12 animate-spin"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.5"
-              stroke-linecap="round"
-              aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9" /></svg
-            >
-          </media-buffering-indicator>
+          <!-- Buffering shows along the video's bottom edge, and on the seek
+               bar in its place while the bars show. -->
+          <media-buffering-indicator class="player-sweep player-buffering-edge text-accent"
+          ></media-buffering-indicator>
 
           {#if !ended}
             <media-controls class="player-controls">
@@ -253,7 +246,8 @@ SPDX-License-Identifier: MIT
                 {@render topBar()}
               </div>
 
-              <div class="flex items-center justify-center gap-6">
+              <!-- Centred in the player, whatever the bars' heights. -->
+              <div class="absolute inset-0 flex items-center justify-center gap-6">
                 <media-seek-button seconds={-SEEK_SECONDS} class="player-seek">
                   {@render seekIcon(false)}
                 </media-seek-button>
@@ -292,11 +286,13 @@ SPDX-License-Identifier: MIT
                   <media-slider-track class="player-track">
                     <media-slider-buffer class="player-buffer"></media-slider-buffer>
                     <media-slider-fill class="player-fill bg-accent"></media-slider-fill>
+                    <media-buffering-indicator class="player-sweep inset-0 text-arriving"
+                    ></media-buffering-indicator>
                   </media-slider-track>
                   <media-slider-thumb class="player-thumb bg-accent"></media-slider-thumb>
                 </media-time-slider>
                 <div class="flex items-center gap-1 md:gap-2">
-                  <media-mute-button class="group btn size-11 px-0">
+                  <media-mute-button class="group btn size-11 shrink-0 px-0">
                     <svg
                       class="size-5"
                       viewBox="0 0 24 24"
@@ -316,7 +312,7 @@ SPDX-License-Identifier: MIT
                     </media-slider-track>
                     <media-slider-thumb class="player-thumb bg-hero-text"></media-slider-thumb>
                   </media-volume-slider>
-                  <span class="ml-1 flex gap-1.5 mono md:text-meta">
+                  <span class="ml-1 flex gap-1.5 mono whitespace-nowrap md:text-meta">
                     <media-time type="current"></media-time>
                     <span aria-hidden="true">/</span>
                     <media-time type="duration"></media-time>
@@ -326,6 +322,7 @@ SPDX-License-Identifier: MIT
                     <TrackMenu
                       id="audio-menu"
                       label={t().audio.short}
+                      icon="audio"
                       options={tracks.map((label, value) => ({ value, label }))}
                       selected={track}
                       onselect={ontrack}
@@ -335,6 +332,7 @@ SPDX-License-Identifier: MIT
                     <TrackMenu
                       id="subtitles-menu"
                       label={t().subtitles.track}
+                      icon="subtitles"
                       options={[
                         { value: -1, label: t().subtitles.off },
                         ...subtitleTracks.map((subtitle, value) => ({
@@ -349,7 +347,7 @@ SPDX-License-Identifier: MIT
                       onselect={onsubtitles}
                     />
                   {/if}
-                  <media-fullscreen-button class="group btn size-11 px-0">
+                  <media-fullscreen-button class="group btn size-11 shrink-0 px-0">
                     <svg
                       class="size-5"
                       viewBox="0 0 24 24"
