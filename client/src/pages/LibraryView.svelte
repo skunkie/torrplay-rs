@@ -158,7 +158,7 @@ SPDX-License-Identifier: MIT
     </p>
   {/if}
 
-  <ul class="grid grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-4">
+  <ul class="poster-grid">
     {#each torrents as torrent (torrent.id)}
       {@const url = poster(torrent)}
       <li>

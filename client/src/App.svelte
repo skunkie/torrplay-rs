@@ -148,7 +148,7 @@ SPDX-License-Identifier: MIT
 <main
   class={page?.name === "title" || page?.name === "watch"
     ? ""
-    : "mx-auto max-w-screen-2xl px-4 pt-1 pb-24 md:px-10 md:pb-10"}
+    : "px-4 pt-1 pb-24 md:px-10 md:pb-10"}
 >
   {#if page?.name === "home"}
     <HomePage />

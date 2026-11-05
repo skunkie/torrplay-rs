@@ -172,7 +172,8 @@ with what to watch.
   and language and signs out. The title page replaces the header with a back
   link and the menu over its hero.
 - **Home.** The first up next entry is a banner that resumes it; the others
-  are rows under it, and recently added titles are posters.
+  are rows under it, and recently added titles are posters. Home and Library
+  use the window's whole width: their grids add columns as it grows.
 - **Title.** The hero offers the episode to resume, or the one after the last
   viewed. Seasons are tabs that open on that episode's season, and its row is
   outlined. The rest of the mockup's actions arrive with their pages: Add and
