@@ -9,7 +9,7 @@
 
 use std::future::Future;
 use std::net::SocketAddr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::sync::{oneshot, watch};
 use torrplay_dlna::network::advertised_address;
@@ -20,11 +20,16 @@ use torrplay_server::MediaServerSetting;
 /// of `SystemUpdateID` events.
 const EVENT_INTERVAL: Duration = Duration::from_secs(2);
 
+/// How long announcing may fail before it is worth a warning. At startup,
+/// the network is often not up yet.
+const ANNOUNCE_GRACE: Duration = Duration::from_secs(10);
+
 /// Follows `setting` until `stop`, starting and stopping the announcer of
 /// the device `uuid` for an API listening on `listen`, announcing it again
 /// when it is renamed, and running `events` every 2 seconds while it is on.
-/// A start that fails, such as on a loopback listener, is logged, and the
-/// next change tries again.
+/// A start that fails, such as on a loopback listener or before the network
+/// is up, tries again with the next change or event check, and warns once if
+/// it keeps failing.
 pub(crate) async fn supervise<F, Fut>(
     mut setting: watch::Receiver<MediaServerSetting>,
     uuid: String,
@@ -37,6 +42,7 @@ pub(crate) async fn supervise<F, Fut>(
 {
     // The announcer and the name it announced.
     let mut running: Option<(Announcer, String)> = None;
+    let mut failures = AnnounceFailures::default();
     let mut interval = tokio::time::interval(EVENT_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
@@ -51,8 +57,11 @@ pub(crate) async fn supervise<F, Fut>(
             // and so the new name, when it is announced again.
             stopped(announcer.stop().await);
         }
+        if !wanted.enabled {
+            failures = AnnounceFailures::default();
+        }
         if wanted.enabled && running.is_none() {
-            running = start(&uuid, listen)
+            running = start(&uuid, listen, &mut failures)
                 .await
                 .map(|announcer| (announcer, wanted.name.clone()));
         }
@@ -71,11 +80,37 @@ pub(crate) async fn supervise<F, Fut>(
     }
 }
 
-async fn start(uuid: &str, listen: SocketAddr) -> Option<Announcer> {
+/// A run of failed attempts to announce, which warns once, after
+/// [`ANNOUNCE_GRACE`], since attempts repeat every few seconds.
+#[derive(Default)]
+struct AnnounceFailures {
+    since: Option<Instant>,
+    warned: bool,
+}
+
+impl AnnounceFailures {
+    /// Records a failure at `now`, and returns whether it should warn.
+    fn failed(&mut self, now: Instant) -> bool {
+        let since = *self.since.get_or_insert(now);
+        let warn = !self.warned && now.duration_since(since) >= ANNOUNCE_GRACE;
+        self.warned |= warn;
+        warn
+    }
+}
+
+async fn start(
+    uuid: &str,
+    listen: SocketAddr,
+    failures: &mut AnnounceFailures,
+) -> Option<Announcer> {
     let address = match advertised_address(listen) {
         Ok(address) => address,
         Err(error) => {
-            tracing::warn!(%error, "the DLNA media server is not announced");
+            if failures.failed(Instant::now()) {
+                tracing::warn!(%error, "the DLNA media server is not announced");
+            } else {
+                tracing::debug!(%error, "the DLNA media server is not announced yet");
+            }
             return None;
         }
     };
@@ -83,10 +118,15 @@ async fn start(uuid: &str, listen: SocketAddr) -> Option<Announcer> {
     match Announcer::start(Config::new(uuid.to_owned(), location.clone(), address)).await {
         Ok(announcer) => {
             tracing::info!(%location, "the DLNA media server is announced");
+            *failures = AnnounceFailures::default();
             Some(announcer)
         }
         Err(error) => {
-            tracing::warn!(%error, "the DLNA media server could not be announced");
+            if failures.failed(Instant::now()) {
+                tracing::warn!(%error, "the DLNA media server could not be announced");
+            } else {
+                tracing::debug!(%error, "the DLNA media server could not be announced yet");
+            }
             None
         }
     }
@@ -102,6 +142,19 @@ fn stopped(result: std::io::Result<()>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failing_to_announce_warns_once_after_the_grace() {
+        let start = Instant::now();
+        let mut failures = AnnounceFailures::default();
+        assert!(!failures.failed(start), "the network may not be up yet");
+        assert!(!failures.failed(start + ANNOUNCE_GRACE - Duration::from_secs(1)));
+        assert!(failures.failed(start + ANNOUNCE_GRACE));
+        assert!(
+            !failures.failed(start + ANNOUNCE_GRACE * 2),
+            "attempts repeat every few seconds"
+        );
+    }
 
     #[tokio::test]
     async fn toggling_on_loopback_announces_nothing_and_stops_promptly() {
