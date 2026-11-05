@@ -371,6 +371,8 @@ remains prioritized, and failure paths preserve consistent persisted state.
   use the application API rather than open its database.
 - Verify browser audio tracks, subtitle extraction, seeking, playback
   authorization, and focus/accessibility behavior end to end.
+- Review the client's code as a whole for consistency, as the backend's layers
+  were reviewed: report findings first, and fix them after agreement.
 - Integrate the Rust backend with desktop and Android packaging after
   standalone backend behavior is stable.
 - Add an optional qBittorrent adapter only if explicitly included in the later
