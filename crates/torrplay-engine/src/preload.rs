@@ -11,7 +11,9 @@
 //! [`Preloads`] tells it which, admits queued preloads as the preloads'
 //! share of the readahead budget allows, and moves preloads through their
 //! states on a timer: as their pieces arrive, at their expiry, and when they
-//! stall or their torrents stop.
+//! stall or their torrents stop. The newest queued preload starts first, and
+//! reclaims older preloads' pins when they leave it no room, since a client
+//! switching files wants the one it asked for last.
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
@@ -46,6 +48,9 @@ const STALLED: &str = "No data of the preload arrived within the piece wait boun
 
 /// The failure of a preload the cache's bounded fallback ended.
 const CACHE_NEEDED_ROOM: &str = "The piece cache needed the preload's pins for active readers.";
+
+/// The failure of a preload a newer one reclaimed.
+const RECLAIMED: &str = "A newer preload needed the room this preload held.";
 
 /// What a preload covers: its pieces, in ascending order, and the file's
 /// byte ranges they hold.
@@ -136,6 +141,10 @@ struct Entry {
     // When a piece last arrived, or it last started downloading.
     progress_at: Instant,
     ended: Option<Instant>,
+    // When it first became ready; falling back does not start this again.
+    first_ready: Option<Instant>,
+    // Whether a reader had its file open when last observed.
+    read: bool,
 }
 
 impl Entry {
@@ -151,6 +160,18 @@ impl Entry {
         )
     }
 
+    /// Whether a newer preload may reclaim its pins at `now`: it pins some,
+    /// and its reader's own pins hold what it fetched, or it is not within
+    /// its protection.
+    fn is_reclaimable(&self, now: Instant) -> bool {
+        self.cached
+            && self.is_scheduled()
+            && (self.read
+                || self
+                    .first_ready
+                    .is_none_or(|at| now.duration_since(at) >= preload::READY_PROTECTION))
+    }
+
     /// Records what has arrived. Progress is counted by chunk, so a large piece
     /// arriving slowly does not count as a stall, and readiness by verified
     /// pieces, so a reader finds what it was promised.
@@ -161,6 +182,7 @@ impl Entry {
         self.status.completed_bytes = received;
         if self.is_scheduled() {
             self.status.state = if verified >= self.status.target_bytes {
+                self.first_ready.get_or_insert(now);
                 PreloadState::Ready
             } else {
                 PreloadState::Downloading
@@ -291,6 +313,8 @@ impl Preloads {
                 expires: now + request.expires_in,
                 progress_at: now,
                 ended: None,
+                first_ready: None,
+                read: false,
             });
             trim_ended(&mut state.entries, torrent, file);
             self.admit(&mut state, now);
@@ -380,35 +404,11 @@ impl Preloads {
         ended
     }
 
-    /// Starts queued preloads of torrents in memory storage, in creation
-    /// order, while their pins fit in the preloads' share of the readahead
-    /// budget, or while no preload pins anything. Returns the schedulers
-    /// of the preloads it started, which need their plans again.
+    /// Starts queued preloads as [`admit_within`] does, within the preloads'
+    /// share of the readahead budget. Returns the schedulers of the preloads
+    /// it started or reclaimed, which need their plans again.
     fn admit(&self, state: &mut State, now: Instant) -> HashSet<*const TorrentScheduler> {
-        let mut admitted = HashSet::new();
-        let share = self.playback.readahead_bytes() / 2;
-        let mut pinned: u64 = state
-            .entries
-            .iter()
-            .filter(|entry| entry.cached && entry.is_scheduled())
-            .map(|entry| entry.pin_bytes)
-            .sum();
-        for entry in &mut state.entries {
-            if entry.status.state != PreloadState::Queued {
-                continue;
-            }
-            if pinned > 0 && pinned + entry.pin_bytes > share {
-                // Later preloads wait behind the first that does not fit.
-                break;
-            }
-            pinned += entry.pin_bytes;
-            entry.status.state = PreloadState::Downloading;
-            entry.progress_at = now;
-            if let Some(scheduler) = entry.scheduler.upgrade() {
-                admitted.insert(Arc::as_ptr(&scheduler));
-            }
-        }
-        admitted
+        admit_within(&mut state.entries, self.playback.readahead_bytes() / 2, now)
     }
 
     /// Publishes the bytes preloads pin, which readers' readahead leaves
@@ -479,12 +479,13 @@ impl Preloads {
                 .filter(|entry| entry.is_active())
                 .map(|entry| {
                     let id = entry.status.id.clone();
-                    (id, entry.scheduler.clone(), entry.coverage.clone())
+                    let file = entry.status.file;
+                    (id, entry.scheduler.clone(), entry.coverage.clone(), file)
                 })
                 .collect::<Vec<_>>()
         }
         .into_iter()
-        .map(|(id, scheduler, coverage)| (id, observe(&scheduler, &coverage)))
+        .map(|(id, scheduler, coverage, file)| (id, observe(&scheduler, &coverage, file)))
         .collect();
         let mut changed = HashSet::new();
         let next = {
@@ -509,7 +510,9 @@ impl Preloads {
                         cached,
                         received,
                         verified,
+                        read,
                     } => {
+                        entry.read = read;
                         if cached != entry.cached {
                             // A storage mode transition: memory storage
                             // queues it for room, disk storage pins nothing.
@@ -594,14 +597,20 @@ enum Observation {
     /// The torrent runs, in memory storage if `cached`, having received
     /// `received` bytes of the preload's ranges, of which it holds `verified`
     /// in pieces that passed their hash checks.
+    /// A reader has its file open if `read`.
     Live {
         cached: bool,
         received: u64,
         verified: u64,
+        read: bool,
     },
 }
 
-fn observe(scheduler: &Weak<TorrentScheduler>, coverage: &Coverage) -> Observation {
+fn observe(
+    scheduler: &Weak<TorrentScheduler>,
+    coverage: &Coverage,
+    file: FileIndex,
+) -> Observation {
     let Some(scheduler) = scheduler.upgrade() else {
         return Observation::Closed;
     };
@@ -626,6 +635,7 @@ fn observe(scheduler: &Weak<TorrentScheduler>, coverage: &Coverage) -> Observati
         // The two reads are not atomic: a piece can pass its check between them.
         received: received_bytes(&layout, coverage, &pieces).max(verified),
         verified,
+        read: scheduler.has_reader_of(file.0),
     }
 }
 
@@ -670,6 +680,81 @@ fn covered_bytes(layout: &Layout, coverage: &Coverage, piece: u32) -> u64 {
         .iter()
         .map(|range| overlap(start, end, range))
         .sum()
+}
+
+/// Starts queued preloads of torrents in memory storage, newest first, while
+/// their pins fit in `share`, or while no preload pins anything. The newest
+/// reclaims older preloads to fit; older ones wait behind it and only take
+/// room that is free. Returns the schedulers of the preloads it changed.
+fn admit_within(
+    entries: &mut [Entry],
+    share: u64,
+    now: Instant,
+) -> HashSet<*const TorrentScheduler> {
+    let mut changed = HashSet::new();
+    let mut pinned: u64 = entries
+        .iter()
+        .filter(|entry| entry.cached && entry.is_scheduled())
+        .map(|entry| entry.pin_bytes)
+        .sum();
+    let queued: Vec<usize> = (0..entries.len())
+        .rev()
+        .filter(|&index| entries[index].status.state == PreloadState::Queued)
+        .collect();
+    for (turn, index) in queued.into_iter().enumerate() {
+        let pin = entries[index].pin_bytes;
+        let fits = |pinned: u64| pinned == 0 || pinned + pin <= share;
+        if !fits(pinned) {
+            let reclaimed = (turn == 0)
+                .then(|| reclaimable(entries, index, pinned, now, fits))
+                .flatten();
+            let Some(reclaimed) = reclaimed else {
+                break;
+            };
+            for older in reclaimed {
+                let entry = &mut entries[older];
+                pinned -= entry.pin_bytes;
+                entry.end(PreloadState::Failed, Some(RECLAIMED), now);
+                if let Some(scheduler) = entry.scheduler.upgrade() {
+                    changed.insert(Arc::as_ptr(&scheduler));
+                }
+            }
+        }
+        let entry = &mut entries[index];
+        pinned += pin;
+        entry.status.state = PreloadState::Downloading;
+        entry.progress_at = now;
+        if let Some(scheduler) = entry.scheduler.upgrade() {
+            changed.insert(Arc::as_ptr(&scheduler));
+        }
+    }
+    changed
+}
+
+/// The preloads older than `newest` to reclaim for it to fit, those being read
+/// first, then the oldest; `None` if reclaiming all it may would not be
+/// enough, when it reclaims nothing and waits.
+fn reclaimable(
+    entries: &[Entry],
+    newest: usize,
+    pinned: u64,
+    now: Instant,
+    fits: impl Fn(u64) -> bool,
+) -> Option<Vec<usize>> {
+    let mut candidates: Vec<usize> = (0..newest)
+        .filter(|&older| entries[older].is_reclaimable(now))
+        .collect();
+    candidates.sort_by_key(|&older| !entries[older].read);
+    let mut left = pinned;
+    let mut reclaimed = Vec::new();
+    for older in candidates {
+        if fits(left) {
+            break;
+        }
+        left -= entries[older].pin_bytes;
+        reclaimed.push(older);
+    }
+    fits(left).then_some(reclaimed)
 }
 
 fn overlap(start: u64, end: u64, range: &ByteRange) -> u64 {
@@ -847,7 +932,126 @@ mod tests {
             expires: now,
             progress_at: now,
             ended: None,
+            first_ready: None,
+            read: false,
         }
+    }
+
+    /// A preload pinning `pin_bytes` of a memory torrent.
+    fn pinning(n: u8, state: PreloadState, pin_bytes: u64) -> Entry {
+        let mut entry = entry(n, 0, n, state);
+        entry.pin_bytes = pin_bytes;
+        entry
+    }
+
+    fn states(entries: &[Entry]) -> Vec<PreloadState> {
+        entries.iter().map(|entry| entry.status.state).collect()
+    }
+
+    use PreloadState::{Downloading, Failed, Queued, Ready};
+
+    #[test]
+    fn a_newer_preload_reclaims_one_still_downloading() {
+        let now = Instant::now();
+        let mut entries = [pinning(1, Downloading, 2), pinning(2, Queued, 2)];
+        admit_within(&mut entries, 2, now);
+        assert_eq!(states(&entries), [Failed, Downloading]);
+        assert_eq!(
+            entries[0]
+                .status
+                .failure
+                .as_ref()
+                .map(|f| f.detail.as_str()),
+            Some(RECLAIMED)
+        );
+    }
+
+    #[test]
+    fn a_ready_preload_is_protected_from_when_it_first_became_ready() {
+        let now = Instant::now();
+        let mut entries = [pinning(1, Ready, 2), pinning(2, Queued, 2)];
+        entries[0].first_ready = Some(now);
+
+        let almost = now + preload::READY_PROTECTION - Duration::from_secs(1);
+        admit_within(&mut entries, 2, almost);
+        assert_eq!(states(&entries), [Ready, Queued], "still protected");
+
+        admit_within(&mut entries, 2, now + preload::READY_PROTECTION);
+        assert_eq!(states(&entries), [Failed, Downloading]);
+    }
+
+    #[test]
+    fn falling_back_from_ready_keeps_the_first_time_it_was_ready() {
+        let now = Instant::now();
+        let mut entry = pinning(1, Downloading, 2);
+        entry.status.target_bytes = 100;
+        entry.observe_progress(100, 100, now);
+        let later = now + Duration::from_secs(5);
+        entry.observe_progress(50, 50, later);
+        assert_eq!(entry.status.state, Downloading);
+        entry.observe_progress(100, 100, later);
+        assert_eq!(entry.first_ready, Some(now));
+    }
+
+    #[test]
+    fn a_preload_being_read_needs_no_protection_and_goes_first() {
+        let now = Instant::now();
+        let mut entries = [
+            pinning(1, Downloading, 2),
+            pinning(2, Ready, 2),
+            pinning(3, Queued, 2),
+        ];
+        entries[1].first_ready = Some(now);
+        entries[1].read = true;
+        admit_within(&mut entries, 4, now);
+        assert_eq!(states(&entries), [Downloading, Failed, Downloading]);
+    }
+
+    #[test]
+    fn only_what_is_needed_is_reclaimed_oldest_first() {
+        let now = Instant::now();
+        let mut entries = [
+            pinning(1, Downloading, 2),
+            pinning(2, Downloading, 2),
+            pinning(3, Queued, 2),
+        ];
+        admit_within(&mut entries, 4, now);
+        assert_eq!(states(&entries), [Failed, Downloading, Downloading]);
+    }
+
+    #[test]
+    fn nothing_is_reclaimed_when_it_would_not_make_enough_room() {
+        let now = Instant::now();
+        let mut entries = [
+            pinning(1, Downloading, 2),
+            pinning(2, Ready, 2),
+            pinning(3, Queued, 2),
+        ];
+        entries[1].first_ready = Some(now);
+        admit_within(&mut entries, 2, now);
+        assert_eq!(states(&entries), [Downloading, Ready, Queued]);
+    }
+
+    #[test]
+    fn a_disk_preload_is_never_reclaimed_and_a_newer_preload_is_safe_from_an_older() {
+        let now = Instant::now();
+        let mut disk = pinning(1, Downloading, 2);
+        disk.cached = false;
+        let mut entries = [disk, pinning(2, Queued, 2), pinning(3, Downloading, 2)];
+        admit_within(&mut entries, 2, now);
+        assert_eq!(states(&entries), [Downloading, Queued, Downloading]);
+    }
+
+    #[test]
+    fn the_newest_starts_first_and_older_ones_take_only_free_room() {
+        let now = Instant::now();
+        let mut entries = [pinning(1, Queued, 2), pinning(2, Queued, 2)];
+        admit_within(&mut entries, 2, now);
+        assert_eq!(states(&entries), [Queued, Downloading], "the older waits");
+
+        let mut entries = [pinning(1, Queued, 2), pinning(2, Queued, 2)];
+        admit_within(&mut entries, 4, now);
+        assert_eq!(states(&entries), [Downloading, Downloading]);
     }
 
     #[test]

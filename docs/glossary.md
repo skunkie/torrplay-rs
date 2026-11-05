@@ -202,6 +202,12 @@ of each.
   can be created, inspected, or canceled, and expires or fails; in memory
   storage its ranges are pinned while it is active.
 
+**Reclaim**
+: What a newer preload does to an older one of a memory torrent that leaves it
+  no room in the preloads' share of the readahead budget: the older one fails
+  and releases its pins and piece priorities, while its cached pieces stay
+  until ordinary eviction.
+
 **Prefetch**
 : Any fetching of piece data before a reader requests it. Readahead,
   preloads, and background downloads are the only permitted forms. HEAD

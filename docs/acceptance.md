@@ -195,11 +195,12 @@ These scenarios accept the lifecycle's preloads (M6).
 | PRL-02 | Preload with `offset_bytes`, then stream from that offset | The ranges cover the first and last pieces and a window around the offset; the stream's first bytes need no new piece |
 | PRL-03 | Let a preload expire, and cancel another while it downloads | The expired one reports `expired` with `ended_at` for 5 minutes, then `not-found`; the canceled one is `not-found` at once; both release their pins and priorities |
 | PRL-04 | Preload while a reader of another file streams | The reader's pieces are requested before the preload's; the stream stays byte-correct and the preload still becomes `ready` |
-| PRL-05 | Preload more than the preloads' share of the readahead budget, in memory storage | Later preloads stay `queued` until earlier ones end, in creation order; pinned bytes stay within the share |
+| PRL-05 | Preload more than the preloads' share of the readahead budget, in memory storage, without canceling any | A `ready` preload stays for 15 seconds from when it first became ready; the newest queued one then reclaims it and starts, the reclaimed one reports `failed`, and older queued ones wait; pinned bytes stay within the share |
 | PRL-06 | Fill the cache with active readers' current pieces while preloads are ready | The bounded fallback fails preloads, newest first, after releasing idle readers |
 | PRL-07 | Preload a paused torrent's file, pause a torrent with preloads, and preload a torrent without peers | `409 lifecycle-conflict`; the paused torrent's preloads fail; the preload without peers fails after the piece wait bound |
 | PRL-08 | Create 5 preloads of one file | The fifth is `409 too-many-preloads`; after one ends, another can be created |
 | PRL-09 | Preload a disk torrent's file, change its storage mode, restart, and delete a torrent with preloads | The disk preload pins nothing and never queues; the transition keeps its preload; a restart and the deletion leave the preloads `not-found` |
+| PRL-10 | Preload a memory torrent's file with no peers, then another torrent's file | The first fails at once as reclaimed, and the second becomes `ready` |
 
 ### Viewings
 

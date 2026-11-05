@@ -233,10 +233,11 @@ async fn a_readers_window_comes_before_a_preload() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// PRL-05: preloads of memory torrents queue, in creation order, while the
-/// pins of earlier ones fill the preloads' share of the readahead budget.
+/// PRL-05: a client switching files without canceling reaches the file it
+/// asked for last: a ready preload is safe for its protection, then the
+/// newest queued preload reclaims it, and older queued ones wait behind.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn preloads_queue_for_their_share_of_the_budget() -> anyhow::Result<()> {
+async fn the_newest_preload_reclaims_a_ready_one_after_its_protection() -> anyhow::Result<()> {
     let spec = catalog::large(8 * MIB);
     let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
     // A 4 MiB budget leaves preloads 2 MiB: two pieces each, one at a time.
@@ -246,38 +247,87 @@ async fn preloads_queue_for_their_share_of_the_budget() -> anyhow::Result<()> {
         .add(&id(1), &upload(&spec), DesiredState::Started)
         .await?;
 
-    for n in 1..=3 {
-        let created = engine
-            .create_preload(
-                &id(1),
-                FileIndex(0),
-                preload_id(n),
-                request(Some(u64::from(n) * 8 * MIB)),
-            )
-            .await?;
-        assert_eq!(created.target_bytes, 2 * MIB);
-    }
+    let torrent = id(1);
+    let create = |n: u8| {
+        engine.create_preload(
+            &torrent,
+            FileIndex(0),
+            preload_id(n),
+            request(Some(u64::from(n) * 8 * MIB)),
+        )
+    };
+    assert_eq!(create(1).await?.target_bytes, 2 * MIB);
     reaches(engine, &id(1), 1, PreloadState::Ready).await?;
-    assert_eq!(status(engine, &id(1), 2).await?.state, PreloadState::Queued);
+    create(2).await?;
+    create(3).await?;
     assert_eq!(status(engine, &id(1), 3).await?.state, PreloadState::Queued);
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(
+        status(engine, &id(1), 1).await?.state,
+        PreloadState::Ready,
+        "polling and waiting within its protection leave it alone"
+    );
     assert!(
         pinned_bytes(engine)? <= 2 * MIB,
         "pins stay within the share"
     );
 
-    engine
-        .cancel_preload(&id(1), FileIndex(0), &preload_id(1))
-        .await?;
-    reaches(engine, &id(1), 2, PreloadState::Ready).await?;
+    reaches(engine, &id(1), 3, PreloadState::Ready).await?;
+    let reclaimed = status(engine, &id(1), 1).await?;
+    assert_eq!(reclaimed.state, PreloadState::Failed);
+    assert!(reclaimed.failure.is_some(), "it says why");
     assert_eq!(
-        status(engine, &id(1), 3).await?.state,
+        status(engine, &id(1), 2).await?.state,
         PreloadState::Queued,
-        "the next waits behind the one that left the queue first"
+        "the older one waits behind the newest"
     );
     assert!(pinned_bytes(engine)? <= 2 * MIB);
 
+    engine
+        .cancel_preload(&id(1), FileIndex(0), &preload_id(3))
+        .await?;
+    reaches(engine, &id(1), 2, PreloadState::Ready).await?;
+
     engine.shutdown().await?;
     seeder.stop().await;
+    Ok(())
+}
+
+/// PRL-10: a preload still downloading has no protection: a newer one of
+/// another torrent takes its room at once, so one with no peers cannot hold
+/// up the file a client switched to.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_newer_preload_reclaims_one_still_downloading() -> anyhow::Result<()> {
+    let abandoned = catalog::large(8 * MIB);
+    let wanted = catalog::large(9 * MIB);
+    // Only the second torrent has a seeder.
+    let seeder = Seeder::start(&wanted, &wanted.metainfo().bytes).await?;
+    let started = start(vec![seeder.addr], 8 * MIB, Duration::from_secs(60)).await?;
+    let engine = &started.engine;
+    engine
+        .add(&id(1), &upload(&abandoned), DesiredState::Started)
+        .await?;
+    engine
+        .add(&id(2), &upload(&wanted), DesiredState::Started)
+        .await?;
+
+    engine
+        .create_preload(&id(1), FileIndex(0), preload_id(1), request(None))
+        .await?;
+    assert_eq!(
+        status(engine, &id(1), 1).await?.state,
+        PreloadState::Downloading
+    );
+    let created = engine
+        .create_preload(&id(2), FileIndex(0), preload_id(2), request(None))
+        .await?;
+    assert_eq!(created.state, PreloadState::Downloading);
+    assert_eq!(status(engine, &id(1), 1).await?.state, PreloadState::Failed);
+    let result = reaches(engine, &id(2), 2, PreloadState::Ready).await;
+
+    engine.shutdown().await?;
+    seeder.stop().await;
+    result?;
     Ok(())
 }
 
