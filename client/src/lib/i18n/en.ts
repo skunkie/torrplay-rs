@@ -43,6 +43,7 @@ export const en = {
     back: "Back",
     fileNotFound: "This file is not in the torrent.",
     finished: "Finished",
+    inLibrary: "In the library",
     playNext: "Play",
     playNow: "Play now",
     preloading: "Preloading",

@@ -44,6 +44,7 @@ export const ru: Messages = {
     back: "Назад",
     fileNotFound: "В торренте нет такого файла.",
     finished: "Просмотр завершён",
+    inLibrary: "В библиотеке",
     playNext: "Смотреть",
     playNow: "Смотреть сейчас",
     preloading: "Предзагрузка",

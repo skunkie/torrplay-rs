@@ -40,6 +40,9 @@ SPDX-License-Identifier: MIT
   let progress = $state<Progress | undefined | null>(null);
   let grant = $state<PlaybackGrant | undefined | null>(null);
   let error = $state<string>();
+  let adding = $state(false);
+  let added = $state(false);
+  let libraryError = $state<string>();
   /** Whether the file is viewed, which every save keeps. */
   let viewed = false;
   let saver: ProgressSaver | undefined;
@@ -92,6 +95,21 @@ SPDX-License-Identifier: MIT
         // A failed save is retried by the next one.
         () => {},
       );
+  }
+
+  /** Keeps the temporary torrent playing. Nothing is read again, which would
+   * start its preload and progress over under the video. */
+  async function addToLibrary(): Promise<void> {
+    adding = true;
+    libraryError = undefined;
+    try {
+      await backend.keepTorrent(torrentId, "memory");
+      added = true;
+    } catch (failure) {
+      libraryError = failureMessage(failure);
+    } finally {
+      adding = false;
+    }
   }
 
   $effect(() => {
@@ -182,6 +200,15 @@ SPDX-License-Identifier: MIT
     : undefined}
   onskippreload={() => preload?.skip()}
   {error}
+  library={torrent?.retention !== "temporary"
+    ? undefined
+    : added
+      ? "added"
+      : adding
+        ? "adding"
+        : "offered"}
+  {libraryError}
+  onaddtolibrary={addToLibrary}
   onplayed={(sample) => saver?.played(sample)}
   onflush={(sample, closing) => saver?.flush(sample, closing)}
   tracks={audio?.tracks.map(trackLabel) ?? []}

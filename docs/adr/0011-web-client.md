@@ -214,7 +214,9 @@ the tokens.
   opens its title instead of adding it again. Add to library chooses the
   storage mode, and keeps a torrent that is already there as a temporary one;
   Play uses a temporary torrent, which disappears when it goes unwatched, as
-  retention describes, and the player offers to add it to the library.
+  retention describes, and the player's top bar offers to add it to the library,
+  also when the video ends. That keeps it in memory without disturbing playback;
+  the title page's Download section then moves it to disk.
 - **Preloading.** Before a file plays, the player creates a preload for where
   playback starts and shows its progress in tiles over the title's art, with
   **Play now** to go ahead without waiting. Playback starts when the preload is

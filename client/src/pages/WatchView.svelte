@@ -34,6 +34,12 @@ SPDX-License-Identifier: MIT
     /** The next episode, offered when playback ends. */
     next: { href: string; label: string } | undefined;
     error: string | undefined;
+    /** How far a temporary torrent got to joining the library; `undefined`
+     * for one that was already there. */
+    library: "offered" | "adding" | "added" | undefined;
+    /** Why the torrent could not join the library. */
+    libraryError: string | undefined;
+    onaddtolibrary: () => void;
     /** Playback moved on, as it does several times a second. */
     onplayed: (sample: Sample) => void;
     /** Playback paused or ended, or the page is closing (`closing`). */
@@ -70,6 +76,9 @@ SPDX-License-Identifier: MIT
     onskippreload,
     next,
     error,
+    library,
+    libraryError,
+    onaddtolibrary,
     onplayed,
     onflush,
     tracks,
@@ -165,6 +174,36 @@ SPDX-License-Identifier: MIT
         <p class="truncate text-meta text-hero-muted">{subtitle}</p>
       {/if}
     </div>
+    {#if library === "added"}
+      <p role="status" class="ml-auto flex shrink-0 items-center gap-2 text-sm font-semibold">
+        <svg
+          class="size-5"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.2"
+          aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg
+        >
+        <span class="max-md:sr-only">{t().player.inLibrary}</span>
+      </p>
+    {:else if library && !error}
+      <button
+        type="button"
+        class="ml-auto btn shrink-0 btn-glass max-md:size-11 max-md:px-0"
+        disabled={library === "adding"}
+        onclick={onaddtolibrary}
+      >
+        <svg
+          class="size-5"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.2"
+          aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg
+        >
+        <span class="max-md:sr-only">{t().add.addToLibrary}</span>
+      </button>
+    {/if}
   </div>
 {/snippet}
 
@@ -371,17 +410,6 @@ SPDX-License-Identifier: MIT
             </media-controls>
           {/if}
 
-          {#if subtitlesFailed || trackFailed}
-            <div class="absolute inset-x-0 top-20 flex flex-col items-center gap-2 px-4 md:top-24">
-              {#if subtitlesFailed}
-                <p role="status" class="alert bg-surface">{t().subtitles.failed}</p>
-              {/if}
-              {#if trackFailed}
-                <p role="status" class="alert bg-surface">{t().audio.failed}</p>
-              {/if}
-            </div>
-          {/if}
-
           {#if ended}
             <div class="absolute inset-0 flex flex-col bg-scrim/70">
               {@render topBar()}
@@ -423,6 +451,21 @@ SPDX-License-Identifier: MIT
                   <a href={backHref} class="btn btn-hero">{t().player.back}</a>
                 {/if}
               </section>
+            </div>
+          {/if}
+
+          <!-- After the end of an episode's screen, which offers the library too. -->
+          {#if subtitlesFailed || trackFailed || libraryError}
+            <div class="absolute inset-x-0 top-20 flex flex-col items-center gap-2 px-4 md:top-24">
+              {#if subtitlesFailed}
+                <p role="status" class="alert bg-surface">{t().subtitles.failed}</p>
+              {/if}
+              {#if trackFailed}
+                <p role="status" class="alert bg-surface">{t().audio.failed}</p>
+              {/if}
+              {#if libraryError}
+                <p role="alert" class="alert bg-surface">{libraryError}</p>
+              {/if}
             </div>
           {/if}
 
