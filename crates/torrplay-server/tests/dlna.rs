@@ -14,7 +14,9 @@
 #[allow(dead_code)]
 mod common;
 
-use common::{Exchange, TestServer, film, film_index, form_request, json_request, request};
+use common::{
+    Exchange, LogCapture, TestServer, film, film_index, form_request, json_request, request,
+};
 use http::{Method, StatusCode, header};
 use serde_json::{Value, json};
 use torrplay_fixtures::{FileSpec, FixtureSpec, Layout, catalog, hex};
@@ -544,6 +546,30 @@ async fn media_streams_with_dlna_headers() {
         .await;
     assert_eq!(art.status, StatusCode::OK);
     assert_eq!(art.header(header::CONTENT_TYPE), Some("image/png"));
+    server.stop().await;
+}
+
+/// A fault answers the device, so a `500` carrying one is not a warning: a
+/// device asking for the library during every start would raise one each time.
+#[tokio::test]
+async fn faults_are_not_logged_as_warnings() {
+    let logs = LogCapture::start();
+    let server = TestServer::start().await;
+    upload(&server, &catalog::media_names()).await;
+    enable(&server, true).await;
+    assert_eq!(fault_code(&call(&server, "Browse", &[]).await), "402");
+    let text = logs.text();
+    assert!(
+        text.lines()
+            .any(|line| line.contains("content-directory/control") && line.contains("DEBUG")),
+        "the fault's response is logged: {text}"
+    );
+    assert!(
+        !text
+            .lines()
+            .any(|line| line.contains("content-directory/control") && line.contains("WARN")),
+        "{text}"
+    );
     server.stop().await;
 }
 
