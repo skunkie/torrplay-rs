@@ -643,10 +643,11 @@ The fork's `torrplay/patches` branch holds twenty-three commits on upstream
 | `fa0185eb` | Fix | Keep handing incoming connections to their torrents after one fails its handshake check, instead of stalling the others until another connection arrives (milestone 6) |
 | `ea389311` | P11 | Let the embedder start and stop the session's DHT at runtime: stopping ends every torrent's DHT search at once, and a started DHT serves torrents as they start, for the `dht_enabled` setting (milestone 7) |
 | `fa1ba579` | P12 | Keep a piece whose hash is being checked from being acquired again, so no peer is left owning a stale in-flight piece that it later fetches without a reservation; requeue a piece whose check could not run or that a pause interrupted (milestone 7) |
-| `bb76ca3e`, `4fa49c26` | P13 | On a steal, release only the old owner's chunk claims, and only once its requests are cancelled, so neither a shared piece's joiners nor the old owner joining again are handed chunks they already requested (milestone 7) |
+| `bb76ca3e`, `4fa49c26`, `7061835f` | P13 | On a steal, release only the old owner's chunk claims, and only once its requests are cancelled, and send no request whose claim was lost while it waited, so neither a shared piece's joiners nor the old owner joining again are handed chunks they already requested (milestone 7) |
 | `2419e0c5` | P14 | Count downloaded pieces that pass and fail their hash check in the session's counters, for the hash check metric (milestone 7) |
 | `5c3c360d` | Fix | End a torrent's speed estimator without an error when a pause takes its chunk tracker first, so shutdown and pauses log no false errors (milestone 7) |
 | `e6df504e` | Fix | End a dead peer's reconnect wait without an error when the torrent paused or stopped meanwhile, so shutdowns and pauses log no false errors (milestone 7) |
+| `27b6c6ec` | Fix | Log a failure at debug level when its task's token is already cancelled, so a task running through a pause, such as a peer finding the chunk tracker gone, logs no false error (milestone 7) |
 
 Two more patches remain candidates. Setting `TCP_NODELAY` on peer sockets
 cut the time to first byte after a reconnect from about 43 ms to about
