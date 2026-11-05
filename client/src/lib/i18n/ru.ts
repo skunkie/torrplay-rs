@@ -146,6 +146,18 @@ export const ru: Messages = {
     tileDownloaded: "Загружено",
     tileArriving: "Загружается",
     tileReading: "Чтение",
+    tileMissing: "Ещё нет",
+    allPieces: "Все части",
+    hide: "Скрыть",
+    showPieces: (percent: number) => `Загружено ${percent}%, показать все части`,
+    hidePieces: (percent: number) => `Загружено ${percent}%, скрыть все части`,
+    piecesSummary: (downloaded: number, total: number, arriving: number) =>
+      `${downloaded.toLocaleString("ru-RU")}\u00A0из\u00A0${total.toLocaleString("ru-RU")} · загружается: ${arriving.toLocaleString("ru-RU")}`,
+    pieceHover: (piece: number, state: string) =>
+      `Часть ${piece.toLocaleString("ru-RU")}: ${state}`,
+    readerActive: "Активно",
+    readerIdle: "Ожидает",
+    readerPiece: (piece: number) => `часть ${piece.toLocaleString("ru-RU")}`,
     readers: "Чтение",
     readerCounts: (active: number, idle: number) => `активно: ${active}, ожидает: ${idle}`,
     storage: "Хранение",

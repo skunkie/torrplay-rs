@@ -17,6 +17,7 @@ SPDX-License-Identifier: MIT
     type TorrentStatistics,
   } from "../lib/backend";
   import { useBackend } from "../lib/context";
+  import { fileName } from "../lib/describe";
   import { engine, pollFailure } from "../lib/engine.svelte";
   import { playables } from "../lib/episodes";
   import { failureMessage } from "../lib/i18n/index.svelte";
@@ -27,6 +28,8 @@ SPDX-License-Identifier: MIT
   import TitleView from "./TitleView.svelte";
 
   const POLL_MS = 5000;
+  /** How often the measurements refresh while every piece shows. */
+  const PIECES_POLL_MS = 2000;
 
   interface Props {
     torrentId: string;
@@ -47,6 +50,7 @@ SPDX-License-Identifier: MIT
   let actionError = $state<string>();
   let statistics = $state<TorrentStatistics>();
   let busy = $state(false);
+  let piecesOpen = $state(false);
   /** The grant poster URLs carry; `null` until it is known. */
   let grant = $state<PlaybackGrant | undefined | null>(null);
   let etag: string | undefined;
@@ -133,6 +137,13 @@ SPDX-License-Identifier: MIT
   });
 
   $effect(() => {
+    if (!piecesOpen) return;
+    const id = torrentId;
+    const mine = generation;
+    return poll(() => readStatistics(id, mine), PIECES_POLL_MS);
+  });
+
+  $effect(() => {
     grants.current().then(
       (current) => (grant = current),
       () => (grant = undefined),
@@ -149,6 +160,12 @@ SPDX-License-Identifier: MIT
   {actionError}
   {statistics}
   busy={busy || engine.status !== "ready"}
+  {piecesOpen}
+  ontogglepieces={() => (piecesOpen = !piecesOpen)}
+  fileNameOf={(fileId) => {
+    const file = files?.find((held) => held.id === fileId);
+    return file ? fileName(file) : undefined;
+  }}
   onretry={() => {
     etag = undefined;
     void refresh(torrentId, profiles.current?.id, generation);

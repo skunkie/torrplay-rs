@@ -185,9 +185,93 @@ describe("the Download panel", () => {
     });
 
     const found = await screen.findByRole("region", { name: "Download" });
-    const map = await within(found).findByRole("img", { name: "25% downloaded" });
-    expect(map.children).toHaveLength(8);
+    const map = await within(found).findByRole("button", {
+      name: "25% downloaded, show all pieces",
+    });
+    expect(map.firstElementChild?.children).toHaveLength(8);
     expect(within(found).getByText("1 active, 1 idle")).toBeInTheDocument();
+  });
+
+  describe("every piece", () => {
+    const shown = torrent(1);
+    const e1 = file(shown, "S01E01.mkv", { season: 1, number: 1 });
+
+    function withPieces(read = vi.fn(async () => mapped())): Backend {
+      return { ...backend(() => shown, [e1]), getStatistics: read };
+    }
+
+    function mapped() {
+      return statistics(0.25, {
+        pieces: { piece_count: 8, verified: "c0", partial: "20" },
+        readers: [{ file_id: e1.id, offset_bytes: 0, piece_index: 1, state: "active" as const }],
+      });
+    }
+
+    async function toggle(): Promise<HTMLElement> {
+      return screen.findByRole("button", { name: /show all pieces/ });
+    }
+
+    it("expands from the small bitmap, and says what it holds", async () => {
+      navigate(titlePath(shown.id));
+      render(App, { backend: withPieces() });
+      const small = await toggle();
+      expect(small).toHaveAttribute("aria-expanded", "false");
+      expect(screen.queryByRole("region", { name: "All pieces" })).not.toBeInTheDocument();
+
+      await fireEvent.click(small);
+
+      const section = await screen.findByRole("region", { name: "All pieces" });
+      expect(small).toHaveAttribute("aria-expanded", "true");
+      expect(within(section).getByRole("img", { name: "2 of 8 · 1 arriving" })).toBeInTheDocument();
+      const readers = within(section).getByRole("list", { name: "Readers" });
+      expect(readers).toHaveTextContent("S01E01.mkv");
+      expect(readers).toHaveTextContent("Active");
+      expect(readers).toHaveTextContent("piece 1");
+    });
+
+    it("hides again from either control, returning focus to the bitmap", async () => {
+      navigate(titlePath(shown.id));
+      render(App, { backend: withPieces() });
+      const small = await toggle();
+
+      await fireEvent.click(small);
+      await fireEvent.click(await screen.findByRole("button", { name: "Hide" }));
+      expect(screen.queryByRole("region", { name: "All pieces" })).not.toBeInTheDocument();
+      expect(small).toHaveFocus();
+
+      await fireEvent.click(small);
+      await screen.findByRole("region", { name: "All pieces" });
+      await fireEvent.click(small);
+      expect(screen.queryByRole("region", { name: "All pieces" })).not.toBeInTheDocument();
+    });
+
+    it("refreshes faster while open, and stops when hidden", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const read = vi.fn(async () => mapped());
+      navigate(titlePath(shown.id));
+      render(App, { backend: withPieces(read) });
+      const small = await toggle();
+
+      await fireEvent.click(small);
+      await vi.advanceTimersByTimeAsync(100);
+      read.mockClear();
+      await vi.advanceTimersByTimeAsync(4100);
+      expect(read.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+      await fireEvent.click(small);
+      await vi.advanceTimersByTimeAsync(100);
+      read.mockClear();
+      await vi.advanceTimersByTimeAsync(4100);
+      expect(read.mock.calls.length).toBeLessThanOrEqual(1);
+    });
+
+    it("has nothing to open while the pieces are not known", async () => {
+      navigate(titlePath(shown.id));
+      render(App, { backend: backend(() => shown, [e1]) });
+
+      await screen.findByRole("region", { name: "Download" });
+      expect(screen.queryByRole("button", { name: /all pieces/ })).not.toBeInTheDocument();
+    });
   });
 
   it("leaves readers out while there are none", async () => {

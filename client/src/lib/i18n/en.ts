@@ -144,6 +144,18 @@ export const en = {
     tileDownloaded: "Downloaded",
     tileArriving: "Arriving",
     tileReading: "Reading",
+    tileMissing: "Not yet",
+    allPieces: "All pieces",
+    hide: "Hide",
+    showPieces: (percent: number) => `${percent}% downloaded, show all pieces`,
+    hidePieces: (percent: number) => `${percent}% downloaded, hide all pieces`,
+    piecesSummary: (downloaded: number, total: number, arriving: number) =>
+      `${downloaded.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} · ${arriving.toLocaleString("en-US")} arriving`,
+    pieceHover: (piece: number, state: string) =>
+      `Piece ${piece.toLocaleString("en-US")}: ${state}`,
+    readerActive: "Active",
+    readerIdle: "Idle",
+    readerPiece: (piece: number) => `piece ${piece.toLocaleString("en-US")}`,
     readers: "Readers",
     readerCounts: (active: number, idle: number) => `${active} active, ${idle} idle`,
     storage: "Storage",
