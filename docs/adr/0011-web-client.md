@@ -111,7 +111,10 @@ seek index. The plan keeps them.
   a television, every action works from the keyboard with visible focus,
   and arrow keys move between items in grids and rows, as a remote does.
 - **Honest state.** While the engine starts, restores, or stops, a banner
-  says so and actions that need it wait, rather than failing one by one.
+  says so and actions that need it wait, disabled, rather than failing one by
+  one. Readiness does not tell starting from stopping, so the banner names both.
+  It also says when the application cannot be reached, and stays out of the
+  player, whose own errors report a stream that fails.
 
 ### Pages
 

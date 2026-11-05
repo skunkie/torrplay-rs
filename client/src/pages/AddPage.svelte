@@ -17,6 +17,7 @@ SPDX-License-Identifier: MIT
     type TorrentSource,
   } from "../lib/backend";
   import { useBackend } from "../lib/context";
+  import { engine } from "../lib/engine.svelte";
   import { firstVideo } from "../lib/episodes";
   import { failureMessage, t } from "../lib/i18n/index.svelte";
   import { type Magnet, parseMagnet } from "../lib/magnet";
@@ -270,7 +271,7 @@ SPDX-License-Identifier: MIT
   {preview}
   {existing}
   {storage}
-  {busy}
+  busy={busy || engine.status !== "ready"}
   {waiting}
   {readError}
   {error}

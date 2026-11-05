@@ -68,6 +68,8 @@ export interface PlaybackGrant {
 /** What the client's pages read and change, which the API serves and the
  * demo imitates. */
 export interface Backend {
+  /** Whether the application can serve what needs its engine. */
+  getReadiness(): Promise<boolean>;
   /** A page of the library's persisted torrents. */
   listTorrents(query: TorrentQuery, page: PageRequest): Promise<Conditional<TorrentPage>>;
   /** A torrent, or `unchanged` when `etag` is still its ETag. */
@@ -171,6 +173,13 @@ function metainfoForm(file: File): FormData {
 /** The backend over the API. */
 export function httpBackend(http: Http): Backend {
   return {
+    async getReadiness() {
+      const { response } = await http.GET("/readyz");
+      // Anything else, such as a proxy's 502, is not this application's answer.
+      if (!response.ok && response.status !== 503) throw new ApiError(response.status, undefined);
+      return response.ok;
+    },
+
     async listTorrents(query, page) {
       return conditional(
         await http.GET("/api/v1/torrents", {

@@ -44,3 +44,18 @@ it("reports a poster the server refuses", async () => {
 
   await expect(backend.setPoster("trr_a", image)).rejects.toBeInstanceOf(ApiError);
 });
+
+it.each([
+  [200, true],
+  [503, false],
+])("reads readiness from a %i", async (status, ready) => {
+  const { backend } = answering(() => new Response("{}", { status }));
+
+  await expect(backend.getReadiness()).resolves.toBe(ready);
+});
+
+it("does not take a proxy's 502 for the application's own answer", async () => {
+  const { backend } = answering(() => new Response(null, { status: 502 }));
+
+  await expect(backend.getReadiness()).rejects.toBeInstanceOf(ApiError);
+});
