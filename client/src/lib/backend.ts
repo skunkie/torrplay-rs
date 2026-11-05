@@ -17,6 +17,11 @@ export type TorrentKind = Schemas["TorrentKind"];
 export type TorrentFile = Schemas["TorrentFile"];
 export type TorrentPreview = Schemas["TorrentPreview"];
 export type PreviewFile = Schemas["PreviewFile"];
+/** What a torrent holds, known from its torrent file or its metadata. */
+export type TorrentContents = Pick<
+  TorrentPreview,
+  "name" | "size_bytes" | "file_count" | "files" | "files_truncated"
+>;
 export type StorageMode = Schemas["CreationStorageMode"];
 export type TorrentStatistics = Schemas["TorrentStatistics"];
 export type TorrentConfiguration = Schemas["TorrentConfiguration"];

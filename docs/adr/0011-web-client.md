@@ -202,9 +202,12 @@ the tokens.
   page. From 768 pixels wide, the empty add page is one drop target; narrower,
   it offers a field for the magnet URI and a button for the file. A valid
   magnet URI is taken as soon as it is pasted. Once read, the page looks like
-  a title page: a hero with the actions, and a torrent file's files as rows. A
-  magnet URI has no rows, since its files come from peers: its Play waits for
-  them and opens the first video. If the library has the torrent, the hero
+  a title page: a hero with the actions, and the torrent's files as rows. A
+  magnet URI starts as a temporary torrent at once, since its files come only
+  from peers, and its rows appear when they arrive; Play meanwhile waits for them
+  and opens the first video, and Add to library keeps that torrent. Going back
+  or leaving without either deletes it, unless it was there already. If the
+  library has the torrent, the hero
   opens its title instead of adding it again. Add to library chooses the
   storage mode, and keeps a torrent that is already there as a temporary one;
   Play uses a temporary torrent, which disappears when it goes unwatched, as

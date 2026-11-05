@@ -125,9 +125,9 @@ export const en = {
     memory: "In memory",
     disk: "On disk",
     temporaryHint: "Playing keeps nothing: the torrent goes away once it is no longer watched.",
-    peersTitle: "Peers send the file list once the torrent starts",
+    peersTitle: "Waiting for peers to send the file list",
     peersHint:
-      "Play opens the first video as soon as it is known. Add to library opens the title, which fills in the same way.",
+      "You need not wait: Play opens the first video as soon as it is known, and Add to library opens the title, which fills in the same way.",
     waitingForFiles: "Waiting for peers to send the file list…",
     playFile: (name: string) => `Play ${name}`,
   },
