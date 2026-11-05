@@ -263,13 +263,22 @@ only until the application restarts.
   the readahead budget, the share of the budget that preloads may pin
   together.
 - A preload is `queued`, `downloading`, `ready`, `expired`, or `failed`. A
-  memory torrent's preload is `queued` while the pins of earlier preloads
-  leave no room for its own in the preloads' share of the budget; preloads
-  leave the queue in the order they were created, and a preload that pins
-  more than the share alone starts once no other preload pins anything. It
-  is then
-  `downloading` until it holds every piece of its ranges, and `ready`
-  from then on. A disk torrent's preload never queues.
+  memory torrent's preload is `queued` while the pins of other preloads
+  leave no room for its own in the preloads' share of the budget, and a
+  preload that pins more than the share alone starts once no other preload
+  pins anything. It is then `downloading` until it holds every piece of its
+  ranges, and `ready` from then on. A disk torrent's preload never queues.
+- The newest queued preload starts first, since a client switching files
+  wants the one it asked for last. To fit, it reclaims older memory
+  preloads: those whose files have a reader, whose own pins hold what they
+  read, then the oldest. A preload is safe for 15 seconds from when it first
+  became `ready`, so a client can start its player, unless its file has a
+  reader; polling does not extend this. A `downloading` preload that was
+  never `ready` has no such protection. If reclaiming all it may would not
+  make room, it reclaims nothing and waits. Older queued preloads wait
+  behind the newest and take only room that is free. Reclaiming releases a
+  preload's pins and piece priorities and fails it with a `failure` that says
+  so; its cached pieces stay until ordinary eviction.
 - A preload's pieces have the piece priority of preloads: below every
   reader's pieces and above background downloads. Preloads do not pause
   for active playback, and a preload is not a reader, so it neither pauses
@@ -288,8 +297,8 @@ only until the application restarts.
   its pieces longer, a client creates another preload.
 - A preload fails, with a `failure` that says why, when its torrent is
   paused or fails, when no data of its ranges arrives within the piece
-  wait bound while it is downloading, or when the piece cache's bounded
-  fallback needs its pins. The fallback ends preloads, newest first, one
+  wait bound while it is downloading, when a newer preload reclaims it, or
+  when the piece cache's bounded fallback needs its pins. The fallback ends preloads, newest first, one
   at a time, after it releases idle readers, refining
   [ADR 5](adr/0005-storage.md)'s order.
 - `DELETE` cancels a preload: it is removed at once, and later requests for

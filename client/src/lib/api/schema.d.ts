@@ -2633,7 +2633,7 @@ export interface components {
             };
         };
         /**
-         * @description Where a preload is in its lifecycle. queued waits for room in the preloads' share of the readahead budget, downloading fetches its pieces, and ready holds them all; expired and failed preloads have ended and released their pins and piece priorities.
+         * @description Where a preload is in its lifecycle. queued waits for room in the preloads' share of the readahead budget, downloading fetches its pieces, and ready holds them all; expired and failed preloads have ended and released their pins and piece priorities. A newer preload may reclaim an older one's room, failing it, as docs/lifecycle.md describes.
          * @example downloading
          * @enum {string}
          */

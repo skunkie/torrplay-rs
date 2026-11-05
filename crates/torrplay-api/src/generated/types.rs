@@ -1538,7 +1538,7 @@ pub struct Preload {
     ///Constraint: minimum=1
     pub target_bytes: i64,
 }
-///Where a preload is in its lifecycle. queued waits for room in the preloads' share of the readahead budget, downloading fetches its pieces, and ready holds them all; expired and failed preloads have ended and released their pins and piece priorities.
+///Where a preload is in its lifecycle. queued waits for room in the preloads' share of the readahead budget, downloading fetches its pieces, and ready holds them all; expired and failed preloads have ended and released their pins and piece priorities. A newer preload may reclaim an older one's room, failing it, as docs/lifecycle.md describes.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum PreloadState {
     #[default]

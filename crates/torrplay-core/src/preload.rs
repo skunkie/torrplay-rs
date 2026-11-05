@@ -28,6 +28,10 @@ pub const EXPIRES_IN_MIN: Duration = Duration::from_secs(10);
 /// The longest expiry a request may set.
 pub const EXPIRES_IN_MAX: Duration = Duration::from_secs(3600);
 
+/// How long a ready preload is safe from a newer one's need for room, from
+/// when it first became ready, so a client has time to start its player.
+pub const READY_PROTECTION: Duration = Duration::from_secs(15);
+
 /// How long an expired or failed preload stays readable.
 pub const ENDED_LIFETIME: Duration = Duration::from_secs(300);
 

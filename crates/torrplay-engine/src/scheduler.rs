@@ -364,6 +364,13 @@ impl TorrentScheduler {
         self.cached.load(Ordering::Acquire)
     }
 
+    /// Whether a reader, idle or not, has file `file` open.
+    pub(crate) fn has_reader_of(&self, file: usize) -> bool {
+        self.state
+            .lock()
+            .is_ok_and(|state| state.readers.values().any(|reader| reader.file == file))
+    }
+
     /// Whether the scheduler closed because its torrent paused, failed, or
     /// is being deleted.
     pub(crate) fn is_closed(&self) -> bool {
