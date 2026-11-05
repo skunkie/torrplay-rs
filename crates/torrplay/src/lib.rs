@@ -1122,10 +1122,15 @@ pub async fn serve(
             .await
             .context("the DLNA media server's task panicked")?;
         let _ = close_listener.send(());
+        // Each step that can wait says so first, so a shutdown that runs out
+        // of time shows where it stopped.
         if !server.is_finished() {
+            tracing::info!("waiting for connections to close");
             server_result(server.await)?;
         }
+        tracing::info!("stopping the engine");
         engine.shutdown().await?;
+        tracing::info!("recording the clean shutdown");
         app.record_clean_shutdown()
             .await
             .context("recording the clean shutdown")?;

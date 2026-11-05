@@ -575,13 +575,16 @@ impl LibrqbitEngine {
         running.playback.release_idle_readers();
         // Disk torrents' data and bitfields reach stable storage before the
         // application records a clean shutdown.
+        tracing::info!("flushing the data of disk torrents");
         let flushed = self.flush_disk_data().await;
         let monitor = take(&running.failure_monitor);
         if let Some(monitor) = monitor {
             monitor.abort();
             let _ = monitor.await;
         }
+        tracing::info!("stopping the BitTorrent session");
         running.session.stop().await;
+        tracing::info!("stopping the engine's tasks");
         let reaper = take(&running.reaper).map(Reaper::shutdown);
         let evictor = take(&running.evictor).map(Evictor::shutdown);
         let preload_timer = take(&running.preload_timer).map(PreloadTimer::shutdown);

@@ -197,3 +197,48 @@ async fn the_next_run_reads_the_last_runs_records() {
     assert_ne!(second_run["run_id"], first_run["run_id"]);
     terminate(second).await;
 }
+
+/// LIF-10: a shutdown that runs out of time shows where it stopped, because
+/// each step that can wait is logged before it begins.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_logs_each_step_in_order() {
+    let data = tempfile::TempDir::new().expect("a data directory");
+    let (first, base) = start(data.path(), &["--log-format", "text"]).await;
+    // The engine's steps run once it has started.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !reqwest::get(format!("{base}/readyz"))
+        .await
+        .is_ok_and(|response| response.status().is_success())
+    {
+        assert!(Instant::now() < deadline, "torrplay did not become ready");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    terminate(first).await;
+
+    let (second, base) = start(data.path(), &["--log-format", "text"]).await;
+    let mut last = 0;
+    for step in [
+        "stopping the engine",
+        "flushing the data of disk torrents",
+        "stopping the BitTorrent session",
+        "stopping the engine's tasks",
+        "recording the clean shutdown",
+    ] {
+        let url = reqwest::Url::parse_with_params(
+            &format!("{base}/api/v1/log-records"),
+            [("contains", step)],
+        )
+        .unwrap();
+        let page = json(url.as_str()).await;
+        let records = page["items"].as_array().expect("records");
+        let sequence = records
+            .iter()
+            .find(|record| record["message"] == step)
+            .and_then(|record| record["sequence"].as_u64())
+            .unwrap_or_else(|| panic!("{step} is logged: {page}"));
+        assert!(sequence > last, "{step} follows the step before it: {page}");
+        last = sequence;
+    }
+    terminate(second).await;
+}
