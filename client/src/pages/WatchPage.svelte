@@ -4,6 +4,8 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import { untrack } from "svelte";
+
   import type { PlaybackGrant, Progress, Torrent, TorrentFile } from "../lib/backend";
   import { useBackend } from "../lib/context";
   import { fileName, torrentTitle } from "../lib/describe";
@@ -14,6 +16,7 @@ SPDX-License-Identifier: MIT
   import { trackLabel } from "../lib/player/audio";
   import { AudioTracks } from "../lib/player/audio-tracks.svelte";
   import { subtitleHost } from "../lib/player/media";
+  import { PlaybackPreload, resumeOffset } from "../lib/player/preload.svelte";
   import { ProgressSaver, type Sample, startPosition } from "../lib/player/progress";
   import { subtitleFiles } from "../lib/player/subtitle-files";
   import { subtitleLabel, Subtitles } from "../lib/player/subtitles.svelte";
@@ -41,6 +44,7 @@ SPDX-License-Identifier: MIT
   let viewed = false;
   let saver: ProgressSaver | undefined;
 
+  let preload = $state<PlaybackPreload>();
   let media = $state<HTMLMediaElement>();
   let audio = $state<AudioTracks>();
   let subtitles = $state<Subtitles>();
@@ -101,8 +105,17 @@ SPDX-License-Identifier: MIT
     saver = new ProgressSaver(save, startAt);
   });
 
+  $effect(() => {
+    if (!file || progress === null) return;
+    const offset = resumeOffset(startAt, progress?.duration_seconds ?? 0, file.size_bytes);
+    // Reading its progress must not start another one.
+    const started = untrack(() => new PlaybackPreload(backend, torrentId, fileId, offset));
+    preload = started;
+    return () => started.destroy();
+  });
+
   const url = $derived(
-    file && grant !== null && progress !== null ? withGrant(file.links.content, grant) : undefined,
+    file && grant !== null && preload?.settled ? withGrant(file.links.content, grant) : undefined,
   );
 
   $effect(() => {
@@ -159,6 +172,15 @@ SPDX-License-Identifier: MIT
   {startAt}
   backHref={titlePath(torrentId)}
   {next}
+  poster={torrent?.poster && grant !== null ? withGrant(torrent.links.poster, grant) : undefined}
+  preloading={preload && !preload.settled
+    ? {
+        completedBytes: preload.current?.completed_bytes ?? 0,
+        targetBytes: preload.current?.target_bytes ?? 0,
+        queued: preload.current?.state === "queued",
+      }
+    : undefined}
+  onskippreload={() => preload?.skip()}
   {error}
   onplayed={(sample) => saver?.played(sample)}
   onflush={(sample, closing) => saver?.flush(sample, closing)}

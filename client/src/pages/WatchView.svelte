@@ -9,7 +9,9 @@ SPDX-License-Identifier: MIT
   import "@videojs/html/video/ui";
   import "../lib/player/labels";
 
+  import Hero from "../components/Hero.svelte";
   import TrackMenu from "../components/TrackMenu.svelte";
+  import { formatBytes } from "../lib/format";
   import { t } from "../lib/i18n/index.svelte";
   import { sampleOf, seekWhenReady } from "../lib/player/media";
   import type { Sample } from "../lib/player/progress";
@@ -23,6 +25,12 @@ SPDX-License-Identifier: MIT
     /** The position to start from, in seconds. */
     startAt: number;
     backHref: string;
+    /** The title's poster, shown while a preload runs. */
+    poster: string | undefined;
+    /** The preload playback waits for, if any, with `targetBytes` 0 until
+     * it is created. */
+    preloading: { completedBytes: number; targetBytes: number; queued: boolean } | undefined;
+    onskippreload: () => void;
     /** The next episode, offered when playback ends. */
     next: { href: string; label: string } | undefined;
     error: string | undefined;
@@ -57,6 +65,9 @@ SPDX-License-Identifier: MIT
     subtitle,
     startAt,
     backHref,
+    poster,
+    preloading,
+    onskippreload,
     next,
     error,
     onplayed,
@@ -72,6 +83,16 @@ SPDX-License-Identifier: MIT
     onmedia,
     onplaynext,
   }: Props = $props();
+
+  /** How many tiles show a preload's progress. */
+  const PRELOAD_TILES = 24;
+
+  const preloadRatio = $derived(
+    preloading && preloading.targetBytes > 0
+      ? preloading.completedBytes / preloading.targetBytes
+      : 0,
+  );
+  const percent = $derived(Math.floor(preloadRatio * 100));
 
   /** How long the end of an episode waits before playing the next one. */
   const NEXT_SECONDS = 10;
@@ -420,6 +441,73 @@ SPDX-License-Identifier: MIT
         </media-container>
       </video-player>
     </media-i18n>
+  {:else if preloading}
+    <Hero url={poster} {title} labelledby="preloading" class="size-full" gutter="md:px-10 md:py-12">
+      <a
+        href={backHref}
+        aria-label={t().player.back}
+        class="absolute top-4 left-4 btn size-11 btn-glass px-0 md:top-6 md:left-10"
+      >
+        <svg
+          class="size-5"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.2"
+          aria-hidden="true"><path d="M15 6l-6 6 6 6" /></svg
+        >
+      </a>
+      <p class="flex flex-wrap gap-2 mono text-accent-text uppercase">
+        <span>{t().player.preloading}</span>
+        {#if subtitle}
+          <span aria-hidden="true">·</span>
+          <span>{subtitle}</span>
+        {/if}
+      </p>
+      <h1
+        id="preloading"
+        class="line-clamp-2 max-w-3xl text-display-small font-bold tracking-tight md:text-display"
+      >
+        {title}
+      </h1>
+      <div
+        role="progressbar"
+        aria-label={t().player.preloading}
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow={percent}
+        class="mt-1.5 grid max-w-xl grid-cols-24 gap-0.75"
+      >
+        {#each { length: PRELOAD_TILES }, tile (tile)}
+          {@const held = preloadRatio * PRELOAD_TILES}
+          <span
+            class="h-3 rounded-sm {tile < Math.floor(held)
+              ? 'bg-accent'
+              : tile === Math.floor(held)
+                ? 'bg-arriving'
+                : 'bg-hero-text/20'}"
+          ></span>
+        {/each}
+      </div>
+      <p role="status" class="font-mono text-meta font-medium text-hero-muted">
+        {#if preloading.queued}
+          {t().player.preloadQueued}
+        {:else if preloading.targetBytes > 0}
+          {percent}% · {formatBytes(preloading.completedBytes)} / {formatBytes(
+            preloading.targetBytes,
+          )}
+        {:else}
+          {t().common.loading}
+        {/if}
+      </p>
+      <!-- svelte-ignore a11y_autofocus -->
+      <button type="button" autofocus class="mt-1 btn btn-hero self-start" onclick={onskippreload}>
+        <svg class="size-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
+          ><path d="M7 4.5v15l13-7.5z" /></svg
+        >
+        {t().player.playNow}
+      </button>
+    </Hero>
   {:else}
     {@render topBar()}
     <p class="m-auto text-hero-muted" role="status">{t().common.loading}</p>

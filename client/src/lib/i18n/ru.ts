@@ -15,6 +15,7 @@ export const ru: Messages = {
     failed: (status: number) => `Запрос не выполнен, код ответа ${status}.`,
     untitled: "Без названия",
   },
+  units: ["Б", "КиБ", "МиБ", "ГиБ", "ТиБ"],
   nav: {
     main: "Основная навигация",
     home: "Главная",
@@ -45,6 +46,8 @@ export const ru: Messages = {
     finished: "Просмотр завершён",
     playNext: "Смотреть",
     playNow: "Смотреть сейчас",
+    preloading: "Предзагрузка",
+    preloadQueued: "Ждёт другие предзагрузки",
     stay: "Остаться",
     nextIn: (seconds: number) =>
       `Начнётся через ${seconds}\u00A0${plural("ru", seconds, { one: "секунду", few: "секунды", many: "секунд", other: "секунды" })}`,

@@ -13,7 +13,7 @@ import type { AudioTrack } from "../lib/player/audio";
 import type * as Media from "../lib/player/media";
 import { resetProfiles } from "../lib/profile.svelte";
 import { watchPath } from "../lib/routes";
-import { fakeBackend, file, profile, progress, torrent } from "../testing";
+import { fakeBackend, file, preload, profile, progress, torrent } from "../testing";
 
 const probed = vi.hoisted(() => ({ tracks: [] as AudioTrack[] }));
 const decoding = vi.hoisted(() => ({ tracks: [] as number[], works: true }));
@@ -191,6 +191,46 @@ function choose(group: HTMLElement, value: string): Promise<boolean> {
 function menuNamed(label: string): Element | null {
   return document.querySelector(`media-menu-radio-group[aria-label="${label}"]`);
 }
+
+it("preloads the file before playing it, showing how far it got", async () => {
+  const fake = backend(show, [e1, e2]);
+  fake.createPreload = vi.fn(async () => preload("downloading", 8));
+  let current = preload("downloading", 8);
+  fake.getPreload = vi.fn(async () => current);
+  navigate(watchPath(show.id, e1.id));
+  render(App, { backend: fake });
+  const counter = await screen.findByRole("progressbar", {}, { timeout: 10_000 });
+  expect(counter).toHaveAttribute("aria-valuenow", "25");
+  expect(screen.getByRole("heading", { level: 1, name: "Harbor Lights" })).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent(/^25% · 8\sB \/ 32\sB$/);
+  expect(document.querySelector("video")).toBeNull();
+  expect(fake.createPreload).toHaveBeenCalledWith(show.id, e1.id, undefined);
+  current = preload("ready", 32);
+  await video();
+  expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+});
+
+it("preloads where playback resumes", async () => {
+  const fake = backend(show, [{ ...e1, size_bytes: 1000 }, e2], [progress(e1, 0.25)]);
+  navigate(watchPath(show.id, e1.id));
+  render(App, { backend: fake });
+  await video();
+  expect(fake.createPreload).toHaveBeenCalledWith(show.id, e1.id, 250);
+});
+
+it("plays at once when asked not to wait for the preload", async () => {
+  const fake = backend(show, [e1, e2]);
+  fake.createPreload = vi.fn(async () => preload("queued", 0));
+  fake.getPreload = vi.fn(async () => preload("queued", 0));
+  navigate(watchPath(show.id, e1.id));
+  render(App, { backend: fake });
+  expect(
+    await screen.findByText("Waiting for other preloads", {}, { timeout: 10_000 }),
+  ).toBeInTheDocument();
+  await fireEvent.click(screen.getByRole("button", { name: "Play now" }));
+  await video();
+  expect(fake.deletePreload).not.toHaveBeenCalled();
+});
 
 it("offers the next episode at the end", async () => {
   navigate(watchPath(show.id, e1.id));

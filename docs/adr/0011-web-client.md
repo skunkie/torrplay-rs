@@ -198,6 +198,11 @@ the tokens.
   the torrent already. Playing a file before adding uses a temporary
   torrent, which disappears when it goes unwatched, as retention describes;
   the player offers to add it to the library.
+- **Preloading.** Before a file plays, the player creates a preload for where
+  playback starts and shows its progress in tiles over the title's art, with
+  **Play now** to go ahead without waiting. Playback starts when the preload is
+  ready, and also when it expires, fails, or cannot be created, since a player
+  can still read the file without it. Leaving first cancels the preload.
 - **Playing.** The player resumes from the profile's progress, saves
   progress as it plays and when it closes, and at the end of an episode
   offers the next one. Codecs the browser lacks go through the Mediabunny
