@@ -279,11 +279,14 @@ only until the application restarts.
   behind the newest and take only room that is free. Reclaiming releases a
   preload's pins and piece priorities and fails it with a `failure` that says
   so; its cached pieces stay until ordinary eviction.
-- A preload's pieces have the piece priority of preloads: below every
-  reader's pieces and above background downloads. Preloads do not pause
-  for active playback, and a preload is not a reader, so it neither pauses
-  background downloads nor counts in the reader counts. Where a reader's
-  range and a preload's overlap, the higher priority applies.
+- A preload's pieces have the piece priority of preloads: on a torrent
+  without readers, above everything; with readers, below each reader's
+  current piece and level with its next piece, ahead of the rest of its
+  window; and always above background downloads. Several peers may fetch
+  them at once, as they do a reader's current and next pieces. Preloads do
+  not pause for active playback, and a preload is not a reader, so it neither
+  pauses background downloads nor counts in the reader counts. Where a
+  reader's range and a preload's overlap, the higher priority applies.
 - In memory storage, a `downloading` or `ready` preload pins the pieces of
   its ranges; readers share what preload pins leave of the readahead
   budget. In disk storage, a preload pins nothing; its pieces stay in the

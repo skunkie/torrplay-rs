@@ -30,7 +30,10 @@
 //! second: librqbit gives each piece of a tier a peer, then helps them,
 //! before turning to the next tier, so one reader's pieces cannot keep every
 //! peer from another's, and a lone reader's next piece waits for the one it
-//! reads.
+//! reads. A preload's pieces are shared too, since a client waits for them
+//! before playback starts: in the first tier on a torrent without readers,
+//! and otherwise in the second, level with the readers' next pieces, so a
+//! preload cannot hold up a piece a reader needs now.
 //!
 //! Closing the scheduler, when its torrent pauses, fails, or is deleted,
 //! cancels its streams and releases its readers, idle ones included, at
@@ -109,13 +112,18 @@ pub(crate) struct Plan {
 }
 
 /// Appends `preloads`' pieces to `plan`, after every reader's and each
-/// once, and pins those of preloads that pin when the torrent is `cached`.
+/// once, shares them, and pins those of preloads that pin when the torrent is
+/// `cached`.
 pub(crate) fn add_preloads(plan: &mut Plan, preloads: &[ScheduledPreload], cached: bool) {
     let mut planned: HashSet<u32> = plan.priorities.iter().copied().collect();
+    let tier = u8::from(!plan.shared.is_empty());
     for preload in preloads {
         for &piece in &preload.pieces {
             if planned.insert(piece) {
                 plan.priorities.push(piece);
+            }
+            if !plan.shared.iter().any(|&(shared, _)| shared == piece) {
+                plan.shared.push((piece, tier));
             }
             if cached && preload.pinned {
                 plan.pins.insert(piece);
@@ -1127,6 +1135,35 @@ mod tests {
         add_preloads(&mut on_disk, &preloads, false);
         assert_eq!(on_disk.priorities, [3, 15, 16, 17]);
         assert!(on_disk.pins.is_empty(), "disk storage pins nothing");
+    }
+
+    #[test]
+    fn preload_pieces_lead_a_torrent_without_readers() {
+        let mut planned = plan(&layout(), &[], 2 * PIECE, 0, 0);
+        let preloads = [ScheduledPreload {
+            pieces: vec![15, 16],
+            pinned: true,
+        }];
+        add_preloads(&mut planned, &preloads, true);
+        assert_eq!(planned.shared, [(15, 0), (16, 0)]);
+    }
+
+    #[test]
+    fn preload_pieces_are_level_with_a_readers_next_pieces() {
+        let mut planned = plan(&layout(), &[at(0, 350)], 2 * PIECE, 0, 0);
+        let readers = planned.shared.clone();
+        let (current, next) = (readers[0], readers[1]);
+        assert_eq!((current.1, next.1), (0, 1));
+        let preloads = [ScheduledPreload {
+            pieces: vec![current.0, next.0, 15],
+            pinned: true,
+        }];
+        add_preloads(&mut planned, &preloads, true);
+        assert_eq!(
+            planned.shared,
+            [current, next, (15, 1)],
+            "a piece a reader needs keeps its tier, and a preload's joins the second"
+        );
     }
 
     #[test]
