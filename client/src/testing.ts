@@ -19,6 +19,9 @@ export function fakeBackend(members: Partial<Backend> = {}): Backend {
   return {
     listTorrents: vi.fn(),
     getTorrent: vi.fn(),
+    createTorrent: vi.fn(),
+    keepTorrent: vi.fn(async () => {}),
+    previewTorrent: vi.fn(),
     listFiles: vi.fn(async () => []),
     listProgress: vi.fn(async () => []),
     setProgress: vi.fn(),

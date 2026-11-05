@@ -7,6 +7,7 @@
 const routes = {
   home: "/",
   library: "/library",
+  add: "/add",
   title: "/titles/:torrent_id",
   watch: "/watch/:torrent_id/:file_id",
   signIn: "/sign-in",

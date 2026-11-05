@@ -5,7 +5,7 @@
 import { expect, it } from "vitest";
 
 import { file, progress, torrent } from "../testing";
-import { nextEpisode, playables, resumeItem, seasons } from "./episodes";
+import { firstVideo, nextEpisode, playables, resumeItem, seasons } from "./episodes";
 
 const show = torrent(1, { kind: "series" });
 
@@ -82,4 +82,17 @@ it.each([
 
 it("has nothing to resume without files", () => {
   expect(resumeItem([])).toBeUndefined();
+});
+
+it("plays the first episode in series order, or else the first video", () => {
+  const show = torrent(1);
+  const notes = { ...file(show, "notes.txt"), media_type: "text/plain" };
+  const second = file(show, "S01E02.mkv", { season: 1, number: 2 });
+  const first = file(show, "S01E01.mkv", { season: 1, number: 1 });
+  const later = file(show, "S02E01.mkv", { season: 2, number: 1 });
+  const extra = file(show, "Extra.mkv");
+
+  expect(firstVideo([notes, extra, later, second, first])).toBe(first);
+  expect(firstVideo([notes, extra])).toBe(extra);
+  expect(firstVideo([notes])).toBeUndefined();
 });

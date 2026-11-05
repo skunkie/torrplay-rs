@@ -15,6 +15,9 @@ export type Torrent = Schemas["Torrent"];
 export type TorrentPage = Schemas["TorrentPage"];
 export type TorrentKind = Schemas["TorrentKind"];
 export type TorrentFile = Schemas["TorrentFile"];
+export type TorrentPreview = Schemas["TorrentPreview"];
+export type PreviewFile = Schemas["PreviewFile"];
+export type StorageMode = Schemas["CreationStorageMode"];
 export type Progress = Schemas["Progress"];
 type ProgressUpdate = Schemas["ProgressUpdate"];
 export type Preload = Schemas["Preload"];
@@ -29,7 +32,17 @@ export interface TorrentQuery {
   category?: string;
   uncategorized?: boolean;
   genre?: string;
+  /** The torrent with this v1 info hash, in hexadecimal. */
+  infoHash?: string;
 }
+
+/** What a new torrent is created from. */
+export type TorrentSource = { magnetUri: string } | { file: File };
+
+/** How a new torrent is kept: temporarily, or in the library in a storage
+ * mode. */
+export type TorrentKeeping =
+  { retention: "temporary" } | { retention: "persisted"; storageMode: StorageMode };
 
 /** A page of the listing to read, and the ETag of the one held. */
 export interface PageRequest {
@@ -51,6 +64,14 @@ export interface Backend {
   listTorrents(query: TorrentQuery, page: PageRequest): Promise<Conditional<TorrentPage>>;
   /** A torrent, or `unchanged` when `etag` is still its ETag. */
   getTorrent(torrentId: string, etag?: string): Promise<Conditional<Torrent>>;
+  /** Creates a torrent. A torrent the application has already is an
+   * `ApiError`, which {@link duplicateOf} reads. */
+  createTorrent(source: TorrentSource, keeping: TorrentKeeping): Promise<Torrent>;
+  /** Moves a temporary torrent into the library in a storage mode. A torrent
+   * already there is left as it is. */
+  keepTorrent(torrentId: string, storageMode: StorageMode): Promise<void>;
+  /** What adding a torrent file would create, without adding it. */
+  previewTorrent(file: File): Promise<TorrentPreview>;
   /** Every file of a torrent whose metadata is known, in metadata order. */
   listFiles(torrentId: string): Promise<TorrentFile[]>;
   /** A profile's progress of a torrent's files, for files with progress. */
@@ -97,6 +118,21 @@ export function cursorOf(next: string | undefined): string | undefined {
     : undefined;
 }
 
+/** The ID of the torrent a creation found it already has, or `undefined`
+ * for any other failure. */
+export function duplicateOf(failure: unknown): string | undefined {
+  if (!(failure instanceof ApiError) || failure.type !== "duplicate-torrent") return undefined;
+  const link = (failure.problem as Schemas["CreationConflictProblem"] | undefined)?.torrent;
+  return link?.split("/").pop();
+}
+
+/** A multipart form holding a torrent file, as the API reads one. */
+function metainfoForm(file: File): FormData {
+  const form = new FormData();
+  form.set("metainfo", file);
+  return form;
+}
+
 /** The backend over the API. */
 export function httpBackend(http: Http): Backend {
   return {
@@ -111,11 +147,66 @@ export function httpBackend(http: Http): Backend {
               ...(query.category ? { category: [query.category] } : {}),
               ...(query.uncategorized ? { uncategorized: true } : {}),
               ...(query.genre ? { genre: [query.genre] } : {}),
+              ...(query.infoHash ? { info_hash: [query.infoHash] } : {}),
               ...(page.cursor ? { cursor: page.cursor } : {}),
               ...(page.pageSize ? { page_size: page.pageSize } : {}),
             },
             ...(page.etag ? { header: { "If-None-Match": page.etag } } : {}),
           },
+        }),
+      );
+    },
+
+    async createTorrent(source, keeping) {
+      const options = {
+        retention: keeping.retention,
+        ...(keeping.retention === "persisted" ? { storage_mode: keeping.storageMode } : {}),
+      };
+      if ("magnetUri" in source) {
+        return unwrap(
+          await http.POST("/api/v1/torrents", {
+            body: { magnet_uri: source.magnetUri, ...options },
+          }),
+        );
+      }
+      const form = metainfoForm(source.file);
+      for (const [name, value] of Object.entries(options)) form.set(name, value);
+      return unwrap(
+        await http.POST("/api/v1/torrents", {
+          // The form is the body; the contract types its parts, not FormData.
+          body: {} as never,
+          bodySerializer: () => form,
+        }),
+      );
+    },
+
+    async keepTorrent(torrentId, storageMode) {
+      const path = { torrent_id: torrentId };
+      const read = await http.GET("/api/v1/torrents/{torrent_id}/configuration", {
+        params: { path },
+      });
+      const configuration = unwrap(read);
+      const etag = read.response.headers.get("ETag");
+      if (configuration.retention !== "temporary") return;
+      if (!etag) throw new ApiError(read.response.status, undefined);
+      unwrap(
+        await http.PATCH("/api/v1/torrents/{torrent_id}/configuration", {
+          params: { path, header: { "If-Match": etag } },
+          headers: { "Content-Type": "application/merge-patch+json" },
+          body: {
+            retention: "persisted",
+            // A temporary torrent is in memory, so only disk is a change.
+            ...(storageMode === "disk" ? { storage_mode: storageMode } : {}),
+          },
+        }),
+      );
+    },
+
+    async previewTorrent(file) {
+      return unwrap(
+        await http.POST("/api/v1/torrent-previews", {
+          body: {} as never,
+          bodySerializer: () => metainfoForm(file),
         }),
       );
     },
