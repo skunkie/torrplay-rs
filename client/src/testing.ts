@@ -4,7 +4,15 @@
 
 import { vi } from "vitest";
 
-import type { Backend, Profile, Progress, Torrent, TorrentFile, UpNextEntry } from "./lib/backend";
+import type {
+  Backend,
+  Preload,
+  Profile,
+  Progress,
+  Torrent,
+  TorrentFile,
+  UpNextEntry,
+} from "./lib/backend";
 
 /** A backend whose operations are mocks, with `members` replacing them. */
 export function fakeBackend(members: Partial<Backend> = {}): Backend {
@@ -14,12 +22,32 @@ export function fakeBackend(members: Partial<Backend> = {}): Backend {
     listFiles: vi.fn(async () => []),
     listProgress: vi.fn(async () => []),
     setProgress: vi.fn(),
+    createPreload: vi.fn(async () => preload("ready", 32)),
+    getPreload: vi.fn(async () => preload("ready", 32)),
+    deletePreload: vi.fn(async () => {}),
     listProfiles: vi.fn(async () => []),
     listUpNext: vi.fn(),
     dismissUpNext: vi.fn(async () => {}),
     signIn: vi.fn(),
     playbackGrant: vi.fn(async () => undefined),
     ...members,
+  };
+}
+
+/** A preload of 32 bytes in `state` with `completed` of them received. */
+export function preload(state: Preload["state"], completed: number): Preload {
+  return {
+    id: "prl_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    state,
+    offset_bytes: null,
+    ranges: [{ start_bytes: 0, length_bytes: 32 }],
+    target_bytes: 32,
+    completed_bytes: completed,
+    created_at: "2026-10-31T00:00:00Z",
+    expires_at: "2026-10-31T00:02:00Z",
+    ended_at: null,
+    failure: null,
+    links: { self: "", file: "", content: "", torrent: "" },
   };
 }
 

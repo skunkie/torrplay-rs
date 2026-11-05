@@ -14,6 +14,7 @@ export const en = {
     failed: (status: number) => `The request failed with status ${status}.`,
     untitled: "Untitled",
   },
+  units: ["B", "KiB", "MiB", "GiB", "TiB"],
   nav: {
     main: "Main",
     home: "Home",
@@ -44,6 +45,8 @@ export const en = {
     finished: "Finished",
     playNext: "Play",
     playNow: "Play now",
+    preloading: "Preloading",
+    preloadQueued: "Waiting for other preloads",
     stay: "Stay here",
     nextIn: (seconds: number) =>
       `Plays in ${seconds}\u00A0${plural("en-US", seconds, { one: "second", other: "seconds" })}`,

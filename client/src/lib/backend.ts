@@ -17,6 +17,7 @@ export type TorrentKind = Schemas["TorrentKind"];
 export type TorrentFile = Schemas["TorrentFile"];
 export type Progress = Schemas["Progress"];
 type ProgressUpdate = Schemas["ProgressUpdate"];
+export type Preload = Schemas["Preload"];
 export type Profile = Schemas["Profile"];
 export type UpNextEntry = Schemas["UpNextEntry"];
 export type UpNextPage = Schemas["UpNextPage"];
@@ -64,6 +65,12 @@ export interface Backend {
     update: ProgressUpdate,
     options?: { keepalive?: boolean },
   ): Promise<Progress>;
+  /** Starts a preload of a file for playback from `offset`, or of its head
+   * and tail without one. */
+  createPreload(torrentId: string, fileId: string, offset: number | undefined): Promise<Preload>;
+  getPreload(torrentId: string, fileId: string, preloadId: string): Promise<Preload>;
+  /** Cancels a preload. */
+  deletePreload(torrentId: string, fileId: string, preloadId: string): Promise<void>;
   /** Every profile, person and device, oldest first. */
   listProfiles(): Promise<Profile[]>;
   /** The first page of what `profileId` can resume or watch next. */
@@ -76,6 +83,9 @@ export interface Backend {
    * password is set and those URLs need none. */
   playbackGrant(): Promise<PlaybackGrant | undefined>;
 }
+
+/** How long a preload the client asks for lasts. */
+const PRELOAD_SECONDS = 120;
 
 /** How long a playback token the client asks for lasts. */
 const GRANT_SECONDS = 24 * 60 * 60;
@@ -195,6 +205,40 @@ export function httpBackend(http: Http): Backend {
           },
         }),
       );
+    },
+
+    async createPreload(torrentId, fileId, offset) {
+      const created = unwrap(
+        await http.POST("/api/v1/torrents/{torrent_id}/files/{file_id}/preloads", {
+          params: { path: { torrent_id: torrentId, file_id: fileId } },
+          body: {
+            expires_in_seconds: PRELOAD_SECONDS,
+            ...(offset === undefined ? {} : { offset_bytes: offset }),
+          },
+        }),
+      );
+      if (!created) throw new ApiError(500, undefined);
+      return created;
+    },
+
+    async getPreload(torrentId, fileId, preloadId) {
+      const read = unwrap(
+        await http.GET("/api/v1/torrents/{torrent_id}/files/{file_id}/preloads/{preload_id}", {
+          params: { path: { torrent_id: torrentId, file_id: fileId, preload_id: preloadId } },
+        }),
+      );
+      if (!read) throw new ApiError(500, undefined);
+      return read;
+    },
+
+    async deletePreload(torrentId, fileId, preloadId) {
+      const result = await http.DELETE(
+        "/api/v1/torrents/{torrent_id}/files/{file_id}/preloads/{preload_id}",
+        { params: { path: { torrent_id: torrentId, file_id: fileId, preload_id: preloadId } } },
+      );
+      if (!result.response.ok) {
+        unwrap(result);
+      }
     },
 
     async dismissUpNext(profileId, entryId) {
