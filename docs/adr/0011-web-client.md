@@ -167,7 +167,7 @@ with what to watch.
   it has the data, so the listing's posters have no tiles until the contract
   reports each torrent's download.
 - **Navigation.** From 768 pixels wide, the header holds the logo, a segmented
-  Home and Library, search, and the menu. Narrower, a bar at the bottom holds
+  Home and Library, Add, search, and the menu. Narrower, a bar at the bottom holds
   Home and Library. The menu, under the profile's initial, switches profile
   and language and signs out. The title page replaces the header with a back
   link and the menu over its hero.
@@ -176,8 +176,8 @@ with what to watch.
   use the window's whole width: their grids add columns as it grows.
 - **Title.** The hero offers the episode to resume, or the one after the last
   viewed. Seasons are tabs that open on that episode's season, and its row is
-  outlined. The rest of the mockup's actions arrive with their pages: Add and
-  the global rate in the header; Edit and the Download panel on the title.
+  outlined. The rest of the mockup's actions arrive with their pages: the
+  global rate in the header; Edit and the Download panel on the title.
 - **Player.** The video fills the window. A top bar with Back and the title,
   centre buttons that move 10 seconds back and forward and play or pause, and a
   full-width bottom bar fade together while playback runs. The bottom bar holds
@@ -195,10 +195,16 @@ the tokens.
 ### Flows
 
 - **Adding.** A magnet URI or torrent file can be pasted or dropped on any
-  page. The add page shows the preview's files and whether the library has
-  the torrent already. Playing a file before adding uses a temporary
-  torrent, which disappears when it goes unwatched, as retention describes;
-  the player offers to add it to the library.
+  page. From 768 pixels wide, the empty add page is one drop target; narrower,
+  it offers a field for the magnet URI and a button for the file. A valid
+  magnet URI is taken as soon as it is pasted. Once read, the page looks like
+  a title page: a hero with the actions, and a torrent file's files as rows. A
+  magnet URI has no rows, since its files come from peers: its Play waits for
+  them and opens the first video. If the library has the torrent, the hero
+  opens its title instead of adding it again. Add to library chooses the
+  storage mode, and keeps a torrent that is already there as a temporary one;
+  Play uses a temporary torrent, which disappears when it goes unwatched, as
+  retention describes, and the player offers to add it to the library.
 - **Preloading.** Before a file plays, the player creates a preload for where
   playback starts and shows its progress in tiles over the title's art, with
   **Play now** to go ahead without waiting. Playback starts when the preload is

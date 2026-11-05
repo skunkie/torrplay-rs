@@ -27,6 +27,23 @@ export function playables(
     .map((file) => ({ file, progress: byFile.get(file.id) }));
 }
 
+/** The file to play first of those a torrent lists: the first episode in
+ * series order, or else the first video. */
+export function firstVideo<File extends Pick<TorrentFile, "media_type" | "episode">>(
+  files: readonly File[],
+): File | undefined {
+  const videos = files.filter((file) => file.media_type.startsWith("video/"));
+  const order = (file: File) => [file.episode?.season ?? 0, file.episode?.number ?? 0] as const;
+  const [first] = videos
+    .filter((file) => file.episode)
+    .sort((a, b) => {
+      const [seasonA, numberA] = order(a);
+      const [seasonB, numberB] = order(b);
+      return seasonA - seasonB || numberA - numberB;
+    });
+  return first ?? videos[0];
+}
+
 /** The episode after `fileId` in a series' order, the order up next
  * follows, or `undefined` after the last one or for a file no episode
  * pattern numbers. */

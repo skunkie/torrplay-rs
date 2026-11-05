@@ -9,6 +9,7 @@ import { match, returnPath } from "./routes";
 const table = {
   home: "/",
   library: "/library",
+  add: "/add",
   title: "/titles/:torrent_id",
   watch: "/watch/:torrent_id/:file_id",
 };
@@ -18,6 +19,7 @@ describe("match", () => {
     ["/", "home", {}],
     ["/library", "library", {}],
     ["/library/", "library", {}],
+    ["/add", "add", {}],
     [
       "/titles/trr_7ndq4m2kzb6hxw3rjpt5yc4ula",
       "title",

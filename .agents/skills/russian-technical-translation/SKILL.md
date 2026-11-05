@@ -130,6 +130,8 @@ English message.
 | Torrent | Торрент | |
 | Torrent file / metainfo | Торрент-файл | `metainfo` stays in code only |
 | Magnet URI | Magnet-ссылка | |
+| Add (a torrent) / add page | Добавить / страница добавления | |
+| Drop (a file) | Перетащить | The verb for the whole gesture; `Отпустите` only while the file is held over the page |
 | Info hash | Инфо-хеш | Dictionary spelling is `хеш`, not `хэш` |
 | Metadata | Метаданные | |
 | Metadata retrieval | Поиск файлов / получение метаданных | Users see `Поиск файлов…` |
