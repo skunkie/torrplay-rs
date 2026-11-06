@@ -26,11 +26,13 @@ SPDX-License-Identifier: MIT
   import { isSettingSection, type SettingSection } from "./lib/settings";
   import { followSystem } from "./lib/theme.svelte";
   import AddPage from "./pages/AddPage.svelte";
+  import BackupPage from "./pages/BackupPage.svelte";
   import EditPage from "./pages/EditPage.svelte";
   import HomePage from "./pages/HomePage.svelte";
   import LibraryPage from "./pages/LibraryPage.svelte";
   import NotFound from "./pages/NotFound.svelte";
   import ProfilesPage from "./pages/ProfilesPage.svelte";
+  import SecurityPage from "./pages/SecurityPage.svelte";
   import SettingsPage from "./pages/SettingsPage.svelte";
   import SignInPage from "./pages/SignInPage.svelte";
   import TitlePage from "./pages/TitlePage.svelte";
@@ -68,6 +70,19 @@ SPDX-License-Identifier: MIT
     // Sooner while something is wrong, so the banner goes as soon as it can.
     const interval = engine.status === "ready" ? ENGINE_POLL_MS : ENGINE_DOWN_POLL_MS;
     return untrack(() => poll(() => checkEngine(backend), interval));
+  });
+
+  /** What the engine was last seen as, to notice it coming back. */
+  let engineWas = engine.status;
+
+  $effect(() => {
+    const status = engine.status;
+    // The server refuses profiles while it restores torrents, as after
+    // restoring a backup, and answers once they are back.
+    if (status === "ready" && engineWas !== "ready" && untrack(() => profiles.failed)) {
+      void loadProfiles(backend);
+    }
+    engineWas = status;
   });
 
   $effect(() => {
@@ -284,6 +299,10 @@ SPDX-License-Identifier: MIT
     <SettingsPage section={undefined} />
   {:else if page?.name === "settingsSection" && page.params.section === "profiles"}
     <ProfilesPage />
+  {:else if page?.name === "settingsSection" && page.params.section === "security"}
+    <SecurityPage />
+  {:else if page?.name === "settingsSection" && page.params.section === "backup"}
+    <BackupPage />
   {:else if page?.name === "settingsSection" && isSettingSection(page.params.section ?? "")}
     <SettingsPage section={page.params.section as SettingSection} />
   {:else if page?.name === "edit"}

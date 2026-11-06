@@ -26,7 +26,7 @@ it("asks again after signing in", async () => {
     .mockResolvedValueOnce({ token: "tpp_a", expiresAt: later });
   const backend = fakeBackend({ playbackGrant });
   expect(await playbackGrants(backend).current()).toBeUndefined();
-  signIn("tpa_secret");
+  signIn({ secret: "tpa_secret", id: "atk_a" });
   expect(await playbackGrants(backend).current()).toEqual({ token: "tpp_a", expiresAt: later });
   expect(playbackGrant).toHaveBeenCalledTimes(2);
 });

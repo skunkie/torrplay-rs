@@ -174,6 +174,11 @@ the application starts, restores, or stops, the banner says
 | Access token | Токен доступа | |
 | Playback token | Токен воспроизведения | |
 | Sign in / sign out | Войти / Выйти | The page is `Вход` |
+| Revoke (a token) | Отозвать | |
+| Token scope | Доступ | `Полный доступ`, `Только воспроизведение`, `Только метрики` |
+| Metrics | Метрики | |
+| Backup | Резервная копия | The file itself may be `архив` |
+| Restore (a backup) | Восстановить | |
 
 ### Animacy of Borrowed Nouns
 

@@ -81,7 +81,7 @@ describe("inside the demo", () => {
 
     expect(session.session.token).toBeUndefined();
 
-    session.signIn("demo");
+    session.signIn({ secret: "demo", id: "atk_demo" });
     expect(session.session.token).toBe("demo");
     session.signOut();
 

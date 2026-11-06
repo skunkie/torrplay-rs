@@ -10,7 +10,7 @@ import { ApiError } from "../lib/api/http";
 import type { Backend } from "../lib/backend";
 import { engine } from "../lib/engine.svelte";
 import { navigate } from "../lib/navigation.svelte";
-import { resetProfiles } from "../lib/profile.svelte";
+import { profiles, resetProfiles } from "../lib/profile.svelte";
 import { titlePath, watchPath } from "../lib/routes";
 import { fakeBackend, file, profile, torrent } from "../testing";
 
@@ -177,4 +177,16 @@ it("stays out of the player", async () => {
     expect(fake.getReadiness).toHaveBeenCalled();
   });
   expect(screen.queryByText(STARTING)).not.toBeInTheDocument();
+});
+
+it("reads the profiles again when the engine returns from refusing them", async () => {
+  const listProfiles = vi
+    .fn<Backend["listProfiles"]>()
+    .mockRejectedValueOnce(unavailable())
+    .mockResolvedValue([profile(1, "Ana")]);
+  render(App, { backend: backend({ listProfiles, getReadiness: vi.fn(async () => true) }) });
+
+  await waitFor(() => expect(listProfiles).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(profiles.current?.name).toBe("Ana"));
+  expect(profiles.failed).toBe(false);
 });

@@ -254,6 +254,99 @@ test.describe("profiles", () => {
   });
 });
 
+test.describe("security", () => {
+  test("sets, changes, and removes the password, and creates tokens that work", async ({
+    page,
+    request,
+  }) => {
+    const FIRST = "an invented first passphrase";
+    const SECOND = "an invented second passphrase";
+    let password = FIRST;
+    try {
+      await page.goto("/settings/security");
+      await page.getByLabel("New password", { exact: true }).fill(FIRST);
+      await page.getByLabel("Repeat the new password").fill(FIRST);
+      await page.getByRole("button", { name: "Set password" }).click();
+
+      // Stays signed in, on this page, with a token it knows for its own.
+      await expect(page.getByText("This device")).toBeVisible();
+      await expect(page).toHaveURL("/settings/security");
+      await page.reload();
+      await expect(page.getByText("This device")).toBeVisible();
+
+      await page.getByRole("button", { name: "New token" }).click();
+      await page.getByLabel("Name", { exact: true }).fill("Scraper");
+      await page.getByLabel("Password", { exact: true }).fill(FIRST);
+      await page.getByLabel("Scope").selectOption("metrics");
+      await page.getByRole("button", { name: "Create" }).click();
+      const secret = await page.getByLabel("The new token").inputValue();
+      const headers = { Authorization: `Bearer ${secret}` };
+      expect((await request.get("/api/v1/statistics", { headers })).ok()).toBe(true);
+      expect((await request.get("/api/v1/settings", { headers })).status()).toBe(403);
+
+      await page.getByRole("button", { name: "Done" }).click();
+      await page.getByRole("button", { name: "Revoke Scraper" }).click();
+      await page.getByRole("dialog").getByRole("button", { name: "Revoke" }).click();
+      await expect(page.getByRole("button", { name: "Revoke Scraper" })).toBeHidden();
+      expect((await request.get("/api/v1/statistics", { headers })).status()).toBe(401);
+
+      await page.getByRole("button", { name: "Change password" }).click();
+      await page.getByLabel("Current password").fill(FIRST);
+      await page.getByLabel("New password", { exact: true }).fill(SECOND);
+      await page.getByLabel("Repeat the new password").fill(SECOND);
+      await page.getByLabel(/Sign out every device/).check();
+      await page.getByRole("main").getByRole("button", { name: "Change password" }).click();
+      password = SECOND;
+      await expect(page.getByLabel("New password", { exact: true })).toBeHidden();
+      await expect(page.getByText("This device")).toBeVisible();
+      await expect(page).toHaveURL("/settings/security");
+
+      await page.getByRole("button", { name: "Remove password" }).click();
+      await page.getByRole("dialog").getByRole("button", { name: "Remove password" }).click();
+      await expect(page.getByText(/anyone on this network/)).toBeVisible();
+      await expect(page).toHaveURL("/settings/security");
+    } finally {
+      // Whatever went wrong, the other tests share this application.
+      const signedIn = await request.post("/api/v1/access-tokens", {
+        data: { password, name: "Cleanup" },
+      });
+      if (signedIn.ok()) {
+        const { secret } = (await signedIn.json()) as { secret: string };
+        await request.delete("/api/v1/password", {
+          headers: { Authorization: `Bearer ${secret}` },
+        });
+      }
+    }
+    expect((await request.get("/api/v1/password")).status()).toBe(404);
+  });
+});
+
+test.describe("backup", () => {
+  test("downloads a backup, and restores it", async ({ page, request }) => {
+    await page.goto("/settings/backup");
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      page.getByRole("button", { name: "Download" }).click(),
+    ]);
+    expect(download.suggestedFilename()).toMatch(/\.zip$/);
+    const archive = await download.path();
+
+    await page.getByLabel("Choose a file").setInputFiles(archive);
+    await page.getByRole("dialog").getByRole("button", { name: "Restore" }).click();
+    await expect(page.getByText(/^Restored\./)).toBeVisible();
+    await expect.poll(async () => (await request.get("/readyz")).status()).toBe(200);
+  });
+
+  test("refuses a file that is not a backup", async ({ page }) => {
+    await page.goto("/settings/backup");
+    await page
+      .getByLabel("Choose a file")
+      .setInputFiles({ name: "notes.zip", mimeType: "application/zip", buffer: PIXEL });
+    await page.getByRole("dialog").getByRole("button", { name: "Restore" }).click();
+    await expect(page.getByRole("alert")).toContainText("not a backup");
+  });
+});
+
 test.describe("the demo", () => {
   test("runs the pages and plays its video without the API", async ({ page }) => {
     const reached: string[] = [];
@@ -355,6 +448,22 @@ test.describe("the demo", () => {
 
     await page.reload();
     await expect(peers).toHaveValue("50");
+  });
+
+  test("revokes a token, and offers a backup that restores", async ({ page }) => {
+    await page.goto("/demo/settings/security");
+    await page.getByRole("button", { name: "Revoke Living room TV" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Revoke" }).click();
+    await expect(page.getByText("Living room TV")).toBeHidden();
+
+    await page.getByRole("link", { name: "Backup" }).click();
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      page.getByRole("button", { name: "Download" }).click(),
+    ]);
+    await page.getByLabel("Choose a file").setInputFiles(await download.path());
+    await page.getByRole("dialog").getByRole("button", { name: "Restore" }).click();
+    await expect(page.getByText(/^Restored\./)).toBeVisible();
   });
 
   test("adds a person with an avatar until the page reloads", async ({ page }) => {

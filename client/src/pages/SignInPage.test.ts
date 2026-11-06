@@ -6,13 +6,24 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { beforeEach, expect, it, vi } from "vitest";
 
 import { ApiError } from "../lib/api/http";
-import type { Backend } from "../lib/backend";
+import type { Backend, CreatedAccessToken } from "../lib/backend";
 import { backendContext } from "../lib/context";
 import { location, navigate } from "../lib/navigation.svelte";
 import { profiles } from "../lib/profile.svelte";
 import { session, signOut } from "../lib/session.svelte";
 import { fakeBackend } from "../testing";
 import SignInPage from "./SignInPage.svelte";
+
+const created: CreatedAccessToken = {
+  id: "atk_new",
+  name: "Web browser",
+  scope: "api",
+  created_at: "2026-10-24T12:00:00Z",
+  expires_at: null,
+  last_used_at: null,
+  secret: "tpa_secret",
+  links: { self: "/api/v1/access-tokens/atk_new" },
+};
 
 function backend(signIn: Backend["signIn"]): Backend {
   return fakeBackend({ signIn });
@@ -29,14 +40,16 @@ beforeEach(() => {
 });
 
 it("keeps the token and returns to the page that asked", async () => {
-  const signIn = vi.fn(async () => "tpa_secret");
+  const signIn = vi.fn(async () => created);
   render(SignInPage, { context: backendContext(backend(signIn)) });
   await submit("correct horse");
   await waitFor(() => expect(location.path).toBe("/library"));
   expect(location.search).toBe("?kind=series");
   expect(signIn).toHaveBeenCalledWith("correct horse", "Web browser");
   expect(session.token).toBe("tpa_secret");
+  expect(session.tokenId).toBe("atk_new");
   expect(localStorage.getItem("torrplay.access-token")).toBe("tpa_secret");
+  expect(localStorage.getItem("torrplay.access-token-id")).toBe("atk_new");
 });
 
 it("says when the password is wrong", async () => {
@@ -57,7 +70,7 @@ it("says when the password is wrong", async () => {
 it("reads the profiles again after signing in, past a read that was refused before", async () => {
   profiles.failed = true;
   render(SignInPage, {
-    context: backendContext(fakeBackend({ signIn: vi.fn(async () => "tpa_secret") })),
+    context: backendContext(fakeBackend({ signIn: vi.fn(async () => created) })),
   });
 
   await fireEvent.input(screen.getByLabelText("Password"), { target: { value: "secret" } });

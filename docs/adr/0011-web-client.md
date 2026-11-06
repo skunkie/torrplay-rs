@@ -124,17 +124,17 @@ seek index. The plan keeps them.
 
 ### Pages
 
-| Path                            | Page     | What it shows                                                                                                                                                                                                                                                                                                            |
-| ------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `/`                             | Home     | Up next for the profile, recently added titles, and a way to add                                                                                                                                                                                                                                                         |
-| `/library`                      | Library  | The library's posters, with search, kind, category, and genre filters from the facets; the filters live in the URL                                                                                                                                                                                                       |
+| Path                            | Page     | What it shows                                                                                                                                                                                                                                                                                                     |
+| ------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/`                             | Home     | Up next for the profile, recently added titles, and a way to add                                                                                                                                                                                                                                                  |
+| `/library`                      | Library  | The library's posters, with search, kind, category, and genre filters from the facets; the filters live in the URL                                                                                                                                                                                                |
 | `/titles/{torrent_id}`          | Title    | Poster, title, year, description, and genres; for a series, its episodes by season with each one's progress, from the episodes the contract reports on files; otherwise its video files. A **Download** section holds the storage mode, preloads, and statistics; **Edit** changes the library members and poster |
-| `/watch/{torrent_id}/{file_id}` | Player   | The player, full window; resume, audio and subtitle tracks, and the next episode at the end                                                                                                                                                                                                                              |
-| `/add`                          | Add      | A magnet URI or torrent file; a torrent file is previewed first. **Play** creates a temporary torrent; **Add to library** a persisted one                                                                                                                                                                                |
-| `/settings/…`                   | Settings | Playback and cache, network and DLNA, profiles, security (password and access tokens), and backup                                                                                                                                                                                                                        |
-| `/system`                       | System   | Version and run, the engine's and cache's statistics, and log records with filters                                                                                                                                                                                                                                       |
-| `/sign-in`                      | Sign-in  | The password, only while one is set                                                                                                                                                                                                                                                                                      |
-| `/demo/…`                       | Demo     | The same pages over the demo backend                                                                                                                                                                                                                                                                                     |
+| `/watch/{torrent_id}/{file_id}` | Player   | The player, full window; resume, audio and subtitle tracks, and the next episode at the end                                                                                                                                                                                                                       |
+| `/add`                          | Add      | A magnet URI or torrent file; a torrent file is previewed first. **Play** creates a temporary torrent; **Add to library** a persisted one                                                                                                                                                                         |
+| `/settings/…`                   | Settings | Playback and cache, network and DLNA, profiles, security (password and access tokens), and backup                                                                                                                                                                                                                 |
+| `/system`                       | System   | Version and run, the engine's and cache's statistics, and log records with filters                                                                                                                                                                                                                                |
+| `/sign-in`                      | Sign-in  | The password, only while one is set                                                                                                                                                                                                                                                                               |
+| `/demo/…`                       | Demo     | The same pages over the demo backend                                                                                                                                                                                                                                                                              |
 
 ### Look
 
@@ -258,6 +258,19 @@ the tokens.
 - **Profiles.** A section of the settings adds, renames, and deletes people, each
   with an avatar, which the menu and the chooser show in place of the initial.
   Avatars are read with the page's playback token, as posters are.
+- **Security.** A section of the settings sets, changes, and removes the
+  password, and creates and revokes access tokens. This device signs itself in
+  with the new password when setting or changing it takes away its token, since
+  it already knows it. It keeps its token's ID beside the secret to mark that
+  token in the list, so one signed in before the ID was kept stays unmarked
+  until the next sign-in.
+- **Backup.** A section of the settings downloads and restores backups. A backup
+  needs the access token, which a link cannot send, and a playback token cannot
+  read one, so the download is held in the browser's memory before it is saved.
+  Backups hold torrent files and images but no media, so this is small for most
+  libraries, though it could exhaust memory on a phone or television near the
+  16 GiB limit. A restore asks first, and the profiles are read again once the
+  engine is back.
 - **Editing.** Edit is a page of its own, because the library members and poster
   are too long a form for a dialog. It sends only what changed, with the ETag it
   read, so a change made elsewhere meanwhile is reported rather than overwritten.
