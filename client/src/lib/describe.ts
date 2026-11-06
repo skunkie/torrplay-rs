@@ -18,7 +18,7 @@ export function torrentTitle(torrent: Torrent): string {
  * {@link nameBelowTitle} shows that one. Clamped text needs the looser line
  * height to keep its letters' lower parts. */
 export function heroTitleClasses(title: string, whole = false): string {
-  const shape = "max-w-6xl font-bold tracking-tight text-balance wrap-break-word";
+  const shape = "font-bold tracking-tight text-balance wrap-break-word";
   if (title.length <= 30) return `${shape} text-display-small md:text-display`;
   if (title.length <= 80) return `${shape} text-display-small md:text-display-medium`;
   const lines = whole ? "line-clamp-16" : "line-clamp-3";
