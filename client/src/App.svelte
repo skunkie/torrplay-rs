@@ -23,12 +23,14 @@ SPDX-License-Identifier: MIT
   import { loadProfiles, profiles, resetProfiles } from "./lib/profile.svelte";
   import { addPath, demo, homePath, libraryPath, match, pagePath, signInPath } from "./lib/routes";
   import { session, signOut } from "./lib/session.svelte";
+  import { isSettingSection, type SettingSection } from "./lib/settings";
   import { followSystem } from "./lib/theme.svelte";
   import AddPage from "./pages/AddPage.svelte";
   import EditPage from "./pages/EditPage.svelte";
   import HomePage from "./pages/HomePage.svelte";
   import LibraryPage from "./pages/LibraryPage.svelte";
   import NotFound from "./pages/NotFound.svelte";
+  import SettingsPage from "./pages/SettingsPage.svelte";
   import SignInPage from "./pages/SignInPage.svelte";
   import TitlePage from "./pages/TitlePage.svelte";
 
@@ -268,6 +270,10 @@ SPDX-License-Identifier: MIT
     <LibraryPage />
   {:else if page?.name === "add"}
     <AddPage />
+  {:else if page?.name === "settings"}
+    <SettingsPage section={undefined} />
+  {:else if page?.name === "settingsSection" && isSettingSection(page.params.section ?? "")}
+    <SettingsPage section={page.params.section as SettingSection} />
   {:else if page?.name === "edit"}
     {#key page.params.torrent_id}
       <EditPage torrentId={page.params.torrent_id ?? ""} />

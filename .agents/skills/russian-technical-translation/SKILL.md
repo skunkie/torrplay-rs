@@ -148,6 +148,7 @@ English message.
 | Piece | Часть | `Кусок` is informal |
 | Piece cache / cache | Кеш | Dictionary spelling, like `хеш`; never `кэш` |
 | Peer / seed | Пир / сид | Standard BitTorrent usage |
+| DHT, DLNA | DHT, DLNA | Stay in Latin letters, as does a command-line option such as `--no-dht` |
 | Background download | Фоновая загрузка | |
 
 ### TorrPlay as a Subject

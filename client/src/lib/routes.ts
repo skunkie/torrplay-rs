@@ -30,6 +30,8 @@ const routes = {
   title: "/titles/:torrent_id",
   edit: "/titles/:torrent_id/edit",
   watch: "/watch/:torrent_id/:file_id",
+  settings: "/settings",
+  settingsSection: "/settings/:section",
   signIn: "/sign-in",
 } as const;
 
@@ -85,6 +87,11 @@ export const homePath = base || "/";
 export const libraryPath = `${base}/library`;
 export const addPath = `${base}/add`;
 export const signInPath = `${base}/sign-in`;
+
+/** The settings, or one of their sections. */
+export function settingsPath(section?: string): string {
+  return `${base}/settings${section ? `/${section}` : ""}`;
+}
 
 /** The title page of a torrent. */
 export function titlePath(torrentId: string): string {

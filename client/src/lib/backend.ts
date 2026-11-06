@@ -32,6 +32,8 @@ export type Preload = Schemas["Preload"];
 export type Profile = Schemas["Profile"];
 export type UpNextEntry = Schemas["UpNextEntry"];
 export type UpNextPage = Schemas["UpNextPage"];
+export type Settings = Schemas["Settings"];
+export type SettingsPatch = Schemas["SettingsPatch"];
 
 /** What the library lists: torrents matching every given filter. */
 export interface TorrentQuery {
@@ -124,6 +126,10 @@ export interface Backend {
   listUpNext(profileId: string, page: PageRequest): Promise<Conditional<UpNextPage>>;
   /** Stops listing an up next entry until its progress changes again. */
   dismissUpNext(profileId: string, entryId: string): Promise<void>;
+  /** The application's settings and the ETag changing them needs. */
+  getSettings(): Promise<{ data: Settings; etag: string }>;
+  /** Changes the settings, if `etag` is still their ETag. */
+  updateSettings(patch: SettingsPatch, etag: string): Promise<void>;
   /** Signs in with the password, returning an access token's secret. */
   signIn(password: string, name: string): Promise<string>;
   /** A playback token for media and poster URLs, or `undefined` while no
@@ -142,6 +148,14 @@ export function cursorOf(next: string | undefined): string | undefined {
   return next
     ? (new URLSearchParams(next.split("?")[1] ?? "").get("cursor") ?? undefined)
     : undefined;
+}
+
+/** What a refused change says is wrong with each of its members. */
+export function errorsOf(failure: ApiError): { pointer?: string; detail: string }[] {
+  return (
+    (failure.problem as { errors?: { pointer?: string; detail: string }[] } | undefined)?.errors ??
+    []
+  );
 }
 
 /** The ID of the torrent a creation found it already has, or `undefined`
@@ -269,6 +283,24 @@ export function httpBackend(http: Http): Backend {
       unwrap(
         await http.PATCH("/api/v1/torrents/{torrent_id}/configuration", {
           params: { path: { torrent_id: torrentId }, header: { "If-Match": etag } },
+          headers: { "Content-Type": "application/merge-patch+json" },
+          body: patch,
+        }),
+      );
+    },
+
+    async getSettings() {
+      const read = await http.GET("/api/v1/settings");
+      const data = unwrap(read);
+      const etag = read.response.headers.get("ETag");
+      if (!etag) throw new ApiError(read.response.status, undefined);
+      return { data, etag };
+    },
+
+    async updateSettings(patch, etag) {
+      unwrap(
+        await http.PATCH("/api/v1/settings", {
+          params: { header: { "If-Match": etag } },
           headers: { "Content-Type": "application/merge-patch+json" },
           body: patch,
         }),

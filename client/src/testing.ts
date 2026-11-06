@@ -9,12 +9,14 @@ import type {
   Preload,
   Profile,
   Progress,
+  Settings,
   Torrent,
   TorrentConfiguration,
   TorrentFile,
   TorrentStatistics,
   UpNextEntry,
 } from "./lib/backend";
+import { settingsFixture } from "./lib/demo/fixtures";
 
 /** A backend whose operations are mocks, with `members` replacing them. */
 export function fakeBackend(members: Partial<Backend> = {}): Backend {
@@ -40,10 +42,17 @@ export function fakeBackend(members: Partial<Backend> = {}): Backend {
     listProfiles: vi.fn(async () => []),
     listUpNext: vi.fn(),
     dismissUpNext: vi.fn(async () => {}),
+    getSettings: vi.fn(async () => ({ data: settings(), etag: '"s"' })),
+    updateSettings: vi.fn(async () => {}),
     signIn: vi.fn(),
     playbackGrant: vi.fn(async () => undefined),
     ...members,
   };
+}
+
+/** The application's default settings, `members` replacing them. */
+export function settings(members: Partial<Settings> = {}): Settings {
+  return { ...settingsFixture(), ...members };
 }
 
 /** A preload of 32 bytes in `state` with `completed` of them received. */

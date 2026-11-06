@@ -39,6 +39,18 @@ export function here(): string {
   return location.path + location.search;
 }
 
+/** What a link within the client asks before it is followed. */
+let guard: ((path: string) => boolean) | undefined;
+
+/** Asks `allow` before a link to a path is followed, as a page with something
+ * unsaved does, until the returned function is called. */
+export function guardNavigation(allow: (path: string) => boolean): () => void {
+  guard = allow;
+  return () => {
+    if (guard === allow) guard = undefined;
+  };
+}
+
 /** Follows the back and forward buttons, and turns clicks on links within
  * the client into navigations. Returns what stops it. */
 export function startNavigation(): () => void {
@@ -67,6 +79,7 @@ export function startNavigation(): () => void {
       return;
     }
     event.preventDefault();
+    if (guard && !guard(link.pathname)) return;
     navigate(link.pathname + link.search + link.hash);
   };
   window.addEventListener("popstate", popped);
