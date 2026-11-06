@@ -17,6 +17,7 @@ SPDX-License-Identifier: MIT
   import { location, replaceQuery } from "../lib/navigation.svelte";
   import { playbackGrants, withGrant } from "../lib/playback";
   import { poll } from "../lib/poll";
+  import { searchTorrents } from "../lib/search";
   import LibraryView from "./LibraryView.svelte";
 
   const PAGE_SIZE = 60;
@@ -28,6 +29,8 @@ SPDX-License-Identifier: MIT
 
   const query = $derived(parseQuery(location.search));
   let pages = $state<TorrentPage[]>([]);
+  /** The search `pages` were read for. */
+  let readSearch = $state("");
   let loading = $state(true);
   let error = $state<string>();
   /** The grant poster URLs carry; `null` until it is known. */
@@ -61,6 +64,7 @@ SPDX-License-Identifier: MIT
       } while (cursor && read.length < count);
       if (mine === generation) {
         pages = read;
+        readSearch = filters.search ?? "";
         etag = tag;
       }
     } catch (failure) {
@@ -124,17 +128,28 @@ SPDX-License-Identifier: MIT
     return () => clearTimeout(searchTimer);
   });
 
-  const torrents = $derived(pages.flatMap((page) => page.items));
+  const typed = $derived(searchText.trim());
+  /** Whether what is held answers the search as typed. Until it does, the server,
+   * which also finds typos, is being asked. */
+  const answered = $derived(typed === readSearch);
+  /** What is held, narrowed at once while the server is asked. Finding nothing
+   * here says nothing yet, since the server may find a typo, so it stays. */
+  const torrents = $derived.by(() => {
+    const held = pages.flatMap((page) => page.items);
+    if (answered || typed === "") return held;
+    const found = searchTorrents(held, typed);
+    return found.length > 0 ? found : held;
+  });
 </script>
 
 <LibraryView
   {torrents}
   facets={pages[0]?.facets}
-  total={pages[0]?.total_count}
+  total={answered ? pages[0]?.total_count : undefined}
   query={{ ...query, search: searchText }}
   {loading}
   {error}
-  hasMore={cursorOf(pages.at(-1)?.links.next) !== undefined}
+  hasMore={answered && cursorOf(pages.at(-1)?.links.next) !== undefined}
   poster={(torrent) =>
     torrent.poster && grant !== null ? withGrant(torrent.links.poster, grant) : undefined}
   onsearch={search}

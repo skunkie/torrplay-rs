@@ -25,7 +25,8 @@
     { "name": "Cosmos.Laundromat.2015.WEB-DL", "title": "Ｃｏｓｍｏｓ Ｌａｕｎｄｒｏｍａｔ" },
     { "name": "Ψάρι", "title": "" },
     { "name": "𝐐𝐮𝐢𝐱𝐨𝐭𝐥.𝐃𝐞𝐦𝐨", "title": "" },
-    { "name": "ᎣᏏᏲ", "title": "" }
+    { "name": "ᎣᏏᏲ", "title": "" },
+    { "name": "Kısa.Film", "title": "" }
   ],
   "cases": [
     { "name": "matches words of dotted release names", "query": "sintel 2010", "want": ["Sintel.2010.1080p.mkv", "Sintel - 2010.mkv", "Sintel2010"] },
@@ -59,6 +60,8 @@
     { "name": "folds styled capitals after decomposing them", "query": "quixotl", "want": ["𝐐𝐮𝐢𝐱𝐨𝐭𝐥.𝐃𝐞𝐦𝐨"] },
     { "name": "matches styled letters with styled letters", "query": "𝐐𝐔𝐈𝐗", "want": ["𝐐𝐮𝐢𝐱𝐨𝐭𝐥.𝐃𝐞𝐦𝐨"] },
     { "name": "ignores the case of Cherokee letters", "query": "ꭳꮟᏺ", "want": ["ᎣᏏᏲ"] },
-    { "name": "ignores the case of mixed-case Cherokee", "query": "Ꭳꮟ", "want": ["ᎣᏏᏲ"] }
+    { "name": "ignores the case of mixed-case Cherokee", "query": "Ꭳꮟ", "want": ["ᎣᏏᏲ"] },
+    { "name": "matches a dotless i", "query": "kısa", "want": ["Kısa.Film"] },
+    { "name": "keeps a dotless i apart from a plain i", "query": "kisa", "want": [] }
   ]
 }

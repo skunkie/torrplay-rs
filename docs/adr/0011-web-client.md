@@ -95,10 +95,11 @@ seek index. The plan keeps them.
   so it leaves the device's alone, and what is changed in it lasts until the page
   reloads. It opens as its first person, without asking, on Home with a short
   introduction a visitor can dismiss and bring back from the menu.
-- Search filters the cached listing at once with a TypeScript port of the
-  server's non-fuzzy matcher, checked against the same language-neutral
-  fixtures as the Rust matcher, and asks the server for fuzzy matches.
-  Responses to earlier queries are ignored.
+- Search narrows the pages the client holds at once with a TypeScript port of
+  the server's non-fuzzy matcher, checked against the same language-neutral
+  fixtures as the Rust matcher, and asks the server for all matches, typos
+  included. Finding nothing in those pages leaves them in place until the server
+  answers. Responses to earlier queries are ignored.
 
 ## User experience
 
