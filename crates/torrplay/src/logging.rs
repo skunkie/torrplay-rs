@@ -70,12 +70,11 @@ pub(crate) struct JsonLayer<W> {
     run_id: String,
     /// Numbers records when no log files do.
     sequence: AtomicU64,
-    /// Held from reading the clock until a line is queued for the files, so
-    /// sequences, times, and the files' lines agree however many threads log
-    /// at once. Queueing never waits. Standard error is written after this
-    /// is released, because a stalled pipe would otherwise stop every thread
-    /// from logging to the files too; its lines can therefore be out of
-    /// sequence order.
+    /// Held from reading the clock until a line is written, so sequences,
+    /// times, and the lines in the files and on standard error agree however
+    /// many threads log at once. A stalled standard error therefore holds up
+    /// every thread that logs, as its own lock would in practice, but a line
+    /// is queued for the files, which never waits, before it is written there.
     order: Mutex<()>,
     /// Reads the time of a record, which tests control.
     clock: fn() -> String,
@@ -191,22 +190,16 @@ where
         event.record(&mut fields);
         let metadata = event.metadata();
         let contents = Contents::bounded(fields);
-        let Some(line) = self.queue_line(level(metadata.level()), metadata.target(), contents)
-        else {
-            return;
-        };
-        if let Some(writer) = &self.writer {
-            // A record that cannot be written is lost; logging must not fail
-            // the code that logs.
-            let _ = writer.make_writer().write_all(line.as_bytes());
-        }
+        self.write_record(level(metadata.level()), metadata.target(), contents);
     }
 }
 
-impl<W> JsonLayer<W> {
-    /// Numbers and times a record, queues its line for the files, and returns
-    /// the line, ended, for standard error.
-    fn queue_line(&self, level: LogLevel, target: &str, contents: Contents) -> Option<String> {
+impl<W> JsonLayer<W>
+where
+    W: for<'writer> MakeWriter<'writer> + 'static,
+{
+    /// Numbers and times a record and writes its line, to the files first.
+    fn write_record(&self, level: LogLevel, target: &str, contents: Contents) {
         let _order = self.order.lock().unwrap_or_else(PoisonError::into_inner);
         let record = LogRecord {
             sequence: self.next_sequence(),
@@ -218,12 +211,21 @@ impl<W> JsonLayer<W> {
             message: contents.message,
             fields: contents.fields,
         };
-        let line = serde_json::to_string(&record).ok()?;
-        let terminated = format!("{line}\n");
+        let Ok(line) = serde_json::to_string(&record) else {
+            return;
+        };
+        let stream = self
+            .writer
+            .as_ref()
+            .map(|writer| (writer, format!("{line}\n")));
         if let Some((_, files)) = &self.files {
             files.write(line);
         }
-        Some(terminated)
+        if let Some((writer, line)) = stream {
+            // A record that cannot be written is lost; logging must not fail
+            // the code that logs.
+            let _ = writer.make_writer().write_all(line.as_bytes());
+        }
     }
 }
 
@@ -365,9 +367,8 @@ mod tests {
         format!("{:020}", READS.fetch_add(1, Ordering::Relaxed))
     }
 
-    /// However many threads log at once, the files hold lines in sequence
-    /// order with times in the same order, and standard error holds each
-    /// record once.
+    /// However many threads log at once, the files and standard error hold
+    /// lines in sequence order, with times in the same order.
     #[test]
     fn records_logged_at_once_stay_in_sequence_order() {
         const THREADS: usize = 8;
@@ -423,9 +424,8 @@ mod tests {
         );
 
         let text = String::from_utf8(lines.0.lock().unwrap().clone()).unwrap();
-        let mut written: Vec<u64> = parsed(&text).iter().map(|record| record.sequence).collect();
-        written.sort_unstable();
-        assert_eq!(written, in_order, "standard error holds each record once");
+        let written: Vec<u64> = parsed(&text).iter().map(|record| record.sequence).collect();
+        assert_eq!(written, in_order, "standard error keeps the order too");
     }
 
     /// A writer that stalls, as a full pipe nobody reads does, until opened.
@@ -462,10 +462,10 @@ mod tests {
         }
     }
 
-    /// Each thread's record reaches the files before it writes to standard
-    /// error, and a thread stalled there holds up no other's.
+    /// A record reaches the files before its thread writes to standard error,
+    /// so a stall there cannot keep it from them.
     #[test]
-    fn a_stalled_standard_error_holds_up_no_records_for_the_files() {
+    fn a_stalled_standard_error_holds_up_no_record_for_the_files() {
         let directory = tempfile::TempDir::new().unwrap();
         let (files, writer) = LogFiles::open(directory.path()).unwrap();
         let writer = Arc::new(writer);
@@ -477,27 +477,25 @@ mod tests {
             Some((files.clone(), Arc::clone(&writer))),
         )));
         let read = std::thread::scope(|scope| {
-            for _ in 0..2 {
-                scope.spawn(|| {
-                    tracing::dispatcher::with_default(&dispatch, || {
-                        tracing::info!("logged while standard error stalls");
-                    });
+            scope.spawn(|| {
+                tracing::dispatcher::with_default(&dispatch, || {
+                    tracing::info!("logged while standard error stalls");
                 });
-            }
+            });
             let deadline = Instant::now() + Duration::from_secs(2);
             let read = loop {
                 assert!(writer.flush(Duration::from_secs(10)));
                 let (records, _) = files.read(None, None, 10, |_| true).unwrap();
-                if records.len() == 2 || Instant::now() >= deadline {
+                if !records.is_empty() || Instant::now() >= deadline {
                     break records.len();
                 }
                 std::thread::sleep(Duration::from_millis(10));
             };
-            // Before asserting, so the threads can end whatever was read.
+            // Before asserting, so the thread can end whatever was read.
             stalled.open();
             read
         });
-        assert_eq!(read, 2, "both records reach the files during the stall");
+        assert_eq!(read, 1, "the record reaches the files during the stall");
     }
 
     #[test]
