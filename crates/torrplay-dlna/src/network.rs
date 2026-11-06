@@ -91,9 +91,10 @@ fn likeliest_ipv4(
 /// This machine's addresses that another device could use, the likeliest first.
 ///
 /// IPv4 comes before IPv6, then interfaces with a hardware address, then the
-/// address that routes to the SSDP group, then the ranges by [`range_rank`].
-/// Global IPv6 addresses are listed only when nothing else is: most of them are
-/// temporary, so a link built on one stops working.
+/// address that routes to the SSDP group, then the ranges a local network
+/// usually uses, with those of container bridges last. Global IPv6 addresses
+/// are listed only when nothing else is: most of them are temporary, so a link
+/// built on one stops working.
 pub fn local_addresses() -> std::io::Result<Vec<IpAddr>> {
     let addresses: Vec<Address> = NetworkInterface::show()
         .map_err(std::io::Error::other)?
