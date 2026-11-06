@@ -237,6 +237,64 @@ jobs:
       - name: Check licenses, advisories, bans, and sources
         run: cargo-deny --locked check
 
+  browser:
+    name: Browser smoke test
+    needs: stage
+    if: needs.stage.outputs.rust == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    env:
+      # Corepack fetches the pnpm release package.json names and checks it
+      # against the SHA-512 written there.
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: client/.node-version
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          build-warnings: warn
+      - name: Enable pnpm
+        run: corepack enable pnpm
+      - name: Install the client's dependencies
+        working-directory: client
+        run: pnpm install --frozen-lockfile
+      - name: Build the client
+        working-directory: client
+        run: pnpm build
+      # A release build embeds the client, as what ships does; a debug build
+      # reads it from the disk.
+      - name: Build the application and the local tracker
+        run: cargo build --release --locked -p torrplay -p torrplay-bench
+      # Chrome and aria2 come from the runner's image and Ubuntu's signed
+      # archive, at no pinned version, since the archive drops superseded
+      # versions and an old browser is the larger risk. This logs both.
+      - name: Install the local seeder
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends aria2
+      - name: Test in the runner's Chrome
+        working-directory: client
+        env:
+          TORRPLAY_BIN_DIR: ${{ github.workspace }}/target/release
+        run: |
+          google-chrome --version
+          aria2c --version | head -n 1
+          pnpm test:browser
+      - name: Keep the traces and logs of a failed run
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-smoke-test
+          path: |
+            client/test-results
+            client/test-logs
+          retention-days: 7
+          if-no-files-found: ignore
+
   native:
     name: Rust build and tests (${{ matrix.os }})
     needs: stage
