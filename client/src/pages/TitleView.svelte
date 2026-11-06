@@ -20,7 +20,7 @@ SPDX-License-Identifier: MIT
   import { type Playable, resumeItem, seasons } from "../lib/episodes";
   import { formatBytes } from "../lib/format";
   import { t } from "../lib/i18n/index.svelte";
-  import { editPath, watchPath } from "../lib/routes";
+  import { editPath, libraryPath, watchPath } from "../lib/routes";
 
   interface Props {
     /** The torrent, or `undefined` before it is read. */
@@ -180,7 +180,7 @@ SPDX-License-Identifier: MIT
       {t().title.notFound}
     </h1>
     <p class="text-hero-muted">
-      {t().title.notFoundHint.before}<a href="/library" class="font-semibold underline"
+      {t().title.notFoundHint.before}<a href={libraryPath} class="font-semibold underline"
         >{t().title.notFoundHint.link}</a
       >{t().title.notFoundHint.after}
     </p>
@@ -289,7 +289,7 @@ SPDX-License-Identifier: MIT
               {#each torrent.genres as genre (genre)}
                 <li>
                   <a
-                    href="/library?{new URLSearchParams({ genre })}"
+                    href="{libraryPath}?{new URLSearchParams({ genre })}"
                     class="flex h-9 items-center rounded-inner bg-tile px-3 text-sm font-semibold"
                     >{genre}</a
                   >

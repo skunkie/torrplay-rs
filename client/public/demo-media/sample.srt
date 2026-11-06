@@ -1,0 +1,7 @@
+1
+00:00:01,000 --> 00:00:06,000
+A subtitle from a file beside the video.
+
+2
+00:00:08,000 --> 00:00:14,000
+This demo plays a generated test pattern.

@@ -3,9 +3,10 @@
 // SPDX-License-Identifier: MIT
 
 import type { Backend, Profile } from "./backend";
+import { demo } from "./routes";
 
 /** Where this device keeps the ID of the profile it watches as. */
-const KEY = "torrplay.profile";
+const KEY = demo ? "torrplay.demo.profile" : "torrplay.profile";
 
 function stored(): string | undefined {
   try {
@@ -44,7 +45,9 @@ export async function loadProfiles(backend: Backend): Promise<void> {
     const people = persons(await backend.listProfiles());
     profiles.people = people;
     profiles.failed = false;
-    const current = pick(people, profiles.current?.id ?? stored());
+    // The demo opens on something to see, not on a question.
+    const current =
+      pick(people, profiles.current?.id ?? stored()) ?? (demo ? people[0] : undefined);
     if (current) {
       // Kept even when it was the only one, so a profile added later
       // does not make this device ask again.

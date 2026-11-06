@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
+import { demo, isDemoPath } from "./routes";
+
 /** The page's location, which the history API changes without reloading:
  * its path, and its query, which pages keep their state in. */
 export const location = $state({
@@ -58,6 +60,10 @@ export function startNavigation(): () => void {
     }
     // The API's own pages, such as its reference, are not the client's.
     if (link.origin !== window.location.origin || link.pathname.startsWith("/api/")) {
+      return;
+    }
+    // Between the demo and the client, the page loads again for its backend.
+    if (isDemoPath(link.pathname) !== demo) {
       return;
     }
     event.preventDefault();

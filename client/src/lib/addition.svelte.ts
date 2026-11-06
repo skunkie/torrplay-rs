@@ -4,6 +4,7 @@
 
 import { type Magnet, parseMagnet } from "./magnet";
 import { navigate } from "./navigation.svelte";
+import { addPath } from "./routes";
 
 /** What is being added: a torrent file, or a magnet URI. */
 export type AdditionSource = { kind: "file"; file: File } | { kind: "magnet"; magnet: Magnet };
@@ -15,7 +16,7 @@ export const addition = $state<{ source: AdditionSource | undefined }>({ source:
 /** Opens the add page with `source`. */
 export function add(source: AdditionSource): void {
   addition.source = source;
-  navigate("/add");
+  navigate(addPath);
 }
 
 export function clearAddition(): void {

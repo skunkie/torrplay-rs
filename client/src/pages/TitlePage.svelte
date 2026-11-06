@@ -25,6 +25,7 @@ SPDX-License-Identifier: MIT
   import { playbackGrants, withGrant } from "../lib/playback";
   import { poll } from "../lib/poll";
   import { profiles } from "../lib/profile.svelte";
+  import { libraryPath } from "../lib/routes";
   import TitleView from "./TitleView.svelte";
 
   const POLL_MS = 5000;
@@ -186,9 +187,9 @@ SPDX-License-Identifier: MIT
     actionError = undefined;
     try {
       await backend.deleteTorrent(torrentId);
-      navigate("/library");
+      navigate(libraryPath);
     } catch (failure) {
-      if (failure instanceof ApiError && failure.type === "not-found") navigate("/library");
+      if (failure instanceof ApiError && failure.type === "not-found") navigate(libraryPath);
       else actionError = failureMessage(failure);
     } finally {
       busy = false;

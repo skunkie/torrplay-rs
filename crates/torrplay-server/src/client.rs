@@ -153,7 +153,7 @@ fn respond(request: &Request, name: &str, file: &ClientFile) -> Result<Response,
 }
 
 /// The media type of the client's file `name`, by its extension, for the
-/// kinds of file a Vite bundle holds.
+/// kinds of file a Vite bundle holds and the demo's media.
 fn content_type(name: &str) -> &'static str {
     let extension = name.rsplit_once('.').map(|(_, extension)| extension);
     match extension.map(str::to_ascii_lowercase).as_deref() {
@@ -168,7 +168,10 @@ fn content_type(name: &str) -> &'static str {
         Some("webp") => "image/webp",
         Some("avif") => "image/avif",
         Some("ico") => "image/x-icon",
+        Some("woff") => "font/woff",
         Some("woff2") => "font/woff2",
+        Some("webm") => "video/webm",
+        Some("srt") => "application/x-subrip",
         Some("wasm") => "application/wasm",
         Some("txt") => "text/plain; charset=utf-8",
         _ => "application/octet-stream",
@@ -208,6 +211,9 @@ mod tests {
             ("assets/index-DAZLTtNL.CSS", "text/css; charset=utf-8"),
             ("assets/decoder.wasm", "application/wasm"),
             ("favicon.svg", "image/svg+xml"),
+            ("assets/font.woff", "font/woff"),
+            ("demo-media/sample.webm", "video/webm"),
+            ("demo-media/sample.srt", "application/x-subrip"),
             ("LICENSE", "application/octet-stream"),
         ] {
             assert_eq!(content_type(name), expected, "{name}");

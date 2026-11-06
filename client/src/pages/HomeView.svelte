@@ -10,7 +10,7 @@ SPDX-License-Identifier: MIT
   import type { Torrent, UpNextEntry } from "../lib/backend";
   import { entryReason, entrySubject, torrentDetails, torrentTitle } from "../lib/describe";
   import { t } from "../lib/i18n/index.svelte";
-  import { titlePath, watchPath } from "../lib/routes";
+  import { libraryPath, titlePath, watchPath } from "../lib/routes";
   import { toneOf } from "../lib/tone";
 
   interface Props {
@@ -157,7 +157,7 @@ SPDX-License-Identifier: MIT
   <section aria-labelledby="recent" class="flex flex-col gap-3">
     <div class="flex items-baseline gap-3">
       <h2 id="recent" class="text-lg font-bold">{t().home.recent}</h2>
-      <a href="/library" class="text-sm font-semibold text-accent-text">{t().home.seeLibrary}</a>
+      <a href={libraryPath} class="text-sm font-semibold text-accent-text">{t().home.seeLibrary}</a>
     </div>
     {#if recent === undefined}
       <p class="text-text-muted" role="status">{t().common.loading}</p>

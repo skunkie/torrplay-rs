@@ -4,9 +4,11 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import { showIntro } from "../lib/demo-intro.svelte";
   import { chooseLocale, i18n, isLocale, locales, profileName, t } from "../lib/i18n/index.svelte";
   import { navigate } from "../lib/navigation.svelte";
   import { chooseProfile, profiles, resetProfiles } from "../lib/profile.svelte";
+  import { demo, homePath, signInPath } from "../lib/routes";
   import { session, signOut } from "../lib/session.svelte";
   import { chooseTheme, isTheme, theme, themes } from "../lib/theme.svelte";
   import { toneOf } from "../lib/tone";
@@ -99,6 +101,21 @@ SPDX-License-Identifier: MIT
       {/each}
     </select>
   </label>
+  {#if demo}
+    <button
+      type="button"
+      class="btn btn-secondary"
+      onclick={() => {
+        document.getElementById("app-menu")?.hidePopover();
+        showIntro();
+        navigate(homePath);
+      }}
+    >
+      {t().demo.about}
+    </button>
+    <!-- Outside the demo, so the page loads again over the real backend. -->
+    <a href="/" class="btn btn-secondary">{t().demo.leave}</a>
+  {/if}
   {#if session.token}
     <button
       type="button"
@@ -107,7 +124,7 @@ SPDX-License-Identifier: MIT
         document.getElementById("app-menu")?.hidePopover();
         signOut();
         resetProfiles();
-        navigate("/sign-in");
+        navigate(signInPath);
       }}
     >
       {t().nav.signOut}
