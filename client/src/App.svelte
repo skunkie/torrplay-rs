@@ -35,6 +35,7 @@ SPDX-License-Identifier: MIT
   import SecurityPage from "./pages/SecurityPage.svelte";
   import SettingsPage from "./pages/SettingsPage.svelte";
   import SignInPage from "./pages/SignInPage.svelte";
+  import StremioPage from "./pages/StremioPage.svelte";
   import SystemPage from "./pages/SystemPage.svelte";
   import TitlePage from "./pages/TitlePage.svelte";
 
@@ -304,6 +305,8 @@ SPDX-License-Identifier: MIT
     <SecurityPage />
   {:else if page?.name === "settingsSection" && page.params.section === "backup"}
     <BackupPage />
+  {:else if page?.name === "settingsSection" && page.params.section === "stremio"}
+    <StremioPage />
   {:else if page?.name === "settingsSection" && page.params.section === "system"}
     <SystemPage />
   {:else if page?.name === "settingsSection" && isSettingSection(page.params.section ?? "")}

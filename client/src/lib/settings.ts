@@ -82,6 +82,7 @@ export type SettingSection = keyof typeof SETTING_SECTIONS;
 export const SETTINGS_PAGES = [
   "playback",
   "network",
+  "stremio",
   "profiles",
   "security",
   "backup",

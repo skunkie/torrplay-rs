@@ -160,6 +160,17 @@ SPDX-License-Identifier: MIT
     )}
   </div>
 
+  {#if system && system.urls.length > 0}
+    <section aria-label={t().system.urls} class="flex flex-col gap-2 rounded-2xl bg-tile p-4">
+      <span class="text-sm font-semibold">{t().system.urls}</span>
+      <ul class="flex flex-col gap-1">
+        {#each system.urls as url (url)}
+          <li class="mono wrap-anywhere text-text-muted">{url}</li>
+        {/each}
+      </ul>
+    </section>
+  {/if}
+
   {#if cache}
     {@const use = t().system.cacheUse(
       formatBytes(cache.usage_bytes),

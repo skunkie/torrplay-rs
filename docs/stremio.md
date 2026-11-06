@@ -29,6 +29,11 @@ The addon is installed from its manifest's URL:
   scope, such as one named `Stremio`. Revoking the token uninstalls the
   addon's access.
 
+The client's settings give this URL under Stremio. With a password set, they
+create a `playback` token named `Stremio` and show the URL once, and list those
+tokens for revoking. They offer the browser's address, unless it is loopback,
+and the `urls` of the system resource.
+
 The host is one Stremio's device reaches the application by; its name must
 be allowed as every request's is.
 
