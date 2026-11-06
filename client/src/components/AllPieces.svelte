@@ -75,7 +75,11 @@ SPDX-License-Identifier: MIT
               class="size-2.5 shrink-0 rounded-[3px] outline-2 -outline-offset-1 outline-focus"
               aria-hidden="true"
             ></span>
-            <span class="min-w-0 grow truncate">{fileName(reader.file_id) ?? reader.file_id}</span>
+            <!-- All of it on a phone, where its end names the episode and no hover can
+                 tell the rest. -->
+            <span class="min-w-0 grow break-all md:truncate"
+              >{fileName(reader.file_id) ?? reader.file_id}</span
+            >
             <span class="shrink-0 text-text-muted">
               {reader.state === "active" ? t().download.readerActive : t().download.readerIdle}
             </span>
