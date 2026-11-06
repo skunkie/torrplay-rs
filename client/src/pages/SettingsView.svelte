@@ -4,8 +4,8 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import SettingsShell from "../components/SettingsShell.svelte";
   import { t } from "../lib/i18n/index.svelte";
-  import { settingsPath } from "../lib/routes";
   import {
     sectionOf,
     SETTING_SECTIONS,
@@ -61,7 +61,6 @@ SPDX-License-Identifier: MIT
     ondiscard,
   }: Props = $props();
 
-  const names = Object.keys(SETTING_SECTIONS) as SettingSection[];
   const current = $derived<SettingSection>(section ?? "playback");
   const groups = $derived(
     Object.entries(SETTING_SECTIONS[current]) as [string, readonly SettingField[]][],
@@ -70,7 +69,7 @@ SPDX-License-Identifier: MIT
   /** A problem or a refusal may be on a section not shown, where saving would
    * seem to do nothing, so the sections that have one are marked. */
   const marked = $derived(
-    new Set(
+    new Set<SettingSection | undefined>(
       [...Object.keys(problems), ...Object.keys(fieldErrors)].map((key) =>
         sectionOf(key as SettingKey),
       ),
@@ -91,23 +90,6 @@ SPDX-License-Identifier: MIT
       : t().settings.required;
   }
 </script>
-
-{#snippet back()}
-  <a
-    href={settingsPath()}
-    aria-label={t().settings.title}
-    class="btn size-11 bg-tile px-0 text-text md:hidden"
-  >
-    <svg
-      class="size-5"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="2.2"
-      aria-hidden="true"><path d="M15 6l-6 6 6 6" /></svg
-    >
-  </a>
-{/snippet}
 
 {#snippet row(field: SettingField)}
   {@const label = t().settings.fields[field.key]}
@@ -182,67 +164,37 @@ SPDX-License-Identifier: MIT
   </div>
 {/snippet}
 
-<div class="flex flex-col gap-6 md:flex-row md:gap-10">
-  <nav
-    aria-label={t().settings.title}
-    class="w-full shrink-0 flex-col gap-0.5 md:flex md:w-58 {section ? 'hidden' : 'flex'}"
-  >
-    <h1 class="mb-3 text-display-small font-bold md:hidden">{t().settings.title}</h1>
-    {#each names as name (name)}
-      <a
-        href={settingsPath(name)}
-        aria-current={name === section ? "page" : undefined}
-        class="flex min-h-11 items-center rounded-xl px-3.5 text-sm font-semibold max-md:min-h-14 max-md:border-t max-md:border-empty max-md:px-0 max-md:text-base {name ===
-        current
-          ? 'md:bg-tile md:font-bold'
-          : 'md:text-text-muted'}"
-      >
-        {t().settings.sections[name]}
-        {#if marked.has(name)}
-          <span class="ml-2 size-2.5 shrink-0 rounded-[3px] bg-arriving" aria-hidden="true"></span>
-          <span class="sr-only">{t().settings.needsFixing}</span>
-        {/if}
-      </a>
-    {/each}
-  </nav>
-
-  <div class="min-w-0 grow flex-col gap-7 pb-24 md:flex md:max-w-215 {section ? 'flex' : 'hidden'}">
-    <div class="flex items-center gap-3">
-      {@render back()}
-      <h1 class="text-display-small font-bold">{t().settings.sections[current]}</h1>
+<SettingsShell {section} {current} {marked}>
+  {#if loadError}
+    <div class="flex flex-col items-start gap-3">
+      <p role="alert" class="text-arriving-text">{loadError}</p>
+      <button type="button" class="btn btn-secondary" onclick={onretry}>
+        {t().common.retry}
+      </button>
     </div>
-
-    {#if loadError}
-      <div class="flex flex-col items-start gap-3">
-        <p role="alert" class="text-arriving-text">{loadError}</p>
-        <button type="button" class="btn btn-secondary" onclick={onretry}>
-          {t().common.retry}
-        </button>
-      </div>
-    {:else if !loaded}
-      <p role="status" class="text-text-muted">{t().common.loading}</p>
-    {:else}
-      <!-- Enter saves, through the Save button that belongs to this form. -->
-      <form
-        id="settings-form"
-        class="flex flex-col gap-7"
-        onsubmit={(event) => {
-          event.preventDefault();
-          if (changes > 0 && !invalid && !busy) onsave();
-        }}
-      >
-        {#each groups as [name, fields] (name)}
-          <section class="flex flex-col">
-            <h2 class="mb-2.5 text-lg font-bold">{groupName(name)}</h2>
-            {#each fields as field (field.key)}
-              {@render row(field)}
-            {/each}
-          </section>
-        {/each}
-      </form>
-    {/if}
-  </div>
-</div>
+  {:else if !loaded}
+    <p role="status" class="text-text-muted">{t().common.loading}</p>
+  {:else}
+    <!-- Enter saves, through the Save button that belongs to this form. -->
+    <form
+      id="settings-form"
+      class="flex flex-col gap-7"
+      onsubmit={(event) => {
+        event.preventDefault();
+        if (changes > 0 && !invalid && !busy) onsave();
+      }}
+    >
+      {#each groups as [name, fields] (name)}
+        <section class="flex flex-col">
+          <h2 class="mb-2.5 text-lg font-bold">{groupName(name)}</h2>
+          {#each fields as field (field.key)}
+            {@render row(field)}
+          {/each}
+        </section>
+      {/each}
+    </form>
+  {/if}
+</SettingsShell>
 
 {#if changes > 0 || saved || saveError || stale}
   <div class="pointer-events-none fixed inset-x-4 bottom-4 z-20 flex justify-center">

@@ -11,7 +11,7 @@ SPDX-License-Identifier: MIT
   import { demo, homePath, settingsPath, signInPath } from "../lib/routes";
   import { session, signOut } from "../lib/session.svelte";
   import { chooseTheme, isTheme, theme, themes } from "../lib/theme.svelte";
-  import { toneOf } from "../lib/tone";
+  import ProfileAvatar from "./ProfileAvatar.svelte";
 
   interface Props {
     /** Whether the button sits on a hero, which is dark in both themes. */
@@ -21,7 +21,6 @@ SPDX-License-Identifier: MIT
   let { overHero = false }: Props = $props();
 
   const name = $derived(profiles.current ? profileName(profiles.current) : undefined);
-  const tone = $derived(name ? toneOf(name) : undefined);
 </script>
 
 <!-- The browser's popover restores focus to the button when it closes. -->
@@ -31,11 +30,9 @@ SPDX-License-Identifier: MIT
   data-hero={overHero || undefined}
   aria-label={name ? `${t().nav.profile}: ${name}` : t().nav.menu}
   class="btn size-11 bg-raised px-0 font-bold"
-  style:background={tone?.background}
-  style:color={tone?.color}
 >
-  {#if name}
-    <span aria-hidden="true">{name.slice(0, 1).toUpperCase()}</span>
+  {#if profiles.current}
+    <ProfileAvatar profile={profiles.current} class="size-full rounded-xl" />
   {:else}
     <svg
       class="size-5"

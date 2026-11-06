@@ -179,6 +179,81 @@ test.describe("settings", () => {
   });
 });
 
+/** A one-pixel PNG, the smallest image the server takes as one. */
+const PIXEL = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAEBgIApD5fRAAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+/** Whether the row of the profile `name` shows a picture that really loaded. */
+function avatarLoaded(page: Page, name: string): Promise<boolean> {
+  return page
+    .locator("li", { hasText: name })
+    .locator("img")
+    .evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0);
+}
+
+test.describe("profiles", () => {
+  test("adds a person with a picture, and deletes them", async ({ page }) => {
+    await page.goto("/settings/profiles");
+    await page.getByLabel("New profile").fill("Cleo");
+    await page.getByRole("button", { name: "Add" }).click();
+    await expect(page.getByRole("main").getByText("Cleo", { exact: true })).toBeVisible();
+
+    await page
+      .getByLabel("Choose a picture for Cleo")
+      .setInputFiles({ name: "cleo.png", mimeType: "image/png", buffer: PIXEL });
+    await expect(page.getByRole("button", { name: "Remove the picture of Cleo" })).toBeVisible();
+    await expect.poll(() => avatarLoaded(page, "Cleo")).toBe(true);
+
+    await page.getByRole("button", { name: "Delete Cleo" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
+    await expect(page.getByRole("main").getByText("Cleo", { exact: true })).toBeHidden();
+  });
+
+  test("shows a picture through a playback token while a password is set", async ({
+    page,
+    request,
+  }) => {
+    const PASSWORD = "an invented test passphrase";
+    const profile = (await (await request.get("/api/v1/profiles")).json()) as {
+      items: { links: { avatar: string }; kind: string; name: string }[];
+    };
+    const person = profile.items.find((item) => item.kind === "person");
+    if (!person) throw new Error("the application has a person");
+    const put = await request.put(person.links.avatar, {
+      headers: { "Content-Type": "image/png" },
+      data: PIXEL,
+    });
+    expect(put.ok()).toBe(true);
+    expect((await request.put("/api/v1/password", { data: { password: PASSWORD } })).ok()).toBe(
+      true,
+    );
+    try {
+      await page.goto("/settings/profiles");
+      await page.getByLabel("Password").fill(PASSWORD);
+      await page.getByRole("button", { name: "Sign in" }).click();
+      await expect(page).toHaveURL("/settings/profiles");
+
+      await expect(page.getByRole("main").getByText(person.name, { exact: true })).toBeVisible();
+      await expect.poll(() => avatarLoaded(page, person.name)).toBe(true);
+      const source = await page
+        .locator("li", { hasText: person.name })
+        .locator("img")
+        .getAttribute("src");
+      expect(source).toContain("token=");
+    } finally {
+      const signedIn = await request.post("/api/v1/access-tokens", {
+        data: { password: PASSWORD, name: "Cleanup", scope: "api" },
+      });
+      const { secret } = (await signedIn.json()) as { secret: string };
+      const headers = { Authorization: `Bearer ${secret}` };
+      await request.delete(person.links.avatar, { headers });
+      expect((await request.delete("/api/v1/password", { headers })).ok()).toBe(true);
+    }
+  });
+});
+
 test.describe("the demo", () => {
   test("runs the pages and plays its video without the API", async ({ page }) => {
     const reached: string[] = [];
@@ -280,6 +355,21 @@ test.describe("the demo", () => {
 
     await page.reload();
     await expect(peers).toHaveValue("50");
+  });
+
+  test("adds a person with a picture until the page reloads", async ({ page }) => {
+    await page.goto("/demo/settings/profiles");
+    await page.getByLabel("New profile").fill("Cleo");
+    await page.getByRole("button", { name: "Add" }).click();
+
+    await page
+      .getByLabel("Choose a picture for Cleo")
+      .setInputFiles({ name: "cleo.png", mimeType: "image/png", buffer: PIXEL });
+    await expect.poll(() => avatarLoaded(page, "Cleo")).toBe(true);
+
+    await page.reload();
+    await expect(page.getByRole("main").getByText("Anna", { exact: true })).toBeVisible();
+    await expect(page.getByRole("main").getByText("Cleo", { exact: true })).toBeHidden();
   });
 
   test("leaves the real profile and session alone", async ({ page }) => {

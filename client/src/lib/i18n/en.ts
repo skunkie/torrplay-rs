@@ -28,7 +28,11 @@ export const en = {
   themes: { system: "System", light: "Light", dark: "Dark" },
   settings: {
     title: "Settings",
-    sections: { playback: "Playback and cache", network: "Network and DLNA" },
+    sections: {
+      playback: "Playback and cache",
+      network: "Network and DLNA",
+      profiles: "Profiles",
+    },
     groups: {
       memory: "Memory and downloads",
       streaming: "Streaming",
@@ -327,6 +331,23 @@ export const en = {
     readFailed: "The profiles could not be read.",
     device: "Devices",
     default: "Default",
+    intro: "Everyone keeps their own progress and up next.",
+    current: "Watching on this device",
+    deviceNote: "Holds the progress of what TVs play over DLNA.",
+    newProfile: "New profile",
+    namePlaceholder: "Name",
+    add: "Add",
+    rename: "Rename",
+    choosePicture: "Choose a picture",
+    removePicture: "Remove picture",
+    nameOf: (name: string) => `New name for ${name}`,
+    pictureOf: (name: string) => `Choose a picture for ${name}`,
+    removePictureOf: (name: string) => `Remove the picture of ${name}`,
+    renameOf: (name: string) => `Rename ${name}`,
+    deleteOf: (name: string) => `Delete ${name}`,
+    pictureTooLarge: "A picture can be at most 1\u00A0MiB.",
+    deleteTitle: (name: string) => `Delete ${name}?`,
+    deleteBody: "Their progress and up next are deleted with them.",
   },
   signIn: {
     title: "Sign in",
@@ -343,6 +364,9 @@ export const en = {
   /** Messages for the problem types the client shows its own text for, by
    * the type's name; any other type shows the server's detail. */
   problems: {
+    "duplicate-profile": "Another profile has this name.",
+    "too-many-profiles": "TorrPlay keeps at most 32 profiles. Delete one first.",
+    "unsupported-media-type": "This file is not an image TorrPlay can use.",
     "invalid-credentials": "The password is not correct.",
     "too-many-attempts": "Too many attempts. Wait a moment and try again.",
     "engine-unavailable": "TorrPlay is starting or stopping. Try again in a moment.",

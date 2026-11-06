@@ -20,7 +20,7 @@ SPDX-License-Identifier: MIT
   import { formatQuery } from "./lib/library-query";
   import { here, location, navigate, startNavigation } from "./lib/navigation.svelte";
   import { poll } from "./lib/poll";
-  import { loadProfiles, profiles, resetProfiles } from "./lib/profile.svelte";
+  import { loadProfiles, profiles, refreshAvatarGrant, resetProfiles } from "./lib/profile.svelte";
   import { addPath, demo, homePath, libraryPath, match, pagePath, signInPath } from "./lib/routes";
   import { session, signOut } from "./lib/session.svelte";
   import { isSettingSection, type SettingSection } from "./lib/settings";
@@ -30,12 +30,15 @@ SPDX-License-Identifier: MIT
   import HomePage from "./pages/HomePage.svelte";
   import LibraryPage from "./pages/LibraryPage.svelte";
   import NotFound from "./pages/NotFound.svelte";
+  import ProfilesPage from "./pages/ProfilesPage.svelte";
   import SettingsPage from "./pages/SettingsPage.svelte";
   import SignInPage from "./pages/SignInPage.svelte";
   import TitlePage from "./pages/TitlePage.svelte";
 
   const ENGINE_POLL_MS = 5000;
   const ENGINE_DOWN_POLL_MS = 2000;
+  /** Grants are renewed an hour before they expire. */
+  const AVATAR_GRANT_POLL_MS = 30 * 60 * 1000;
 
   interface Props {
     /** The backend the pages use; the API's by default. */
@@ -65,6 +68,13 @@ SPDX-License-Identifier: MIT
     // Sooner while something is wrong, so the banner goes as soon as it can.
     const interval = engine.status === "ready" ? ENGINE_POLL_MS : ENGINE_DOWN_POLL_MS;
     return untrack(() => poll(() => checkEngine(backend), interval));
+  });
+
+  $effect(() => {
+    const timer = setInterval(() => {
+      if (profiles.people) void refreshAvatarGrant(backend);
+    }, AVATAR_GRANT_POLL_MS);
+    return () => clearInterval(timer);
   });
 
   const page = $derived(match(pagePath(location.path)));
@@ -272,6 +282,8 @@ SPDX-License-Identifier: MIT
     <AddPage />
   {:else if page?.name === "settings"}
     <SettingsPage section={undefined} />
+  {:else if page?.name === "settingsSection" && page.params.section === "profiles"}
+    <ProfilesPage />
   {:else if page?.name === "settingsSection" && isSettingSection(page.params.section ?? "")}
     <SettingsPage section={page.params.section as SettingSection} />
   {:else if page?.name === "edit"}

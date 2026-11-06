@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-import type { Backend, Profile } from "./backend";
+import type { Backend, PlaybackGrant, Profile } from "./backend";
+import { playbackGrants, withGrant } from "./playback";
 import { demo } from "./routes";
 
 /** Where this device keeps the ID of the profile it watches as. */
@@ -37,7 +38,26 @@ export const profiles = $state<{
   current: Profile | undefined;
   /** Whether the last read failed. */
   failed: boolean;
-}>({ people: undefined, current: undefined, failed: false });
+  /** The grant avatars are read with; `null` until it is known. */
+  grant: PlaybackGrant | undefined | null;
+}>({ people: undefined, current: undefined, failed: false, grant: null });
+
+/** The URL of `profile`'s avatar, or `undefined` while it has none or the grant
+ * to read it is not known. */
+export function avatarUrl(
+  profile: Profile,
+  grant: PlaybackGrant | undefined | null,
+): string | undefined {
+  return profile.avatar && grant !== null ? withGrant(profile.links.avatar, grant) : undefined;
+}
+
+/** Asks for a new grant if the one held is close to expiring, so avatars keep
+ * loading on a page left open. A failure keeps the grant held. */
+export async function refreshAvatarGrant(backend: Backend): Promise<void> {
+  profiles.grant = await playbackGrants(backend)
+    .current()
+    .catch(() => profiles.grant);
+}
 
 /** Reads the profiles and picks the one to watch as. */
 export async function loadProfiles(backend: Backend): Promise<void> {
@@ -55,6 +75,8 @@ export async function loadProfiles(backend: Backend): Promise<void> {
     } else {
       profiles.current = undefined;
     }
+    // After the choice, which everything waits for, and pictures need not.
+    await refreshAvatarGrant(backend);
   } catch {
     profiles.failed = true;
   }
@@ -75,4 +97,5 @@ export function resetProfiles(): void {
   profiles.people = undefined;
   profiles.current = undefined;
   profiles.failed = false;
+  profiles.grant = null;
 }

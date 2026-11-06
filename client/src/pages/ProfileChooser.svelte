@@ -4,9 +4,9 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import ProfileAvatar from "../components/ProfileAvatar.svelte";
   import type { Profile } from "../lib/backend";
   import { profileName, t } from "../lib/i18n/index.svelte";
-  import { toneOf } from "../lib/tone";
 
   interface Props {
     people: Profile[];
@@ -26,14 +26,7 @@ SPDX-License-Identifier: MIT
           class="flex w-28 cursor-pointer flex-col items-center gap-2 rounded-2xl p-2 font-semibold"
           onclick={() => onchoose(profile)}
         >
-          <span
-            class="flex size-20 items-center justify-center rounded-panel text-3xl font-bold"
-            style:background={toneOf(profileName(profile)).background}
-            style:color={toneOf(profileName(profile)).color}
-            aria-hidden="true"
-          >
-            {profileName(profile).slice(0, 1).toUpperCase()}
-          </span>
+          <ProfileAvatar {profile} class="size-20 rounded-panel text-3xl" />
           <span class="line-clamp-2 text-center">{profileName(profile)}</span>
         </button>
       </li>

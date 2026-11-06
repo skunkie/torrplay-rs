@@ -438,6 +438,18 @@ describe("with unsaved changes", () => {
     stop();
   });
 
+  it("asks before moving to a page of the settings that is not this form", async () => {
+    const stop = await changed();
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirm);
+
+    await fireEvent.click(link("/settings/profiles"));
+
+    expect(confirm).toHaveBeenCalled();
+    expect(location.path).toBe("/settings/playback");
+    stop();
+  });
+
   it("warns before the page unloads, until nothing is unsaved", async () => {
     const stop = await changed();
     const unload = () => {

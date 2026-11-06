@@ -78,6 +78,11 @@ export const SETTING_SECTIONS = {
 
 export type SettingSection = keyof typeof SETTING_SECTIONS;
 
+/** Every page of the settings, in the order the rail lists them. */
+export const SETTINGS_PAGES = ["playback", "network", "profiles"] as const;
+
+export type SettingsPage = (typeof SETTINGS_PAGES)[number];
+
 /** Whether `name`, a path's, names a section. */
 export function isSettingSection(name: string): name is SettingSection {
   return Object.hasOwn(SETTING_SECTIONS, name);

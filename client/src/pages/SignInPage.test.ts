@@ -9,6 +9,7 @@ import { ApiError } from "../lib/api/http";
 import type { Backend } from "../lib/backend";
 import { backendContext } from "../lib/context";
 import { location, navigate } from "../lib/navigation.svelte";
+import { profiles } from "../lib/profile.svelte";
 import { session, signOut } from "../lib/session.svelte";
 import { fakeBackend } from "../testing";
 import SignInPage from "./SignInPage.svelte";
@@ -51,4 +52,18 @@ it("says when the password is wrong", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("The password is not correct.");
   expect(session.token).toBeUndefined();
   expect(location.path).toBe("/sign-in");
+});
+
+it("reads the profiles again after signing in, past a read that was refused before", async () => {
+  profiles.failed = true;
+  render(SignInPage, {
+    context: backendContext(fakeBackend({ signIn: vi.fn(async () => "tpa_secret") })),
+  });
+
+  await fireEvent.input(screen.getByLabelText("Password"), { target: { value: "secret" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+  await waitFor(() => {
+    expect(profiles.failed).toBe(false);
+  });
 });
