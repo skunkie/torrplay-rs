@@ -92,7 +92,7 @@ and journald's JSON export read as it is, with these members:
 
 | Member | Type | Meaning |
 | --- | --- | --- |
-| `sequence` | integer | The record's position among every record the log files have held, 1 for the first, continued across restarts; it orders records logged in the same millisecond and shows gaps. Without log files, it counts from the process's start. |
+| `sequence` | integer | The record's position among every record the log files have held, 1 for the first, continued across restarts; it orders records logged in the same millisecond and shows gaps, and records appear in the files and on standard error in this order. Without log files, it counts from the process's start. |
 | `logged_at` | string | When the record was logged, in UTC, as RFC 3339 to the millisecond. |
 | `level` | string | `error`, `warn`, `info`, `debug`, or `trace`. |
 | `run_id` | string | The process's run ID, also in the system resource, which tells one run's records from another's. |

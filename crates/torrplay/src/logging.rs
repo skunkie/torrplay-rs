@@ -13,8 +13,8 @@
 
 use std::fmt;
 use std::io::Write;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use std::collections::BTreeMap;
 
@@ -70,6 +70,10 @@ pub(crate) struct JsonLayer<W> {
     run_id: String,
     /// Numbers records when no log files do.
     sequence: AtomicU64,
+    /// Held from assigning a record's sequence until its line is written, so
+    /// lines leave in sequence order however many threads log at once: the
+    /// log files' reader and clients following them rely on that order.
+    order: Mutex<()>,
     writer: Option<W>,
     files: Option<(LogFiles, Arc<LogWriter>)>,
 }
@@ -83,6 +87,7 @@ impl<W> JsonLayer<W> {
         Self {
             run_id: run_id.to_string(),
             sequence: AtomicU64::new(0),
+            order: Mutex::new(()),
             writer,
             files,
         }
@@ -174,12 +179,14 @@ where
         }
         event.record(&mut fields);
         let metadata = event.metadata();
-        let record = self.record(
+        let mut record = self.record(
             level(metadata.level()),
             metadata.target(),
             fields,
             Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
         );
+        let _order = self.order.lock().unwrap_or_else(PoisonError::into_inner);
+        record.sequence = self.next_sequence();
         let Ok(line) = serde_json::to_string(&record) else {
             return;
         };
@@ -197,6 +204,7 @@ where
 }
 
 impl<W> JsonLayer<W> {
+    /// The record for these values, its sequence still to be assigned.
     fn record(
         &self,
         level: LogLevel,
@@ -215,7 +223,7 @@ impl<W> JsonLayer<W> {
             }
         }
         LogRecord {
-            sequence: self.next_sequence(),
+            sequence: 0,
             logged_at,
             level: level.as_str().to_owned(),
             run_id: self.run_id.clone(),
@@ -244,7 +252,8 @@ fn bounded(text: &str, max_bytes: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::sync::{Barrier, Mutex};
+    use std::time::Duration;
 
     use serde_json::Value;
     use tracing_subscriber::layer::SubscriberExt;
@@ -326,6 +335,59 @@ mod tests {
                 .map(|record| &record["sequence"])
                 .collect::<Vec<_>>(),
             [1, 2]
+        );
+    }
+
+    /// Lines reach the files and standard error in sequence order however
+    /// many threads log at once: the reader takes a line that is out of order
+    /// for one it has read already and hides it.
+    #[test]
+    fn records_logged_at_once_stay_in_sequence_order() {
+        const THREADS: usize = 8;
+        // Fewer than the writer's queue holds, so none is dropped.
+        const RECORDS_PER_THREAD: usize = 100;
+        let directory = tempfile::TempDir::new().unwrap();
+        let (files, writer) = LogFiles::open(directory.path()).unwrap();
+        let writer = Arc::new(writer);
+        let lines = Lines::default();
+        let run = RunId::from_random_bytes([7; 16]);
+        let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(JsonLayer::new(
+            &run,
+            Some(lines.clone()),
+            Some((files.clone(), Arc::clone(&writer))),
+        )));
+        let start = Barrier::new(THREADS);
+        std::thread::scope(|scope| {
+            for _ in 0..THREADS {
+                scope.spawn(|| {
+                    tracing::dispatcher::with_default(&dispatch, || {
+                        start.wait();
+                        for _ in 0..RECORDS_PER_THREAD {
+                            tracing::info!("logged at once");
+                        }
+                    });
+                });
+            }
+        });
+        assert!(writer.flush(Duration::from_secs(10)));
+        assert_eq!(files.dropped(), 0);
+
+        let total = (THREADS * RECORDS_PER_THREAD) as u64;
+        let expected: Vec<u64> = (1..=total).rev().collect();
+        let (records, oldest) = files.read(None, None, usize::MAX, |_| true).unwrap();
+        let read: Vec<u64> = records.iter().map(|record| record.sequence).collect();
+        assert_eq!(read, expected, "the files hide no record");
+        assert_eq!(oldest, Some(1));
+
+        let text = String::from_utf8(lines.0.lock().unwrap().clone()).unwrap();
+        let written: Vec<u64> = text
+            .lines()
+            .map(|line| serde_json::from_str::<LogRecord>(line).unwrap().sequence)
+            .collect();
+        assert_eq!(
+            written,
+            (1..=total).collect::<Vec<_>>(),
+            "standard error keeps the order too"
         );
     }
 

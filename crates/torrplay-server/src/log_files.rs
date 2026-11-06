@@ -11,6 +11,7 @@
 //! up one number, and the oldest beyond [`KEPT_FILE_LIMIT`] is deleted.
 //! Logging never waits for the disk: records go through a bounded queue,
 //! and those the queue or the disk cannot take are dropped and counted.
+//! Lines reach the files in sequence order, which reading relies on.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
@@ -164,8 +165,9 @@ impl LogFiles {
         }
         let mut records = Vec::new();
         let mut oldest = None;
-        // Records are read newest first; one that is not older than the one
-        // before it was read twice across a rotation and is skipped.
+        // Records are read newest first and were written in sequence order,
+        // so one that is not older than the one before it was read twice
+        // across a rotation and is skipped.
         let mut previous = u64::MAX;
         let mut done = false;
         for file in opened {
@@ -201,7 +203,8 @@ impl LogFiles {
 
 impl LogWriter {
     /// Queues a record's line, or drops and counts it when the queue is
-    /// full.
+    /// full. Callers write lines in sequence order: [`LogFiles::read`] skips
+    /// one that follows a lower sequence.
     pub fn write(&self, line: String) {
         match self.queue.try_send(Message::Line(line)) {
             Ok(()) => {}

@@ -157,6 +157,25 @@ async fn json(url: &str) -> Value {
     serde_json::from_slice(&response.bytes().await.expect("a body")).expect("JSON")
 }
 
+/// What the log files under `data` hold, to tell a record that was lost from
+/// one the API did not find.
+#[cfg(unix)]
+fn log_files_text(data: &std::path::Path) -> String {
+    let logs = data.join("logs");
+    let Ok(entries) = std::fs::read_dir(&logs) else {
+        return format!("{} cannot be read", logs.display());
+    };
+    let mut paths: Vec<_> = entries.flatten().map(|entry| entry.path()).collect();
+    paths.sort();
+    paths
+        .iter()
+        .map(|path| {
+            let text = std::fs::read_to_string(path).unwrap_or_else(|error| error.to_string());
+            format!("{}:\n{text}", path.display())
+        })
+        .collect()
+}
+
 /// Asks torrplay to shut down as a service manager does, and waits for it.
 #[cfg(unix)]
 async fn terminate(mut child: std::process::Child) {
@@ -197,7 +216,12 @@ async fn the_next_run_reads_the_last_runs_records() {
     let (second, base) = start(data.path(), &["--log-format", "text"]).await;
     let page = json(&format!("{base}/api/v1/log-records?contains={request_id}")).await;
     let records = page["items"].as_array().expect("records");
-    assert_eq!(records.len(), 1, "{page}");
+    assert_eq!(
+        records.len(),
+        1,
+        "{request_id} in {page}\nthe log files hold:\n{}",
+        log_files_text(data.path())
+    );
     assert_eq!(records[0]["run_id"], first_run["run_id"]);
     assert_eq!(records[0]["fields"]["route"], "/api/v1/system");
     let latest = page["latest_sequence"].as_u64().unwrap();
