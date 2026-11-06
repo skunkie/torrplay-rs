@@ -35,6 +35,9 @@ pub enum Failure {
     /// A tool's argument the server refused before sending anything.
     #[error("{0}")]
     Argument(String),
+    /// An image the server was asked to download could not be used.
+    #[error("the image could not be used: {0}")]
+    Image(String),
     /// The response was not one the operation answers with.
     #[error("the application's response was unusable: {0}")]
     Unusable(String),
@@ -113,6 +116,20 @@ impl Client {
             .header(header::CONTENT_TYPE, MERGE_PATCH)
             .header(header::IF_MATCH, etag)
             .body(encode(patch)?);
+        self.send(request).await
+    }
+
+    /// Sends `bytes` as the image of type `media_type` stored at `path`.
+    pub async fn put_image(
+        &self,
+        path: &str,
+        media_type: &'static str,
+        bytes: Vec<u8>,
+    ) -> Result<Answer, Failure> {
+        let request = self
+            .request(Method::PUT, path)?
+            .header(header::CONTENT_TYPE, media_type)
+            .body(bytes);
         self.send(request).await
     }
 

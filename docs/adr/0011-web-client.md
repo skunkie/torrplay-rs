@@ -128,7 +128,7 @@ seek index. The plan keeps them.
 | ------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/`                             | Home     | Up next for the profile, recently added titles, and a way to add                                                                                                                                                                                                                                                  |
 | `/library`                      | Library  | The library's posters, with search, kind, category, and genre filters from the facets; the filters live in the URL                                                                                                                                                                                                |
-| `/titles/{torrent_id}`          | Title    | Poster, title, year, description, and genres; for a series, its episodes by season with each one's progress, from the episodes the contract reports on files; otherwise its video files. A **Download** section holds the storage mode, preloads, and statistics; **Edit** changes the library members and poster |
+| `/titles/{torrent_id}`          | Title    | Poster, title, year, description, and genres; for a series, its episodes by season with each one's progress, from the episodes the contract reports on files; otherwise its video files. A **Download** section holds the storage mode and statistics; **Edit** changes the library members and poster |
 | `/watch/{torrent_id}/{file_id}` | Player   | The player, full window; resume, audio and subtitle tracks, and the next episode at the end                                                                                                                                                                                                                       |
 | `/add`                          | Add      | A magnet URI or torrent file; a torrent file is previewed first. **Play** creates a temporary torrent; **Add to library** a persisted one                                                                                                                                                                         |
 | `/settings/…`                   | Settings | Playback and cache, network and DLNA, profiles, security (password and access tokens), and backup                                                                                                                                                                                                                 |
@@ -231,7 +231,8 @@ the tokens.
   playback starts and shows its progress in tiles over the title's art, with
   **Play now** to go ahead without waiting. Playback starts when the preload is
   ready, and also when it expires, fails, or cannot be created, since a player
-  can still read the file without it. Leaving first cancels the preload.
+  can still read the file without it. Leaving first cancels the preload. There
+  is no way to start a preload by hand: only the player creates them.
 - **Playing.** The player resumes from the profile's progress, saves
   progress as it plays and when it closes, and at the end of an episode
   offers the next one. Codecs the browser lacks go through the Mediabunny

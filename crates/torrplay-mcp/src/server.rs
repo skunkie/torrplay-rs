@@ -21,6 +21,7 @@ use serde_json::{Value, json};
 use torrplay_api::types as api;
 
 use crate::client::{Client, Failure};
+use crate::image::{self, Rules};
 
 /// How many torrents a page of `list_torrents` holds by default, and at
 /// most.
@@ -52,12 +53,16 @@ statistics: its peers, download rate, and piece progress. create_preload \
 fetches a file's head and tail so playback starts at once. To look into a \
 failure, read list_log_records at warn or above, narrowed with contains to \
 a torrent's ID or a request_id from a problem; get_system and \
-get_statistics describe the process and every torrent and reader.";
+get_statistics describe the process and every torrent and reader. To fill in \
+a title, find its details from a source of your choice, then use \
+update_torrent and set_torrent_poster.";
 
 /// The MCP server of one application.
 #[derive(Clone, Debug)]
 pub struct Server {
     client: Client,
+    /// What a downloaded image may reach.
+    image_rules: Rules,
     tool_router: ToolRouter<Self>,
 }
 
@@ -65,6 +70,7 @@ impl Server {
     pub fn new(client: Client) -> Self {
         Self {
             client,
+            image_rules: image::PUBLIC,
             tool_router: Self::tool_router(),
         }
     }
@@ -194,6 +200,16 @@ pub struct UpdateTorrent {
     pub storage_mode: Option<String>,
     /// started or paused.
     pub desired_state: Option<String>,
+}
+
+/// The arguments of `set_torrent_poster`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetTorrentPoster {
+    /// The torrent's ID, trr_...
+    pub torrent_id: String,
+    /// The image's https URL on a public host: AVIF, GIF, JPEG, PNG, or WebP,
+    /// at most 1 MiB.
+    pub image_url: String,
 }
 
 /// The arguments of `get_stream_url`.
@@ -378,6 +394,37 @@ impl Server {
                     Failure::Unusable("the configuration has no entity tag".to_owned())
                 })?;
                 Ok(self.client.patch(&path, &patch, etag).await?.body)
+            }
+            .await,
+        )
+    }
+
+    #[tool(
+        description = "Set a torrent's poster from an image's URL, replacing \
+            any it has: an https URL on a public host, of an AVIF, GIF, JPEG, \
+            PNG, or WebP image of at most 1 MiB.",
+        annotations(idempotent_hint = true, open_world_hint = true)
+    )]
+    async fn set_torrent_poster(
+        &self,
+        Parameters(arguments): Parameters<SetTorrentPoster>,
+    ) -> CallToolResult {
+        answer(
+            async {
+                let torrent_id = segment("torrent_id", &arguments.torrent_id, "trr_")?;
+                let path = format!("/api/v1/torrents/{torrent_id}");
+                // First, so a mistaken ID contacts no one else.
+                self.client.get(&path, &[]).await?;
+                let poster = image::download(&arguments.image_url, self.image_rules).await?;
+                let size_bytes = poster.bytes.len();
+                self.client
+                    .put_image(&format!("{path}/poster"), poster.media_type, poster.bytes)
+                    .await?;
+                Ok(json!({
+                    "torrent_id": torrent_id,
+                    "media_type": poster.media_type,
+                    "size_bytes": size_bytes,
+                }))
             }
             .await,
         )
@@ -822,7 +869,159 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+
+    use axum::Router;
+    use axum::routing::get;
+    use tempfile::TempDir;
+    use torrplay_core::fake::FakeEngine;
+    use torrplay_core::id::InfoHashV1;
+    use torrplay_fixtures::catalog;
+    use torrplay_server::{App, router};
+    use torrplay_store::Store;
+
     use super::*;
+    use crate::image::tests::{ImageHost, LOCAL, PNG, image};
+
+    /// What a tool's result holds, and whether it failed.
+    fn read(result: &CallToolResult) -> (bool, Value) {
+        let result = serde_json::to_value(result).expect("a result");
+        let text = result["content"][0]["text"]
+            .as_str()
+            .expect("a text result");
+        (
+            result["isError"] == json!(true),
+            serde_json::from_str(text).expect("JSON text"),
+        )
+    }
+
+    /// MCP-11, from the download through the upload: the tool's only path past
+    /// the public rules, whose hosts a test cannot be.
+    #[tokio::test]
+    async fn a_downloaded_image_becomes_the_poster() {
+        let data = TempDir::new().expect("a data directory");
+        let (store, contents) = Store::open(data.path()).expect("the store opens");
+        let engine = FakeEngine::with_catalog();
+        let spec = catalog::single_small();
+        let info_hash = spec.metainfo().info_hash;
+        engine.set_metadata_retrievable(InfoHashV1::from_bytes(info_hash), true);
+        let app = Arc::new(App::new(Arc::new(engine), store).with_settings(contents.settings));
+        app.apply_dht()
+            .await
+            .expect("the fake engine takes the DHT switch");
+        app.restore(contents.torrents)
+            .await
+            .expect("the stored torrents are restored");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a port");
+        let origin = format!("http://{}", listener.local_addr().expect("an address"));
+        let (shutdown, signal) = tokio::sync::oneshot::channel::<()>();
+        let task = tokio::spawn(
+            axum::serve(
+                listener,
+                router(app).into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(async {
+                let _ = signal.await;
+            })
+            .into_future(),
+        );
+        let client = Client::new(origin.parse().expect("an origin"), None).expect("a client");
+        let mut server = Server::new(client);
+        server.image_rules = LOCAL;
+        let host = ImageHost::start(
+            Router::new()
+                .route(
+                    "/poster",
+                    get(|| async { image("image/png", PNG.to_vec()) }),
+                )
+                .route(
+                    "/mislabeled",
+                    get(|| async { image("image/png", b"<html>".to_vec()) }),
+                ),
+        )
+        .await;
+
+        let created = server
+            .create_torrent(Parameters(CreateTorrent {
+                magnet_uri: spec.magnet_uri(&info_hash),
+                title: None,
+                kind: None,
+                year: None,
+                imdb_id: None,
+                description: None,
+                categories: None,
+                genres: None,
+                retention: None,
+                storage_mode: None,
+                desired_state: None,
+            }))
+            .await;
+        let (failed, created) = read(&created);
+        assert!(!failed, "{created}");
+        let torrent_id = created["id"].as_str().expect("an ID").to_owned();
+        let set = |torrent_id: &str, path: &str| {
+            Parameters(SetTorrentPoster {
+                torrent_id: torrent_id.to_owned(),
+                image_url: format!("{}{path}", host.origin),
+            })
+        };
+
+        // The first image, then the same again in place of it.
+        for _ in 0..2 {
+            let (failed, body) =
+                read(&server.set_torrent_poster(set(&torrent_id, "/poster")).await);
+            assert!(!failed, "{body}");
+            assert_eq!(
+                body,
+                json!({
+                    "torrent_id": torrent_id,
+                    "media_type": "image/png",
+                    "size_bytes": PNG.len(),
+                })
+            );
+        }
+        let poster = reqwest::get(format!("{origin}/api/v1/torrents/{torrent_id}/poster"))
+            .await
+            .expect("the poster");
+        assert_eq!(poster.status(), 200);
+        assert_eq!(poster.bytes().await.expect("its bytes").as_ref(), PNG);
+
+        // The application still judges the bytes, and the torrent.
+        let (failed, problem) = read(
+            &server
+                .set_torrent_poster(set(&torrent_id, "/mislabeled"))
+                .await,
+        );
+        assert!(failed);
+        assert_eq!(problem["status"], 422, "{problem}");
+
+        // Neither an unknown torrent nor a refused ID contacts the host.
+        let before = host.hits.load(std::sync::atomic::Ordering::SeqCst);
+        let (failed, problem) = read(
+            &server
+                .set_torrent_poster(set("trr_aaaaaaaaaaaaaaaaaaaaaaaaaa", "/poster"))
+                .await,
+        );
+        assert!(failed);
+        assert_eq!(problem["status"], 404, "{problem}");
+        let (failed, problem) = read(
+            &server
+                .set_torrent_poster(set("trr_../settings", "/poster"))
+                .await,
+        );
+        assert!(failed);
+        assert_eq!(problem["title"], "Invalid argument");
+        assert_eq!(host.hits.load(std::sync::atomic::Ordering::SeqCst), before);
+
+        host.stop().await;
+        let _ = shutdown.send(());
+        task.await
+            .expect("the server task")
+            .expect("the server stops cleanly");
+    }
 
     #[test]
     fn ids_cannot_leave_their_path() {
