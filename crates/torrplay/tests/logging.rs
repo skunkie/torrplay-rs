@@ -16,16 +16,19 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-/// A port nothing listens on now.
-fn free_port() -> std::io::Result<u16> {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
-    Ok(listener.local_addr()?.port())
+/// Ports nothing listens on now, for the API and the peers. Both are held
+/// while choosing: a port just let go can be chosen again, and torrplay stops
+/// when its two listeners ask for the same one.
+fn free_ports() -> std::io::Result<(u16, u16)> {
+    let api = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let peers = std::net::TcpListener::bind("127.0.0.1:0")?;
+    Ok((api.local_addr()?.port(), peers.local_addr()?.port()))
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn json_records_name_the_run_and_the_request() {
     let data = tempfile::TempDir::new().expect("a data directory");
-    let port = free_port().expect("a port");
+    let (port, peer_port) = free_ports().expect("ports");
     let mut child = Command::new(env!("CARGO_BIN_EXE_torrplay"))
         // Responses that succeed are debug messages.
         .args([
@@ -38,7 +41,7 @@ async fn json_records_name_the_run_and_the_request() {
         ])
         .arg(format!("127.0.0.1:{port}"))
         .arg("--peer-port")
-        .arg(free_port().expect("a peer port").to_string())
+        .arg(peer_port.to_string())
         .arg("--data-dir")
         .arg(data.path())
         .env_remove("TORRPLAY_LOG_FORMAT")
@@ -65,10 +68,18 @@ async fn json_records_name_the_run_and_the_request() {
     let system = loop {
         match client.get(format!("{base}/api/v1/system")).send().await {
             Ok(response) => break response,
-            Err(_) if Instant::now() < deadline => {
-                tokio::time::sleep(Duration::from_millis(50)).await;
+            Err(error) => {
+                let exit = child.try_wait().expect("its status");
+                if exit.is_none() && Instant::now() < deadline {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    continue;
+                }
+                // Its standard error ends only once it has stopped.
+                child.kill().expect("torrplay stops");
+                child.wait().expect("its exit");
+                let output = received.iter().collect::<Vec<_>>().join("\n");
+                panic!("torrplay did not listen ({exit:?}): {error}\n{output}");
             }
-            Err(error) => panic!("torrplay did not listen: {error}"),
         }
     };
     let request_id = system
@@ -117,13 +128,13 @@ async fn json_records_name_the_run_and_the_request() {
 /// base URL once it answers.
 #[cfg(unix)]
 async fn start(data: &std::path::Path, args: &[&str]) -> (std::process::Child, String) {
-    let port = free_port().expect("a port");
-    let child = Command::new(env!("CARGO_BIN_EXE_torrplay"))
+    let (port, peer_port) = free_ports().expect("ports");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_torrplay"))
         .args(args)
         .args(["--no-dht", "--listen"])
         .arg(format!("127.0.0.1:{port}"))
         .arg("--peer-port")
-        .arg(free_port().expect("a peer port").to_string())
+        .arg(peer_port.to_string())
         .arg("--data-dir")
         .arg(data)
         .env_remove("TORRPLAY_LOG_FORMAT")
@@ -136,6 +147,9 @@ async fn start(data: &std::path::Path, args: &[&str]) -> (std::process::Child, S
     let base = format!("http://127.0.0.1:{port}");
     let deadline = Instant::now() + Duration::from_secs(30);
     while reqwest::get(format!("{base}/readyz")).await.is_err() {
+        if let Some(status) = child.try_wait().expect("its status") {
+            panic!("torrplay exited before it listened: {status}");
+        }
         assert!(Instant::now() < deadline, "torrplay did not listen");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
