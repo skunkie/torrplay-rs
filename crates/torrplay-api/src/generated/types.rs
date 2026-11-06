@@ -2553,7 +2553,7 @@ pub struct AccessToken {
     pub name: String,
     pub scope: AccessTokenScope,
 }
-///What an access token allows. An api token allows every operation. A playback token allows only reading torrents' file content and posters, and may travel in a URL's token query parameter. A metrics token allows only reading the metrics, the system resource, and the application's and the piece cache's statistics, for a monitoring scraper; it travels only as a bearer token.
+///What an access token allows. An api token allows every operation. A playback token allows only reading torrents' file content and posters and profiles' avatars, and may travel in a URL's token query parameter. A metrics token allows only reading the metrics, the system resource, and the application's and the piece cache's statistics, for a monitoring scraper; it travels only as a bearer token.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum AccessTokenScope {
     #[default]
@@ -2608,7 +2608,7 @@ pub struct PlaybackTokenCreation {
     ///Constraint: minimum=60, maximum=2592000
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_in_seconds: Option<i64>,
-    ///The torrent whose content and poster the token allows, or null for every torrent. An unknown torrent is validation-failed.
+    ///The torrent whose content and poster the token allows, or null for every torrent and profiles' avatars. An unknown torrent is validation-failed.
     #[serde(
         skip_serializing_if = "Option::is_none",
         default,

@@ -6915,6 +6915,16 @@ mod scenario {
             uploaded_content(&server, &catalog::multi_boundary()).await;
         let poster = format!("/api/v1/torrents/{torrent}/poster");
         server.send(put_poster(&poster, "image/png", PNG)).await;
+        let profile = server
+            .send(json_request(
+                Method::POST,
+                "/api/v1/profiles",
+                &json!({ "name": "Alex" }),
+            ))
+            .await
+            .json();
+        let avatar = format!("{}/avatar", profile["links"]["self"].as_str().unwrap());
+        server.send(put_poster(&avatar, "image/png", PNG)).await;
         set_first_password(&server).await;
 
         // AUT-02: every operation but the public ones needs a token.
@@ -7032,7 +7042,8 @@ mod scenario {
             "a change keeps tokens unless it revokes them"
         );
 
-        // AUT-05: a playback access token reads content and posters only.
+        // AUT-05: a playback access token reads content, posters, and avatars
+        // only.
         let (_, television) = sign_in(&server, "Living room TV", "playback").await;
         for path in [content.clone(), format!("{content}?token={television}")] {
             let mut streamed = request(Method::GET, &path);
@@ -7049,6 +7060,30 @@ mod scenario {
                 .status,
             StatusCode::OK
         );
+        assert_unauthenticated(&server.get(&avatar).await, None);
+        for read in [Method::GET, Method::HEAD] {
+            assert_eq!(
+                server
+                    .send(empty(read, &format!("{avatar}?token={television}")))
+                    .await
+                    .status,
+                StatusCode::OK
+            );
+        }
+        for changed in [
+            bearer_empty(Method::DELETE, &avatar, &television),
+            request(Method::PUT, &avatar)
+                .header(header::AUTHORIZATION, format!("Bearer {television}"))
+                .header(header::CONTENT_TYPE, "image/png")
+                .body(PNG.to_vec())
+                .unwrap(),
+        ] {
+            assert_problem(
+                &server.send(changed).await,
+                StatusCode::FORBIDDEN,
+                "insufficient-scope",
+            );
+        }
         let scoped = server
             .send(bearer_empty(Method::GET, "/api/v1/torrents", &television))
             .await;
@@ -7126,7 +7161,22 @@ mod scenario {
             StatusCode::FORBIDDEN,
             "insufficient-scope",
         );
+        // An avatar belongs to no torrent, so only a token of all of them reads it.
+        assert_problem(
+            &server
+                .send(empty(Method::GET, &format!("{avatar}?token={one}")))
+                .await,
+            StatusCode::FORBIDDEN,
+            "insufficient-scope",
+        );
         let every = playback_token(&server, &api, None).await;
+        assert_eq!(
+            server
+                .send(empty(Method::GET, &format!("{avatar}?token={every}")))
+                .await
+                .status,
+            StatusCode::OK
+        );
         assert_eq!(
             server
                 .send(empty(
