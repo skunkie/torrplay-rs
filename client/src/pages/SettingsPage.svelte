@@ -12,6 +12,7 @@ SPDX-License-Identifier: MIT
   import { pagePath } from "../lib/routes";
   import {
     draftOf,
+    isSettingSection,
     patchOf,
     problemsOf,
     type SettingKey,
@@ -62,6 +63,14 @@ SPDX-License-Identifier: MIT
     }
   }
 
+  /** Whether `path`, a link's, shows this form, which keeps what was typed. */
+  function staysInForm(path: string): boolean {
+    const [, page, name, ...rest] = pagePath(path).replace(/\/$/, "").split("/");
+    return (
+      page === "settings" && rest.length === 0 && (name === undefined || isSettingSection(name))
+    );
+  }
+
   $effect(() => {
     void load();
   });
@@ -70,10 +79,8 @@ SPDX-License-Identifier: MIT
     if (changes === 0) return;
     const warn = (event: BeforeUnloadEvent) => event.preventDefault();
     window.addEventListener("beforeunload", warn);
-    // Moving between the sections keeps what was typed.
-    const stop = guardNavigation(
-      (path) => pagePath(path).startsWith("/settings") || confirm(t().settings.leave),
-    );
+    // Moving between the sections of this form keeps what was typed.
+    const stop = guardNavigation((path) => staysInForm(path) || confirm(t().settings.leave));
     return () => {
       window.removeEventListener("beforeunload", warn);
       stop();

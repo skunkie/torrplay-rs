@@ -98,7 +98,7 @@ export function makeFile(
   };
 }
 
-function makeProfile(n: number, name: string, kind: Profile["kind"] = "person"): Profile {
+export function makeProfile(n: number, name: string, kind: Profile["kind"] = "person"): Profile {
   const id = identifier("prf", n);
   const self = `/api/v1/profiles/${id}`;
   return {

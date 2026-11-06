@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../api/http";
 import { type Backend, changeTorrent, duplicateOf, type Torrent } from "../backend";
@@ -509,5 +509,86 @@ describe("changes", () => {
     await backend.deleteTorrent(GLASS_HARBOR);
 
     expect((await library(start().backend)).map((item) => item.id)).toContain(GLASS_HARBOR);
+  });
+});
+
+describe("profiles", () => {
+  it("adds, renames, and deletes a person, with their progress", async () => {
+    const { backend } = start();
+    const added = await backend.createProfile("Cleo");
+    await backend.renameProfile(added.id, "Cleo B");
+    const files = await backend.listFiles(LIGHTHOUSE);
+    await backend.setProgress(added.id, LIGHTHOUSE, files[0]?.id ?? "", {
+      position_seconds: 3,
+      duration_seconds: 30,
+      viewed: false,
+    });
+    expect((await backend.listProfiles()).map((profile) => profile.name)).toContain("Cleo B");
+
+    await backend.deleteProfile(added.id);
+
+    expect((await backend.listProfiles()).map((profile) => profile.id)).not.toContain(added.id);
+    expect(await backend.listProgress(added.id, LIGHTHOUSE)).toEqual([]);
+  });
+
+  it("refuses a name another profile has, as the application does", async () => {
+    const { backend } = start();
+    const [anna, ben] = await backend.listProfiles();
+
+    await expect(backend.createProfile("Anna")).rejects.toMatchObject({
+      type: "duplicate-profile",
+    });
+    await expect(backend.renameProfile(ben?.id ?? "", "Anna")).rejects.toMatchObject({
+      type: "duplicate-profile",
+    });
+    await expect(backend.renameProfile(anna?.id ?? "", "Anna")).resolves.toBeUndefined();
+  });
+
+  it("protects the device profile and the last person", async () => {
+    const { backend } = start();
+    const everyone = await backend.listProfiles();
+    const device = everyone.find((profile) => profile.kind === "device");
+    const [anna, ben] = everyone;
+
+    await expect(backend.renameProfile(device?.id ?? "", "TV")).rejects.toMatchObject({
+      type: "lifecycle-conflict",
+    });
+    await expect(backend.deleteProfile(device?.id ?? "")).rejects.toMatchObject({
+      type: "lifecycle-conflict",
+    });
+    await backend.deleteProfile(ben?.id ?? "");
+    await expect(backend.deleteProfile(anna?.id ?? "")).rejects.toMatchObject({
+      type: "lifecycle-conflict",
+    });
+  });
+
+  it("refuses an avatar that is not an image, as the application does", async () => {
+    const { backend } = start();
+    const [anna] = await backend.listProfiles();
+
+    await expect(
+      backend.setAvatar(anna?.id ?? "", new File(["x"], "a.txt", { type: "text/plain" })),
+    ).rejects.toMatchObject({ type: "unsupported-media-type" });
+  });
+
+  it("keeps and removes an avatar", async () => {
+    vi.stubGlobal(
+      "URL",
+      Object.assign(URL, { createObjectURL: () => "blob:a", revokeObjectURL: () => {} }),
+    );
+    const { backend } = start();
+    const [anna] = await backend.listProfiles();
+    const id = anna?.id ?? "";
+
+    await backend.setAvatar(id, new File(["x"], "a.png", { type: "image/png" }));
+    const held = (await backend.listProfiles())[0];
+    expect(held?.avatar?.media_type).toBe("image/png");
+    expect(held?.links.avatar).toBe("blob:a");
+
+    await backend.deleteAvatar(id);
+    const gone = (await backend.listProfiles())[0];
+    expect(gone?.avatar).toBeNull();
+    expect(gone?.links.avatar).not.toContain("blob:");
+    vi.unstubAllGlobals();
   });
 });

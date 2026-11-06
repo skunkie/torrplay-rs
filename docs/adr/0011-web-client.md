@@ -255,6 +255,9 @@ the tokens.
   what was typed. A link that leaves with changes unsaved asks first, and so does
   closing the page; the browser's Back button does not. DLNA says that it opens
   the library to the local network.
+- **Profiles.** A section of the settings adds, renames, and deletes people, each
+  with an avatar, which the menu and the chooser show in place of the initial.
+  Avatars are read with the page's playback token, as posters are.
 - **Editing.** Edit is a page of its own, because the library members and poster
   are too long a form for a dialog. It sends only what changed, with the ETag it
   read, so a change made elsewhere meanwhile is reported rather than overwritten.

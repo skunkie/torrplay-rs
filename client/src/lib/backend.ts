@@ -122,6 +122,16 @@ export interface Backend {
   deletePreload(torrentId: string, fileId: string, preloadId: string): Promise<void>;
   /** Every profile, person and device, oldest first. */
   listProfiles(): Promise<Profile[]>;
+  /** Adds a person. */
+  createProfile(name: string): Promise<Profile>;
+  /** Renames a person; the device profile's name is fixed. */
+  renameProfile(profileId: string, name: string): Promise<void>;
+  /** Deletes a person with their avatar and progress, unless the last. */
+  deleteProfile(profileId: string): Promise<void>;
+  /** Stores an image as a profile's avatar. */
+  setAvatar(profileId: string, image: File): Promise<void>;
+  /** Removes a profile's avatar. */
+  deleteAvatar(profileId: string): Promise<void>;
   /** The first page of what `profileId` can resume or watch next. */
   listUpNext(profileId: string, page: PageRequest): Promise<Conditional<UpNextPage>>;
   /** Stops listing an up next entry until its progress changes again. */
@@ -148,6 +158,17 @@ export function cursorOf(next: string | undefined): string | undefined {
   return next
     ? (new URLSearchParams(next.split("?")[1] ?? "").get("cursor") ?? undefined)
     : undefined;
+}
+
+/** `profile` with an avatar link its upload time is part of, so a new image is a
+ * new URL: an element keeps showing what a URL it already has gave. */
+function withAvatarVersion(profile: Profile): Profile {
+  if (!profile.avatar) return profile;
+  const version = encodeURIComponent(profile.avatar.updated_at);
+  return {
+    ...profile,
+    links: { ...profile.links, avatar: `${profile.links.avatar}?v=${version}` },
+  };
 }
 
 /** What a refused change says is wrong with each of its members. */
@@ -289,6 +310,50 @@ export function httpBackend(http: Http): Backend {
       );
     },
 
+    async createProfile(name) {
+      return unwrap(await http.POST("/api/v1/profiles", { body: { name } }));
+    },
+
+    async renameProfile(profileId, name) {
+      const path = { profile_id: profileId };
+      const read = await http.GET("/api/v1/profiles/{profile_id}", { params: { path } });
+      unwrap(read);
+      const etag = read.response.headers.get("ETag");
+      if (!etag) throw new ApiError(read.response.status, undefined);
+      unwrap(
+        await http.PATCH("/api/v1/profiles/{profile_id}", {
+          params: { path, header: { "If-Match": etag } },
+          headers: { "Content-Type": "application/merge-patch+json" },
+          body: { name },
+        }),
+      );
+    },
+
+    async deleteProfile(profileId) {
+      const result = await http.DELETE("/api/v1/profiles/{profile_id}", {
+        params: { path: { profile_id: profileId } },
+      });
+      if (!result.response.ok) unwrap(result);
+    },
+
+    async setAvatar(profileId, image) {
+      const result = await http.PUT("/api/v1/profiles/{profile_id}/avatar", {
+        params: { path: { profile_id: profileId } },
+        headers: { "Content-Type": image.type },
+        // The image is the body; the contract types it as a string.
+        body: image as unknown as string,
+        bodySerializer: (body) => body,
+      });
+      if (!result.response.ok) unwrap(result);
+    },
+
+    async deleteAvatar(profileId) {
+      const result = await http.DELETE("/api/v1/profiles/{profile_id}/avatar", {
+        params: { path: { profile_id: profileId } },
+      });
+      if (!result.response.ok) unwrap(result);
+    },
+
     async getSettings() {
       const read = await http.GET("/api/v1/settings");
       const data = unwrap(read);
@@ -405,7 +470,7 @@ export function httpBackend(http: Http): Backend {
             params: { query: { page_size: 200, ...(cursor ? { cursor } : {}) } },
           }),
         );
-        profiles.push(...page.items);
+        profiles.push(...page.items.map(withAvatarVersion));
         cursor = cursorOf(page.links.next);
       } while (cursor);
       return profiles;

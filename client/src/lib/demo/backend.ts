@@ -6,6 +6,7 @@ import { ApiError, type Problem } from "../api/http";
 import type {
   Backend,
   Preload,
+  Profile,
   Progress,
   Settings,
   Torrent,
@@ -22,6 +23,7 @@ import {
   type Fixture,
   fixtures,
   makeFile,
+  makeProfile,
   makeTorrent,
   profileFixtures,
   progressFixtures,
@@ -43,6 +45,8 @@ const PEERS = 23;
 /** The share of a file played that marks it viewed, as the server's default. */
 const VIEWED_RATIO = 0.9;
 const PAGE_SIZE = 24;
+/** What the application takes as an image. */
+const IMAGE_TYPES = ["image/avif", "image/gif", "image/jpeg", "image/png", "image/webp"];
 
 /** A torrent the backend holds, and how its download is going. */
 interface Held {
@@ -257,6 +261,31 @@ export function demoBackend(now: () => number = Date.now): Backend {
       torrent: { name, size_bytes: size, file_count: 1 },
       files: [makeFile(n, 0, `${name}.mkv`, size)],
     };
+  }
+
+  function profileOf(profileId: string): Profile {
+    const profile = people.find((other) => other.id === profileId);
+    if (!profile) throw notFound();
+    return profile;
+  }
+
+  /** The profile with `profileId`, which must be a person's to change. */
+  function person(profileId: string): Profile {
+    const profile = profileOf(profileId);
+    if (profile.kind !== "person") {
+      throw refused(409, "lifecycle-conflict", "The device profile cannot be changed.");
+    }
+    return profile;
+  }
+
+  function replaceProfile(profile: Profile): void {
+    people[people.findIndex((other) => other.id === profile.id)] = profile;
+  }
+
+  function refuseTaken(name: string, except?: string): void {
+    if (people.some((other) => other.name === name && other.id !== except)) {
+      throw refused(409, "duplicate-profile", "Another profile has this name.");
+    }
   }
 
   function upNextOf(profileId: string): UpNextEntry[] {
@@ -568,6 +597,57 @@ export function demoBackend(now: () => number = Date.now): Backend {
     },
 
     listProfiles: async () => structuredClone(people),
+
+    async createProfile(name) {
+      refuseTaken(name);
+      const profile = makeProfile(nextId(), name);
+      people.push(profile);
+      return structuredClone(profile);
+    },
+
+    async renameProfile(profileId, name) {
+      const profile = person(profileId);
+      refuseTaken(name, profileId);
+      replaceProfile({ ...profile, name });
+    },
+
+    async deleteProfile(profileId) {
+      const profile = person(profileId);
+      if (people.filter((other) => other.kind === "person").length <= 1) {
+        throw refused(409, "lifecycle-conflict", "The last person's profile cannot be deleted.");
+      }
+      if (profile.links.avatar.startsWith("blob:")) URL.revokeObjectURL(profile.links.avatar);
+      people.splice(people.indexOf(profile), 1);
+      progress.delete(profileId);
+      version += 1;
+    },
+
+    async setAvatar(profileId, image) {
+      const profile = profileOf(profileId);
+      if (!IMAGE_TYPES.includes(image.type)) {
+        throw refused(415, "unsupported-media-type", "This file is not an image the demo can use.");
+      }
+      if (profile.links.avatar.startsWith("blob:")) URL.revokeObjectURL(profile.links.avatar);
+      replaceProfile({
+        ...profile,
+        avatar: {
+          media_type: image.type as NonNullable<Profile["avatar"]>["media_type"],
+          size_bytes: image.size,
+          updated_at: new Date(now()).toISOString(),
+        },
+        links: { ...profile.links, avatar: URL.createObjectURL(image) },
+      });
+    },
+
+    async deleteAvatar(profileId) {
+      const profile = profileOf(profileId);
+      if (profile.links.avatar.startsWith("blob:")) URL.revokeObjectURL(profile.links.avatar);
+      replaceProfile({
+        ...profile,
+        avatar: null,
+        links: { ...profile.links, avatar: `${profile.links.self}/avatar` },
+      });
+    },
 
     async listUpNext(profileId, page) {
       const etag = `"u-${version}-${profileId}"`;

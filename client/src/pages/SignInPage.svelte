@@ -7,6 +7,7 @@ SPDX-License-Identifier: MIT
   import { useBackend } from "../lib/context";
   import { failureMessage, t } from "../lib/i18n/index.svelte";
   import { location, navigate } from "../lib/navigation.svelte";
+  import { resetProfiles } from "../lib/profile.svelte";
   import { returnPath } from "../lib/routes";
   import { signIn } from "../lib/session.svelte";
   import SignInView from "./SignInView.svelte";
@@ -21,6 +22,8 @@ SPDX-License-Identifier: MIT
     try {
       // The name the access token is listed under in the settings.
       signIn(await backend.signIn(password, t().signIn.tokenName));
+      // A read refused before signing in is not to stand now.
+      resetProfiles();
       navigate(returnPath(location.search));
     } catch (failure) {
       error = failureMessage(failure);

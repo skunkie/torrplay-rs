@@ -29,7 +29,11 @@ export const ru: Messages = {
   themes: { system: "Как в системе", light: "Светлая", dark: "Тёмная" },
   settings: {
     title: "Настройки",
-    sections: { playback: "Воспроизведение и кеш", network: "Сеть и DLNA" },
+    sections: {
+      playback: "Воспроизведение и кеш",
+      network: "Сеть и DLNA",
+      profiles: "Профили",
+    },
     groups: {
       memory: "Память и загрузка",
       streaming: "Потоковая передача",
@@ -331,6 +335,23 @@ export const ru: Messages = {
     readFailed: "Не удалось загрузить профили.",
     device: "Устройства",
     default: "Основной",
+    intro: "У каждого свой прогресс и свой список «Продолжить просмотр».",
+    current: "Смотрит на этом устройстве",
+    deviceNote: "Хранит прогресс того, что телевизоры показывают через DLNA.",
+    newProfile: "Новый профиль",
+    namePlaceholder: "Имя",
+    add: "Добавить",
+    rename: "Переименовать",
+    chooseAvatar: "Выбрать аватар",
+    removeAvatar: "Удалить аватар",
+    nameOf: (name: string) => `Новое имя для профиля «${name}»`,
+    avatarOf: (name: string) => `Выбрать аватар для профиля «${name}»`,
+    removeAvatarOf: (name: string) => `Удалить аватар профиля «${name}»`,
+    renameOf: (name: string) => `Переименовать профиль «${name}»`,
+    deleteOf: (name: string) => `Удалить профиль «${name}»`,
+    avatarTooLarge: "Размер аватара не должен превышать 1\u00A0МиБ.",
+    deleteTitle: (name: string) => `Удалить профиль «${name}»?`,
+    deleteBody: "Вместе с профилем удаляются его прогресс и список «Продолжить просмотр».",
   },
   signIn: {
     title: "Вход",
@@ -345,6 +366,9 @@ export const ru: Messages = {
     home: "На главную",
   },
   problems: {
+    "duplicate-profile": "У другого профиля уже есть такое имя.",
+    "too-many-profiles": "В TorrPlay может быть не больше 32\u00A0профилей. Сначала удалите один.",
+    "unsupported-media-type": "TorrPlay не может использовать этот файл как изображение.",
     "invalid-credentials": "Неверный пароль.",
     "too-many-attempts": "Слишком много попыток. Подождите немного и попробуйте ещё раз.",
     "engine-unavailable":
