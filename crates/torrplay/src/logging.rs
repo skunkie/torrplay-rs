@@ -70,10 +70,15 @@ pub(crate) struct JsonLayer<W> {
     run_id: String,
     /// Numbers records when no log files do.
     sequence: AtomicU64,
-    /// Held from assigning a record's sequence until its line is written, so
-    /// lines leave in sequence order however many threads log at once: the
-    /// log files' reader and clients following them rely on that order.
+    /// Held from reading the clock until a line is queued for the files, so
+    /// sequences, times, and the files' lines agree however many threads log
+    /// at once. Queueing never waits. Standard error is written after this
+    /// is released, because a stalled pipe would otherwise stop every thread
+    /// from logging to the files too; its lines can therefore be out of
+    /// sequence order.
     order: Mutex<()>,
+    /// Reads the time of a record, which tests control.
+    clock: fn() -> String,
     writer: Option<W>,
     files: Option<(LogFiles, Arc<LogWriter>)>,
 }
@@ -88,6 +93,7 @@ impl<W> JsonLayer<W> {
             run_id: run_id.to_string(),
             sequence: AtomicU64::new(0),
             order: Mutex::new(()),
+            clock: now,
             writer,
             files,
         }
@@ -100,6 +106,11 @@ impl<W> JsonLayer<W> {
             None => self.sequence.fetch_add(1, Ordering::Relaxed) + 1,
         }
     }
+}
+
+/// The time now, as records give it.
+fn now() -> String {
+    Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
 /// A span's fields, kept in its extensions for the records logged in it.
@@ -179,39 +190,53 @@ where
         }
         event.record(&mut fields);
         let metadata = event.metadata();
-        let mut record = self.record(
-            level(metadata.level()),
-            metadata.target(),
-            fields,
-            Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
-        );
-        let _order = self.order.lock().unwrap_or_else(PoisonError::into_inner);
-        record.sequence = self.next_sequence();
-        let Ok(line) = serde_json::to_string(&record) else {
+        let contents = Contents::bounded(fields);
+        let Some(line) = self.queue_line(level(metadata.level()), metadata.target(), contents)
+        else {
             return;
         };
         if let Some(writer) = &self.writer {
             // A record that cannot be written is lost; logging must not fail
             // the code that logs.
-            let _ = writer
-                .make_writer()
-                .write_all(format!("{line}\n").as_bytes());
-        }
-        if let Some((_, files)) = &self.files {
-            files.write(line);
+            let _ = writer.make_writer().write_all(line.as_bytes());
         }
     }
 }
 
 impl<W> JsonLayer<W> {
-    /// The record for these values, its sequence still to be assigned.
-    fn record(
-        &self,
-        level: LogLevel,
-        target: &str,
-        fields: Fields,
-        logged_at: String,
-    ) -> LogRecord {
+    /// Numbers and times a record, queues its line for the files, and returns
+    /// the line, ended, for standard error.
+    fn queue_line(&self, level: LogLevel, target: &str, contents: Contents) -> Option<String> {
+        let _order = self.order.lock().unwrap_or_else(PoisonError::into_inner);
+        let record = LogRecord {
+            sequence: self.next_sequence(),
+            logged_at: (self.clock)(),
+            level: level.as_str().to_owned(),
+            run_id: self.run_id.clone(),
+            request_id: contents.request_id,
+            target: target.to_owned(),
+            message: contents.message,
+            fields: contents.fields,
+        };
+        let line = serde_json::to_string(&record).ok()?;
+        let terminated = format!("{line}\n");
+        if let Some((_, files)) = &self.files {
+            files.write(line);
+        }
+        Some(terminated)
+    }
+}
+
+/// What a record says, redacted and bounded, which takes too long to do while
+/// other threads wait to log.
+struct Contents {
+    message: String,
+    request_id: Option<String>,
+    fields: BTreeMap<String, String>,
+}
+
+impl Contents {
+    fn bounded(fields: Fields) -> Self {
         let Fields { message, values } = fields;
         let mut request_id = None;
         let mut members = BTreeMap::new();
@@ -222,14 +247,9 @@ impl<W> JsonLayer<W> {
                 members.insert(name.to_owned(), bounded(&value, VALUE_MAX_BYTES));
             }
         }
-        LogRecord {
-            sequence: 0,
-            logged_at,
-            level: level.as_str().to_owned(),
-            run_id: self.run_id.clone(),
-            request_id,
-            target: target.to_owned(),
+        Self {
             message: bounded(&message.unwrap_or_default(), MESSAGE_MAX_BYTES),
+            request_id,
             fields: members,
         }
     }
@@ -252,8 +272,8 @@ fn bounded(text: &str, max_bytes: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Barrier, Mutex};
-    use std::time::Duration;
+    use std::sync::{Barrier, Condvar};
+    use std::time::{Duration, Instant};
 
     use serde_json::Value;
     use tracing_subscriber::layer::SubscriberExt;
@@ -338,9 +358,16 @@ mod tests {
         );
     }
 
-    /// Lines reach the files and standard error in sequence order however
-    /// many threads log at once: the reader takes a line that is out of order
-    /// for one it has read already and hides it.
+    /// A clock that reads later each time, unlike a real one within a
+    /// millisecond, so any time out of sequence order shows.
+    fn counting_clock() -> String {
+        static READS: AtomicU64 = AtomicU64::new(0);
+        format!("{:020}", READS.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// However many threads log at once, the files hold lines in sequence
+    /// order with times in the same order, and standard error holds each
+    /// record once.
     #[test]
     fn records_logged_at_once_stay_in_sequence_order() {
         const THREADS: usize = 8;
@@ -351,11 +378,13 @@ mod tests {
         let writer = Arc::new(writer);
         let lines = Lines::default();
         let run = RunId::from_random_bytes([7; 16]);
-        let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(JsonLayer::new(
+        let mut layer = JsonLayer::new(
             &run,
             Some(lines.clone()),
             Some((files.clone(), Arc::clone(&writer))),
-        )));
+        );
+        layer.clock = counting_clock;
+        let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(layer));
         let start = Barrier::new(THREADS);
         std::thread::scope(|scope| {
             for _ in 0..THREADS {
@@ -372,23 +401,103 @@ mod tests {
         assert!(writer.flush(Duration::from_secs(10)));
         assert_eq!(files.dropped(), 0);
 
-        let total = (THREADS * RECORDS_PER_THREAD) as u64;
-        let expected: Vec<u64> = (1..=total).rev().collect();
-        let (records, oldest) = files.read(None, None, usize::MAX, |_| true).unwrap();
-        let read: Vec<u64> = records.iter().map(|record| record.sequence).collect();
-        assert_eq!(read, expected, "the files hide no record");
-        assert_eq!(oldest, Some(1));
+        let parsed = |text: &str| -> Vec<LogRecord> {
+            text.lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect()
+        };
+        let in_order: Vec<u64> = (1..=(THREADS * RECORDS_PER_THREAD) as u64).collect();
+        // The file itself, because reading sorts what it reads.
+        let text = std::fs::read_to_string(directory.path().join("torrplay.jsonl")).unwrap();
+        let in_file = parsed(&text);
+        let sequences: Vec<u64> = in_file.iter().map(|record| record.sequence).collect();
+        assert_eq!(
+            sequences, in_order,
+            "the file holds lines in sequence order"
+        );
+        assert!(
+            in_file
+                .windows(2)
+                .all(|pair| pair[0].logged_at < pair[1].logged_at),
+            "a later sequence never carries an earlier time"
+        );
 
         let text = String::from_utf8(lines.0.lock().unwrap().clone()).unwrap();
-        let written: Vec<u64> = text
-            .lines()
-            .map(|line| serde_json::from_str::<LogRecord>(line).unwrap().sequence)
-            .collect();
-        assert_eq!(
-            written,
-            (1..=total).collect::<Vec<_>>(),
-            "standard error keeps the order too"
-        );
+        let mut written: Vec<u64> = parsed(&text).iter().map(|record| record.sequence).collect();
+        written.sort_unstable();
+        assert_eq!(written, in_order, "standard error holds each record once");
+    }
+
+    /// A writer that stalls, as a full pipe nobody reads does, until opened.
+    #[derive(Clone, Default)]
+    struct StalledWriter(Arc<(Mutex<bool>, Condvar)>);
+
+    impl StalledWriter {
+        fn open(&self) {
+            *self.0.0.lock().unwrap() = true;
+            self.0.1.notify_all();
+        }
+    }
+
+    impl Write for StalledWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            let (open, opened) = &*self.0;
+            let mut open = open.lock().unwrap();
+            while !*open {
+                open = opened.wait(open).unwrap();
+            }
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'writer> MakeWriter<'writer> for StalledWriter {
+        type Writer = Self;
+
+        fn make_writer(&'writer self) -> Self {
+            self.clone()
+        }
+    }
+
+    /// Each thread's record reaches the files before it writes to standard
+    /// error, and a thread stalled there holds up no other's.
+    #[test]
+    fn a_stalled_standard_error_holds_up_no_records_for_the_files() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let (files, writer) = LogFiles::open(directory.path()).unwrap();
+        let writer = Arc::new(writer);
+        let stalled = StalledWriter::default();
+        let run = RunId::from_random_bytes([7; 16]);
+        let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(JsonLayer::new(
+            &run,
+            Some(stalled.clone()),
+            Some((files.clone(), Arc::clone(&writer))),
+        )));
+        let read = std::thread::scope(|scope| {
+            for _ in 0..2 {
+                scope.spawn(|| {
+                    tracing::dispatcher::with_default(&dispatch, || {
+                        tracing::info!("logged while standard error stalls");
+                    });
+                });
+            }
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let read = loop {
+                assert!(writer.flush(Duration::from_secs(10)));
+                let (records, _) = files.read(None, None, 10, |_| true).unwrap();
+                if records.len() == 2 || Instant::now() >= deadline {
+                    break records.len();
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            };
+            // Before asserting, so the threads can end whatever was read.
+            stalled.open();
+            read
+        });
+        assert_eq!(read, 2, "both records reach the files during the stall");
     }
 
     #[test]

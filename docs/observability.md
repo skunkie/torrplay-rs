@@ -92,7 +92,7 @@ and journald's JSON export read as it is, with these members:
 
 | Member | Type | Meaning |
 | --- | --- | --- |
-| `sequence` | integer | The record's position among every record the log files have held, 1 for the first, continued across restarts; it orders records logged in the same millisecond and shows gaps, and records appear in the files and on standard error in this order. Without log files, it counts from the process's start. |
+| `sequence` | integer | The record's position among every record the log files have held, 1 for the first, continued across restarts; it orders records logged in the same millisecond and shows gaps. Lines in the log files are in this order, and a later sequence never carries an earlier time. Lines on standard error can be out of this order when threads log at once, so collectors order them by this member. Without log files, it counts from the process's start. |
 | `logged_at` | string | When the record was logged, in UTC, as RFC 3339 to the millisecond. |
 | `level` | string | `error`, `warn`, `info`, `debug`, or `trace`. |
 | `run_id` | string | The process's run ID, also in the system resource, which tells one run's records from another's. |
@@ -125,7 +125,10 @@ a bug report. The text format on standard error does not change them.
 - **Never blocking.** A background thread writes the files, through a queue
   of 1024 records. When the queue is full or the disk fails, records are
   dropped rather than delaying the code that logs them, and
-  `torrplay_log_records_dropped_total` counts them.
+  `torrplay_log_records_dropped_total` counts them. Standard error is
+  written by the thread that logs, in both formats, so one that stalls holds
+  up each thread logging to it; in the JSON format, the thread has queued
+  its record for the files by then.
 - **Crashes.** A panic is logged as an `error` record and flushed to the
   files before the process ends, and exiting flushes what is queued, each
   waiting at most 2 seconds. A line a crash cut short is ended when the

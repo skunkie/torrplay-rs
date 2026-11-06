@@ -87,16 +87,25 @@ async fn json_records_name_the_run_and_the_request() {
     let body: Value = serde_json::from_slice(&system.bytes().await.unwrap()).unwrap();
     let run_id = body["run_id"].as_str().expect("a run ID").to_owned();
 
-    // The response is logged once its headers are ready.
+    // The response is logged once its headers are ready. Lines can arrive out
+    // of sequence order, so this reads until every earlier record has too.
     let mut records = Vec::new();
+    let mut found = None;
+    let mut sequences = std::collections::BTreeSet::new();
     let found = loop {
         let line = received
             .recv_timeout(Duration::from_secs(10))
-            .expect("the response is logged");
+            .expect("the response and every earlier record are logged");
         let record: Value = serde_json::from_str(&line).expect("every line is JSON");
         records.push(record.clone());
+        sequences.insert(record["sequence"].as_u64().unwrap());
         if record["request_id"] == request_id.as_str() {
-            break record;
+            found = Some(record);
+        }
+        if let Some(found) = &found
+            && (1..=found["sequence"].as_u64().unwrap()).all(|each| sequences.contains(&each))
+        {
+            break found.clone();
         }
     };
     assert_eq!(found["message"], "response");
@@ -104,14 +113,10 @@ async fn json_records_name_the_run_and_the_request() {
     for record in &records {
         assert_eq!(record["run_id"], run_id.as_str(), "{record}");
     }
-    let sequences: Vec<u64> = records
-        .iter()
-        .map(|record| record["sequence"].as_u64().unwrap())
-        .collect();
     assert_eq!(
-        sequences,
+        sequences.into_iter().collect::<Vec<_>>(),
         (1..=records.len() as u64).collect::<Vec<_>>(),
-        "sequences count up from 1 without gaps"
+        "sequences count up from 1 without gaps or repeats"
     );
 
     child.kill().expect("torrplay stops");
