@@ -55,8 +55,8 @@ enum Requirement {
     Nothing,
     /// An allowed host only.
     Host,
-    /// An `api` or `playback` credential, of the operation's torrent: the
-    /// playback operations.
+    /// An `api` or `playback` credential, of the operation's torrent if a
+    /// playback token names one: the playback operations.
     Playback,
     /// An `api` or `metrics` credential: reading the metrics, the system
     /// resource, and statistics.
@@ -91,6 +91,7 @@ fn requirement(route: Option<&str>, method: &Method) -> Requirement {
         "/api/v1/access-tokens" if method == Method::POST => Requirement::Host,
         "/api/v1/torrents/{torrent_id}/files/{file_id}/content"
         | "/api/v1/torrents/{torrent_id}/poster"
+        | "/api/v1/profiles/{profile_id}/avatar"
             if reads =>
         {
             Requirement::Playback
@@ -373,6 +374,21 @@ mod tests {
             (
                 Some("/api/v1/torrents/{torrent_id}/poster"),
                 Method::PUT,
+                Requirement::Api,
+            ),
+            (
+                Some("/api/v1/profiles/{profile_id}/avatar"),
+                Method::HEAD,
+                Requirement::Playback,
+            ),
+            (
+                Some("/api/v1/profiles/{profile_id}/avatar"),
+                Method::PUT,
+                Requirement::Api,
+            ),
+            (
+                Some("/api/v1/profiles/{profile_id}/avatar"),
+                Method::DELETE,
                 Requirement::Api,
             ),
             (

@@ -438,16 +438,16 @@ of each.
 
 **Scope**
 : What a credential allows: `api`, every operation; `playback`, only
-  reading file content and posters; or `metrics`, only reading the metrics,
+  reading file content, posters, and avatars; or `metrics`, only reading the metrics,
   the system resource, and statistics.
 
 **Playback operation**
-: `GET` or `HEAD` of a file's content or a torrent's poster, the operations
-  a `playback` credential allows.
+: `GET` or `HEAD` of a file's content, a torrent's poster, or a profile's
+  avatar, the operations a `playback` credential allows.
 
 **Playback token**
-: A signed, expiring credential for the playback operations of one torrent
-  or of all, carried in a URL's `token` query parameter. The application
+: A signed, expiring credential for the playback operations of one torrent,
+  or of all of them with every profile's avatar, carried in a URL's `token` query parameter. The application
   does not store it.
 
 **Allowed host**

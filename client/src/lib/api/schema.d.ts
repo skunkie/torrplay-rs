@@ -3777,7 +3777,7 @@ export interface components {
             revoke_access_tokens: boolean;
         };
         /**
-         * @description What an access token allows. An api token allows every operation. A playback token allows only reading torrents' file content and posters, and may travel in a URL's token query parameter. A metrics token allows only reading the metrics, the system resource, and the application's and the piece cache's statistics, for a monitoring scraper; it travels only as a bearer token.
+         * @description What an access token allows. An api token allows every operation. A playback token allows only reading torrents' file content and posters and profiles' avatars, and may travel in a URL's token query parameter. A metrics token allows only reading the metrics, the system resource, and the application's and the piece cache's statistics, for a monitoring scraper; it travels only as a bearer token.
          * @example api
          * @enum {string}
          */
@@ -3885,7 +3885,7 @@ export interface components {
         /** @description The scope and lifetime of a playback token to issue. */
         PlaybackTokenCreation: {
             /**
-             * @description The torrent whose content and poster the token allows, or null for every torrent. An unknown torrent is validation-failed.
+             * @description The torrent whose content and poster the token allows, or null for every torrent and profiles' avatars. An unknown torrent is validation-failed.
              * @default null
              * @example trr_7ndq4m2kzb6hxw3rjpt5yc4ula
              */

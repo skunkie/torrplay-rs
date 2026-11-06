@@ -2046,6 +2046,10 @@ paths:
         Returns the profile's avatar image as it was uploaded, with its media type. The
         request is not-found while there is none. A Range header is ignored.
       tags: [Profiles]
+      security:
+        - {}
+        - accessToken: []
+        - playbackToken: []
       parameters:
         - $ref: '#/components/parameters/IfNoneMatch'
       responses:
@@ -2096,6 +2100,10 @@ paths:
       summary: Read a profile's avatar's headers
       description: Returns the headers and status a GET of the avatar would return, without a body.
       tags: [Profiles]
+      security:
+        - {}
+        - accessToken: []
+        - playbackToken: []
       parameters:
         - $ref: '#/components/parameters/IfNoneMatch'
       responses:
@@ -8087,7 +8095,8 @@ components:
       description: >-
         What an access token allows. An api token allows every operation. A
         playback token allows only reading torrents' file content and
-        posters, and may travel in a URL's token query parameter. A metrics
+        posters and profiles' avatars, and may travel in a URL's token query
+        parameter. A metrics
         token allows only reading the metrics, the system resource, and the
         application's and the piece cache's statistics, for a monitoring
         scraper; it travels only as a bearer token.
@@ -8233,7 +8242,8 @@ components:
           type: [string, 'null']
           description: >-
             The torrent whose content and poster the token allows, or null
-            for every torrent. An unknown torrent is validation-failed.
+            for every torrent and profiles' avatars. An unknown torrent is
+            validation-failed.
           default: null
           examples: [trr_7ndq4m2kzb6hxw3rjpt5yc4ula]
         expires_in_seconds:

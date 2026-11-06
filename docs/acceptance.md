@@ -376,8 +376,8 @@ These scenarios accept the lifecycle's
 | AUT-02 | Set a password, then list torrents without a token, with a wrong token, and with a signed-in token | `201` with `Location`; `401` with `WWW-Authenticate` and, for the wrong token, `invalid_token`; `200` |
 | AUT-03 | Sign in with a wrong password six times, then with the right one before and after `Retry-After` | `403 invalid-credentials` five times, then `429` with `Retry-After`; `429`, then `201` |
 | AUT-04 | Change the password without, with a wrong, and with the right `current_password`, revoking tokens | `422` naming `/current_password`; `403`; `200`, and the old token gets `401` |
-| AUT-05 | Create a `playback` access token and use it for content, as a header and a query, and for listing torrents | Content `200` both ways; listing `403 insufficient-scope` |
-| AUT-06 | Issue a playback token for one torrent and stream its file, another torrent's file, and its file after revoking the issuing access token | `200`; `403 insufficient-scope`; `401` |
+| AUT-05 | Create a `playback` access token and use it for content, as a header and a query, to read and change an avatar, and for listing torrents | Content `200` both ways; reading an avatar `200`, changing it and listing `403 insufficient-scope` |
+| AUT-06 | Issue a playback token for one torrent and stream its file, another torrent's file, a profile's avatar, and its file after revoking the issuing access token; read the avatar with a token of every torrent | `200`; `403 insufficient-scope` twice; `401`; `200` |
 | AUT-07 | Send an `api` token in the `token` query, and an expired or tampered playback token | `401` each time |
 | AUT-08 | Request with `Host` as an IP address, `localhost`, a `.local` name, an allowed name, and another name; `/livez` with another name | `200` four times, then `421 misdirected-request`; `200` |
 | AUT-09 | Restart with a password and access tokens, remove the password, and set one again | Tokens work after the restart; after removal requests need none; old tokens and playback tokens fail once a password is set again |
