@@ -247,8 +247,12 @@ SPDX-License-Identifier: MIT
 
     {#if torrent}
       <!-- The panel, then every piece, then the episodes; on a large window every
-           piece spans the top, with the episodes and the panel side by side below. -->
-      <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_21.25rem] lg:items-start">
+           piece spans the top, with the episodes and the panel side by side below. The
+           single column is sized to the page, not to what it holds: one line of a
+           reader's long file name would otherwise widen everything in it. -->
+      <div
+        class="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1fr)_21.25rem] lg:items-start"
+      >
         <div class="lg:col-start-2 {showingPieces ? 'lg:row-start-2' : 'lg:row-start-1'}">
           <DownloadPanel
             {torrent}

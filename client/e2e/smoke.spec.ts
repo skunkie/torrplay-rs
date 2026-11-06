@@ -526,6 +526,48 @@ test.describe("the demo", () => {
     expect(await heading.evaluate(cut), "on the home page it stops short").toBe(true);
   });
 
+  test.describe("a title being played, with every piece showing", () => {
+    const THE_TITLE = "/demo/titles/trr_aaaaaaaaaaaaaaaaaaaaaaaaa1";
+
+    /** Opens every piece, returning the strip's width from before that. */
+    async function showPieces(page: Page): Promise<number | undefined> {
+      await page.goto(THE_TITLE);
+      const strip = page.getByRole("button", { name: /show all pieces/ });
+      const width = (await strip.boundingBox())?.width;
+      await strip.click();
+      await expect(page.getByRole("list", { name: "Readers" })).toBeVisible();
+      return width;
+    }
+
+    async function expectSameWidth(page: Page, before: number | undefined): Promise<void> {
+      expect(before, "the strip was measured").toBeGreaterThan(0);
+      const after = await page.getByRole("button", { name: /hide all pieces/ }).boundingBox();
+      expect(after?.width, "the strip keeps its size").toBe(before);
+      const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+      expect(scrollWidth, "nothing to scroll sideways").toBe(page.viewportSize()?.width);
+    }
+
+    test("shows all of the reader's file name on a phone", async ({ page }) => {
+      await page.setViewportSize({ width: 375, height: 812 });
+      const before = await showPieces(page);
+      const name = page.getByRole("list", { name: "Readers" }).getByText("S01E04");
+      const clipped = await name.evaluate((text) => text.scrollWidth > text.clientWidth);
+      expect(clipped, "the end of the name names the episode").toBe(false);
+      await expectSameWidth(page, before);
+    });
+
+    test("keeps its width for a long file name on a tablet", async ({ page }) => {
+      await page.setViewportSize({ width: 768, height: 1024 });
+      const before = await showPieces(page);
+      // Longer than the window, which no name in the demo is.
+      await page
+        .getByRole("list", { name: "Readers" })
+        .getByText("S01E04")
+        .evaluate((text) => (text.textContent = "A.Very.Long.File.Name.".repeat(20)));
+      await expectSameWidth(page, before);
+    });
+  });
+
   test("introduces itself once, and again when asked", async ({ page }) => {
     await page.goto("/demo");
     const heading = page.getByRole("heading", { name: "This is a demo of TorrPlay" });
