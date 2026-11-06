@@ -539,7 +539,7 @@ SPDX-License-Identifier: MIT
         {#if preloading.queued}
           {t().player.preloadQueued}
         {:else if preloading.targetBytes > 0}
-          {percent}% · {formatBytes(preloading.completedBytes)} / {formatBytes(
+          {t().common.percent(percent)} · {formatBytes(preloading.completedBytes)} / {formatBytes(
             preloading.targetBytes,
           )}
         {:else}
