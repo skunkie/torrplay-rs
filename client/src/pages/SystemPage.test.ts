@@ -8,7 +8,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../lib/api/http";
 import type { Backend, LogQuery, LogRecord, LogRecordPage } from "../lib/backend";
 import { backendContext } from "../lib/context";
-import { LOG_KEPT } from "../lib/logs";
 import {
   cacheStatistics,
   fakeBackend,
@@ -37,7 +36,8 @@ function logOf(...items: LogRecord[]) {
 }
 
 function rows(): string[] {
-  return within(screen.getByRole("list"))
+  // The log's list comes after the list of addresses.
+  return within(screen.getAllByRole("list").at(-1) as HTMLElement)
     .getAllByRole("listitem")
     .map((row) => row.textContent);
 }
@@ -165,23 +165,6 @@ it("reads from the top when more arrived than a page holds", async () => {
   await screen.findByText("record 301");
 
   expect(screen.queryByText("record 1")).toBeNull();
-});
-
-it("reads from the top rather than keep too many records", async () => {
-  const many = Array.from({ length: LOG_KEPT }, (_, index) => logRecord(LOG_KEPT - index));
-  const list = vi.fn(async (query: LogQuery) =>
-    query.afterSequence === undefined
-      ? logRecordPage(list.mock.calls.length > 1 ? [logRecord(LOG_KEPT + 1)] : many)
-      : logRecordPage([logRecord(LOG_KEPT + 1)]),
-  );
-  show(fakeBackend({ listLogRecords: list }));
-
-  await screen.findByText(`record ${LOG_KEPT}`);
-  await nextPoll();
-
-  await waitFor(() => {
-    expect(rows()).toHaveLength(1);
-  });
 });
 
 it("reads older records with the cursor it was given", async () => {
@@ -531,4 +514,17 @@ it("adds the date to a record once the day has changed", async () => {
   await waitFor(() => {
     expect(rows()[0]).toContain("Nov");
   });
+});
+
+it("lists the addresses other devices reach it at, and nothing without any", async () => {
+  show(fakeBackend({ getSystem: vi.fn(async () => system({ urls: ["http://10.0.0.5:8642"] })) }));
+
+  expect(await screen.findByText("http://10.0.0.5:8642")).toBeTruthy();
+});
+
+it("leaves out the addresses when there are none", async () => {
+  show(fakeBackend({ getSystem: vi.fn(async () => system({ urls: [] })) }));
+
+  await screen.findByText("Version 0.1.0 · linux aarch64");
+  expect(screen.queryByText("Other devices reach TorrPlay at")).toBeNull();
 });

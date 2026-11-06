@@ -116,6 +116,64 @@ test.describe("on a device whose system prefers dark", () => {
   });
 });
 
+test.describe("stremio", () => {
+  test("gives a link that Stremio can read", async ({ page, request }) => {
+    await page.goto("/settings");
+    await page.getByRole("link", { name: "Stremio" }).click();
+    await expect(page).toHaveURL("/settings/stremio");
+
+    // The tests reach the application on loopback, and it listens only there.
+    const link = page.getByLabel("Link for Stremio");
+    await expect(page.getByText(/works on this computer only/)).toBeVisible();
+    const manifest = await request.get(await link.inputValue());
+    expect(manifest.ok()).toBe(true);
+    expect(await manifest.json()).toMatchObject({ name: expect.any(String) });
+  });
+
+  test("creates a link that holds its own key while a password is set", async ({
+    page,
+    request,
+  }) => {
+    const PASSWORD = "an invented test passphrase";
+    expect((await request.put("/api/v1/password", { data: { password: PASSWORD } })).ok()).toBe(
+      true,
+    );
+    try {
+      await page.goto("/settings/stremio");
+      await page.getByLabel("Password", { exact: true }).fill(PASSWORD);
+      await page.getByRole("button", { name: "Sign in" }).click();
+      await expect(page).toHaveURL("/settings/stremio");
+
+      await page.getByLabel("Current password").fill(PASSWORD);
+      await page.getByRole("button", { name: "Create link" }).click();
+      const link = page.getByLabel("Link for Stremio");
+      await expect(link).toBeFocused();
+
+      // Without a credential of its own, as Stremio asks.
+      const url = await link.inputValue();
+      expect(url).toMatch(/\/stremio\/[^/]+\/manifest\.json$/);
+      expect((await request.get(url)).ok()).toBe(true);
+      const bare = url.replace(/\/stremio\/[^/]+\//, "/stremio/");
+      expect((await request.get(bare)).status()).toBe(401);
+
+      await page.reload();
+      await expect(page.getByRole("heading", { name: "Existing links" })).toBeVisible();
+      await page.getByRole("button", { name: "Revoke" }).click();
+      await page.getByRole("dialog").getByRole("button", { name: "Revoke" }).click();
+      await expect(page.getByRole("button", { name: "Create link" })).toBeVisible();
+      expect((await request.get(url)).status()).toBe(401);
+    } finally {
+      // Whatever went wrong, the other tests share this application.
+      const cleanup = await request.post("/api/v1/access-tokens", {
+        data: { password: PASSWORD, name: "Cleanup", scope: "api" },
+      });
+      const { secret } = (await cleanup.json()) as { secret: string };
+      const headers = { Authorization: `Bearer ${secret}` };
+      expect((await request.delete("/api/v1/password", { headers })).ok()).toBe(true);
+    }
+  });
+});
+
 test.describe("system", () => {
   test("shows the run, finds a record, and changes the log level", async ({ page }) => {
     await page.goto("/settings");

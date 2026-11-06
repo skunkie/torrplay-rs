@@ -31,6 +31,7 @@ export const en = {
     sections: {
       playback: "Playback and cache",
       network: "Network and DLNA",
+      stremio: "Stremio",
       profiles: "Profiles",
       security: "Security",
       backup: "Backup",
@@ -403,6 +404,7 @@ export const en = {
       `Version ${version} · ${os} ${architecture}`,
     memory: "Memory in use",
     memoryHint: "The whole process",
+    urls: "Other devices reach TorrPlay at",
     readers: "Readers",
     activeReaders: (count: number) => `${count} active`,
     otherReaders: (idle: number, waiting: number) => `${idle} idle · ${waiting} waiting`,
@@ -435,6 +437,35 @@ export const en = {
     logLevelOption: "The --log-level option sets it for this run.",
     logFilterOption: "The --log-filter option sets it for this run.",
     logLevelCustom: "Custom",
+  },
+  stremio: {
+    intro: "Browse and play your library in Stremio, on this or another device.",
+    address: "Address other devices use",
+    link: "Link for Stremio",
+    open: "Open in Stremio",
+    how: "In Stremio, open Add-ons and paste this link, or press Open in Stremio on the device that has it.",
+    noPassword:
+      "No password is set, so anyone on your local network can use this link. Set one under Security to require a key.",
+    createTitle: "Create a link",
+    createBody:
+      "A password is set, so the link holds its own key. The key can only play files; it cannot change anything.",
+    create: "Create link",
+    once: "Copy this link now. It is not shown again.",
+    revokeNote: "To remove it later, come back here and revoke it.",
+    existing: "Existing links",
+    existingBody: "Their keys cannot be shown again. A link keeps working until you revoke it.",
+    created: (when: string) => `Created ${when}`,
+    lastUsed: (when: string) => `Last used ${when}`,
+    notUsed: "Not used yet",
+    createAnother: "Create a new link",
+    anotherNote: "For another device. Creating one needs your password.",
+    revokeTitle: "Revoke this link?",
+    revokeBody: "Stremio stops reaching TorrPlay wherever this link is installed.",
+    fromLoopback:
+      "You opened TorrPlay at localhost, which other devices cannot use, so the link uses this computer’s network address instead.",
+    thisComputer:
+      "No address for other devices was found, so this link works on this computer only.",
+    thisComputerHint: "To reach it from a TV or phone, start TorrPlay without --listen 127.0.0.1.",
   },
   backup: {
     downloadTitle: "Download a backup",

@@ -151,6 +151,7 @@ English message.
 | Peer / seed | Пир / сид | Standard BitTorrent usage |
 | DHT, DLNA | DHT, DLNA | Stay in Latin letters, as does a command-line option such as `--no-dht` or `--log-level` |
 | Background download | Фоновая загрузка | |
+| Addon (Stremio) | Аддон | `Stremio` stays in Latin letters, as do `localhost` and a local address |
 | Log / log record | Журнал / запись | Never `лог` |
 | Log level: error, warn, info, debug, trace | Уровень журнала: error, warn, info, debug, trace | The names stay in Latin letters, as the records show them |
 | Reader (statistics) | Поток чтения | Never `ридер` |

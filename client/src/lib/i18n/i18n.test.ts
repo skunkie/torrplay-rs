@@ -62,7 +62,7 @@ it("has every message in Russian, in Russian typography", () => {
   for (const [at, text] of texts(ru)) {
     // The translation skill keeps these names, and the IMDb ID's form, in Latin letters.
     const words = text.replaceAll(
-      /TorrPlay|magnet|\bID\b|IMDb|tt0000000|DLNA|DHT|--no-dht|--log-level|--log-filter|\b(?:error|warn|info|debug|trace)\b/gi,
+      /TorrPlay|magnet|\bID\b|IMDb|tt0000000|DLNA|DHT|--no-dht|--log-level|--log-filter|--listen|127\.0\.0\.1|Stremio|localhost|\b(?:error|warn|info|debug|trace)\b/gi,
       "",
     );
     expect(words, at).not.toMatch(/[A-Za-z]/);
