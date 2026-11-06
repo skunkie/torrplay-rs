@@ -12,6 +12,8 @@ SPDX-License-Identifier: MIT
   import type { Torrent, TorrentStatistics } from "../lib/backend";
   import {
     fileName,
+    heroTitleClasses,
+    nameBelowTitle,
     progressLabel,
     stateLabel,
     torrentDetails,
@@ -201,10 +203,7 @@ SPDX-License-Identifier: MIT
           <span class="rounded-lg bg-scrim/80 px-2 py-1 text-hero-text">{label}</span>
         {/if}
       </p>
-      <h1
-        id="title"
-        class="max-w-3xl text-display-small font-bold tracking-tight wrap-break-word md:text-display"
-      >
+      <h1 id="title" class={heroTitleClasses(torrentTitle(torrent), true)}>
         {torrentTitle(torrent)}
       </h1>
       {#if torrent.description}
@@ -297,7 +296,7 @@ SPDX-License-Identifier: MIT
               {/each}
             </ul>
           {/if}
-          {#if torrent.title && torrent.name && torrent.title !== torrent.name}
+          {#if nameBelowTitle(torrent)}
             <p class="text-meta break-all text-text-muted">{torrent.name}</p>
           {/if}
 

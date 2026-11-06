@@ -502,6 +502,30 @@ test.describe("the demo", () => {
     expect(await video.evaluate((media: HTMLVideoElement) => media.paused)).toBe(false);
   });
 
+  test("shows a long title whole on its page and short of that on the home page", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/demo/titles/trr_aaaaaaaaaaaaaaaaaaaaaaaaa1/edit");
+    await page.getByLabel(/^Title/).fill("A very long invented title ".repeat(12));
+    await page.getByRole("button", { name: "Save" }).click();
+
+    const heading = page.getByRole("heading", { level: 1 });
+    await expect(heading).toHaveText(/^A very long invented title/);
+    const cut = (element: HTMLElement) => element.scrollHeight > element.clientHeight;
+    expect(await heading.evaluate(cut), "all of it shows").toBe(false);
+    const textWidth = await heading.evaluate((element) => {
+      const text = document.createRange();
+      text.selectNodeContents(element);
+      return text.getBoundingClientRect().width;
+    });
+    expect(textWidth, "it takes the width beside the poster").toBeGreaterThan(768);
+
+    await page.getByRole("link", { name: "Back" }).click();
+    await expect(heading).toHaveText(/^A very long invented title/);
+    expect(await heading.evaluate(cut), "on the home page it stops short").toBe(true);
+  });
+
   test("introduces itself once, and again when asked", async ({ page }) => {
     await page.goto("/demo");
     const heading = page.getByRole("heading", { name: "This is a demo of TorrPlay" });

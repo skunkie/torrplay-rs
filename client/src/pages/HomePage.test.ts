@@ -122,9 +122,27 @@ it("removes a dismissed entry from up next", async () => {
   expect(fake.dismissUpNext).toHaveBeenCalledWith(ana.id, entry.id);
 });
 
+it("says Resume once on a banner for a file at its end", async () => {
+  render(App, { backend: backend([ana], () => [upNext(torrent(1), 1)]) });
+  const banner = within(await screen.findByRole("region", { name: "Title 1" }));
+  expect(banner.getAllByText("Resume")).toHaveLength(1);
+});
+
+it("says a viewed file is viewed on its banner", async () => {
+  const entry = upNext(torrent(1), 0.5);
+  const viewed = {
+    ...entry,
+    progress: entry.progress && { ...entry.progress, viewed: true, position_seconds: 0 },
+  };
+  render(App, { backend: backend([ana], () => [viewed]) });
+  const banner = within(await screen.findByRole("region", { name: "Title 1" }));
+  expect(banner.getByText("Viewed")).toBeInTheDocument();
+});
+
 it("leads with the only entry and lists no row under it", async () => {
   render(App, { backend: backend([ana], () => [upNext(torrent(1), 0.5)]) });
   const banner = within(await screen.findByRole("region", { name: "Title 1" }));
+  expect(banner.getAllByText("Resume")).toHaveLength(1);
   expect(banner.getByRole("link", { name: "Resume" })).toBeInTheDocument();
   expect(banner.getByRole("link", { name: "Details" })).toBeInTheDocument();
   expect(banner.getByText("30 min left")).toBeInTheDocument();
