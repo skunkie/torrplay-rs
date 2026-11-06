@@ -11,6 +11,9 @@
 //! up one number, and the oldest beyond [`KEPT_FILE_LIMIT`] is deleted.
 //! Logging never waits for the disk: records go through a bounded queue,
 //! and those the queue or the disk cannot take are dropped and counted.
+//! Lines reach the files in sequence order, so a client following the log
+//! never sees a record before an earlier one. Earlier versions could write
+//! them out of order, so reading and reopening do not assume that order.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
@@ -141,10 +144,10 @@ impl LogFiles {
         self.dropped.load(Ordering::Relaxed)
     }
 
-    /// Reads up to `limit` records newest first, after `before` when it is
-    /// given and down to, not including, `down_to`, that `keep` accepts, and
-    /// the oldest sequence the files hold. It reads files, so callers run it
-    /// on a blocking thread.
+    /// Reads up to `limit` records, highest sequence first, below `before`
+    /// when it is given and above `down_to`, that `keep` accepts, and the
+    /// oldest sequence the files hold. It reads files, so callers run it on a
+    /// blocking thread.
     pub fn read(
         &self,
         before: Option<u64>,
@@ -162,46 +165,39 @@ impl LogFiles {
                 Err(error) => return Err(error),
             }
         }
-        let mut records = Vec::new();
-        let mut oldest = None;
-        // Records are read newest first; one that is not older than the one
-        // before it was read twice across a rotation and is skipped.
-        let mut previous = u64::MAX;
-        let mut done = false;
+        // Kept by sequence, so pages follow cursors whatever order the lines
+        // are in and a record read twice across a rotation is one record.
+        let mut records = BTreeMap::new();
+        let mut oldest: Option<u64> = None;
         for file in opened {
-            let mut lines = Vec::new();
             for line in BufReader::new(file).lines() {
-                lines.push(line?);
-            }
-            for line in lines.iter().rev() {
                 // A line the writer has not finished is no record yet.
-                let Ok(record) = serde_json::from_str::<LogRecord>(line) else {
+                let Ok(record) = serde_json::from_str::<LogRecord>(&line?) else {
                     continue;
                 };
-                if record.sequence >= previous {
-                    continue;
-                }
-                previous = record.sequence;
-                oldest = Some(record.sequence);
-                if done || before.is_some_and(|before| record.sequence >= before) || !keep(&record)
+                let sequence = record.sequence;
+                oldest = Some(oldest.map_or(sequence, |oldest| oldest.min(sequence)));
+                if before.is_some_and(|before| sequence >= before)
+                    || down_to.is_some_and(|down_to| sequence <= down_to)
+                    || !keep(&record)
                 {
                     continue;
                 }
-                if down_to.is_some_and(|down_to| record.sequence <= down_to) {
-                    done = true;
-                    continue;
+                records.entry(sequence).or_insert(record);
+                if records.len() > limit {
+                    records.pop_first();
                 }
-                records.push(record);
-                done = records.len() >= limit;
             }
         }
+        let records = records.into_values().rev().collect();
         Ok((records, oldest))
     }
 }
 
 impl LogWriter {
     /// Queues a record's line, or drops and counts it when the queue is
-    /// full.
+    /// full. Callers write lines in sequence order, which clients following
+    /// the log rely on.
     pub fn write(&self, line: String) {
         match self.queue.try_send(Message::Line(line)) {
             Ok(()) => {}
@@ -334,25 +330,24 @@ fn open_current(directory: &Path) -> io::Result<Current> {
     })
 }
 
-/// The sequence of the newest record the files hold, or 0 without one.
+/// The highest sequence the files hold, or 0 without one. Every file is
+/// read: lines of earlier versions may be out of order, even across a
+/// rotation, so neither the last line nor the current file need hold it.
 fn last_sequence(directory: &Path) -> io::Result<u64> {
+    let mut highest = 0;
     for index in 0..KEPT_FILE_LIMIT {
         let file = match File::open(directory.join(file_name(index))) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error),
         };
-        let mut last = None;
         for line in BufReader::new(file).lines() {
             if let Ok(record) = serde_json::from_str::<LogRecord>(&line?) {
-                last = Some(record.sequence);
+                highest = highest.max(record.sequence);
             }
         }
-        if let Some(last) = last {
-            return Ok(last);
-        }
     }
-    Ok(0)
+    Ok(highest)
 }
 
 #[cfg(test)]
@@ -475,6 +470,80 @@ mod tests {
             total - oldest.unwrap() + 1,
             "no gap or repeat within the files"
         );
+    }
+
+    /// Writes a file of records with `sequences`, in that order.
+    fn write_file(directory: &Path, index: usize, sequences: &[u64]) {
+        let lines: String = sequences
+            .iter()
+            .map(|sequence| {
+                let line = serde_json::to_string(&record(*sequence, "info", "written")).unwrap();
+                format!("{line}\n")
+            })
+            .collect();
+        fs::write(directory.join(file_name(index)), lines).unwrap();
+    }
+
+    #[test]
+    fn a_line_out_of_order_hides_no_record() {
+        let directory = tempfile::TempDir::new().unwrap();
+        write_file(directory.path(), 1, &[1, 2, 12]);
+        write_file(directory.path(), 0, &[10, 11, 3]);
+        let (files, writer) = LogFiles::open(directory.path()).unwrap();
+        let all = |_: &LogRecord| true;
+        let (records, oldest) = files.read(None, None, 10, all).unwrap();
+        assert_eq!(sequences(&records), [12, 11, 10, 3, 2, 1]);
+        assert_eq!(oldest, Some(1));
+        let (newer, _) = files.read(None, Some(3), 10, all).unwrap();
+        assert_eq!(sequences(&newer), [12, 11, 10], "after_sequence bounds it");
+
+        // A cursor is a sequence, so pages hold the newest records left.
+        let mut paged = Vec::new();
+        let mut before = None;
+        loop {
+            let (page, _) = files.read(before, None, 1, all).unwrap();
+            let Some(last) = page.last() else { break };
+            before = Some(last.sequence);
+            paged.extend(sequences(&page));
+        }
+        assert_eq!(
+            paged,
+            [12, 11, 10, 3, 2, 1],
+            "pages neither skip nor repeat"
+        );
+        writer.close().unwrap();
+    }
+
+    /// What reading sees when a rotation moves a file between opening one
+    /// number and the next: the same file twice.
+    #[test]
+    fn a_file_read_twice_repeats_no_record() {
+        let directory = tempfile::TempDir::new().unwrap();
+        write_file(directory.path(), 0, &[1, 2, 3]);
+        write_file(directory.path(), 1, &[1, 2, 3]);
+        let (files, writer) = LogFiles::open(directory.path()).unwrap();
+        let (records, oldest) = files.read(None, None, 10, |_| true).unwrap();
+        assert_eq!(sequences(&records), [3, 2, 1]);
+        assert_eq!(oldest, Some(1));
+        writer.close().unwrap();
+    }
+
+    #[test]
+    fn a_reopen_continues_from_the_highest_sequence() {
+        // The highest may be neither the last line nor in the current file.
+        let cases: [(&str, &[u64], &[u64]); 2] = [
+            ("the current file's last line is lower", &[9, 11, 10], &[]),
+            ("an older file holds the highest", &[11], &[10, 12]),
+        ];
+        for (case, current, older) in cases {
+            let directory = tempfile::TempDir::new().unwrap();
+            write_file(directory.path(), 0, current);
+            write_file(directory.path(), 1, older);
+            let (files, writer) = LogFiles::open(directory.path()).unwrap();
+            let highest = current.iter().chain(older).max().copied();
+            assert_eq!(files.latest_sequence(), highest, "{case}");
+            writer.close().unwrap();
+        }
     }
 
     #[test]
