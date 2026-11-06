@@ -6,7 +6,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/sve
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../lib/api/http";
-import type { Backend, LogQuery, LogRecordPage } from "../lib/backend";
+import type { Backend, LogQuery, LogRecord, LogRecordPage } from "../lib/backend";
 import { backendContext } from "../lib/context";
 import { LOG_KEPT } from "../lib/logs";
 import {
@@ -27,6 +27,13 @@ function show(backend: Backend) {
 /** Lets the page's next poll run. */
 async function nextPoll(): Promise<void> {
   await vi.advanceTimersByTimeAsync(5000);
+}
+
+/** Answers as the server does: `items`, newest first, past `after_sequence`. */
+function logOf(...items: LogRecord[]) {
+  return vi.fn(async (query: LogQuery) =>
+    logRecordPage(items.filter((item) => item.sequence > (query.afterSequence ?? 0))),
+  );
 }
 
 function rows(): string[] {
@@ -102,15 +109,13 @@ it("keeps what still answers when one measure fails", async () => {
 it("shows a record's level, target, message, and fields", async () => {
   show(
     fakeBackend({
-      listLogRecords: vi.fn(async () =>
-        logRecordPage([
-          logRecord(2, {
-            level: "warn",
-            target: "librqbit::peer",
-            message: "a peer stopped responding",
-            fields: { peer: "198.51.100.7:51413", attempts: "3" },
-          }),
-        ]),
+      listLogRecords: logOf(
+        logRecord(2, {
+          level: "warn",
+          target: "librqbit::peer",
+          message: "a peer stopped responding",
+          fields: { peer: "198.51.100.7:51413", attempts: "3" },
+        }),
       ),
     }),
   );
@@ -195,7 +200,7 @@ it("reads older records with the cursor it was given", async () => {
 });
 
 it("filters by level at once and by text once typing pauses", async () => {
-  const list = vi.fn(async () => logRecordPage([logRecord(1)]));
+  const list = logOf(logRecord(1));
   show(fakeBackend({ listLogRecords: list }));
   await screen.findByText("record 1");
   expect(list).toHaveBeenLastCalledWith(
@@ -515,7 +520,7 @@ it("adds the date to a record once the day has changed", async () => {
   const at = new Date(2026, 10, 6, 23, 59, 50).toISOString();
   show(
     fakeBackend({
-      listLogRecords: vi.fn(async () => logRecordPage([logRecord(1, { logged_at: at })])),
+      listLogRecords: logOf(logRecord(1, { logged_at: at })),
     }),
   );
   await screen.findByText("record 1");
