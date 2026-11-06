@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
   import { chooseLocale, i18n, isLocale, locales, profileName, t } from "../lib/i18n/index.svelte";
   import { navigate } from "../lib/navigation.svelte";
   import { chooseProfile, profiles, resetProfiles } from "../lib/profile.svelte";
-  import { demo, homePath, signInPath } from "../lib/routes";
+  import { demo, homePath, settingsPath, signInPath } from "../lib/routes";
   import { session, signOut } from "../lib/session.svelte";
   import { chooseTheme, isTheme, theme, themes } from "../lib/theme.svelte";
   import { toneOf } from "../lib/tone";
@@ -101,6 +101,13 @@ SPDX-License-Identifier: MIT
       {/each}
     </select>
   </label>
+  <a
+    href={settingsPath()}
+    class="btn btn-secondary"
+    onclick={() => document.getElementById("app-menu")?.hidePopover()}
+  >
+    {t().settings.title}
+  </a>
   {#if demo}
     <button
       type="button"

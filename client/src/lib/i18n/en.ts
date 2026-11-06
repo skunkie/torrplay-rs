@@ -26,6 +26,88 @@ export const en = {
     signOut: "Sign out",
   },
   themes: { system: "System", light: "Light", dark: "Dark" },
+  settings: {
+    title: "Settings",
+    sections: { playback: "Playback and cache", network: "Network and DLNA" },
+    groups: {
+      memory: "Memory and downloads",
+      streaming: "Streaming",
+      temporary: "Torrents outside the library",
+      peers: "Peers",
+      dlna: "DLNA",
+    },
+    units: { mib: "MiB", seconds: "s", minutes: "min", days: "days" },
+    fields: {
+      cache_capacity_bytes: {
+        label: "Memory for pieces",
+        hint: "The cache every torrent in memory shares. Applies at once; making it smaller drops pieces it was keeping.",
+      },
+      background_downloads_enabled: {
+        label: "Download in the background",
+        hint: "Lets torrents on disk download what they lack while nothing reads them. Playback pauses it.",
+      },
+      piece_wait_seconds: {
+        label: "Wait for a missing piece",
+        hint: "How long a stream waits before it is canceled, and how long a peer may hold requests before it is disconnected.",
+      },
+      idle_reader_timeout_seconds: {
+        label: "Keep an idle reader",
+        hint: "Lets a player's next request continue where the last one ended. At 0, a reader is released at once.",
+      },
+      idle_reader_limit_per_torrent: {
+        label: "Idle readers per torrent",
+        hint: "The oldest beyond this are released.",
+      },
+      idle_reader_limit: {
+        label: "Idle readers in all",
+        hint: "Across every torrent. The oldest beyond this are released.",
+      },
+      drain_period_seconds: {
+        label: "Finish streams when stopping",
+        hint: "How long streams may go on after TorrPlay is told to stop. Applies at the next stop.",
+      },
+      temporary_idle_seconds: {
+        label: "Remove when unwatched for",
+        hint: "A torrent outside the library is deleted after going unwatched this long.",
+      },
+      temporary_torrent_limit: {
+        label: "Most at once",
+        hint: "Adding one more deletes the one unwatched longest.",
+      },
+      temporary_progress_seconds: {
+        label: "Keep their progress for",
+        hint: "So adding a torrent again finds where someone stopped.",
+      },
+      peer_limit: {
+        label: "Peers per torrent",
+        hint: "Applies to a torrent when it starts.",
+      },
+      dht_enabled: {
+        label: "Find peers through DHT",
+        hint: "Finds peers without a tracker. Turning it on applies to a torrent when it starts. Private torrents never use it.",
+      },
+      dlna_enabled: {
+        label: "Share with TVs over DLNA",
+        hint: "Anyone on your local network can then play your library without a password, even when one is set.",
+      },
+      dlna_name: {
+        label: "Name on the network",
+        hint: "How TVs list this TorrPlay.",
+      },
+    },
+    dhtOverride: "The --no-dht option keeps it off for this run.",
+    range: (min: number, max: number) => `Enter a whole number from ${min} to ${max}.`,
+    required: "Enter a name.",
+    changes: (count: number) =>
+      `${count}\u00A0${plural("en-US", count, { one: "change", other: "changes" })}`,
+    fixFirst: "Some values need fixing. Their sections are marked.",
+    needsFixing: "needs fixing",
+    leave: "Leave without saving your changes?",
+    changedElsewhere: "The settings changed somewhere else. Check them and save again.",
+    saved: "Saved",
+    save: "Save",
+    discard: "Discard",
+  },
   demo: {
     label: "Demo",
     leave: "Leave the demo",

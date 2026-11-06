@@ -5,11 +5,12 @@ SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
   import { ApiError } from "../lib/api/http";
-  import type {
-    PlaybackGrant,
-    Torrent,
-    TorrentConfiguration,
-    TorrentConfigurationPatch,
+  import {
+    errorsOf,
+    type PlaybackGrant,
+    type Torrent,
+    type TorrentConfiguration,
+    type TorrentConfigurationPatch,
   } from "../lib/backend";
   import { useBackend } from "../lib/context";
   import { failureMessage, t } from "../lib/i18n/index.svelte";
@@ -96,13 +97,6 @@ SPDX-License-Identifier: MIT
     } else {
       saveError = failureMessage(failure);
     }
-  }
-
-  function errorsOf(failure: ApiError): { pointer?: string; detail: string }[] {
-    return (
-      (failure.problem as { errors?: { pointer?: string; detail: string }[] } | undefined)
-        ?.errors ?? []
-    );
   }
 
   async function save(values: EditValues, poster: PosterChange): Promise<void> {

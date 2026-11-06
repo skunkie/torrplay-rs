@@ -116,6 +116,69 @@ test.describe("on a device whose system prefers dark", () => {
   });
 });
 
+test.describe("settings", () => {
+  test("saves a change the application keeps", async ({ page }) => {
+    await page.goto("/library");
+    await page.getByRole("button", { name: /^(Menu|Profile)/ }).click();
+    await page.getByRole("link", { name: "Settings" }).click();
+    await page.getByRole("link", { name: "Network and DLNA" }).click();
+    await expect(page).toHaveURL("/settings/network");
+
+    const peers = page.getByLabel("Peers per torrent");
+    await expect(peers).toHaveValue("50");
+    await peers.fill("80");
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByText("Saved")).toBeVisible();
+
+    await page.reload();
+    await expect(peers).toHaveValue("80");
+
+    // The tests share one application.
+    await peers.fill("50");
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByText("Saved")).toBeVisible();
+  });
+
+  test("saves with Enter", async ({ page }) => {
+    await page.goto("/settings/network");
+    const peers = page.getByLabel("Peers per torrent");
+    await expect(peers).toHaveValue("50");
+
+    await peers.fill("60");
+    await peers.press("Enter");
+    await expect(page.getByText("Saved")).toBeVisible();
+
+    await peers.fill("50");
+    await peers.press("Enter");
+    await expect(page.getByText("Saved")).toBeVisible();
+  });
+
+  test("asks before a link leaves unsaved changes", async ({ page }) => {
+    await page.goto("/settings/network");
+    await page.getByLabel("Peers per torrent").fill("60");
+    let asked = false;
+    page.once("dialog", (dialog) => {
+      asked = true;
+      void dialog.dismiss();
+    });
+
+    await page.getByRole("link", { name: "TorrPlay" }).click();
+
+    expect(asked).toBe(true);
+    await expect(page).toHaveURL("/settings/network");
+  });
+
+  test("holds back a value out of bounds", async ({ page }) => {
+    await page.goto("/settings/playback");
+    const memory = page.getByLabel("Memory for pieces");
+    await expect(memory).toHaveValue("256");
+
+    await memory.fill("1");
+    await expect(page.getByRole("button", { name: "Save" })).toBeDisabled();
+    await expect(page.getByRole("alert")).toContainText("from 4 to 65536");
+  });
+});
+
 test.describe("the demo", () => {
   test("runs the pages and plays its video without the API", async ({ page }) => {
     const reached: string[] = [];
@@ -201,6 +264,22 @@ test.describe("the demo", () => {
     // Its file arrives after a moment, as metadata does.
     await page.getByRole("button", { name: /^Play/ }).first().click();
     await expect(page).toHaveURL(/\/demo\/watch\//);
+  });
+
+  test("keeps a setting until the page reloads", async ({ page }) => {
+    await page.goto("/demo/settings/network");
+    const peers = page.getByLabel("Peers per torrent");
+    await peers.fill("80");
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByText("Saved")).toBeVisible();
+
+    await page.getByRole("link", { name: "Playback and cache" }).click();
+    await expect(page).toHaveURL("/demo/settings/playback");
+    await page.getByRole("link", { name: "Network and DLNA" }).click();
+    await expect(peers).toHaveValue("80");
+
+    await page.reload();
+    await expect(peers).toHaveValue("50");
   });
 
   test("leaves the real profile and session alone", async ({ page }) => {

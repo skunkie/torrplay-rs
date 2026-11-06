@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-import type { Profile, Progress, Torrent, TorrentFile } from "../backend";
+import type { Profile, Progress, Settings, Torrent, TorrentFile } from "../backend";
 
 /** A generated test pattern with two audio tracks, and subtitles to go with
  * it. Every video in the demo plays these. */
@@ -282,3 +282,26 @@ export function progressFixtures(): { torrentId: string; progress: Progress }[] 
 
 /** The first person, whom the progress fixtures belong to. */
 export const FIRST_PROFILE = identifier("prf", 1);
+
+/** The application's defaults, as a fresh one reports them. */
+export function settingsFixture(): Settings {
+  return {
+    piece_wait_seconds: 60,
+    idle_reader_timeout_seconds: 30,
+    idle_reader_limit_per_torrent: 4,
+    idle_reader_limit: 16,
+    drain_period_seconds: 10,
+    peer_limit: 50,
+    cache_capacity_bytes: 256 * MIB,
+    temporary_idle_seconds: 600,
+    temporary_torrent_limit: 16,
+    temporary_progress_seconds: 2_592_000,
+    background_downloads_enabled: true,
+    dlna_enabled: false,
+    dlna_name: "TorrPlay",
+    dht_enabled: true,
+    log_level: "info",
+    overrides: {},
+    links: { self: "/api/v1/settings" },
+  };
+}

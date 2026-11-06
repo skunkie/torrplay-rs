@@ -7,6 +7,7 @@ import type {
   Backend,
   Preload,
   Progress,
+  Settings,
   Torrent,
   TorrentConfiguration,
   TorrentFile,
@@ -25,6 +26,7 @@ import {
   profileFixtures,
   progressFixtures,
   SAMPLE_SECONDS,
+  settingsFixture,
 } from "./fixtures";
 
 /** How long a torrent takes to download from nothing. */
@@ -106,6 +108,8 @@ export function demoBackend(now: () => number = Date.now): Backend {
   ]);
   const dismissed = new Set<string>();
   const preloads = new Map<string, { at: number; offset: number | null }>();
+  let settings = settingsFixture();
+  let settingsVersion = 1;
   let serial = held.size;
   /** Bumped by every change a listing would show. */
   let version = 1;
@@ -575,6 +579,20 @@ export function demoBackend(now: () => number = Date.now): Backend {
     async dismissUpNext(profileId, entryId) {
       dismissed.add(`${profileId}/${entryId}`);
       version += 1;
+    },
+
+    getSettings: async () => ({ data: structuredClone(settings), etag: `"s-${settingsVersion}"` }),
+
+    async updateSettings(patch, etag) {
+      if (etag !== `"s-${settingsVersion}"`) {
+        throw refused(
+          412,
+          "precondition-failed",
+          "The settings have changed since they were read.",
+        );
+      }
+      settings = { ...settings, ...patch } as Settings;
+      settingsVersion += 1;
     },
 
     signIn: async () => "demo",

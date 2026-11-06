@@ -426,6 +426,21 @@ describe("progress and up next", () => {
   });
 });
 
+describe("settings", () => {
+  it("stores a change and refuses one made from an old copy", async () => {
+    const { backend } = start();
+    const { data, etag } = await backend.getSettings();
+    expect(data.peer_limit).toBe(50);
+
+    await backend.updateSettings({ peer_limit: 80 }, etag);
+
+    expect((await backend.getSettings()).data.peer_limit).toBe(80);
+    await expect(backend.updateSettings({ peer_limit: 90 }, etag)).rejects.toMatchObject({
+      status: 412,
+    });
+  });
+});
+
 describe("changes", () => {
   it("applies a configuration patch, clearing what is null", async () => {
     const { backend } = start();
