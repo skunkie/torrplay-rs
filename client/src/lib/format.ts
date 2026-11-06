@@ -34,3 +34,38 @@ export function formatBytes(bytes: number): string {
   );
   return `${number}\u00A0${units[unit]}`;
 }
+
+/** How long `seconds` is in its two largest units, such as "2 d 4 h". */
+export function formatDuration(seconds: number): string {
+  const units = t().durationUnits;
+  const parts: [number, string][] = [
+    [Math.floor(seconds / 86_400), units.day],
+    [Math.floor(seconds / 3600) % 24, units.hour],
+    [Math.floor(seconds / 60) % 60, units.minute],
+    [Math.floor(seconds) % 60, units.second],
+  ];
+  const first = parts.findIndex(([amount]) => amount > 0);
+  if (first === -1) return `0\u00A0${units.second}`;
+  return parts
+    .slice(first, first + 2)
+    .filter(([amount]) => amount > 0)
+    .map(([amount, unit]) => `${amount}\u00A0${unit}`)
+    .join(" ");
+}
+
+/** The time of a log record, with its date unless it is `now`'s, in the page's
+ * language and the browser's time zone. */
+export function formatLogTime(at: string, now: number = Date.now()): string {
+  const date = new Date(at);
+  const time: Intl.DateTimeFormatOptions = {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  };
+  const today = date.toDateString() === new Date(now).toDateString();
+  return new Intl.DateTimeFormat(
+    i18n.locale,
+    today ? time : { ...time, month: "short", day: "numeric" },
+  ).format(date);
+}

@@ -149,8 +149,12 @@ English message.
 | Piece | Часть | `Кусок` is informal |
 | Piece cache / cache | Кеш | Dictionary spelling, like `хеш`; never `кэш` |
 | Peer / seed | Пир / сид | Standard BitTorrent usage |
-| DHT, DLNA | DHT, DLNA | Stay in Latin letters, as does a command-line option such as `--no-dht` |
+| DHT, DLNA | DHT, DLNA | Stay in Latin letters, as does a command-line option such as `--no-dht` or `--log-level` |
 | Background download | Фоновая загрузка | |
+| Log / log record | Журнал / запись | Never `лог` |
+| Log level: error, warn, info, debug, trace | Уровень журнала: error, warn, info, debug, trace | The names stay in Latin letters, as the records show them |
+| Reader (statistics) | Поток чтения | Never `ридер` |
+| Pinned / eviction (cache) | Закреплено / вытеснение | |
 
 ### TorrPlay as a Subject
 

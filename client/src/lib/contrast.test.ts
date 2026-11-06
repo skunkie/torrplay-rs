@@ -49,6 +49,7 @@ const PAIRS: [string, string, number][] = [
   ["text-muted", "tile", TEXT],
   ["accent-text", "surface", TEXT],
   ["accent-text", "tile", TEXT],
+  ["warning", "surface", TEXT],
   ["arriving-text", "surface", TEXT],
   ["arriving-text", "tile", TEXT],
   ["on-accent", "accent", TEXT],

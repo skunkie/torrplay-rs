@@ -2,7 +2,16 @@
 //
 // SPDX-License-Identifier: MIT
 
-import type { AccessToken, Profile, Progress, Settings, Torrent, TorrentFile } from "../backend";
+import type {
+  AccessToken,
+  LogLevel,
+  LogRecord,
+  Profile,
+  Progress,
+  Settings,
+  Torrent,
+  TorrentFile,
+} from "../backend";
 
 /** A generated test pattern with two audio tracks, and subtitles to go with
  * it. Every video in the demo plays these. */
@@ -16,6 +25,9 @@ const MIB = 1024 ** 2;
 const CREATED = Date.parse("2026-10-20T18:00:00Z");
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
+
+/** The demo's one run, which its log records and its system name. */
+export const DEMO_RUN = "run_demoaaaaaaaaaaaaaaaaaaaaaa";
 
 function identifier(prefix: string, n: number): string {
   return `${prefix}_${String(n).padStart(26, "a")}`;
@@ -352,6 +364,42 @@ export function progressFixtures(): { torrentId: string; progress: Progress }[] 
 
 /** The first person, whom the progress fixtures belong to. */
 export const FIRST_PROFILE = identifier("prf", 1);
+
+/** What the log holds when the demo starts, oldest first; `started` is when. */
+export function logFixtures(started: number): LogRecord[] {
+  const entries: [number, LogLevel, string, string, Record<string, string>][] = [
+    [190, "info", "torrplay", "the engine is ready, with the stored torrents", { torrents: "6" }],
+    [172, "info", "torrplay_server::app", "a preload is ready", {}],
+    [
+      141,
+      "debug",
+      "torrplay_server::http",
+      "response",
+      { route: "/api/v1/torrents", status: "200" },
+    ],
+    [118, "info", "torrplay_server::stream", "a stream started", { file: "Episode 3.mkv" }],
+    [96, "warn", "librqbit::peer", "a peer stopped responding", { peer: "198.51.100.7:51413" }],
+    [
+      64,
+      "error",
+      "torrplay_engine::storage",
+      "a piece failed its check, and is downloaded again",
+      { piece: "412" },
+    ],
+    [31, "info", "torrplay_server::stream", "a stream ended", { file: "Episode 3.mkv" }],
+    [12, "debug", "torrplay_server::http", "response", { route: "/api/v1/system", status: "200" }],
+  ];
+  return entries.map(([secondsAgo, level, target, message, fields], index) => ({
+    sequence: index + 1,
+    logged_at: new Date(started - secondsAgo * 1000).toISOString(),
+    level,
+    run_id: DEMO_RUN,
+    request_id: null,
+    target,
+    message,
+    fields,
+  }));
+}
 
 /** The application's defaults, as a fresh one reports them. */
 export function settingsFixture(): Settings {

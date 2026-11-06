@@ -24,6 +24,12 @@ export type TorrentContents = Pick<
 >;
 export type StorageMode = Schemas["CreationStorageMode"];
 export type TorrentStatistics = Schemas["TorrentStatistics"];
+export type System = Schemas["System"];
+export type Statistics = Schemas["Statistics"];
+export type CacheStatistics = Schemas["CacheStatistics"];
+export type LogLevel = Schemas["LogLevel"];
+export type LogRecord = Schemas["LogRecord"];
+export type LogRecordPage = Schemas["LogRecordPage"];
 export type TorrentConfiguration = Schemas["TorrentConfiguration"];
 export type TorrentConfigurationPatch = Schemas["TorrentConfigurationPatch"];
 export type Progress = Schemas["Progress"];
@@ -59,6 +65,14 @@ export type TorrentSource = { magnetUri: string } | { file: File };
 export type TorrentKeeping =
   { retention: "temporary" } | { retention: "persisted"; storageMode: StorageMode };
 
+/** Which log records to list. */
+export interface LogQuery {
+  minLevel?: LogLevel;
+  contains?: string;
+  /** Only records newer than this sequence. */
+  afterSequence?: number;
+}
+
 /** A page of the listing to read, and the ETag of the one held. */
 export interface PageRequest {
   cursor?: string;
@@ -90,7 +104,7 @@ export interface Backend {
   /** Deletes a torrent and, in disk storage, its files. */
   deleteTorrent(torrentId: string): Promise<void>;
   /** A torrent's transfer measurements. */
-  getStatistics(torrentId: string): Promise<TorrentStatistics>;
+  getTorrentStatistics(torrentId: string): Promise<TorrentStatistics>;
   /** A torrent's writable configuration and the ETag changing it needs. */
   getConfiguration(torrentId: string): Promise<{ data: TorrentConfiguration; etag: string }>;
   /** Changes a torrent's configuration, if `etag` is still its ETag. */
@@ -141,6 +155,14 @@ export interface Backend {
   listUpNext(profileId: string, page: PageRequest): Promise<Conditional<UpNextPage>>;
   /** Stops listing an up next entry until its progress changes again. */
   dismissUpNext(profileId: string, entryId: string): Promise<void>;
+  /** The running process: its build, platform, and resource use. */
+  getSystem(): Promise<System>;
+  /** The whole application's torrents, readers, and transfers. */
+  getStatistics(): Promise<Statistics>;
+  /** The piece cache's capacity and use. */
+  getCacheStatistics(): Promise<CacheStatistics>;
+  /** A page of log records, newest first. */
+  listLogRecords(query: LogQuery, page: PageRequest): Promise<LogRecordPage>;
   /** The application's settings and the ETag changing them needs. */
   getSettings(): Promise<{ data: Settings; etag: string }>;
   /** Changes the settings, if `etag` is still their ETag. */
@@ -311,7 +333,7 @@ export function httpBackend(http: Http): Backend {
       }
     },
 
-    async getStatistics(torrentId) {
+    async getTorrentStatistics(torrentId) {
       return unwrap(
         await http.GET("/api/v1/torrents/{torrent_id}/statistics", {
           params: { path: { torrent_id: torrentId } },
@@ -381,6 +403,34 @@ export function httpBackend(http: Http): Backend {
         params: { path: { profile_id: profileId } },
       });
       if (!result.response.ok) unwrap(result);
+    },
+
+    async getSystem() {
+      return unwrap(await http.GET("/api/v1/system"));
+    },
+
+    async getStatistics() {
+      return unwrap(await http.GET("/api/v1/statistics"));
+    },
+
+    async getCacheStatistics() {
+      return unwrap(await http.GET("/api/v1/cache/statistics"));
+    },
+
+    async listLogRecords(query, page) {
+      return unwrap(
+        await http.GET("/api/v1/log-records", {
+          params: {
+            query: {
+              ...(query.minLevel ? { min_level: query.minLevel } : {}),
+              ...(query.contains ? { contains: query.contains } : {}),
+              ...(query.afterSequence === undefined ? {} : { after_sequence: query.afterSequence }),
+              ...(page.cursor ? { cursor: page.cursor } : {}),
+              ...(page.pageSize ? { page_size: page.pageSize } : {}),
+            },
+          },
+        }),
+      );
     },
 
     async getSettings() {

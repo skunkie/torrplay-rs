@@ -36,7 +36,7 @@ SPDX-License-Identifier: MIT
         class="flex min-h-11 items-center rounded-xl px-3.5 text-sm font-semibold max-md:min-h-14 max-md:border-t max-md:border-empty max-md:px-0 max-md:text-base {name ===
         current
           ? 'md:bg-tile md:font-bold'
-          : 'md:text-text-muted'}"
+          : 'md:text-text-muted'} {name === 'system' ? 'md:mt-3' : ''}"
       >
         {t().settings.sections[name]}
         {#if marked.has(name)}

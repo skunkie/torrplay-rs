@@ -6,10 +6,15 @@ import { vi } from "vitest";
 
 import type {
   Backend,
+  CacheStatistics,
+  LogRecord,
+  LogRecordPage,
   Preload,
   Profile,
   Progress,
   Settings,
+  Statistics,
+  System,
   Torrent,
   TorrentConfiguration,
   TorrentFile,
@@ -27,7 +32,7 @@ export function fakeBackend(members: Partial<Backend> = {}): Backend {
     createTorrent: vi.fn(),
     keepTorrent: vi.fn(async () => {}),
     deleteTorrent: vi.fn(async () => {}),
-    getStatistics: vi.fn(async () => statistics(0.34)),
+    getTorrentStatistics: vi.fn(async () => statistics(0.34)),
     getConfiguration: vi.fn(async () => ({ data: configuration(), etag: '"c"' })),
     updateConfiguration: vi.fn(async () => {}),
     setPoster: vi.fn(async () => {}),
@@ -47,6 +52,10 @@ export function fakeBackend(members: Partial<Backend> = {}): Backend {
     deleteProfile: vi.fn(async () => {}),
     setAvatar: vi.fn(async () => {}),
     deleteAvatar: vi.fn(async () => {}),
+    getSystem: vi.fn(async () => system()),
+    getStatistics: vi.fn(async () => overallStatistics()),
+    getCacheStatistics: vi.fn(async () => cacheStatistics()),
+    listLogRecords: vi.fn(async () => logRecordPage([])),
     getSettings: vi.fn(async () => ({ data: settings(), etag: '"s"' })),
     updateSettings: vi.fn(async () => {}),
     signIn: vi.fn(),
@@ -64,6 +73,86 @@ export function fakeBackend(members: Partial<Backend> = {}): Backend {
 }
 
 /** The application's default settings, `members` replacing them. */
+export function system(members: Partial<System> = {}): System {
+  return {
+    version: "0.1.0",
+    os: "linux",
+    architecture: "aarch64",
+    run_id: "run_a",
+    started_at: "2026-11-04T08:00:00Z",
+    uptime_seconds: 187_200,
+    resident_memory_bytes: 412 * 1024 * 1024,
+    links: {
+      self: "/api/v1/system",
+      statistics: "/api/v1/statistics",
+      log_records: "/api/v1/log-records",
+      metrics: "/metrics",
+    },
+    ...members,
+  };
+}
+
+export function overallStatistics(members: Partial<Statistics> = {}): Statistics {
+  return {
+    torrent_count: 3,
+    torrent_counts_by_observed_state: {
+      retrieving_metadata: 0,
+      downloading: 2,
+      paused: 1,
+      failed: 0,
+    },
+    active_reader_count: 1,
+    idle_reader_count: 2,
+    waiting_reader_count: 0,
+    peer_count: 23,
+    downloaded_bytes: 2 * 1024 ** 3,
+    uploaded_bytes: 300 * 1024 ** 2,
+    streamed_bytes: 1024 ** 3,
+    download_rate_bytes_per_second: 4 * 1024 ** 2,
+    upload_rate_bytes_per_second: 512 * 1024,
+    links: {
+      self: "/api/v1/statistics",
+      system: "/api/v1/system",
+      cache_statistics: "/api/v1/cache/statistics",
+    },
+    ...members,
+  };
+}
+
+export function cacheStatistics(members: Partial<CacheStatistics> = {}): CacheStatistics {
+  return {
+    capacity_bytes: 256 * 1024 ** 2,
+    usage_bytes: 192 * 1024 ** 2,
+    pinned_bytes: 64 * 1024 ** 2,
+    eviction_count: 1204,
+    links: { self: "/api/v1/cache/statistics" },
+    ...members,
+  };
+}
+
+export function logRecord(sequence: number, members: Partial<LogRecord> = {}): LogRecord {
+  return {
+    sequence,
+    logged_at: "2026-11-06T09:15:02.481Z",
+    level: "info",
+    run_id: "run_a",
+    request_id: null,
+    target: "torrplay",
+    message: `record ${sequence}`,
+    fields: {},
+    ...members,
+  };
+}
+
+export function logRecordPage(items: LogRecord[], next?: string): LogRecordPage {
+  return {
+    items,
+    oldest_sequence: items.at(-1)?.sequence ?? null,
+    latest_sequence: items[0]?.sequence ?? null,
+    links: { self: "/api/v1/log-records", ...(next ? { next } : {}) },
+  };
+}
+
 export function settings(members: Partial<Settings> = {}): Settings {
   return { ...settingsFixture(), ...members };
 }

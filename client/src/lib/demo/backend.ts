@@ -8,6 +8,8 @@ import type {
   AccessTokenCreation,
   Backend,
   CreatedAccessToken,
+  LogLevel,
+  LogRecord,
   Preload,
   Profile,
   Progress,
@@ -20,12 +22,15 @@ import type {
   UpNextEntry,
 } from "../backend";
 import { nextEpisode, playables } from "../episodes";
+import { LOG_LEVELS } from "../logs";
 import { parseMagnet } from "../magnet";
 import {
   accessTokenFixtures,
+  DEMO_RUN,
   FIRST_PROFILE,
   type Fixture,
   fixtures,
+  logFixtures,
   makeFile,
   makeProfile,
   makeTorrent,
@@ -46,6 +51,13 @@ const PRELOAD_BYTES = 32 * 1024 * 1024;
 const PIECE_BYTES = 16 * 1024 * 1024;
 const DOWNLOAD_RATE = 4.2 * 1024 * 1024;
 const PEERS = 23;
+/** How long the demo's application pretends to have been running. */
+const RUNNING_MS = 2 * 24 * 60 * 60 * 1000 + 4 * 60 * 60 * 1000;
+const RESIDENT_MEMORY_BYTES = 412 * 1024 * 1024;
+const CACHE_USE_BYTES = 198 * 1024 * 1024;
+const CACHE_PINNED_BYTES = 64 * 1024 * 1024;
+const EVICTIONS = 1204;
+const LOG_PAGE_SIZE = 50;
 /** The share of a file played that marks it viewed, as the server's default. */
 const VIEWED_RATIO = 0.9;
 const PAGE_SIZE = 24;
@@ -126,6 +138,7 @@ export function demoBackend(now: () => number = Date.now): Backend {
    * visitor, but it is removed and set again as a real one is. */
   let passwordAt: string | undefined = new Date(started).toISOString();
   let tokens = accessTokenFixtures(started);
+  const logged = logFixtures(started);
   /** Bumped by every change a listing would show. */
   let version = 1;
 
@@ -143,6 +156,26 @@ export function demoBackend(now: () => number = Date.now): Backend {
       identity: fixture.torrent.info_hashes[0]?.value ?? "",
       version: 1,
     };
+  }
+
+  /** Logs a message of the application's own, if the log level lets it. */
+  function log(
+    level: LogLevel,
+    target: string,
+    message: string,
+    fields: LogRecord["fields"],
+  ): void {
+    if (LOG_LEVELS.indexOf(level) > LOG_LEVELS.indexOf(settings.log_level)) return;
+    logged.push({
+      sequence: logged.length + 1,
+      logged_at: new Date(now()).toISOString(),
+      level,
+      run_id: DEMO_RUN,
+      request_id: null,
+      target,
+      message,
+      fields,
+    });
   }
 
   /** The torrent with `id`, its metadata applied if that has arrived. */
@@ -456,6 +489,7 @@ export function demoBackend(now: () => number = Date.now): Backend {
         identity: identity ?? "",
         version: 1,
       });
+      log("info", "torrplay_server::app", "a torrent was added", { torrent_id: torrent.id });
       version += 1;
       return structuredClone(torrent);
     },
@@ -471,6 +505,9 @@ export function demoBackend(now: () => number = Date.now): Backend {
     async deleteTorrent(torrentId) {
       read(torrentId);
       held.delete(torrentId);
+      log("info", "torrplay_server::app", "a torrent was deleted", {
+        torrent_id: torrentId,
+      });
       for (const own of progress.values()) {
         for (const [fileId, entry] of own) {
           if (entry.torrentId === torrentId) own.delete(fileId);
@@ -479,7 +516,107 @@ export function demoBackend(now: () => number = Date.now): Backend {
       version += 1;
     },
 
-    getStatistics: async (torrentId) => statisticsOf(read(torrentId)),
+    getTorrentStatistics: async (torrentId) => statisticsOf(read(torrentId)),
+
+    getSystem: async () => ({
+      version: "0.1.0",
+      os: "linux",
+      architecture: "aarch64",
+      run_id: DEMO_RUN,
+      started_at: new Date(started - RUNNING_MS).toISOString(),
+      uptime_seconds: Math.floor((now() - started + RUNNING_MS) / 1000),
+      resident_memory_bytes: RESIDENT_MEMORY_BYTES,
+      links: {
+        self: "/api/v1/system",
+        statistics: "/api/v1/statistics",
+        log_records: "/api/v1/log-records",
+        metrics: "/metrics",
+      },
+    }),
+
+    async getStatistics() {
+      const items = [...held.keys()].map(read);
+      const measured = items.map(statisticsOf);
+      const sum = (of: (statistics: TorrentStatistics) => number) =>
+        measured.reduce((total, statistics) => total + of(statistics), 0);
+      const inState = (state: Torrent["observed_state"]) =>
+        items.filter((item) => item.torrent.observed_state === state).length;
+      return {
+        torrent_count: items.length,
+        torrent_counts_by_observed_state: {
+          retrieving_metadata: inState("retrieving_metadata"),
+          downloading: inState("downloading"),
+          paused: inState("paused"),
+          failed: inState("failed"),
+        },
+        active_reader_count: items.filter((item) => item.reading).length,
+        idle_reader_count: 0,
+        waiting_reader_count: 0,
+        peer_count: sum((statistics) => statistics.peer_count),
+        downloaded_bytes: sum((statistics) => statistics.downloaded_bytes),
+        uploaded_bytes: sum((statistics) => statistics.uploaded_bytes),
+        streamed_bytes: Math.floor(sum((statistics) => statistics.downloaded_bytes) * 0.6),
+        download_rate_bytes_per_second: sum(
+          (statistics) => statistics.download_rate_bytes_per_second,
+        ),
+        upload_rate_bytes_per_second: sum((statistics) => statistics.upload_rate_bytes_per_second),
+        links: {
+          self: "/api/v1/statistics",
+          system: "/api/v1/system",
+          cache_statistics: "/api/v1/cache/statistics",
+        },
+      };
+    },
+
+    async getCacheStatistics() {
+      const capacity = settings.cache_capacity_bytes;
+      const usage = Math.min(capacity, CACHE_USE_BYTES);
+      const reading = [...held.values()].some((item) => item.reading);
+      return {
+        capacity_bytes: capacity,
+        usage_bytes: usage,
+        pinned_bytes: reading ? Math.min(usage, CACHE_PINNED_BYTES) : 0,
+        eviction_count: EVICTIONS,
+        links: { self: "/api/v1/cache/statistics" },
+      };
+    },
+
+    async listLogRecords(query, page) {
+      const contains = query.contains?.toLowerCase();
+      const matching = logged
+        .filter(
+          (record) =>
+            record.sequence > (query.afterSequence ?? 0) &&
+            (!query.minLevel ||
+              LOG_LEVELS.indexOf(record.level) <= LOG_LEVELS.indexOf(query.minLevel)) &&
+            (!contains ||
+              [
+                record.message,
+                record.target,
+                record.request_id ?? "",
+                JSON.stringify(record.fields),
+              ]
+                .join(" ")
+                .toLowerCase()
+                .includes(contains)),
+        )
+        .reverse();
+      const before = page.cursor ? Number(page.cursor) : Infinity;
+      const rest = matching.filter((record) => record.sequence < before);
+      const items = rest.slice(0, page.pageSize ?? LOG_PAGE_SIZE);
+      const last = items.at(-1);
+      return {
+        items: structuredClone(items),
+        oldest_sequence: logged[0]?.sequence ?? null,
+        latest_sequence: logged.at(-1)?.sequence ?? null,
+        links: {
+          self: "/api/v1/log-records",
+          ...(last && rest.length > items.length
+            ? { next: `/api/v1/log-records?cursor=${last.sequence}` }
+            : {}),
+        },
+      };
+    },
 
     async getConfiguration(torrentId) {
       const item = read(torrentId);
@@ -703,6 +840,9 @@ export function demoBackend(now: () => number = Date.now): Backend {
       }
       settings = { ...settings, ...patch } as Settings;
       settingsVersion += 1;
+      log("info", "torrplay_server::app", "the settings changed", {
+        changed: Object.keys(patch).join(", "),
+      });
     },
 
     signIn: async (password, name) =>

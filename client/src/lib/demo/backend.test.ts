@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../api/http";
-import { type Backend, changeTorrent, duplicateOf, type Torrent } from "../backend";
+import { type Backend, changeTorrent, cursorOf, duplicateOf, type Torrent } from "../backend";
 import { failureMessage } from "../i18n/index.svelte";
 import { pieceCounts, pieceState } from "../pieces";
 import { demoBackend } from "./backend";
@@ -234,21 +234,23 @@ describe("a torrent file", () => {
 describe("a download", () => {
   it("advances on the clock while running", async () => {
     const { backend, advance } = start();
-    const before = (await backend.getStatistics(LIGHTHOUSE)).completion_ratio ?? 0;
+    const before = (await backend.getTorrentStatistics(LIGHTHOUSE)).completion_ratio ?? 0;
 
     advance(60_000);
 
-    expect((await backend.getStatistics(LIGHTHOUSE)).completion_ratio).toBeGreaterThan(before);
+    expect((await backend.getTorrentStatistics(LIGHTHOUSE)).completion_ratio).toBeGreaterThan(
+      before,
+    );
   });
 
   it("stops while paused and goes on from there", async () => {
     const { backend, advance } = start();
     await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
-    const paused = await backend.getStatistics(LIGHTHOUSE);
+    const paused = await backend.getTorrentStatistics(LIGHTHOUSE);
 
     advance(60_000);
 
-    expect((await backend.getStatistics(LIGHTHOUSE)).completion_ratio).toBe(
+    expect((await backend.getTorrentStatistics(LIGHTHOUSE)).completion_ratio).toBe(
       paused.completion_ratio,
     );
     expect(paused.peer_count).toBe(0);
@@ -256,7 +258,7 @@ describe("a download", () => {
     await changeTorrent(backend, LIGHTHOUSE, { desired_state: "started" });
     advance(60_000);
 
-    expect((await backend.getStatistics(LIGHTHOUSE)).completion_ratio).toBeGreaterThan(
+    expect((await backend.getTorrentStatistics(LIGHTHOUSE)).completion_ratio).toBeGreaterThan(
       paused.completion_ratio ?? 0,
     );
   });
@@ -266,7 +268,7 @@ describe("a download", () => {
 
     advance(60 * 60 * 1000);
 
-    const finished = await backend.getStatistics(LIGHTHOUSE);
+    const finished = await backend.getTorrentStatistics(LIGHTHOUSE);
     expect(finished.completion_ratio).toBe(1);
     expect(finished.download_rate_bytes_per_second).toBe(0);
   });
@@ -274,7 +276,7 @@ describe("a download", () => {
   it("reports pieces as the panel reads them, and a reader", async () => {
     const { backend } = start();
 
-    const statistics = await backend.getStatistics(LIGHTHOUSE);
+    const statistics = await backend.getTorrentStatistics(LIGHTHOUSE);
 
     if (!statistics.pieces) throw new Error("the pieces are known");
     const { piece_count: count } = statistics.pieces;
@@ -293,7 +295,7 @@ describe("a download", () => {
     const failed = await torrentOf(backend, ORCHARD_ROAD);
 
     expect(failed.failure).not.toBeNull();
-    expect((await backend.getStatistics(ORCHARD_ROAD)).pieces).toBeNull();
+    expect((await backend.getTorrentStatistics(ORCHARD_ROAD)).pieces).toBeNull();
   });
 });
 
@@ -673,5 +675,80 @@ describe("the posters", () => {
     const without = (await library(backend)).filter((torrent) => !torrent.poster);
 
     expect(without.map((torrent) => torrent.title)).toEqual(["Orchard Road"]);
+  });
+});
+
+describe("system", () => {
+  it("adds up the torrents and counts the run's time", async () => {
+    const { backend, advance } = start();
+    const before = await backend.getSystem();
+    advance(60_000);
+    const after = await backend.getSystem();
+    expect(after.uptime_seconds - before.uptime_seconds).toBe(60);
+
+    const statistics = await backend.getStatistics();
+    const counts = Object.values(statistics.torrent_counts_by_observed_state);
+    expect(counts.reduce((total, count) => total + count, 0)).toBe(statistics.torrent_count);
+    expect(statistics.download_rate_bytes_per_second).toBeGreaterThan(0);
+  });
+
+  it("follows the cache capacity setting", async () => {
+    const { backend } = start();
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ cache_capacity_bytes: 16 * 1024 * 1024 }, etag);
+
+    const cache = await backend.getCacheStatistics();
+    expect(cache.capacity_bytes).toBe(16 * 1024 * 1024);
+    expect(cache.usage_bytes).toBeLessThanOrEqual(cache.capacity_bytes);
+    expect(cache.pinned_bytes).toBeLessThanOrEqual(cache.usage_bytes);
+  });
+
+  it("filters log records as the server does, newest first", async () => {
+    const { backend } = start();
+
+    const warnings = await backend.listLogRecords({ minLevel: "warn" }, {});
+    expect(warnings.items.map((record) => record.level)).toEqual(["error", "warn"]);
+
+    const found = await backend.listLogRecords({ contains: "EPISODE 3" }, {});
+    expect(found.items.length).toBe(2);
+
+    const everything = await backend.listLogRecords({}, {});
+    const sequences = everything.items.map((record) => record.sequence);
+    expect(sequences).toEqual([...sequences].sort((a, b) => b - a));
+    const newest = sequences[0] ?? 0;
+    expect((await backend.listLogRecords({ afterSequence: newest }, {})).items).toEqual([]);
+  });
+
+  it("pages through log records", async () => {
+    const { backend } = start();
+
+    const first = await backend.listLogRecords({}, { pageSize: 3 });
+    expect(first.items).toHaveLength(3);
+    const cursor = cursorOf(first.links.next);
+    expect(cursor).toBeDefined();
+    const second = await backend.listLogRecords(
+      {},
+      { pageSize: 100, ...(cursor ? { cursor } : {}) },
+    );
+    expect(second.items[0]?.sequence).toBe((first.items[2]?.sequence ?? 0) - 1);
+    expect(second.links.next).toBeUndefined();
+  });
+
+  it("logs what happens, as far as the log level lets it", async () => {
+    const { backend } = start();
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ log_level: "error" }, etag);
+    const logged = await backend.listLogRecords({ contains: "settings changed" }, {});
+    expect(logged.items).toEqual([]);
+
+    const fresh = await backend.getSettings();
+    await backend.updateSettings({ log_level: "info" }, fresh.etag);
+    await backend.deleteTorrent(LIGHTHOUSE);
+    const deleted = await backend.listLogRecords({ contains: LIGHTHOUSE }, {});
+    expect(deleted.items[0]?.message).toBe("a torrent was deleted");
+
+    const added = await backend.createTorrent({ magnetUri: MAGNET }, { retention: "temporary" });
+    const listed = await backend.listLogRecords({ contains: added.id }, {});
+    expect(listed.items[0]?.message).toBe("a torrent was added");
   });
 });

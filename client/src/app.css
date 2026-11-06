@@ -25,6 +25,7 @@
   --color-arriving: #f472b6;
   --color-arriving-text: #f9a8d4;
   --color-focus: #fbbf24;
+  --color-warning: #fbbf24;
   /* Heroes and the player stay dark in both themes, as video does. */
   --color-hero: #12324a;
   --color-hero-text: #f8fafc;
@@ -60,6 +61,7 @@
   --color-arriving: #db2777;
   --color-arriving-text: #be185d;
   --color-focus: #b45309;
+  --color-warning: #b45309;
 }
 
 /* The colors of a title without a poster, in both themes; see lib/tone.ts. */
@@ -97,6 +99,7 @@
   --color-arriving: #f472b6;
   --color-arriving-text: #f9a8d4;
   --color-focus: #fbbf24;
+  --color-warning: #fbbf24;
   color-scheme: dark;
 }
 

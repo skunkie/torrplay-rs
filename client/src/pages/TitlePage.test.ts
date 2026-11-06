@@ -154,7 +154,7 @@ describe("the Download panel", () => {
     render(App, {
       backend: {
         ...backend(() => shown, []),
-        getStatistics: vi.fn(async () => statistics(0.5, { peer_count: 7 })),
+        getTorrentStatistics: vi.fn(async () => statistics(0.5, { peer_count: 7 })),
       },
     });
 
@@ -172,7 +172,7 @@ describe("the Download panel", () => {
     render(App, {
       backend: {
         ...backend(() => shown, []),
-        getStatistics: vi.fn(async () =>
+        getTorrentStatistics: vi.fn(async () =>
           statistics(0.25, {
             pieces: { piece_count: 8, verified: "c0", partial: "20" },
             readers: [
@@ -197,7 +197,7 @@ describe("the Download panel", () => {
     const e1 = file(shown, "S01E01.mkv", { season: 1, number: 1 });
 
     function withPieces(read = vi.fn(async () => mapped())): Backend {
-      return { ...backend(() => shown, [e1]), getStatistics: read };
+      return { ...backend(() => shown, [e1]), getTorrentStatistics: read };
     }
 
     function mapped() {
@@ -347,7 +347,7 @@ describe("the Download panel", () => {
   it("confirms before moving back to memory, which deletes the files", async () => {
     let shown = torrent(1, { title: "Harbor", storage_mode: "disk", size_bytes: 1024 * 1024 });
     const fake = backend(() => shown, []);
-    fake.getStatistics = vi.fn(async () => statistics(1));
+    fake.getTorrentStatistics = vi.fn(async () => statistics(1));
     fake.updateConfiguration = vi.fn(async () => {
       shown = torrent(1, {
         storage_mode: "disk",
@@ -467,7 +467,7 @@ describe("deleting", () => {
       size_bytes: 1024 * 1024 * 1024,
     });
     const fake = backend(() => shown, []);
-    fake.getStatistics = vi.fn(async () => statistics(0.5));
+    fake.getTorrentStatistics = vi.fn(async () => statistics(0.5));
     const dialog = await openDialog(shown, fake);
 
     expect(

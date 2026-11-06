@@ -35,6 +35,7 @@ export const ru: Messages = {
       profiles: "Профили",
       security: "Безопасность",
       backup: "Резервная копия",
+      system: "Система",
     },
     groups: {
       memory: "Память и загрузка",
@@ -398,6 +399,48 @@ export const ru: Messages = {
     revokeBody:
       "Всё, что его использует, перестанет работать, как и выданные им ссылки для воспроизведения.",
     revokeOwnBody: "На этом устройстве будет выполнен выход.",
+  },
+  durationUnits: { day: "д", hour: "ч", minute: "мин", second: "с" },
+  system: {
+    updates: "Обновляется, пока страница открыта.",
+    uptime: "Работает",
+    build: (version: string, os: string, architecture: string) =>
+      `Версия ${version} · ${os} ${architecture}`,
+    memory: "Занято памяти",
+    memoryHint: "Весь процесс",
+    readers: "Потоки чтения",
+    activeReaders: (count: number) => `Активных: ${count}`,
+    otherReaders: (idle: number, waiting: number) => `Простаивают: ${idle} · ждут: ${waiting}`,
+    speed: "Скорость",
+    upload: (rate: string, peers: number) => `Отдача ${rate} · пиров: ${peers}`,
+    torrents: "Торренты",
+    state: (name: string, count: number) => `${name}: ${count}`,
+    downloading: "Загружается",
+    transferred: "Загружено с запуска",
+    uploaded: (uploaded: string, streamed: string) =>
+      `Отдано ${uploaded} · передано в потоках ${streamed}`,
+    cache: "Кеш частей",
+    cacheUse: (usage: string, capacity: string, pinned: string, evictions: string) =>
+      `${usage} / ${capacity} · закреплено ${pinned} · вытеснений: ${evictions}`,
+    log: "Журнал",
+    logSearch: "Поиск по журналу",
+    logFilter: "Показывать начиная с уровня",
+    logFilters: {
+      error: "error",
+      warn: "warn и серьёзнее",
+      info: "info и серьёзнее",
+      debug: "debug и серьёзнее",
+      trace: "trace и серьёзнее",
+    },
+    logEmpty: "Подходящих записей нет.",
+    logOlder: "Записи постарше",
+    logNewest: "Самые новые записи",
+    logLevel: "Уровень журнала",
+    logLevelHint:
+      "Начиная с какого уровня TorrPlay пишет свои сообщения в журнал. Другие компоненты пишут только предупреждения и ошибки. Применяется сразу.",
+    logLevelOption: "Параметр --log-level задаёт уровень на время этого запуска.",
+    logFilterOption: "Параметр --log-filter задаёт уровни на время этого запуска.",
+    logLevelCustom: "Особый",
   },
   backup: {
     downloadTitle: "Скачать резервную копию",

@@ -62,7 +62,7 @@ SPDX-License-Identifier: MIT
   /** Reads the measurements, whose absence only leaves the panel's old ones. */
   async function readStatistics(id: string, mine: number): Promise<void> {
     try {
-      const read = await backend.getStatistics(id);
+      const read = await backend.getTorrentStatistics(id);
       if (mine === generation) statistics = read;
     } catch {
       // The engine may be starting or stopping; the next run tries again.
