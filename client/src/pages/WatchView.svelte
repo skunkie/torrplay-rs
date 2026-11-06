@@ -11,6 +11,7 @@ SPDX-License-Identifier: MIT
 
   import Hero from "../components/Hero.svelte";
   import TrackMenu from "../components/TrackMenu.svelte";
+  import { heroTitleClasses } from "../lib/describe";
   import { formatBytes } from "../lib/format";
   import { t } from "../lib/i18n/index.svelte";
   import { sampleOf, seekWhenReady } from "../lib/player/media";
@@ -512,10 +513,7 @@ SPDX-License-Identifier: MIT
           <span>{subtitle}</span>
         {/if}
       </p>
-      <h1
-        id="preloading"
-        class="line-clamp-2 max-w-3xl text-display-small font-bold tracking-tight md:text-display"
-      >
+      <h1 id="preloading" class={heroTitleClasses(title)}>
         {title}
       </h1>
       <div
