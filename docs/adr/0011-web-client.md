@@ -265,8 +265,10 @@ layer, and the demo fixtures are new.
 - CI installs with a frozen lockfile and runs type checking, linting, the
   tests, and the production build, whose bundle the Rust jobs embed; the
   development guide lists the commands.
-- A browser smoke test against a running server follows once the player
-  works.
+- A browser smoke test runs Playwright in the installed Chrome against the real
+  application and a local swarm: a magnet link plays real video from a peer and
+  joins the library, a torrent file does too, the theme holds, and nothing
+  breaks the content security policy.
 
 ## Consequences
 

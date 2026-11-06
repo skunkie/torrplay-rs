@@ -160,6 +160,27 @@ palette; `pnpm exec eslint . --fix` sorts and rewrites what it can.
 `pnpm test` runs Vitest, and `pnpm build` writes the production bundle to
 `client/dist`. CI runs the same commands.
 
+The browser smoke test needs Google Chrome and `aria2c` installed, and runs the
+real application with the client it was just given:
+
+```sh
+pnpm build
+cargo build -p torrplay -p torrplay-bench
+pnpm test:browser
+```
+
+Playwright starts the application, `torrplay-bench tracker`, and `aria2c` seeding
+`client/e2e/fixtures/test-pattern.webm`, with a temporary data directory. It
+uses the ports 47910 to 47913 and stops at once if something holds one. The
+application and tracker's own ports listen on loopback, while the peer port and
+the seeder's listen on every interface for as long as the test runs.
+
+`TORRPLAY_BIN_DIR` names another directory for the two binaries, by default
+`target/debug`. A debug build reads the client from `client/dist`, so CI tests a
+release build, which embeds it as what ships does. After a failed run,
+`client/test-results` holds a trace, which `pnpm exec playwright show-trace`
+opens, and `client/test-logs` each process's log; CI keeps both as an artifact.
+
 The client's messages live in `client/src/lib/i18n`: `en.ts` in American
 English is the source, and its type requires `ru.ts` to have every message
 with the same parameters. Write Russian messages with the [Russian

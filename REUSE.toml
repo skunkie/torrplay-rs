@@ -17,6 +17,13 @@ path = "crates/torrplay-api/src/generated/**"
 SPDX-FileCopyrightText = "2026 TorrPlay"
 SPDX-License-Identifier = "MIT"
 
+# A video cannot carry a header. ffmpeg generated it from its own test sources:
+# ffmpeg -f lavfi -i "testsrc2=size=160x90:rate=12:duration=20" -f lavfi -i "sine=frequency=330:duration=20" -c:v libvpx-vp9 -b:v 24k -g 24 -c:a libopus -b:a 16k -ac 1 test-pattern.webm
+[[annotations]]
+path = "client/e2e/fixtures/test-pattern.webm"
+SPDX-FileCopyrightText = "2026 TorrPlay"
+SPDX-License-Identifier = "MIT"
+
 # JSON Lines has no comment syntax for a header.
 [[annotations]]
 path = "bench/traces/*.jsonl"
