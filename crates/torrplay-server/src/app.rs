@@ -88,6 +88,8 @@ pub struct App<E> {
     allowed_hosts: AllowedHosts,
     clock: Clock,
     media_server: Option<crate::dlna::MediaServer>,
+    /// The address the API's listener is bound to, when the caller told it.
+    listen_address: Option<std::net::SocketAddr>,
     /// Whether the DLNA media server is on and its name, for the task that
     /// announces it.
     media_server_setting: watch::Sender<MediaServerSetting>,
@@ -193,6 +195,7 @@ impl<E: Engine> App<E> {
             allowed_hosts: AllowedHosts::default(),
             clock: Arc::new(SystemTime::now),
             media_server: None,
+            listen_address: None,
             media_server_setting: watch::Sender::new(MediaServerSetting {
                 enabled: false,
                 name: torrplay_core::settings::DLNA_NAME_DEFAULT.to_owned(),
@@ -282,6 +285,17 @@ impl<E: Engine> App<E> {
     pub fn with_credentials(mut self, stored: StoredCredentials) -> Self {
         self.credentials = Credentials::new(stored.password, stored.key, stored.tokens);
         self
+    }
+
+    /// Tells the application where its listener is bound, which the system
+    /// resource's URLs are worked out from.
+    pub fn with_listen_address(mut self, address: std::net::SocketAddr) -> Self {
+        self.listen_address = Some(address);
+        self
+    }
+
+    pub(crate) fn listen_address(&self) -> Option<std::net::SocketAddr> {
+        self.listen_address
     }
 
     /// Allows requests to name `hosts` beyond those always allowed.

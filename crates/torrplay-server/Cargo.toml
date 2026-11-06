@@ -27,6 +27,7 @@ h2.workspace = true
 http-body.workspace = true
 http-body-util.workspace = true
 memchr.workspace = true
+network-interface.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

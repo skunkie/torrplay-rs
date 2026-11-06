@@ -33,6 +33,7 @@
 //!
 //! Binding the listener and the shutdown sequence belong to the caller.
 
+mod addresses;
 mod app;
 mod authentication;
 mod backup;

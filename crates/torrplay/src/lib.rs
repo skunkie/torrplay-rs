@@ -1015,6 +1015,7 @@ pub async fn serve(
             .with_viewing(profiles, progress, titles, temporary_progress, dismissals)
             .with_credentials(credentials)
             .with_allowed_hosts(options.allowed_hosts)
+            .with_listen_address(listener.local_addr()?)
             .with_run(options.run)
             .with_log_files(options.log_files)
             .with_media_server(Device {

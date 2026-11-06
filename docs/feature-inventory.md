@@ -98,7 +98,7 @@ document that schedules it.
 | Torrent statistics | `GET /api/stats/torrents/{hash}` | Verified | `statistics` |
 | Cache statistics | `GET /api/stats/memory` | Verified | CAC scenarios, `statistics` |
 | Piece and reader maps of a torrent | `pieces`, `readers` in statistics | Verified | `pieces`, `readers` in statistics, API-28, `statistics`, `statistics_map_pieces_and_readers` |
-| System information | `/api/system/info` | Verified | `/api/v1/system`, OBS-01 |
+| System information | `/api/system/info` | Verified | `/api/v1/system`, OBS-01; its URLs, OBS-11 |
 | Global statistics | `/api/system/metrics` | Verified | `/api/v1/statistics`, OBS-02 |
 | Prometheus metrics | `GET /metrics` | Verified | OBS-03, OBS-05, AUT-12; [observability](observability.md#metrics) |
 | Structured logs and request IDs | Text logs | Verified | `--log-format json`, `X-Request-Id`, OBS-04, OBS-06 |

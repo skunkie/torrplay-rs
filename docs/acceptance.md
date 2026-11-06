@@ -464,6 +464,7 @@ These scenarios accept [the MCP contract](mcp.md) (M7).
 | OBS-08 | List log records with `min_level`, `contains` naming a field and a request ID, `after_sequence`, and pages of 2; then bad parameters, a restart, and an unreadable file | Newest first, filtered and bounded; next links reach the oldest; `400 malformed-request` for each bad parameter and a cursor of other filters; the sequence continues after the restart; `500 internal-error` |
 | OBS-09 | Request the system resource, stop `torrplay`, start it again on the same data directory, and list records containing the request ID | The earlier run's response record, with its run ID, which differs from the new run's |
 | OBS-10 | Download from a peer that serves corrupt blocks, then from a valid one; and from a valid seeder alone | At least one failed hash check and one passed check per piece; with the valid seeder alone, every piece passes and none fails |
+| OBS-11 | Read the system resource while listening on every interface, then on loopback | The URLs of this machine's addresses with the listener's port, an interface with a hardware address first, without loopback, link-local, or, while others exist, global IPv6 ones; then none |
 
 ### Peers
 

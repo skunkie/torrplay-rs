@@ -13,7 +13,7 @@ none of them is left out.
 
 | Resource | Reader | Question |
 | --- | --- | --- |
-| `GET /api/v1/system` | a bug report, an about dialog | What is running, where, since when, and how big is it? |
+| `GET /api/v1/system` | a bug report, an about dialog | What is running, where, since when, how big is it, and at which URLs? |
 | `GET /api/v1/statistics` | a person or an agent watching playback | Is it streaming, waiting, or downloading, and how fast? |
 | `GET /api/v1/log-records` | a client's log view, an agent | What went wrong recently, and before the last restart? |
 | `GET /metrics` | Prometheus | Every number above, over time. |

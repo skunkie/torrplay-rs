@@ -133,7 +133,8 @@ its field names.
 - `list_up_next` takes a `profile_id`. Without one, it returns the
   profiles to choose from instead.
 - `get_system` returns the build, the platform, the run ID, the uptime,
-  and the memory use, as a bug report needs them. `get_statistics` returns
+  the memory use, and the URLs other devices may reach the application at,
+  as a bug report needs them. `get_statistics` returns
   the measurements across every torrent and reader: torrents by observed
   state, readers, peers, and the transfer totals and rates.
 - `list_log_records` takes `min_level`, `contains`, and `after_sequence`,

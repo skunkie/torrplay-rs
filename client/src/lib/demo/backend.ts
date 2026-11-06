@@ -526,6 +526,7 @@ export function demoBackend(now: () => number = Date.now): Backend {
       started_at: new Date(started - RUNNING_MS).toISOString(),
       uptime_seconds: Math.floor((now() - started + RUNNING_MS) / 1000),
       resident_memory_bytes: RESIDENT_MEMORY_BYTES,
+      urls: ["http://192.168.1.10:8642", "http://100.84.7.2:8642"],
       links: {
         self: "/api/v1/system",
         statistics: "/api/v1/statistics",
