@@ -52,8 +52,8 @@ document that schedules it.
 | Preview a torrent file without adding it | `POST /api/v1/torrent-previews` | Verified | API-24, `torrent_previews` |
 | Preview a torrent from a URL or a magnet URI | `POST /api/v1/torrent-resolutions` | Deferred | A URL needs an outbound request policy first; a magnet URI's metadata comes from peers |
 | Back up and restore the library, profiles, and settings | `/api/v1/torrents/backup`, `/restore` | Verified | `GET` and `PUT /api/v1/backup`, a zip archive without credentials or torrent data, restored in place of the records, or on a stopped application's command line with `torrplay backup create` and `restore`; BAK-01 to BAK-14 |
-| Posters and metadata from TheTVDB | `internal/metadata` | Deferred | The server stays out of it: an agent fills a title from a source of its choice through MCP, as [MCP](mcp.md#planned-posters) describes |
-| A poster set through MCP | Not present | Planned | `set_torrent_poster`, as [MCP](mcp.md#planned-posters) describes |
+| Posters and metadata from TheTVDB | `internal/metadata` | Deferred | The server stays out of it: an agent fills a title from a source of its choice through MCP, as [MCP](mcp.md#posters) describes |
+| A poster set through MCP | Not present | Verified | `set_torrent_poster`, as [MCP](mcp.md#posters) describes; MCP-11 |
 
 ## Files and streaming
 
@@ -122,7 +122,7 @@ document that schedules it.
 | DLNA/UPnP media server | `internal/dlna` | Verified | `torrplay-dlna` and [the DLNA contract](dlna.md); DLNA scenarios: discovery, browsing, search, sorting, eventing, media, and icons (DLNA-15); its name is the `dlna_name` setting (SET-10) |
 | Stremio addon | `internal/stremio` | Verified | [Its own adapter](stremio.md): movie and series catalogs with search, skip, and genre, metadata, and streams, with path and query token authentication; STM-01 to STM-08 |
 | Stremio streams on Cinemeta's IMDb items | Not present | Verified | The `imdb_id` library member and the `tt` ID prefix; STM-09 to STM-11 |
-| MCP server | `internal/mcp` | Verified | `torrplay mcp` and [the MCP contract](mcp.md), over the application's HTTP API; MCP-01 to MCP-10, including the system, statistics, and log records |
+| MCP server | `internal/mcp` | Verified | `torrplay mcp` and [the MCP contract](mcp.md), over the application's HTTP API; MCP-01 to MCP-11, including the system, statistics, and log records |
 | qBittorrent API | `POST /api/v2/torrents/add` | Deferred | Optional; only if a later product scope includes it |
 | TorrServer API | `/echo`, `/play`, `/stream`, and others | Excluded | Out of scope for the Rust implementation |
 

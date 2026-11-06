@@ -18,6 +18,7 @@ use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, Stream
 use rmcp::{RoleServer, ServiceExt};
 
 pub mod client;
+mod image;
 mod server;
 
 pub use client::Client;

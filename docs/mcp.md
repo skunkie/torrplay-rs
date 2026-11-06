@@ -48,7 +48,8 @@ torrplay mcp [--url <URL>] [--transport stdio|http] [--listen <address>]
   ```
 
 - Every request to the application is bounded: a 10-second timeout, and
-  response bodies of at most 4 MiB.
+  response bodies of at most 4 MiB. The one other host it contacts is the
+  one `set_torrent_poster` is given, as [Posters](#posters) bounds.
 
 ## Transports
 
@@ -83,6 +84,7 @@ its field names.
 | `get_torrent` | `getTorrent`, `listTorrentFiles`, `getTorrentStatistics` | read-only |
 | `create_torrent` | `createTorrent` | |
 | `update_torrent` | `updateTorrentConfiguration` | idempotent |
+| `set_torrent_poster` | `setTorrentPoster` | idempotent |
 | `delete_torrent` | `deleteTorrent` | destructive |
 | `get_stream_url` | `createPlaybackToken` | |
 | `create_preload` | `createFilePreload`, `getFilePreload` | |
@@ -108,6 +110,9 @@ its field names.
   members, sent as a merge patch; `null` clears a member. It reads the
   configuration's entity tag first and sends it in `If-Match`, so a change
   made in between is a `412` failure rather than lost.
+- `set_torrent_poster` takes `torrent_id` and `image_url`, and returns the
+  stored image's `media_type` and `size_bytes`. See
+  [Posters](#posters).
 - `delete_torrent` takes `torrent_id`. Its `destructive` annotation lets
   the MCP client ask the person first.
 - `get_stream_url` takes `torrent_id` and `file_id`, and returns the
@@ -153,25 +158,47 @@ correct.
 nothing the completion ratio does not, at a cost in tokens that grows with the
 torrent.
 
-Not offered: posters and avatars, profiles' management, progress writes,
+Not offered: removing a poster, avatars, profiles' management, progress writes,
 settings changes, backups and their restore, the password, and access
 tokens. These change the application's security or need a person's
 judgment, and the web client covers them.
 
-### Planned: posters
+### Posters
 
-`update_torrent` already lets an agent fill in a title from a source of its
-choice, such as TMDB, so the application needs no provider credentials and
-makes no outbound requests for it. Only the poster is missing, which a planned
-`set_torrent_poster` tool would add, leaving avatars out as above.
+`update_torrent` and `set_torrent_poster` let an agent fill in a title from a
+source of its choice, such as TMDB, so the application needs no provider
+credentials and makes no outbound requests for it.
 
-The tool takes an image URL. The MCP process, not the server, downloads the
-image and uploads it through `setTorrentPoster`, so the server still never
-fetches one. Because a model chooses the URL, the download is bounded: `https`
-only, no loopback, link-local, or private addresses, after each redirect too,
-at most the poster's 1048576 bytes, a bounded time, and one of the contract's
-image types. Taking the image's bytes as base64 instead would need no such
-bounds, but many agents cannot get an image's bytes, and they cost tokens.
+`set_torrent_poster` takes an image URL. The MCP process, not the application,
+downloads the image and uploads it through `setTorrentPoster`, so the
+application still never fetches one. Because a model chooses the URL, the
+download is bounded:
+
+- The URL must use `https` and hold no credentials.
+- Only public addresses are reached: nothing on loopback, link-local, private,
+  shared, multicast, or documentation ranges, nor the IPv6 ranges that embed
+  such an address, such as NAT64 and 6to4. A name's addresses are checked as
+  it is resolved for the connection, so it cannot pass a check and then
+  resolve elsewhere. No proxy is used, since one would resolve names itself.
+- At most 5 redirects are followed, each held to the same rules.
+- The download takes at most 20 seconds and at most the poster's 1048576 bytes.
+- The response's `Content-Type` must be one of the contract's image types, or
+  `image/jpg`, which is taken as `image/jpeg`. The application still checks the
+  bytes' signature.
+- It carries the name `TorrPlay/<version>`, and never the access token.
+
+The torrent is read first, so an unknown one contacts no other host. These bounds
+protect the private network, not what the request itself reveals: the host a
+model chooses, possibly steered by something it read, learns this machine's
+public address and whatever the URL holds.
+
+A URL the rules refuse is `Invalid argument`, before anything is requested. A
+download that fails, or an answer that is no usable image, is a tool error whose
+`title` says why. The application's refusals, such as an unknown torrent or
+bytes that do not match their type, are its problems, as for any tool.
+
+Taking the image's bytes as base64 instead would need no such bounds, but many
+agents cannot get an image's bytes, and they cost tokens.
 
 ## Resources
 

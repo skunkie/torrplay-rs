@@ -3783,6 +3783,7 @@ name = "torrplay-mcp"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "futures-util",
  "reqwest",
  "rmcp",
  "schemars 1.2.3",
