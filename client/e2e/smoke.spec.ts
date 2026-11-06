@@ -502,6 +502,22 @@ test.describe("the demo", () => {
     expect(await video.evaluate((media: HTMLVideoElement) => media.paused)).toBe(false);
   });
 
+  test("keeps a long title to one line where a large window has the room", async ({ page }) => {
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await page.goto("/demo/titles/trr_aaaaaaaaaaaaaaaaaaaaaaaaa1/edit");
+    await page.getByLabel(/^Title/).fill("A long invented title ".repeat(5).trim());
+    await page.getByRole("button", { name: "Save" }).click();
+
+    const heading = page.getByRole("heading", { level: 1 });
+    await expect(heading).toHaveText(/^A long invented title/);
+    const lines = await heading.evaluate((element) => {
+      const text = document.createRange();
+      text.selectNodeContents(element);
+      return new Set([...text.getClientRects()].map(({ top }) => Math.round(top))).size;
+    });
+    expect(lines).toBe(1);
+  });
+
   test("shows a long title whole on its page and short of that on the home page", async ({
     page,
   }) => {
