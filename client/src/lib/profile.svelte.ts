@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import type { Backend, PlaybackGrant, Profile } from "./backend";
+import { pollFailure } from "./engine.svelte";
 import { playbackGrants, withGrant } from "./playback";
 import { demo } from "./routes";
 
@@ -77,7 +78,10 @@ export async function loadProfiles(backend: Backend): Promise<void> {
     }
     // After the choice, which everything waits for, and avatars need not.
     await refreshAvatarGrant(backend);
-  } catch {
+  } catch (error) {
+    // Tells the banner at once, whose polling then sees the engine return,
+    // which is when the application reads the profiles again.
+    pollFailure(error);
     profiles.failed = true;
   }
 }

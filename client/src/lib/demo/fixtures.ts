@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-import type { Profile, Progress, Settings, Torrent, TorrentFile } from "../backend";
+import type { AccessToken, Profile, Progress, Settings, Torrent, TorrentFile } from "../backend";
 
 /** A generated test pattern with two audio tracks, and subtitles to go with
  * it. Every video in the demo plays these. */
@@ -236,6 +236,34 @@ export function profileFixtures(): Profile[] {
     makeProfile(1, "Anna"),
     makeProfile(2, "Ben"),
     makeProfile(3, "Living room TV", "device"),
+  ];
+}
+
+/** The access tokens the demo starts with, as of `at`. */
+export function accessTokenFixtures(at: number): AccessToken[] {
+  const token = (
+    n: number,
+    name: string,
+    scope: AccessToken["scope"],
+    usedHoursAgo: number,
+    expiresInDays: number | null,
+  ): AccessToken => {
+    const id = identifier("atk", n);
+    return {
+      id,
+      name,
+      scope,
+      created_at: new Date(at - 60 * 24 * HOUR_MS).toISOString(),
+      expires_at:
+        expiresInDays === null ? null : new Date(at + expiresInDays * 24 * HOUR_MS).toISOString(),
+      last_used_at: new Date(at - usedHoursAgo * HOUR_MS).toISOString(),
+      links: { self: `/api/v1/access-tokens/${id}` },
+    };
+  };
+  return [
+    token(1, "Anna’s laptop", "api", 3, null),
+    token(2, "Living room TV", "playback", 26, 300),
+    token(3, "Metrics scraper", "metrics", 1, null),
   ];
 }
 

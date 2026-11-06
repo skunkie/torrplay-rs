@@ -79,7 +79,7 @@ export const SETTING_SECTIONS = {
 export type SettingSection = keyof typeof SETTING_SECTIONS;
 
 /** Every page of the settings, in the order the rail lists them. */
-export const SETTINGS_PAGES = ["playback", "network", "profiles"] as const;
+export const SETTINGS_PAGES = ["playback", "network", "profiles", "security", "backup"] as const;
 
 export type SettingsPage = (typeof SETTINGS_PAGES)[number];
 

@@ -592,3 +592,64 @@ describe("profiles", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("security", () => {
+  it("removes the password with every token, and refuses tokens until one is set", async () => {
+    const { backend } = start();
+    expect(await backend.getPassword()).toBeDefined();
+    expect(await backend.listAccessTokens()).not.toHaveLength(0);
+
+    await backend.deletePassword();
+    expect(await backend.getPassword()).toBeUndefined();
+    expect(await backend.listAccessTokens()).toHaveLength(0);
+    await expect(backend.signIn("anything", "Browser")).rejects.toMatchObject({
+      type: "lifecycle-conflict",
+    });
+
+    await backend.setPassword({ password: "a passphrase", revoke_access_tokens: false });
+    expect(await backend.getPassword()).toBeDefined();
+    expect((await backend.signIn("a passphrase", "Browser")).name).toBe("Browser");
+  });
+
+  it("revokes every token only when a change asks to", async () => {
+    const { backend } = start();
+    const before = (await backend.listAccessTokens()).length;
+
+    await backend.setPassword({ password: "a passphrase", revoke_access_tokens: false });
+    expect(await backend.listAccessTokens()).toHaveLength(before);
+
+    await backend.setPassword({ password: "a passphrase", revoke_access_tokens: true });
+    expect(await backend.listAccessTokens()).toHaveLength(0);
+  });
+
+  it("creates a token that expires when asked, and revokes it", async () => {
+    const { backend } = start();
+    const created = await backend.createAccessToken({
+      password: "anything",
+      name: "Scraper",
+      scope: "metrics",
+      expires_in_seconds: 3600,
+    });
+    expect(created.secret).toBeTruthy();
+    expect(created.expires_at).toBe("2026-11-06T01:00:00.000Z");
+
+    const listed = await backend.listAccessTokens();
+    expect(listed.find((token) => token.id === created.id)).not.toHaveProperty("secret");
+
+    await backend.deleteAccessToken(created.id);
+    await expect(backend.deleteAccessToken(created.id)).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe("backup", () => {
+  it("restores the file it offers, and refuses one that is no zip archive", async () => {
+    const { backend } = start();
+    const { archive, name } = await backend.getBackup();
+    const file = new File([archive], name);
+
+    await expect(backend.restoreBackup(file)).resolves.toBeUndefined();
+    await expect(backend.restoreBackup(new File(["nope"], "a.zip"))).rejects.toMatchObject({
+      type: "validation-failed",
+    });
+  });
+});

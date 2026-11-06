@@ -33,6 +33,11 @@ export type Profile = Schemas["Profile"];
 export type UpNextEntry = Schemas["UpNextEntry"];
 export type UpNextPage = Schemas["UpNextPage"];
 export type Settings = Schemas["Settings"];
+export type Password = Schemas["Password"];
+type PasswordChange = Schemas["PasswordChange"];
+export type AccessToken = Schemas["AccessToken"];
+export type AccessTokenCreation = Schemas["AccessTokenCreation"];
+export type CreatedAccessToken = Schemas["CreatedAccessToken"];
 export type SettingsPatch = Schemas["SettingsPatch"];
 
 /** What the library lists: torrents matching every given filter. */
@@ -140,8 +145,24 @@ export interface Backend {
   getSettings(): Promise<{ data: Settings; etag: string }>;
   /** Changes the settings, if `etag` is still their ETag. */
   updateSettings(patch: SettingsPatch, etag: string): Promise<void>;
-  /** Signs in with the password, returning an access token's secret. */
-  signIn(password: string, name: string): Promise<string>;
+  /** Signs in with the password, returning the new access token. */
+  signIn(password: string, name: string): Promise<CreatedAccessToken>;
+  /** When the password was set, or `undefined` while none is. */
+  getPassword(): Promise<Password | undefined>;
+  /** Sets the first password or, with the current one, changes it. */
+  setPassword(change: PasswordChange): Promise<void>;
+  /** Removes the password, which revokes every token. */
+  deletePassword(): Promise<void>;
+  /** Every access token that has not expired, oldest first. */
+  listAccessTokens(): Promise<AccessToken[]>;
+  /** Creates an access token, whose secret only this answer holds. */
+  createAccessToken(creation: AccessTokenCreation): Promise<CreatedAccessToken>;
+  /** Revokes an access token, with every playback token it issued. */
+  deleteAccessToken(accessTokenId: string): Promise<void>;
+  /** Writes a backup, with the file name the server gives it. */
+  getBackup(): Promise<{ archive: Blob; name: string }>;
+  /** Replaces the application's records with a backup's. */
+  restoreBackup(archive: File): Promise<void>;
   /** A playback token for media and poster URLs, or `undefined` while no
    * password is set and those URLs need none. */
   playbackGrant(): Promise<PlaybackGrant | undefined>;
@@ -149,6 +170,9 @@ export interface Backend {
 
 /** How long a preload the client asks for lasts. */
 const PRELOAD_SECONDS = 120;
+
+/** What a backup is called if the server gives it no name. */
+const BACKUP_NAME = "torrplay-backup.zip";
 
 /** How long a playback token the client asks for lasts. */
 const GRANT_SECONDS = 24 * 60 * 60;
@@ -196,6 +220,11 @@ export async function changeTorrent(
 ): Promise<void> {
   const { etag } = await backend.getConfiguration(torrentId);
   await backend.updateConfiguration(torrentId, patch, etag);
+}
+
+/** The file name in a `Content-Disposition` header. */
+export function dispositionName(header: string | null): string {
+  return /filename="([^"]+)"/.exec(header ?? "")?.[1] ?? BACKUP_NAME;
 }
 
 /** A multipart form holding a torrent file, as the API reads one. */
@@ -540,7 +569,69 @@ export function httpBackend(http: Http): Backend {
           body: { password, name, scope: "api", expires_in_seconds: null },
         }),
       );
-      return created.secret;
+      return created;
+    },
+
+    async getPassword() {
+      const result = await http.GET("/api/v1/password");
+      // No password is set, which is how the API tells an open server.
+      if (result.response.status === 404) return undefined;
+      return unwrap(result);
+    },
+
+    async setPassword(change) {
+      unwrap(await http.PUT("/api/v1/password", { body: change }));
+    },
+
+    async deletePassword() {
+      const result = await http.DELETE("/api/v1/password");
+      if (!result.response.ok) unwrap(result);
+    },
+
+    async listAccessTokens() {
+      const tokens: AccessToken[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = unwrap(
+          await http.GET("/api/v1/access-tokens", {
+            params: { query: { page_size: 200, ...(cursor ? { cursor } : {}) } },
+          }),
+        );
+        tokens.push(...page.items);
+        cursor = cursorOf(page.links.next);
+      } while (cursor);
+      return tokens;
+    },
+
+    async createAccessToken(creation) {
+      return unwrap(await http.POST("/api/v1/access-tokens", { body: creation }));
+    },
+
+    async deleteAccessToken(accessTokenId) {
+      const result = await http.DELETE("/api/v1/access-tokens/{access_token_id}", {
+        params: { path: { access_token_id: accessTokenId } },
+      });
+      if (!result.response.ok) unwrap(result);
+    },
+
+    async getBackup() {
+      const result = await http.GET("/api/v1/backup", { parseAs: "blob" });
+      const archive = unwrap(result) as unknown as Blob;
+      return {
+        archive,
+        name: dispositionName(result.response.headers.get("Content-Disposition")),
+      };
+    },
+
+    async restoreBackup(archive) {
+      const result = await http.PUT("/api/v1/backup", {
+        // Not the file's own type, which some systems name differently.
+        headers: { "Content-Type": "application/zip" },
+        // The archive is the body; the contract types it as a string.
+        body: archive as unknown as string,
+        bodySerializer: (body) => body,
+      });
+      if (!result.response.ok) unwrap(result);
     },
 
     async playbackGrant() {

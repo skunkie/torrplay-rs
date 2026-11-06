@@ -4,7 +4,10 @@
 
 import { ApiError, type Problem } from "../api/http";
 import type {
+  AccessToken,
+  AccessTokenCreation,
   Backend,
+  CreatedAccessToken,
   Preload,
   Profile,
   Progress,
@@ -19,6 +22,7 @@ import type {
 import { nextEpisode, playables } from "../episodes";
 import { parseMagnet } from "../magnet";
 import {
+  accessTokenFixtures,
   FIRST_PROFILE,
   type Fixture,
   fixtures,
@@ -47,6 +51,9 @@ const VIEWED_RATIO = 0.9;
 const PAGE_SIZE = 24;
 /** What the application takes as an image. */
 const IMAGE_TYPES = ["image/avif", "image/gif", "image/jpeg", "image/png", "image/webp"];
+
+/** A zip archive with nothing in it: only its end-of-directory record. */
+const EMPTY_ZIP = new Uint8Array([0x50, 0x4b, 0x05, 0x06, ...new Array<number>(18).fill(0)]);
 
 /** A torrent the backend holds, and how its download is going. */
 interface Held {
@@ -115,6 +122,10 @@ export function demoBackend(now: () => number = Date.now): Backend {
   let settings = settingsFixture();
   let settingsVersion = 1;
   let serial = held.size;
+  /** The password never checks anything here, as it is not known to the
+   * visitor, but it is removed and set again as a real one is. */
+  let passwordAt: string | undefined = new Date(started).toISOString();
+  let tokens = accessTokenFixtures(started);
   /** Bumped by every change a listing would show. */
   let version = 1;
 
@@ -276,6 +287,25 @@ export function demoBackend(now: () => number = Date.now): Backend {
       throw refused(409, "lifecycle-conflict", "The device profile cannot be changed.");
     }
     return profile;
+  }
+
+  function createToken(creation: AccessTokenCreation): CreatedAccessToken {
+    if (!passwordAt) {
+      throw refused(409, "lifecycle-conflict", "No password is set, so requests need no token.");
+    }
+    const id = `atk_demo${nextId()}`;
+    const seconds = creation.expires_in_seconds;
+    const token: AccessToken = {
+      id,
+      name: creation.name,
+      scope: creation.scope,
+      created_at: new Date(now()).toISOString(),
+      expires_at: seconds === null ? null : new Date(now() + seconds * 1000).toISOString(),
+      last_used_at: null,
+      links: { self: `/api/v1/access-tokens/${id}` },
+    };
+    tokens = [...tokens, token];
+    return { ...token, secret: `tpa_demo${id}` };
   }
 
   function replaceProfile(profile: Profile): void {
@@ -675,7 +705,46 @@ export function demoBackend(now: () => number = Date.now): Backend {
       settingsVersion += 1;
     },
 
-    signIn: async () => "demo",
+    signIn: async (password, name) =>
+      createToken({ password, name, scope: "api", expires_in_seconds: null }),
+
+    getPassword: async () =>
+      passwordAt ? { updated_at: passwordAt, links: { self: "/api/v1/password" } } : undefined,
+
+    async setPassword(change) {
+      if (change.revoke_access_tokens) tokens = [];
+      passwordAt = new Date(now()).toISOString();
+    },
+
+    async deletePassword() {
+      if (!passwordAt) throw notFound();
+      passwordAt = undefined;
+      tokens = [];
+    },
+
+    listAccessTokens: async () => [...tokens],
+
+    createAccessToken: async (creation) => createToken(creation),
+
+    async deleteAccessToken(accessTokenId) {
+      if (!tokens.some((token) => token.id === accessTokenId)) throw notFound();
+      tokens = tokens.filter((token) => token.id !== accessTokenId);
+    },
+
+    getBackup: async () => ({
+      archive: new Blob([EMPTY_ZIP], { type: "application/zip" }),
+      name: "torrplay-demo-backup.zip",
+    }),
+
+    /** Checks the file is a zip archive, and leaves the demo's records alone:
+     * the file it offers holds none, and it could not read a real one's. */
+    async restoreBackup(archive) {
+      const signature = new Uint8Array(await archive.slice(0, 2).arrayBuffer());
+      if (signature[0] !== EMPTY_ZIP[0] || signature[1] !== EMPTY_ZIP[1]) {
+        throw refused(422, "validation-failed", "The body is not a zip archive.");
+      }
+    },
+
     playbackGrant: async () => undefined,
   };
 }
