@@ -450,6 +450,33 @@ test.describe("the demo", () => {
     await expect(peers).toHaveValue("50");
   });
 
+  test("shows posters it serves itself, and a tile for a torrent with none", async ({ page }) => {
+    await page.goto("/demo/library");
+    const poster = page.locator('img[src="/demo-media/posters/paper-moons.webp"]').first();
+    await expect(poster).toBeVisible();
+    await expect
+      .poll(() => poster.evaluate((image: HTMLImageElement) => image.naturalWidth))
+      .toBeGreaterThan(0);
+    await expect(page.getByText("Orchard Road")).toBeVisible();
+  });
+
+  test("shows a hero's poster whole, beside its content", async ({ page }) => {
+    for (const path of ["/demo", "/demo/titles/trr_aaaaaaaaaaaaaaaaaaaaaaaaa1"]) {
+      await page.goto(path);
+      const hero = page.locator("section[data-hero]");
+      const title = hero.getByText("The Lighthouse Keepers").first();
+      await expect(title).toBeVisible();
+      // The last image: the first holds only the poster's colors, behind.
+      const box = await hero.locator("img").last().boundingBox();
+      const words = await title.boundingBox();
+      if (!box || !words) throw new Error(`${path} has a poster and a title`);
+
+      expect(box.width, path).toBeGreaterThan(100);
+      expect(box.width / box.height, path).toBeCloseTo(2 / 3, 1);
+      expect(words.x + words.width, path).toBeLessThanOrEqual(box.x);
+    }
+  });
+
   test("revokes a token, and offers a backup that restores", async ({ page }) => {
     await page.goto("/demo/settings/security");
     await page.getByRole("button", { name: "Revoke Living room TV" }).click();

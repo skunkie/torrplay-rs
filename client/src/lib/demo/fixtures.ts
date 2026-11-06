@@ -187,38 +187,80 @@ const paperMoons = series(2, "Paper.Moons", [4], {
   genres: ["Comedy"],
 });
 
+/** The size of each poster in `public/demo-media/posters`, which
+ * `scripts/demo-posters.mjs` draws and reports. */
+export const POSTER_BYTES = {
+  "the-lighthouse-keepers": 13782,
+  "paper-moons": 15434,
+  "glass-harbor": 12794,
+  "salt-and-copper": 19684,
+  "dolgaya-zima": 11584,
+  "small-engines": 20820,
+};
+
+/** `fixture` with the poster called `name`. A torrent keeps its own poster link
+ * until `setPoster` replaces it, so this is a file the demo serves. */
+function withPoster(fixture: Fixture, name: keyof typeof POSTER_BYTES): Fixture {
+  const { torrent } = fixture;
+  return {
+    ...fixture,
+    torrent: {
+      ...torrent,
+      poster: {
+        media_type: "image/webp",
+        size_bytes: POSTER_BYTES[name],
+        updated_at: torrent.created_at,
+      },
+      links: { ...torrent.links, poster: `/demo-media/posters/${name}.webp` },
+    },
+  };
+}
+
 /** The library the demo starts with, newest last: invented titles in every
- * state a torrent can be seen in. */
+ * state a torrent can be seen in. Orchard Road has no poster, to show what a
+ * torrent without one looks like. */
 export function fixtures(): Fixture[] {
   return [
-    lighthouse,
-    paperMoons,
-    movie(3, "Glass.Harbor.2021.1080p", 1, {
-      title: "Glass Harbor",
-      year: 2021,
-      storage_mode: "disk",
-      description: "A diver finds a town under the bay that nobody remembers flooding.",
-      categories: ["Family"],
-      genres: ["Drama"],
-    }),
-    movie(4, "Salt.and.Copper.2022.1080p", 0.7, {
-      title: "Salt & Copper",
-      year: 2022,
-      genres: ["Thriller"],
-    }),
-    movie(5, "Dolgaya.Zima.2020.1080p", 0.15, {
-      title: "Долгая зима",
-      year: 2020,
-      description: "Смотритель метеостанции остаётся один на всю полярную ночь.",
-      genres: ["Drama"],
-    }),
-    movie(6, "Small.Engines.2019.720p", 0.55, {
-      title: "Small Engines",
-      year: 2019,
-      kind: "other",
-      observed_state: "paused",
-      categories: ["Documentaries"],
-    }),
+    withPoster(lighthouse, "the-lighthouse-keepers"),
+    withPoster(paperMoons, "paper-moons"),
+    withPoster(
+      movie(3, "Glass.Harbor.2021.1080p", 1, {
+        title: "Glass Harbor",
+        year: 2021,
+        storage_mode: "disk",
+        description: "A diver finds a town under the bay that nobody remembers flooding.",
+        categories: ["Family"],
+        genres: ["Drama"],
+      }),
+      "glass-harbor",
+    ),
+    withPoster(
+      movie(4, "Salt.and.Copper.2022.1080p", 0.7, {
+        title: "Salt & Copper",
+        year: 2022,
+        genres: ["Thriller"],
+      }),
+      "salt-and-copper",
+    ),
+    withPoster(
+      movie(5, "Dolgaya.Zima.2020.1080p", 0.15, {
+        title: "Долгая зима",
+        year: 2020,
+        description: "Смотритель метеостанции остаётся один на всю полярную ночь.",
+        genres: ["Drama"],
+      }),
+      "dolgaya-zima",
+    ),
+    withPoster(
+      movie(6, "Small.Engines.2019.720p", 0.55, {
+        title: "Small Engines",
+        year: 2019,
+        kind: "other",
+        observed_state: "paused",
+        categories: ["Documentaries"],
+      }),
+      "small-engines",
+    ),
     movie(7, "Orchard.Road.2018.1080p", 0.3, {
       title: "Orchard Road",
       year: 2018,
