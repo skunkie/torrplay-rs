@@ -3740,6 +3740,7 @@ dependencies = [
 name = "torrplay-dlna"
 version = "0.1.0"
 dependencies = [
+ "network-interface",
  "quick-xml",
  "socket2",
  "thiserror 2.0.21",
@@ -3825,7 +3826,6 @@ dependencies = [
  "http-body",
  "http-body-util",
  "memchr",
- "network-interface",
  "reqwest",
  "serde",
  "serde_json",
