@@ -95,13 +95,14 @@ English message.
 | Demo | Демо | Indeclinable: `Выйти из демо` |
 | Avatar | Аватар | Not «изображение профиля» |
 | Title | Фильм / Сериал when the kind is known; otherwise name the torrent | Never `тайтл` or `титул`, and not `фильм или сериал`, which is clumsy and wrong for other kinds: `Торрент не найден`, `Ничего не найдено`; «название» for a title's name |
-| Kind: movie / series / other | Фильм / Сериал / Другое | Chips and filters |
+| Kind: movie / series / other | Тип: Фильм / Сериал / Другое | Chips and filters |
 | Episode | Серия | Not `эпизод`, which reads as a scene. Pages write `1 сезон, 2 серия`; cards and other short places write `С1 Е2` with Cyrillic letters, never `S1 E2` |
 | Season | Сезон | Season 0 is `Спецвыпуски` |
 | Category | Категория | |
 | Genre | Жанр | |
 | Poster | Постер | |
-| Reader (of a torrent) | Чтение | State counts: `активно`, `ожидает` |
+| Reader | Поток чтения | Never `ридер`. `Чтение` only in the piece map's legend, for a piece being read. States: `Активен`, `Простаивает`; counts: `активных: 1, простаивают: 0` |
+| Idle (reader) | Простаивает | In the settings `простаивающий поток чтения`, so it is not taken for a stream. Not `ожидает`, which is too close to `ждут`, "waiting" |
 | Up next | Продолжить просмотр | The row and its entries; resuming and next episodes both belong to it |
 | Viewed | Просмотрено | Status of a file |
 | Next episode | Следующая серия | |
@@ -140,7 +141,13 @@ English message.
 | Metadata retrieval | Поиск файлов / получение метаданных | Users see `Поиск файлов…` |
 | Persisted torrent | Торрент в библиотеке | |
 | Temporary torrent | Временный торрент | |
-| Storage mode: memory / disk | Оперативная память / Диск | Never bare `RAM` or `ОЗУ` |
+| Storage mode: memory / disk | Оперативная память / Диск | Never bare `RAM` or `ОЗУ`, nor `память` alone for the mode: `Перенос в оперативную память` |
+| Downloaded files | Загруженные файлы | `Скачать` only for a file saved to this device, such as a backup |
+| Upload | Отдача / отдано | `Отдача 1 МиБ/с`, `Отдано 2 ГиБ` |
+| Stream / streaming | Поток / потоковая передача | |
+| Tracker | Трекер | |
+| Remove (a poster, an avatar, a value) | Убрать | `Убрать` for what is attached to something else; `Удалить` for what stands alone: a torrent, a profile, a password |
+| Applies at once | Действует сразу | Not `Применяется сразу` |
 | Preload | Предзагрузка | |
 | IMDb ID | ID в IMDb | Stays in Latin letters; an example ID stays as `tt0000000` |
 | Pause / resume (a torrent) | Приостановить / продолжить | State label: `Приостановлено` |
@@ -151,10 +158,9 @@ English message.
 | Peer / seed | Пир / сид | Standard BitTorrent usage |
 | DHT, DLNA | DHT, DLNA | Stay in Latin letters, as does a command-line option such as `--no-dht` or `--log-level` |
 | Background download | Фоновая загрузка | |
-| Addon (Stremio) | Аддон | `Stremio` stays in Latin letters, as do `localhost` and a local address |
+| Addon (Stremio) | Аддон | `Stremio` stays in Latin letters, as do `MCP`, `localhost`, and a local address |
 | Log / log record | Журнал / запись | Never `лог` |
 | Log level: error, warn, info, debug, trace | Уровень журнала: error, warn, info, debug, trace | The names stay in Latin letters, as the records show them |
-| Reader (statistics) | Поток чтения | Never `ридер` |
 | Pinned / eviction (cache) | Закреплено / вытеснение | |
 
 ### TorrPlay as a Subject
@@ -178,6 +184,7 @@ the application starts, restores, or stops, the banner says
 | Password | Пароль | |
 | Access token | Токен доступа | |
 | Playback token | Токен воспроизведения | |
+| Key (of a Stremio link) | Ключ | The token as the link holds it |
 | Sign in / sign out | Войти / Выйти | The page is `Вход` |
 | Revoke (a token) | Отозвать | |
 | Token scope | Доступ | `Полный доступ`, `Только воспроизведение`, `Только метрики` |
@@ -260,7 +267,8 @@ fractions use `other`.
   for the current locale; never assemble them from strings. Russian uses a
   decimal comma and a space between thousands, which `Intl` provides.
 - Put a non-breaking space between a number and its unit: `100 мс`,
-  `256 МиБ`.
+  `256 МиБ`. A percent goes through `percentText`, which uses `Intl`: `40 %`
+  in Russian, with that space, and `40%` in English.
 - **Sizes are binary**, with IEC symbols, in both languages: `B`, `KiB`,
   `MiB`, `GiB`, `TiB` and `Б`, `КиБ`, `МиБ`, `ГиБ`, `ТиБ`, with
   1 MiB = 1,048,576 bytes. They match the settings' values (`256 МиБ`), the

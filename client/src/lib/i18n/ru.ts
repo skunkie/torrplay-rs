@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import type { Messages } from "./en";
+import { percentText } from "./percent";
 import { plural } from "./plural";
 
 /** The client's messages in Russian, written by the Russian translation
@@ -14,6 +15,7 @@ export const ru: Messages = {
     unreachable: "Не удалось подключиться к TorrPlay.",
     failed: (status: number) => `Запрос не выполнен, код ответа ${status}.`,
     untitled: "Без названия",
+    percent: (percent: number) => percentText("ru-RU", percent),
   },
   units: ["Б", "КиБ", "МиБ", "ГиБ", "ТиБ"],
   nav: {
@@ -49,7 +51,7 @@ export const ru: Messages = {
     fields: {
       cache_capacity_bytes: {
         label: "Память для частей",
-        hint: "Кеш, общий для всех торрентов в памяти. Действует сразу; при уменьшении сохранённые части удаляются.",
+        hint: "Кеш, общий для всех торрентов в оперативной памяти. Действует сразу; при уменьшении лишние части удаляются.",
       },
       background_downloads_enabled: {
         label: "Загружать в фоне",
@@ -57,30 +59,30 @@ export const ru: Messages = {
       },
       piece_wait_seconds: {
         label: "Ждать недостающую часть",
-        hint: "Сколько поток ждёт, прежде чем отмениться, и сколько пир может не отвечать на запросы, прежде чем отключиться.",
+        hint: "Сколько поток ждёт, прежде чем его отменят, и сколько пир может не отвечать на запросы, прежде чем его отключат.",
       },
       idle_reader_timeout_seconds: {
-        label: "Хранить ожидающее чтение",
-        hint: "Следующий запрос плеера продолжит с того же места. При значении 0\u00A0чтение завершается сразу.",
+        label: "Хранить простаивающий поток чтения",
+        hint: "Следующий запрос плеера продолжит с того же места. При значении 0\u00A0поток чтения завершается сразу.",
       },
       idle_reader_limit_per_torrent: {
-        label: "Ожидающих чтений на торрент",
+        label: "Простаивающих потоков чтения на торрент",
         hint: "Самые старые сверх этого числа завершаются.",
       },
       idle_reader_limit: {
-        label: "Ожидающих чтений всего",
+        label: "Простаивающих потоков чтения всего",
         hint: "По всем торрентам. Самые старые сверх этого числа завершаются.",
       },
       drain_period_seconds: {
         label: "Завершать потоки при остановке",
-        hint: "Сколько потоки могут продолжаться после команды остановки. Действует при следующей остановке.",
+        hint: "Сколько потоки ещё работают после команды остановки. Действует при следующей остановке.",
       },
       temporary_idle_seconds: {
         label: "Удалять без просмотра через",
         hint: "Торрент вне библиотеки удаляется, если его столько времени не смотрят.",
       },
       temporary_torrent_limit: {
-        label: "Сколько одновременно",
+        label: "Не больше одновременно",
         hint: "При добавлении ещё одного удаляется тот, который дольше всех не смотрели.",
       },
       temporary_progress_seconds: {
@@ -126,9 +128,8 @@ export const ru: Messages = {
     body: "Фильмы и сериалы здесь выдуманы, загрузки имитируются, а все видео показывают одну и ту же тестовую таблицу. Данные никуда не отправляются, а после перезагрузки страницы всё начнётся заново.",
     tryHeading: "Что попробовать",
     tryPlay: "Нажмите «Продолжить», чтобы проверить плеер со звуковыми дорожками и субтитрами.",
-    tryLibrary:
-      "Откройте фильм или сериал в библиотеке и посмотрите, как он загружается по частям.",
-    tryAdd: "Добавьте торрент по примеру magnet-ссылки.",
+    tryLibrary: "Откройте торрент в библиотеке и посмотрите, как он загружается по частям.",
+    tryAdd: "Добавьте торрент по готовой magnet-ссылке.",
     dismiss: "Понятно",
   },
   kinds: { movie: "Фильм", series: "Сериал", other: "Другое" },
@@ -180,7 +181,7 @@ export const ru: Messages = {
   },
   home: {
     upNext: "Продолжить просмотр",
-    upNextEmpty: "Пока нечего продолжить. Здесь появится то, что вы начнёте смотреть.",
+    upNextEmpty: "Пока продолжать нечего. Здесь появится то, что вы начнёте смотреть.",
     remove: (title: string) => `Убрать «${title}» из раздела «Продолжить просмотр»`,
     removeHint: "Убрать из раздела «Продолжить просмотр»",
     episodes: "Серии",
@@ -207,7 +208,7 @@ export const ru: Messages = {
     showMore: "Показать ещё",
   },
   engine: {
-    unavailable: "TorrPlay запускается или останавливается. Действия подождут.",
+    unavailable: "TorrPlay запускается или останавливается. Действия пока могут не выполниться.",
     unreachable: "Не удалось подключиться к TorrPlay. Повторная попытка…",
   },
   add: {
@@ -221,7 +222,7 @@ export const ru: Messages = {
     magnet: "Magnet-ссылка",
     magnetInvalid: "Не удалось прочитать magnet-ссылку.",
     fileInvalid: "Не удалось прочитать торрент-файл.",
-    tryAnother: "Указать другую",
+    tryAnother: "Выбрать другой торрент",
     reading: "Чтение торрент-файла…",
     notInLibrary: "Нет в библиотеке",
     inLibrary: "Уже в библиотеке",
@@ -242,11 +243,10 @@ export const ru: Messages = {
     peersHint:
       "Ждать не обязательно: кнопка «Смотреть» откроет первое видео, как только станет известно о нём, а торрент, добавленный в библиотеку, заполнится так же.",
     waitingForFiles: "Ожидание списка файлов от пиров…",
-    playFile: (name: string) => `Смотреть ${name}`,
+    playFile: (name: string) => `Смотреть «${name}»`,
   },
   download: {
     title: "Загрузка",
-    downloaded: (percent: number) => `Загружено ${percent}%`,
     size: "Размер",
     speed: "Скорость",
     peers: "Пиры",
@@ -256,22 +256,24 @@ export const ru: Messages = {
     tileMissing: "Ещё нет",
     allPieces: "Все части",
     hide: "Скрыть",
-    showPieces: (percent: number) => `Загружено ${percent}%, показать все части`,
-    hidePieces: (percent: number) => `Загружено ${percent}%, скрыть все части`,
+    showPieces: (percent: number) =>
+      `Загружено ${percentText("ru-RU", percent)}, показать все части`,
+    hidePieces: (percent: number) => `Загружено ${percentText("ru-RU", percent)}, скрыть все части`,
     piecesSummary: (downloaded: number, total: number, arriving: number) =>
       `${downloaded.toLocaleString("ru-RU")}\u00A0из\u00A0${total.toLocaleString("ru-RU")} · загружается: ${arriving.toLocaleString("ru-RU")}`,
     pieceHover: (piece: number, state: string) =>
       `Часть ${piece.toLocaleString("ru-RU")}: ${state}`,
-    readerActive: "Активно",
-    readerIdle: "Ожидает",
+    readerActive: "Активен",
+    readerIdle: "Простаивает",
     readerPiece: (piece: number) => `часть ${piece.toLocaleString("ru-RU")}`,
-    readers: "Чтение",
-    readerCounts: (active: number, idle: number) => `активно: ${active}, ожидает: ${idle}`,
+    readers: "Потоки чтения",
+    readerCounts: (active: number, idle: number) =>
+      `активных:\u00A0${active}, простаивают:\u00A0${idle}`,
     storage: "Хранение",
     memory: "Оперативная память",
     disk: "Диск",
     movingToDisk: "Перенос на диск",
-    movingToMemory: "Перенос в память",
+    movingToMemory: "Перенос в оперативную память",
     moving: "Во время переноса просмотр продолжается.",
     rate: (size: string) => `${size}/с`,
     paused: "Приостановлено",
@@ -279,10 +281,10 @@ export const ru: Messages = {
     keepInMemory: "Хранить в оперативной памяти",
     moveToMemoryTitle: (name: string) => `Хранить торрент «${name}» в оперативной памяти?`,
     moveToMemoryBody: (size: string) =>
-      `После переноса загруженные файлы (${size}) удалятся с диска. Чтобы сохранить их, сначала скопируйте их в другое место.`,
+      `После переноса загруженные файлы (${size}) удалятся с диска. Чтобы сохранить файлы, сначала скопируйте их в другое место.`,
     moveToMemoryAfter:
       "Затем останется только то, что сейчас смотрят. Остальное загрузится заново при просмотре.",
-    moveToMemory: "Перенести в память",
+    moveToMemory: "Перенести в оперативную память",
     stayOnDisk: "Оставить на диске",
     pause: "Приостановить",
     resume: "Продолжить",
@@ -292,7 +294,7 @@ export const ru: Messages = {
     deleteBody: "Торрент исчезнет из библиотеки, а прогресс просмотра удалится во всех профилях.",
     deleteNoFiles: "На диске ничего не хранится, поэтому удалять файлы не придётся.",
     deleteFiles: (size: string) =>
-      `С диска также удалятся загруженные файлы (${size}). Чтобы сохранить их, сначала скопируйте их в другое место.`,
+      `С диска также удалятся загруженные файлы (${size}). Чтобы сохранить файлы, сначала скопируйте их в другое место.`,
     deleteTemporary: "Просмотр остановится. В библиотеке этого торрента нет.",
     keepIt: "Оставить",
   },
@@ -311,7 +313,7 @@ export const ru: Messages = {
     genres: "Жанры",
     addValue: "Добавить…",
     addTo: (field: string) => `Добавить: ${field}`,
-    removeValue: (value: string) => `Убрать ${value}`,
+    removeValue: (value: string) => `Убрать «${value}»`,
     poster: "Постер",
     choosePoster: "Выбрать постер",
     removePoster: "Убрать постер",
@@ -334,7 +336,7 @@ export const ru: Messages = {
   },
   profiles: {
     who: "Выберите профиль",
-    remembered: "Устройство запомнит выбор. Сменить профиль можно в шапке.",
+    remembered: "Устройство запомнит выбор. Сменить профиль можно в меню.",
     none: "Нет профилей для просмотра.",
     readFailed: "Не удалось загрузить профили.",
     device: "Устройства",
@@ -347,10 +349,10 @@ export const ru: Messages = {
     add: "Добавить",
     rename: "Переименовать",
     chooseAvatar: "Выбрать аватар",
-    removeAvatar: "Удалить аватар",
+    removeAvatar: "Убрать аватар",
     nameOf: (name: string) => `Новое имя для профиля «${name}»`,
     avatarOf: (name: string) => `Выбрать аватар для профиля «${name}»`,
-    removeAvatarOf: (name: string) => `Удалить аватар профиля «${name}»`,
+    removeAvatarOf: (name: string) => `Убрать аватар профиля «${name}»`,
     renameOf: (name: string) => `Переименовать профиль «${name}»`,
     deleteOf: (name: string) => `Удалить профиль «${name}»`,
     avatarTooLarge: "Размер аватара не должен превышать 1\u00A0МиБ.",
@@ -375,7 +377,7 @@ export const ru: Messages = {
     removeBody:
       "После этого TorrPlay будет доступен всем в этой сети, а все токены доступа перестанут работать.",
     tokens: "Токены доступа",
-    tokensIntro: "Для других устройств и программ, например для сбора метрик.",
+    tokensIntro: "Для других устройств и программ, например для сервера MCP или сбора метрик.",
     tokensNeedPassword: "Токены доступа работают, только если задан пароль.",
     newToken: "Новый токен",
     name: "Название",
@@ -388,7 +390,7 @@ export const ru: Messages = {
     scopes: { api: "Полный доступ", playback: "Только воспроизведение", metrics: "Только метрики" },
     lifetimes: { revoked: "Пока не отозван", month: "30\u00A0дней", year: "1\u00A0год" },
     create: "Создать",
-    createdNote: "Скопируйте токен сейчас: больше он показан не будет.",
+    createdNote: "Скопируйте токен сейчас: больше он не появится.",
     secret: "Новый токен",
     copy: "Скопировать",
     copied: "Скопировано",
@@ -399,7 +401,7 @@ export const ru: Messages = {
     revokeTitle: (name: string) => `Отозвать токен «${name}»?`,
     revokeBody:
       "Всё, что его использует, перестанет работать, как и выданные им ссылки для воспроизведения.",
-    revokeOwnBody: "На этом устройстве будет выполнен выход.",
+    revokeOwnBody: "Вы выйдете на этом устройстве.",
   },
   durationUnits: { day: "д", hour: "ч", minute: "мин", second: "с" },
   system: {
@@ -409,7 +411,7 @@ export const ru: Messages = {
       `Версия ${version} · ${os} ${architecture}`,
     memory: "Занято памяти",
     memoryHint: "Весь процесс",
-    urls: "Другие устройства подключаются к TorrPlay по адресам",
+    urls: "Как подключиться к TorrPlay с других устройств",
     readers: "Потоки чтения",
     activeReaders: (count: number) => `Активных: ${count}`,
     otherReaders: (idle: number, waiting: number) => `Простаивают: ${idle} · ждут: ${waiting}`,
@@ -435,11 +437,11 @@ export const ru: Messages = {
       trace: "trace и серьёзнее",
     },
     logEmpty: "Подходящих записей нет.",
-    logOlder: "Записи постарше",
-    logNewest: "Самые новые записи",
+    logOlder: "Более ранние записи",
+    logNewest: "Последние записи",
     logLevel: "Уровень журнала",
     logLevelHint:
-      "Начиная с какого уровня TorrPlay пишет свои сообщения в журнал. Другие компоненты пишут только предупреждения и ошибки. Применяется сразу.",
+      "Начиная с какого уровня TorrPlay пишет свои сообщения в журнал. Другие компоненты пишут только предупреждения и ошибки. Действует сразу.",
     logLevelOption: "Параметр --log-level задаёт уровень на время этого запуска.",
     logFilterOption: "Параметр --log-filter задаёт уровни на время этого запуска.",
     logLevelCustom: "Особый",
@@ -477,7 +479,7 @@ export const ru: Messages = {
   backup: {
     downloadTitle: "Скачать резервную копию",
     downloadBody:
-      "Торренты, профили, прогресс просмотра и настройки в одном архиве. Скачанных файлов и пароля в нём нет.",
+      "Торренты, профили, прогресс просмотра и настройки в одном архиве. Загруженных файлов и пароля в нём нет.",
     downloadSecret:
       "Храните его в надёжном месте: в торрент-файлах могут быть учётные данные приватных трекеров.",
     download: "Скачать",
@@ -488,7 +490,7 @@ export const ru: Messages = {
     chooseFile: "Выбрать файл",
     confirmTitle: (name: string) => `Восстановить из файла «${name}»?`,
     confirmBody:
-      "Торренты, которых нет в резервной копии, будут удалены вместе со скачанными файлами. Пароль и токены доступа не изменятся.",
+      "Торренты, которых нет в резервной копии, будут удалены вместе с загруженными файлами. Пароль и токены доступа не изменятся.",
     restore: "Восстановить",
     restoring: "Восстановление…",
     restored: "Готово. TorrPlay восстанавливает торренты.",

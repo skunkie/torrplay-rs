@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
+import { percentText } from "./percent";
 import { plural } from "./plural";
 
 /** The client's messages in American English, the source language. Their
@@ -13,6 +14,7 @@ export const en = {
     unreachable: "TorrPlay could not be reached.",
     failed: (status: number) => `The request failed with status ${status}.`,
     untitled: "Untitled",
+    percent: (percent: number) => percentText("en-US", percent),
   },
   units: ["B", "KiB", "MiB", "GiB", "TiB"],
   nav: {
@@ -48,7 +50,7 @@ export const en = {
     fields: {
       cache_capacity_bytes: {
         label: "Memory for pieces",
-        hint: "The cache every torrent in memory shares. Applies at once; making it smaller drops pieces it was keeping.",
+        hint: "The cache every torrent in memory shares. Applies at once; making it smaller drops the pieces that no longer fit.",
       },
       background_downloads_enabled: {
         label: "Download in the background",
@@ -205,7 +207,7 @@ export const en = {
     showMore: "Show more",
   },
   engine: {
-    unavailable: "TorrPlay is starting or stopping. Actions will wait for it.",
+    unavailable: "TorrPlay is starting or stopping. Actions may not go through for now.",
     unreachable: "TorrPlay could not be reached. Trying again…",
   },
   add: {
@@ -243,7 +245,6 @@ export const en = {
   },
   download: {
     title: "Download",
-    downloaded: (percent: number) => `${percent}% downloaded`,
     size: "Size",
     speed: "Speed",
     peers: "Peers",
@@ -253,8 +254,8 @@ export const en = {
     tileMissing: "Not yet",
     allPieces: "All pieces",
     hide: "Hide",
-    showPieces: (percent: number) => `${percent}% downloaded, show all pieces`,
-    hidePieces: (percent: number) => `${percent}% downloaded, hide all pieces`,
+    showPieces: (percent: number) => `${percentText("en-US", percent)} downloaded, show all pieces`,
+    hidePieces: (percent: number) => `${percentText("en-US", percent)} downloaded, hide all pieces`,
     piecesSummary: (downloaded: number, total: number, arriving: number) =>
       `${downloaded.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} · ${arriving.toLocaleString("en-US")} arriving`,
     pieceHover: (piece: number, state: string) =>
@@ -330,7 +331,7 @@ export const en = {
   },
   profiles: {
     who: "Who is watching?",
-    remembered: "This device remembers the choice; switch from the header.",
+    remembered: "This device remembers the choice; switch from the menu.",
     none: "There are no profiles to watch as.",
     readFailed: "The profiles could not be read.",
     device: "Devices",

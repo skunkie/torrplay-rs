@@ -244,10 +244,12 @@ SPDX-License-Identifier: MIT
 
   <div class="flex flex-col gap-3 px-4 pt-6 pb-24 md:px-10 md:pb-6">
     {#if error}
-      <div role="alert" class="alert">
+      <div role="alert" class="alert flex-wrap">
         <span>{error}</span>
-        <button type="button" class="font-semibold text-accent-text underline" onclick={onreset}
-          >{t().add.tryAnother}</button
+        <button
+          type="button"
+          class="font-semibold whitespace-nowrap text-accent-text underline"
+          onclick={onreset}>{t().add.tryAnother}</button
         >
       </div>
     {/if}

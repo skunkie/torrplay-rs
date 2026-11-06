@@ -71,7 +71,7 @@ SPDX-License-Identifier: MIT
   <div class="flex items-baseline justify-between">
     <h2 id="download" class="font-bold">{t().download.title}</h2>
     {#if statistics?.completion_ratio !== null && statistics}
-      <span class="mono text-text-muted">{percent}%</span>
+      <span class="mono text-text-muted">{t().common.percent(percent)}</span>
     {/if}
   </div>
 

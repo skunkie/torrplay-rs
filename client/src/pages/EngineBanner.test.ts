@@ -14,7 +14,7 @@ import { profiles, resetProfiles } from "../lib/profile.svelte";
 import { titlePath, watchPath } from "../lib/routes";
 import { fakeBackend, file, profile, torrent } from "../testing";
 
-const STARTING = "TorrPlay is starting or stopping. Actions will wait for it.";
+const STARTING = "TorrPlay is starting or stopping. Actions may not go through for now.";
 const LOST = "TorrPlay could not be reached. Trying again…";
 const shown = torrent(1);
 

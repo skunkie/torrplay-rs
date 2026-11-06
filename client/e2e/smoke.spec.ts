@@ -76,6 +76,37 @@ test("plays a magnet link from a peer and adds it to the library", async ({ page
   await expect(page.getByText("The library is empty.")).toBeVisible();
 });
 
+test("keeps a refused magnet link's way back on one line on a phone in Russian", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 360, height: 760 });
+  await page.addInitScript(() => localStorage.setItem("torrplay.locale", "ru"));
+  await page.route("**/api/v1/torrents", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({
+          status: 422,
+          contentType: "application/problem+json",
+          body: JSON.stringify({
+            type: "tag:skunkie.github.io,2026:torrplay/problems/validation-failed",
+            title: "Validation failed",
+            status: 422,
+            errors: [],
+          }),
+        })
+      : route.continue(),
+  );
+  await page.goto("/add");
+  await page.getByLabel("Magnet-ссылка").fill(environment("TORRPLAY_E2E_MAGNET"));
+  await page.getByRole("button", { name: "Добавить в библиотеку" }).click({ timeout: 30_000 });
+
+  const back = page.getByRole("alert").getByRole("button", { name: "Выбрать другой торрент" });
+  await expect(back).toBeVisible();
+  const box = await back.boundingBox();
+  expect(box?.height, "the link takes one line").toBeLessThan(30);
+  const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+  expect(scrollWidth, "nothing to scroll sideways").toBe(360);
+});
+
 test("reads a torrent file and adds it to the library", async ({ page }) => {
   await page.goto("/add");
   await page.locator('input[type="file"]').setInputFiles(environment("TORRPLAY_E2E_TORRENT"));
