@@ -16,6 +16,8 @@ SPDX-License-Identifier: MIT
     class?: string;
     /** Classes for the padding around the content from `md` up. */
     gutter?: string;
+    /** Classes for the poster's size from `md` up. */
+    posterSize?: string;
     labelledby?: string | undefined;
     children: Snippet;
   }
@@ -25,6 +27,7 @@ SPDX-License-Identifier: MIT
     title,
     class: shape = "",
     gutter = "md:px-12 md:py-10",
+    posterSize = "w-44 self-center",
     labelledby,
     children,
   }: Props = $props();
@@ -37,11 +40,11 @@ SPDX-License-Identifier: MIT
   style:background={url ? undefined : toneOf(title).background}
 >
   {#if url}
-    <img
-      src={url}
-      alt=""
-      class="absolute inset-y-0 right-0 size-full object-cover md:w-3/5 md:object-top"
-    />
+    <!-- Its colors alone: a poster usually has words on it, which a crop would
+         set behind the content's own. -->
+    <div class="absolute -inset-10">
+      <img src={url} alt="" class="size-full object-cover opacity-75 blur-3xl" />
+    </div>
   {/if}
   <div
     class="absolute inset-0 bg-linear-to-t from-scrim via-scrim/60 to-transparent md:bg-linear-to-r"
@@ -49,4 +52,9 @@ SPDX-License-Identifier: MIT
   <div class="relative flex min-w-0 grow flex-col justify-end gap-3 p-4 {gutter}">
     {@render children()}
   </div>
+  {#if url}
+    <div class="relative my-6 mr-10 hidden aspect-2/3 shrink-0 md:block {posterSize}">
+      <img src={url} alt="" class="absolute inset-0 size-full rounded-xl object-cover shadow-2xl" />
+    </div>
+  {/if}
 </section>

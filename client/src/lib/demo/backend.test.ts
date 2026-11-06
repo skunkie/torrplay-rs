@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
+import { statSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../api/http";
@@ -9,7 +11,7 @@ import { type Backend, changeTorrent, duplicateOf, type Torrent } from "../backe
 import { failureMessage } from "../i18n/index.svelte";
 import { pieceCounts, pieceState } from "../pieces";
 import { demoBackend } from "./backend";
-import { FIRST_PROFILE, torrentId } from "./fixtures";
+import { FIRST_PROFILE, POSTER_BYTES, torrentId } from "./fixtures";
 
 const LIGHTHOUSE = torrentId(1);
 const GLASS_HARBOR = torrentId(3);
@@ -651,5 +653,25 @@ describe("backup", () => {
     await expect(backend.restoreBackup(new File(["nope"], "a.zip"))).rejects.toMatchObject({
       type: "validation-failed",
     });
+  });
+});
+
+describe("the posters", () => {
+  it("are files the demo serves, of the sizes it reports", async () => {
+    const { backend } = start();
+    const posters = (await library(backend)).filter((torrent) => torrent.poster);
+
+    expect(posters).toHaveLength(Object.keys(POSTER_BYTES).length);
+    for (const { links, poster } of posters) {
+      expect(links.poster).toMatch(/^\/demo-media\/posters\/.+\.webp$/);
+      expect(statSync(join("public", links.poster)).size).toBe(poster?.size_bytes);
+    }
+  });
+
+  it("leaves one torrent without a poster", async () => {
+    const { backend } = start();
+    const without = (await library(backend)).filter((torrent) => !torrent.poster);
+
+    expect(without.map((torrent) => torrent.title)).toEqual(["Orchard Road"]);
   });
 });

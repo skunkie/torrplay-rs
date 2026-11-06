@@ -180,6 +180,10 @@ with what to watch.
   Home and Library. The menu, under the profile's initial, switches profile
   and language and signs out. The title page replaces the header with a back
   link and the menu over its hero.
+- **Heroes.** A hero shows its poster whole at the right, with its colors blurred
+  behind the content, because a poster usually has words on it, which a crop
+  would set behind the hero's own title. A phone has no room beside the content,
+  so it shows the colors alone.
 - **Home.** The first up next entry is a banner that resumes it; the others
   are rows under it, and recently added titles are posters. Home and Library
   use the window's whole width: their grids add columns as it grows. So do the

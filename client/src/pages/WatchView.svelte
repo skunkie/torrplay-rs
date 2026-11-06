@@ -483,7 +483,14 @@ SPDX-License-Identifier: MIT
       </video-player>
     </media-i18n>
   {:else if preloading}
-    <Hero url={poster} {title} labelledby="preloading" class="size-full" gutter="md:px-10 md:py-12">
+    <Hero
+      url={poster}
+      {title}
+      labelledby="preloading"
+      class="size-full"
+      gutter="md:px-10 md:py-12"
+      posterSize="self-stretch portrait:md:hidden"
+    >
       <a
         href={backHref}
         aria-label={t().player.back}
