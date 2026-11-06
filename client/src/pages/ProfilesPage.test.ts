@@ -238,12 +238,12 @@ it("stops watching as a profile that was deleted", async () => {
   });
 });
 
-it("uploads a chosen picture", async () => {
+it("uploads a chosen avatar", async () => {
   const backend = backendOf();
   show(backend);
   const image = new File(["x"], "a.png", { type: "image/png" });
 
-  await fireEvent.change(await screen.findByLabelText("Choose a picture for Anna"), {
+  await fireEvent.change(await screen.findByLabelText("Choose an avatar for Anna"), {
     target: { files: [image] },
   });
 
@@ -252,12 +252,12 @@ it("uploads a chosen picture", async () => {
   });
 });
 
-it("refuses a picture over the limit without sending it, saying why", async () => {
+it("refuses an avatar over the limit without sending it, saying why", async () => {
   const backend = backendOf();
   show(backend);
   const image = new File([new Uint8Array(1048577)], "a.png", { type: "image/png" });
 
-  await fireEvent.change(await screen.findByLabelText("Choose a picture for Ben"), {
+  await fireEvent.change(await screen.findByLabelText("Choose an avatar for Ben"), {
     target: { files: [image] },
   });
 
@@ -267,7 +267,7 @@ it("refuses a picture over the limit without sending it, saying why", async () =
   expect(row).toContainElement(screen.getByRole("alert"));
 });
 
-it("says why the server refuses a picture", async () => {
+it("says why the server refuses an avatar", async () => {
   const backend = backendOf({
     setAvatar: vi.fn(async () => {
       throw refused(415, "unsupported-media-type", "From the server.");
@@ -275,28 +275,28 @@ it("says why the server refuses a picture", async () => {
   });
   show(backend);
 
-  await fireEvent.change(await screen.findByLabelText("Choose a picture for Anna"), {
+  await fireEvent.change(await screen.findByLabelText("Choose an avatar for Anna"), {
     target: { files: [new File(["x"], "a.png", { type: "image/png" })] },
   });
 
   expect(await screen.findByRole("alert")).toHaveTextContent("not an image TorrPlay can use");
 });
 
-it("offers removing a picture only when there is one", async () => {
-  const pictured: Profile = {
+it("offers removing an avatar only when there is one", async () => {
+  const withAvatar: Profile = {
     ...anna,
     avatar: { media_type: "image/png", size_bytes: 1, updated_at: "2026-11-06T00:00:00Z" },
   };
-  const backend = backendOf({}, [pictured, ben, tv]);
+  const backend = backendOf({}, [withAvatar, ben, tv]);
   show(backend);
 
-  await fireEvent.click(await screen.findByRole("button", { name: "Remove the picture of Anna" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Remove the avatar of Anna" }));
 
   await waitFor(() => {
     expect(backend.deleteAvatar).toHaveBeenCalledWith(anna.id);
   });
   expect(
-    screen.queryByRole("button", { name: "Remove the picture of Ben" }),
+    screen.queryByRole("button", { name: "Remove the avatar of Ben" }),
   ).not.toBeInTheDocument();
 });
 
@@ -313,13 +313,13 @@ it("offers to read again when the profiles could not be read", async () => {
   expect(await screen.findByText("Anna")).toBeInTheDocument();
 });
 
-const pictured: Profile = {
+const withAvatar: Profile = {
   ...anna,
   avatar: { media_type: "image/png", size_bytes: 1, updated_at: "2026-11-06T00:00:00Z" },
 };
 
 it("carries a grant's token when one is needed", () => {
-  const versioned = { ...pictured, links: { ...pictured.links, avatar: "/avatar?v=1" } };
+  const versioned = { ...withAvatar, links: { ...withAvatar.links, avatar: "/avatar?v=1" } };
 
   expect(avatarUrl(versioned, undefined)).toBe("/avatar?v=1");
   expect(avatarUrl(versioned, { token: "tpk_a", expiresAt: new Date() })).toBe(
@@ -327,18 +327,18 @@ it("carries a grant's token when one is needed", () => {
   );
 });
 
-it("has no URL without a picture or before the grant is known", () => {
+it("has no URL without an avatar or before the grant is known", () => {
   expect(avatarUrl(anna, undefined)).toBeUndefined();
-  expect(avatarUrl(pictured, null)).toBeUndefined();
+  expect(avatarUrl(withAvatar, null)).toBeUndefined();
 });
 
-it("shows the picture once the grant is known, and the initial if it cannot load", async () => {
-  await loadProfiles(backendOf({}, [pictured, tv]));
-  show(backendOf({}, [pictured, tv]));
+it("shows the avatar once the grant is known, and the initial if it cannot load", async () => {
+  await loadProfiles(backendOf({}, [withAvatar, tv]));
+  show(backendOf({}, [withAvatar, tv]));
   await screen.findByText("Anna");
   const row = screen.getByText("Anna").closest("li");
   const image = row?.querySelector("img");
-  if (!image) throw new Error("the picture is shown");
+  if (!image) throw new Error("the avatar is shown");
   expect(image).toHaveAttribute("src", anna.links.avatar);
 
   await fireEvent.error(image);

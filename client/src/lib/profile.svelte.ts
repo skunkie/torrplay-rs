@@ -75,7 +75,7 @@ export async function loadProfiles(backend: Backend): Promise<void> {
     } else {
       profiles.current = undefined;
     }
-    // After the choice, which everything waits for, and pictures need not.
+    // After the choice, which everything waits for, and avatars need not.
     await refreshAvatarGrant(backend);
   } catch {
     profiles.failed = true;

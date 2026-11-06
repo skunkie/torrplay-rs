@@ -185,7 +185,7 @@ const PIXEL = Buffer.from(
   "base64",
 );
 
-/** Whether the row of the profile `name` shows a picture that really loaded. */
+/** Whether the row of the profile `name` shows an avatar that really loaded. */
 function avatarLoaded(page: Page, name: string): Promise<boolean> {
   return page
     .locator("li", { hasText: name })
@@ -194,16 +194,16 @@ function avatarLoaded(page: Page, name: string): Promise<boolean> {
 }
 
 test.describe("profiles", () => {
-  test("adds a person with a picture, and deletes them", async ({ page }) => {
+  test("adds a person with an avatar, and deletes them", async ({ page }) => {
     await page.goto("/settings/profiles");
     await page.getByLabel("New profile").fill("Cleo");
     await page.getByRole("button", { name: "Add" }).click();
     await expect(page.getByRole("main").getByText("Cleo", { exact: true })).toBeVisible();
 
     await page
-      .getByLabel("Choose a picture for Cleo")
+      .getByLabel("Choose an avatar for Cleo")
       .setInputFiles({ name: "cleo.png", mimeType: "image/png", buffer: PIXEL });
-    await expect(page.getByRole("button", { name: "Remove the picture of Cleo" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Remove the avatar of Cleo" })).toBeVisible();
     await expect.poll(() => avatarLoaded(page, "Cleo")).toBe(true);
 
     await page.getByRole("button", { name: "Delete Cleo" }).click();
@@ -211,7 +211,7 @@ test.describe("profiles", () => {
     await expect(page.getByRole("main").getByText("Cleo", { exact: true })).toBeHidden();
   });
 
-  test("shows a picture through a playback token while a password is set", async ({
+  test("shows an avatar through a playback token while a password is set", async ({
     page,
     request,
   }) => {
@@ -357,13 +357,13 @@ test.describe("the demo", () => {
     await expect(peers).toHaveValue("50");
   });
 
-  test("adds a person with a picture until the page reloads", async ({ page }) => {
+  test("adds a person with an avatar until the page reloads", async ({ page }) => {
     await page.goto("/demo/settings/profiles");
     await page.getByLabel("New profile").fill("Cleo");
     await page.getByRole("button", { name: "Add" }).click();
 
     await page
-      .getByLabel("Choose a picture for Cleo")
+      .getByLabel("Choose an avatar for Cleo")
       .setInputFiles({ name: "cleo.png", mimeType: "image/png", buffer: PIXEL });
     await expect.poll(() => avatarLoaded(page, "Cleo")).toBe(true);
 

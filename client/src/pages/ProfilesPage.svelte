@@ -69,12 +69,12 @@ SPDX-License-Identifier: MIT
   }}
   onrename={(profile, name) => act(profile.id, () => backend.renameProfile(profile.id, name))}
   ondelete={(profile) => act(profile.id, () => backend.deleteProfile(profile.id))}
-  onpicture={(profile, image) => {
+  onavatar={(profile, image) => {
     if (image.size > AVATAR_MAX_BYTES) {
-      failure = { profileId: profile.id, message: t().profiles.pictureTooLarge };
+      failure = { profileId: profile.id, message: t().profiles.avatarTooLarge };
       return;
     }
     void act(profile.id, () => backend.setAvatar(profile.id, image));
   }}
-  onremovepicture={(profile) => void act(profile.id, () => backend.deleteAvatar(profile.id))}
+  onremoveavatar={(profile) => void act(profile.id, () => backend.deleteAvatar(profile.id))}
 />

@@ -93,7 +93,7 @@ English message.
 | :--- | :--- | :--- |
 | Library | Библиотека | The page and the persisted torrents in it |
 | Demo | Демо | Indeclinable: `Выйти из демо` |
-| Avatar | Изображение профиля | The client calls it a picture |
+| Avatar | Аватар | Not «изображение профиля» |
 | Title | Фильм / Сериал when the kind is known; otherwise name the torrent | Never `тайтл` or `титул`, and not `фильм или сериал`, which is clumsy and wrong for other kinds: `Торрент не найден`, `Ничего не найдено`; «название» for a title's name |
 | Kind: movie / series / other | Фильм / Сериал / Другое | Chips and filters |
 | Episode | Серия | Not `эпизод`, which reads as a scene. Pages write `1 сезон, 2 серия`; cards and other short places write `С1 Е2` with Cyrillic letters, never `S1 E2` |

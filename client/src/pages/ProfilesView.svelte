@@ -26,8 +26,8 @@ SPDX-License-Identifier: MIT
     /** Resolves to whether the name was changed. */
     onrename: (profile: Profile, name: string) => Promise<boolean>;
     ondelete: (profile: Profile) => void;
-    onpicture: (profile: Profile, image: File) => void;
-    onremovepicture: (profile: Profile) => void;
+    onavatar: (profile: Profile, image: File) => void;
+    onremoveavatar: (profile: Profile) => void;
   }
 
   let {
@@ -40,8 +40,8 @@ SPDX-License-Identifier: MIT
     onadd,
     onrename,
     ondelete,
-    onpicture,
-    onremovepicture,
+    onavatar,
+    onremoveavatar,
   }: Props = $props();
 
   const IMAGE_TYPES = "image/avif,image/gif,image/jpeg,image/png,image/webp";
@@ -132,17 +132,17 @@ SPDX-License-Identifier: MIT
                   <label
                     class="btn btn-secondary outline-offset-2 outline-focus has-focus-visible:outline-3"
                   >
-                    {t().profiles.choosePicture}
+                    {t().profiles.chooseAvatar}
                     <input
                       type="file"
                       accept={IMAGE_TYPES}
-                      aria-label={t().profiles.pictureOf(name)}
+                      aria-label={t().profiles.avatarOf(name)}
                       class="sr-only"
                       disabled={busy}
                       onchange={(event) => {
                         const image = event.currentTarget.files?.[0];
                         event.currentTarget.value = "";
-                        if (image) onpicture(profile, image);
+                        if (image) onavatar(profile, image);
                       }}
                     />
                   </label>
@@ -150,11 +150,11 @@ SPDX-License-Identifier: MIT
                     <button
                       type="button"
                       class="btn btn-secondary"
-                      aria-label={t().profiles.removePictureOf(name)}
+                      aria-label={t().profiles.removeAvatarOf(name)}
                       disabled={busy}
-                      onclick={() => onremovepicture(profile)}
+                      onclick={() => onremoveavatar(profile)}
                     >
-                      {t().profiles.removePicture}
+                      {t().profiles.removeAvatar}
                     </button>
                   {/if}
                   <button
