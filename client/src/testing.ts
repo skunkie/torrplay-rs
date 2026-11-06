@@ -82,6 +82,7 @@ export function system(members: Partial<System> = {}): System {
     started_at: "2026-11-04T08:00:00Z",
     uptime_seconds: 187_200,
     resident_memory_bytes: 412 * 1024 * 1024,
+    urls: ["http://192.168.1.10:8642"],
     links: {
       self: "/api/v1/system",
       statistics: "/api/v1/statistics",

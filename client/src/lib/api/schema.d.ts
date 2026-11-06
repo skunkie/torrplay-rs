@@ -3128,6 +3128,14 @@ export interface components {
              * @example 402653184
              */
             resident_memory_bytes: number | null;
+            /**
+             * @description The URLs other devices may reach the application at, read from the network interfaces on each request, the likeliest first: IPv4 before IPv6, an interface with a hardware address before a tunnel, the address that routes to the local network's multicast group, and then the ranges a local network usually uses. Listening on every interface lists every address but loopback and link-local ones, and global IPv6 ones while any other remains, since those are mostly temporary. It may include addresses no other device can reach, such as a container bridge's. Listening on one address lists that address. It is empty while the application listens on loopback or the interfaces cannot be read. A reverse proxy's name is not among them.
+             * @example [
+             *       "http://192.168.1.10:8642",
+             *       "http://100.84.7.2:8642"
+             *     ]
+             */
+            urls: string[];
             /** @description Links from the system resource. */
             links: {
                 /**

@@ -63,7 +63,7 @@ pub fn advertised_address(listen: SocketAddr) -> Result<Ipv4Addr, AddressError> 
 
 /// The local address a datagram to the SSDP group would leave from.
 /// Connecting a UDP socket sends nothing.
-fn route_to_group() -> std::io::Result<Ipv4Addr> {
+pub fn route_to_group() -> std::io::Result<Ipv4Addr> {
     let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
     socket.connect((SSDP_GROUP, SSDP_PORT))?;
     match socket.local_addr()?.ip() {

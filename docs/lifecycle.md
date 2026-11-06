@@ -875,6 +875,9 @@ televisions, and other computers on the local network reach it:
   document, the API reference, and the health checks answer everyone. Once
   a password is set, every client may connect and every request needs its
   credential.
+- `GET /api/v1/system` lists the URLs other devices may reach the application
+  at, read from the network interfaces on each request, for a client to offer
+  in a link. It cannot know a reverse proxy's name.
 - Behind a reverse proxy, the client's address is the proxy's, so a proxy
   on this computer makes every client local: set a password before
   exposing the application.

@@ -67,6 +67,7 @@ pub(crate) async fn get_system<E: Engine>(
         started_at: run.started_at().into(),
         uptime_seconds: count(run.uptime().as_secs()),
         resident_memory_bytes: process.resident_memory_bytes.map(count),
+        urls: crate::addresses::read_urls(app.listen_address()).await,
         links: api::SystemLinks {
             self_field: system_path(),
             statistics: statistics_path(),

@@ -2929,6 +2929,9 @@ paths:
                     started_at: '2026-10-29T12:00:00Z'
                     uptime_seconds: 86400
                     resident_memory_bytes: 402653184
+                    urls:
+                      - http://192.168.1.10:8642
+                      - http://100.84.7.2:8642
                     links:
                       self: /api/v1/system
                       statistics: /api/v1/statistics
@@ -7236,7 +7239,7 @@ components:
     System:
       type: object
       description: The running process's build, platform, and resource use.
-      required: [version, os, architecture, run_id, started_at, uptime_seconds, resident_memory_bytes, links]
+      required: [version, os, architecture, run_id, started_at, uptime_seconds, resident_memory_bytes, urls, links]
       properties:
         version:
           type: string
@@ -7280,6 +7283,26 @@ components:
             report it. It includes the piece cache's usage and every other
             allocation, so it may exceed the cache capacity.
           examples: [402653184]
+        urls:
+          type: array
+          maxItems: 32
+          description: >-
+            The URLs other devices may reach the application at, read from the
+            network interfaces on each request, the likeliest first: IPv4
+            before IPv6, an interface with a hardware address before a tunnel,
+            the address that routes to the local network's multicast group,
+            and then the ranges a local network usually uses. Listening on
+            every interface lists every address but loopback and link-local
+            ones, and global IPv6 ones while any other remains, since those
+            are mostly temporary. It may include addresses no other device can
+            reach, such as a container bridge's. Listening on one address lists
+            that address. It is empty while the application listens on loopback
+            or the interfaces cannot be read. A reverse proxy's name is not
+            among them.
+          items:
+            type: string
+            format: uri
+          examples: [['http://192.168.1.10:8642', 'http://100.84.7.2:8642']]
         links:
           type: object
           description: Links from the system resource.

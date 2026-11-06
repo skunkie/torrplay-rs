@@ -2153,6 +2153,8 @@ mod scenario {
             assert!(body["resident_memory_bytes"].as_u64().unwrap() > 0);
         }
         assert_eq!(body["links"]["metrics"], "/metrics");
+        // OBS-11: a server not told where it listens lists no URLs.
+        assert_eq!(body["urls"], serde_json::json!([]));
 
         // OBS-02: the statistics count torrents by state and the bytes
         // streamed.

@@ -1068,6 +1068,9 @@ pub struct System {
     ///How long the process has run, from a monotonic clock, so it is right even when the system clock or the client's is not.
     ///Constraint: minimum=0
     pub uptime_seconds: i64,
+    ///The URLs other devices may reach the application at, read from the network interfaces on each request, the likeliest first: IPv4 before IPv6, an interface with a hardware address before a tunnel, the address that routes to the local network's multicast group, and then the ranges a local network usually uses. Listening on every interface lists every address but loopback and link-local ones, and global IPv6 ones while any other remains, since those are mostly temporary. It may include addresses no other device can reach, such as a container bridge's. Listening on one address lists that address. It is empty while the application listens on loopback or the interfaces cannot be read. A reverse proxy's name is not among them.
+    ///Constraint: maxItems=32
+    pub urls: Vec<String>,
     ///The application's version, as its package declares it.
     pub version: String,
 }
