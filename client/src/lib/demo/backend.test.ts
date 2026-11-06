@@ -58,6 +58,9 @@ describe("the library", () => {
   it.each([
     [{ search: "HARBOR" }, ["Glass Harbor"]],
     [{ search: "зима" }, ["Долгая зима"]],
+    [{ search: "harbor.2021" }, ["Glass Harbor"]],
+    [{ search: "зима долгая" }, ["Долгая зима"]],
+    [{ search: "harbr" }, []],
     [{ genre: "Comedy" }, ["Paper Moons"]],
     [{ kind: "other" }, ["Small Engines"]],
     [{ category: "Documentaries" }, ["Small Engines"]],

@@ -87,6 +87,99 @@ it("keeps filters in the page's query and searches after a pause", async () => {
   expect(await screen.findByText("Nothing matches.")).toBeInTheDocument();
 });
 
+it("narrows what it holds at once, then shows what the server finds", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const harbor = torrent(1, { title: "Harbor" });
+  const salt = torrent(2, { title: "Salt" });
+  const typo = torrent(3, { title: "Harbour" });
+  const { fake } = backend((query) => ({
+    unchanged: false,
+    data: page(query.search ? [harbor, typo] : [harbor, salt]),
+    etag: `"${query.search ?? ""}"`,
+  }));
+  render(LibraryPage, { context: backendContext(fake) });
+  expect(await screen.findByText("Salt")).toBeInTheDocument();
+
+  await fireEvent.input(screen.getByRole("searchbox"), { target: { value: "harbor" } });
+  expect(screen.getByText("Harbor")).toBeInTheDocument();
+  expect(screen.queryByText("Salt")).not.toBeInTheDocument();
+  expect(screen.queryByText("Harbour")).not.toBeInTheDocument();
+
+  await vi.advanceTimersByTimeAsync(300);
+  expect(await screen.findByText("Harbour")).toBeInTheDocument();
+});
+
+it("says nothing matches only once the server has answered", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const { fake } = backend((query) => ({
+    unchanged: false,
+    data: page(query.search ? [] : [torrent(1)]),
+    etag: `"${query.search ?? ""}"`,
+  }));
+  render(LibraryPage, { context: backendContext(fake) });
+  expect(await screen.findByText("Title 1")).toBeInTheDocument();
+
+  await fireEvent.input(screen.getByRole("searchbox"), { target: { value: "nothing" } });
+  expect(screen.getByText("Title 1")).toBeInTheDocument();
+  expect(screen.queryByText("Nothing matches.")).not.toBeInTheDocument();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+  await vi.advanceTimersByTimeAsync(300);
+  expect(await screen.findByText("Nothing matches.")).toBeInTheDocument();
+  expect(screen.queryByText("Title 1")).not.toBeInTheDocument();
+});
+
+it("keeps a typo's matches on screen while the search goes on", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const { fake } = backend(() => ({
+    unchanged: false,
+    data: page([torrent(1, { title: "Harbor" })]),
+    etag: '"e"',
+  }));
+  render(LibraryPage, { context: backendContext(fake) });
+  await fireEvent.input(await screen.findByRole("searchbox"), { target: { value: "harbr" } });
+  await vi.advanceTimersByTimeAsync(300);
+  expect(await screen.findByText("Harbor")).toBeInTheDocument();
+
+  await fireEvent.input(screen.getByRole("searchbox"), { target: { value: "harbro" } });
+  expect(screen.getByText("Harbor")).toBeInTheDocument();
+});
+
+it("does not offer more of an earlier search", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const { fake } = backend((query) => {
+    if (query.search) throw new Error("offline");
+    return {
+      unchanged: false,
+      data: page([torrent(1)], "/api/v1/torrents?cursor=c2"),
+      etag: '"e"',
+    };
+  });
+  render(LibraryPage, { context: backendContext(fake) });
+  expect(await screen.findByRole("button", { name: "Show more" })).toBeInTheDocument();
+
+  await fireEvent.input(screen.getByRole("searchbox"), { target: { value: "title" } });
+  await vi.advanceTimersByTimeAsync(300);
+  expect(await screen.findByRole("alert")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Show more" })).not.toBeInTheDocument();
+});
+
+it("stops loading when the server cannot answer a search", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const { fake } = backend((query) => {
+    if (query.search) throw new Error("offline");
+    return { unchanged: false, data: page([torrent(1)]), etag: '"e"' };
+  });
+  render(LibraryPage, { context: backendContext(fake) });
+  expect(await screen.findByText("Title 1")).toBeInTheDocument();
+
+  await fireEvent.input(screen.getByRole("searchbox"), { target: { value: "title" } });
+  await vi.advanceTimersByTimeAsync(300);
+  expect(await screen.findByRole("alert")).toBeInTheDocument();
+  expect(screen.getByText("Title 1")).toBeInTheDocument();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
 it("reports a failure and tries again", async () => {
   let fail = true;
   const { fake } = backend(() => {

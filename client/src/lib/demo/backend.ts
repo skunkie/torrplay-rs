@@ -24,6 +24,7 @@ import type {
 import { nextEpisode, playables } from "../episodes";
 import { LOG_LEVELS } from "../logs";
 import { parseMagnet } from "../magnet";
+import { searchTorrents } from "../search";
 import {
   accessTokenFixtures,
   DEMO_RUN,
@@ -390,26 +391,19 @@ export function demoBackend(now: () => number = Date.now): Backend {
       const etag = `"l-${version}-${JSON.stringify(query)}-${page.cursor ?? ""}"`;
       if (page.etag === etag) return { unchanged: true };
       const torrents = persisted.map((item) => item.torrent);
-      const search = query.search?.toLowerCase();
-      const matches = torrents
+      const filtered = torrents
         .filter((torrent) => {
           if (query.kind && torrent.kind !== query.kind) return false;
           if (query.category && !torrent.categories.includes(query.category)) return false;
           if (query.uncategorized && torrent.categories.length > 0) return false;
           if (query.genre && !torrent.genres.includes(query.genre)) return false;
-          if (
-            query.infoHash &&
-            !torrent.info_hashes.some((infoHash) => infoHash.value === query.infoHash)
-          ) {
-            return false;
-          }
           return (
-            !search ||
-            torrent.title?.toLowerCase().includes(search) ||
-            torrent.name?.toLowerCase().includes(search)
+            !query.infoHash ||
+            torrent.info_hashes.some((infoHash) => infoHash.value === query.infoHash)
           );
         })
-        .sort((a, b) => b.created_at.localeCompare(a.created_at));
+        .sort((a, b) => b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id));
+      const matches = query.search ? searchTorrents(filtered, query.search) : filtered;
       const size = page.pageSize ?? PAGE_SIZE;
       const start = Number(page.cursor ?? 0);
       const labels = (of: (torrent: Torrent) => string[]) => {
