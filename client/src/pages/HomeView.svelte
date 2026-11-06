@@ -8,7 +8,14 @@ SPDX-License-Identifier: MIT
   import Poster from "../components/Poster.svelte";
   import WatchedBar from "../components/WatchedBar.svelte";
   import type { Torrent, UpNextEntry } from "../lib/backend";
-  import { entryReason, entrySubject, torrentDetails, torrentTitle } from "../lib/describe";
+  import {
+    entryReason,
+    entrySubject,
+    heroTitleClasses,
+    timeLeftLabel,
+    torrentDetails,
+    torrentTitle,
+  } from "../lib/describe";
   import { t } from "../lib/i18n/index.svelte";
   import { libraryPath, titlePath, watchPath } from "../lib/routes";
   import { toneOf } from "../lib/tone";
@@ -71,23 +78,25 @@ SPDX-License-Identifier: MIT
       labelledby="continue"
       class="min-h-65 rounded-panel md:min-h-85 md:rounded-3xl"
     >
-      <p class="flex flex-wrap gap-2 mono text-accent-text uppercase">
-        <span
-          >{lead.reason === "next_episode" ? t().progress.nextEpisode : t().progress.resume}</span
-        >
-        {#if subject}
-          <span aria-hidden="true">·</span>
-          <span>{subject}</span>
-        {/if}
-      </p>
-      <h1
-        id="continue"
-        class="line-clamp-2 max-w-3xl text-display-small font-bold tracking-tight md:text-display"
-      >
+      <!-- Resuming needs no words here: the button says it. -->
+      {#if lead.reason === "next_episode" || subject}
+        <p class="flex flex-wrap gap-2 mono text-accent-text uppercase">
+          {#if lead.reason === "next_episode"}
+            <span>{t().progress.nextEpisode}</span>
+            {#if subject}
+              <span aria-hidden="true">·</span>
+            {/if}
+          {/if}
+          {#if subject}
+            <span>{subject}</span>
+          {/if}
+        </p>
+      {/if}
+      <h1 id="continue" class={heroTitleClasses(torrentTitle(lead.torrent))}>
         {torrentTitle(lead.torrent)}
       </h1>
-      {#if lead.progress}
-        <p class="text-meta text-hero-muted md:text-base">{entryReason(lead)}</p>
+      {#if lead.reason !== "next_episode" && timeLeftLabel(lead.progress)}
+        <p class="text-meta text-hero-muted md:text-base">{timeLeftLabel(lead.progress)}</p>
       {/if}
       <div class="mt-2 flex flex-wrap items-center gap-3 md:gap-4">
         <a href={watchPath(lead.torrent.id, lead.file.id)} class="btn btn-hero">

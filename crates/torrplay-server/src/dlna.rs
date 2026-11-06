@@ -392,6 +392,15 @@ pub(crate) async fn connection_manager<E: Engine>(
 /// The library as the media server presents it, or `None` while the stored
 /// torrents are being restored: the torrents with metadata and a playable
 /// file that are neither paused nor failed, newest first.
+/// A torrent's title on a TV, which shows one line, and whose `dc:date` is when
+/// it was added: the year tells a film from its remake.
+fn title_with_year(title: String, year: Option<i32>) -> String {
+    match year {
+        Some(year) => format!("{title} ({year})"),
+        None => title,
+    }
+}
+
 async fn catalog<E: Engine>(app: &App<E>) -> Result<Option<Catalog>, Problem> {
     let Some(playable) = playable::torrents(app).await? else {
         return Ok(None);
@@ -403,7 +412,8 @@ async fn catalog<E: Engine>(app: &App<E>) -> Result<Option<Catalog>, Problem> {
             let saved = progress.get(&torrent.id);
             tree::Torrent {
                 id: torrent.id.to_string(),
-                title: torrent.title.unwrap_or(torrent.name),
+                title: title_with_year(torrent.display_title, torrent.display_year),
+                name: torrent.name,
                 kind: torrent.kind.map(|kind| match kind {
                     Kind::Movie => tree::Kind::Movie,
                     Kind::Series => tree::Kind::Series,
@@ -586,4 +596,15 @@ pub(crate) async fn get_icon<E: Engine>(
         bytes,
     )
         .into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_title_on_a_tv_carries_its_year() {
+        assert_eq!(title_with_year("Dune".into(), Some(2021)), "Dune (2021)");
+        assert_eq!(title_with_year("Dune".into(), None), "Dune");
+    }
 }

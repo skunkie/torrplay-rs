@@ -46,6 +46,10 @@ pub struct Torrent {
     pub title: Option<String>,
     /// Its name from its metadata.
     pub name: String,
+    /// What it is shown as.
+    pub display_title: String,
+    /// The year to show beside it.
+    pub display_year: Option<i32>,
     /// The catalog it belongs to.
     pub kind: Kind,
     /// Its library IMDb ID, which it is listed and streamed by.
@@ -57,12 +61,6 @@ pub struct Torrent {
     /// Its video files, at least one: in metadata order for a movie, in
     /// episode order for a series.
     pub files: Vec<File>,
-}
-
-impl Torrent {
-    fn display_name(&self) -> &str {
-        self.title.as_deref().unwrap_or(&self.name)
-    }
 }
 
 /// Which catalog a torrent belongs to.
@@ -391,7 +389,7 @@ impl Library {
                     .iter()
                     .filter(move |file| episode.is_none() || file.episode == episode)
                     .map(move |file| {
-                        let title = format!("{}\n{}", torrent.display_name(), file.name);
+                        let title = format!("{}\n{}", torrent.display_title, file.name);
                         stream(torrent, file, title, base)
                     })
             })
@@ -423,7 +421,8 @@ fn preview(torrent: &Torrent, base: Base<'_>) -> MetaPreview {
             .clone()
             .unwrap_or_else(|| format!("{ID_PREFIX}{}", torrent.id)),
         kind: torrent.kind.as_str(),
-        name: torrent.display_name().to_owned(),
+        name: torrent.display_title.clone(),
+        release_info: torrent.display_year.map(|year| year.to_string()),
         genres: torrent.genres.clone(),
         poster: torrent.has_poster.then(|| base.poster(torrent)),
     }

@@ -66,6 +66,8 @@ pub struct MetaPreview {
     #[serde(rename = "type")]
     pub kind: &'static str,
     pub name: String,
+    #[serde(rename = "releaseInfo", skip_serializing_if = "Option::is_none")]
+    pub release_info: Option<String>,
     pub genres: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub poster: Option<String>,

@@ -829,6 +829,14 @@ impl<E: Engine> App<E> {
         }
         self.ensure_profiles().await;
         self.restoring.store(false, Ordering::SeqCst);
+        // The first listing would otherwise read them all on an async worker.
+        let names = self
+            .registry
+            .list()
+            .into_iter()
+            .filter_map(|record| record.metadata.map(|metadata| metadata.display_name()))
+            .collect();
+        crate::release_name::read_ahead(names).await;
         Ok(())
     }
 
@@ -1129,6 +1137,7 @@ impl<E: Engine> App<E> {
         id: &TorrentId,
         metadata: &Arc<Metadata>,
     ) -> Result<bool, Problem> {
+        crate::release_name::read_ahead(vec![metadata.display_name()]).await;
         let metainfo = match self.engine.metainfo(id).await {
             Ok(Some(bytes)) => bytes,
             Ok(None) | Err(EngineError::Unavailable { .. } | EngineError::UnknownTorrent) => {

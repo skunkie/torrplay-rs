@@ -38,6 +38,8 @@
 
   --text-display: 3.25rem;
   --text-display--line-height: 1;
+  --text-display-medium: 2.5rem;
+  --text-display-medium--line-height: 1.05;
   --text-display-small: 1.75rem;
   --text-display-small--line-height: 1.05;
   --text-body: 0.9375rem;

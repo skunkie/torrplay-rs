@@ -5,7 +5,7 @@
 import { expect, it } from "vitest";
 
 import { file, progress, torrent, upNext } from "../testing";
-import { entryReason, entrySubject, progressLabel } from "./describe";
+import { entryReason, entrySubject, heroTitleClasses, progressLabel } from "./describe";
 
 it.each([
   ["a resumed file by the minutes left", upNext(torrent(1), 0.5), "30\u00A0min left"],
@@ -36,4 +36,20 @@ it.each([
   ["a file in progress by the minutes left", progress(video, 0.75), "15\u00A0min left"],
 ])("labels %s", (_, held, expected) => {
   expect(progressLabel(held)).toBe(expected);
+});
+
+it.each([
+  ["Paper Moons", "md:text-display"],
+  ["x".repeat(30), "md:text-display"],
+  ["x".repeat(31), "md:text-display-medium"],
+  ["x".repeat(60), "md:text-display-medium"],
+  ["x".repeat(61), "line-clamp-3"],
+])("sizes a hero's title to its length: %s", (title, expected) => {
+  expect(heroTitleClasses(title).split(" ")).toContain(expected);
+});
+
+it("shows a very long title whole where it is asked to", () => {
+  const long = "x".repeat(61);
+  expect(heroTitleClasses(long, true).split(" ")).not.toContain("line-clamp-3");
+  expect(heroTitleClasses(long, true).split(" ")).toContain("md:text-display-small");
 });

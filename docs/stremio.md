@@ -104,9 +104,9 @@ Every resource under `/stremio` answers as the playback operations do:
   does.
 - A page holds at most 100 items; `skip` is how many to leave out, a
   non-negative integer.
-- Each item is a meta preview: `id`, `type`, `name`, the library title or
-  else the torrent's name, `genres`, and `poster`, the torrent's poster's
-  URL with the credential, when it has one.
+- Each item is a meta preview: `id`, `type`, `name`, the torrent's display
+  title, `releaseInfo`, its display year, when it has one, `genres`, and
+  `poster`, the torrent's poster's URL with the credential, when it has one.
 
 ## Metadata
 

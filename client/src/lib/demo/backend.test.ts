@@ -11,7 +11,7 @@ import { type Backend, changeTorrent, cursorOf, duplicateOf, type Torrent } from
 import { failureMessage } from "../i18n/index.svelte";
 import { pieceCounts, pieceState } from "../pieces";
 import { demoBackend } from "./backend";
-import { FIRST_PROFILE, POSTER_BYTES, torrentId } from "./fixtures";
+import { FIRST_PROFILE, POSTER_BYTES, shownName, torrentId } from "./fixtures";
 
 const LIGHTHOUSE = torrentId(1);
 const GLASS_HARBOR = torrentId(3);
@@ -750,5 +750,27 @@ describe("system", () => {
     const added = await backend.createTorrent({ magnetUri: MAGNET }, { retention: "temporary" });
     const listed = await backend.listLogRecords({ contains: added.id }, {});
     expect(listed.items[0]?.message).toBe("a torrent was added");
+  });
+});
+
+describe("what a torrent is shown as", () => {
+  it("keeps the first of several titles and drops a video's extension", () => {
+    expect(shownName(null, "Первый / Second.mkv", null).display_title).toBe("Первый");
+    expect(shownName(null, "Paper.Moons.mkv", null).display_title).toBe("Paper Moons");
+  });
+
+  it("cleans a release name, and a title wins", async () => {
+    const { backend } = start();
+    const created = await backend.createTorrent(
+      { magnetUri: `magnet:?xt=urn:btih:${"b".repeat(40)}&dn=Night.Ferry.2021.1080p` },
+      { retention: "temporary" },
+    );
+    expect(created.display_title).toBe("Night Ferry");
+    expect(created.display_year).toBe(2021);
+
+    const { etag } = await backend.getConfiguration(created.id);
+    await backend.updateConfiguration(created.id, { title: "The Ferry" }, etag);
+    const read = await backend.getTorrent(created.id);
+    expect(!read.unchanged && read.data.display_title).toBe("The Ferry");
   });
 });

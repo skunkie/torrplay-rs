@@ -175,9 +175,11 @@ parse, or names nothing, is `701`.
   paused or failed, and only if it has a playable file: one served with an
   `audio/`, `video/`, or `image/` media type. Temporary torrents are never
   listed, and their media URLs are `404 Not Found`.
-- A torrent container's title is its library title, or else its name, with
-  its poster as `upnp:albumArtURI`. Its files are in metadata order, or, in
-  a series, in episode order as up next orders them.
+- A torrent container's title is its display title, which the
+  [glossary](glossary.md) defines, with its display year in parentheses when it
+  has one, since `dc:date` is when it was added, and its poster as
+  `upnp:albumArtURI`. Its files are in metadata order, or, in a series, in
+  episode order as up next orders them.
 - A file's title is its name. Its class is `object.item.videoItem`,
   `object.item.audioItem.musicTrack`, or `object.item.imageItem.photo`, and
   its one resource has its size, the media type the native API serves it
@@ -241,7 +243,9 @@ container that holds torrents or files says `searchable="1"`.
   quoted, with `\"` and `\\` escapes. Anything else, including another
   property, is `708`.
 - `dc:title contains` and `doesNotContain` use the shared search matcher
-  without typo tolerance, so they match as the native API's `search` does.
+  without typo tolerance, so they match as the native API's `search` does: a
+  torrent's name counts as well as its `dc:title`, which may show only part of
+  it.
   Other string comparisons ignore case. `derivedfrom` matches a class and
   its subclasses. `upnp:genre` is a torrent's genres; a file has its
   torrent's. `dc:date` compares as `YYYY-MM-DD` text.

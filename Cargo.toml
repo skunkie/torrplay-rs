@@ -86,6 +86,9 @@ jsonschema = { version = "0.59", default-features = false }
 librqbit = { git = "https://github.com/skunkie/rqbit", rev = "fb2e14e94e59aa66b40e2039e1154978fd59e883", default-features = false, features = ["rust-tls"] }
 librqbit-core = { git = "https://github.com/skunkie/rqbit", rev = "fb2e14e94e59aa66b40e2039e1154978fd59e883", default-features = false }
 memchr = "2"
+# Reading release names. Exact while it is this young, so an upgrade is a decision
+# that release_name.rs's table of names checks.
+parse-torrent-title = "=2.0.7"
 # Listing the addresses the application may be reached at; librqbit already uses it.
 network-interface = "2"
 # Reading the DLNA media server's SOAP requests; librqbit already depends on

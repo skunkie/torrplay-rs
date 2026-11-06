@@ -998,6 +998,11 @@ pub async fn serve(
             Err(error) => tracing::warn!(%error, "deleting backups' temporary files panicked"),
         }
     }
+    // Before the first request, which would otherwise build its patterns on an
+    // async worker.
+    if let Err(error) = tokio::task::spawn_blocking(torrplay_server::prepare_release_names).await {
+        tracing::warn!(%error, "preparing to read release names panicked");
+    }
     let sweeping = engine.clone();
     match tokio::task::spawn_blocking(move || sweeping.sweep_download_dir(&keep)).await {
         Ok(Ok(deleted)) => {

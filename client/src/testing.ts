@@ -215,7 +215,7 @@ export function configuration(members: Partial<TorrentConfiguration> = {}): Torr
 /** A persisted movie torrent numbered `n`. */
 export function torrent(n: number, members: Partial<Torrent> = {}): Torrent {
   const id = `trr_${String(n).padStart(26, "a")}`;
-  return {
+  const merged: Omit<Torrent, "display_title" | "display_year"> = {
     id,
     name: `Name ${n}`,
     info_hashes: [],
@@ -245,6 +245,11 @@ export function torrent(n: number, members: Partial<Torrent> = {}): Torrent {
       metainfo: "",
     },
     ...members,
+  };
+  return {
+    display_title: merged.title ?? merged.name,
+    display_year: merged.year,
+    ...merged,
   };
 }
 

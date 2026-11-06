@@ -826,6 +826,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastjs-regex"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1b4c4b59fcd632762f77b326d281d91a8a29330e5606d7d3c0d3089b3ac645d"
+dependencies = [
+ "regex",
+ "regex-syntax",
+ "regress",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2353,6 +2364,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "parse-torrent-title"
+version = "2.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "836f72bd7df4a0b718fb733832dba6043220b747d66397996041347186fad534"
+dependencies = [
+ "aho-corasick",
+ "chrono",
+ "fastjs-regex",
+ "indexmap 2.14.2",
+ "regex-syntax",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "password-hash"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2711,6 +2737,15 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "regress"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32eef8b209c3c1c15dbad02c1f30f9539f00dc7253e0cbcdaae442a50a09d7c1"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "reqwest"
@@ -3826,6 +3861,7 @@ dependencies = [
  "http-body",
  "http-body-util",
  "memchr",
+ "parse-torrent-title",
  "reqwest",
  "serde",
  "serde_json",

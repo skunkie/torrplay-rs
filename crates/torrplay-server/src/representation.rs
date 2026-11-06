@@ -21,6 +21,7 @@ use torrplay_core::profiles::{Profile, ProfileKind, Progress};
 use crate::app::TorrentView;
 use crate::content;
 use crate::problem::Problem;
+use crate::release_name::clean_name;
 
 /// The media type of JSON representations.
 pub(crate) const JSON: &str = "application/json";
@@ -137,8 +138,16 @@ pub(crate) fn torrent(view: &TorrentView) -> api::Torrent {
     let metadata = record.metadata.as_deref();
     let library = record.configuration.library();
     let path = torrent_path(&record.id);
+    let name = metadata.map(|metadata| metadata.display_name());
+    let shown = shown_name(
+        library.title.as_deref(),
+        name.as_deref(),
+        reported_kind(library, metadata),
+    );
     api::Torrent {
         retention: retention(record.configuration.retention()),
+        display_title: shown.title,
+        display_year: library.year.map(i32::from).or(shown.year),
         title: library.title.clone(),
         kind: reported_kind(library, metadata).map(kind),
         year: library.year.map(i32::from),
@@ -166,7 +175,7 @@ pub(crate) fn torrent(view: &TorrentView) -> api::Torrent {
             metainfo: format!("{path}/metainfo"),
             self_field: path,
         },
-        name: metadata.map(|metadata| metadata.display_name()),
+        name,
         observed_state: observed_state(view.observed_state()),
         size_bytes: metadata.map(|metadata| count(metadata.size_bytes())),
         storage_mode: storage_mode(record.storage_mode),
@@ -179,6 +188,42 @@ pub(crate) fn torrent(view: &TorrentView) -> api::Torrent {
                 detail: detail.clone(),
             }
         }),
+    }
+}
+
+/// What a torrent is shown as, from its title if it has one and otherwise its
+/// name.
+pub(crate) struct ShownName {
+    pub(crate) title: Option<String>,
+    pub(crate) year: Option<i32>,
+}
+
+pub(crate) fn shown_name(title: Option<&str>, name: Option<&str>, kind: Option<Kind>) -> ShownName {
+    if let Some(title) = title {
+        return ShownName {
+            title: Some(title.to_owned()),
+            year: None,
+        };
+    }
+    let Some(name) = name else {
+        return ShownName {
+            title: None,
+            year: None,
+        };
+    };
+    // The dots and versions of software and documents are part of their names.
+    let clean = (kind != Some(Kind::Other))
+        .then(|| clean_name(name))
+        .flatten();
+    match clean {
+        Some(clean) => ShownName {
+            title: Some(clean.title),
+            year: clean.year,
+        },
+        None => ShownName {
+            title: Some(name.to_owned()),
+            year: None,
+        },
     }
 }
 
@@ -464,4 +509,51 @@ pub(crate) fn body_etag(prefix: &str, value: &impl Serialize) -> Result<EntityTa
         "{prefix}-{}",
         short_hex(&Sha256::digest(&body))
     )))
+}
+
+#[cfg(test)]
+mod shown_name_tests {
+    use super::*;
+
+    #[test]
+    fn a_torrent_is_shown_by_its_title_or_else_its_cleaned_name() {
+        let release = Some("Harbor.Lights.2024.1080p.WEB-DL");
+        for (title, name, kind, shown, year) in [
+            (
+                None,
+                release,
+                Some(Kind::Movie),
+                Some("Harbor Lights"),
+                Some(2024),
+            ),
+            (None, release, None, Some("Harbor Lights"), Some(2024)),
+            (
+                Some("My Title"),
+                release,
+                Some(Kind::Movie),
+                Some("My Title"),
+                None,
+            ),
+            // The dots of software and documents are part of their names.
+            (
+                None,
+                Some("ubuntu-24.04.1-desktop-amd64.iso"),
+                Some(Kind::Other),
+                Some("ubuntu-24.04.1-desktop-amd64.iso"),
+                None,
+            ),
+            (
+                None,
+                Some("1080p.x264-GRP"),
+                Some(Kind::Movie),
+                Some("1080p.x264-GRP"),
+                None,
+            ),
+            (None, None, None, None, None),
+        ] {
+            let result = shown_name(title, name, kind);
+            assert_eq!(result.title.as_deref(), shown, "{name:?}");
+            assert_eq!(result.year, year, "{name:?}");
+        }
+    }
 }

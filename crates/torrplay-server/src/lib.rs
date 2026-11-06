@@ -58,6 +58,7 @@ mod profiles;
 mod progress;
 mod query;
 mod reference;
+mod release_name;
 mod representation;
 mod retention;
 mod service;
@@ -90,6 +91,7 @@ pub use crate::backup::{
 pub use crate::client::{ClientFile, ClientFiles};
 use crate::problem::{Problem, ProblemType};
 pub use crate::telemetry::Run;
+pub use release_name::prepare as prepare_release_names;
 
 /// Returns the router of the API over `app`.
 pub fn router<E: Engine>(app: Arc<App<E>>) -> Router {

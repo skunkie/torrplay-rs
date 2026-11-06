@@ -344,6 +344,11 @@ of each.
 : Progress the application saves itself, from the ranges a client streams,
   in the device profile.
 
+**Display title**
+: What a torrent is shown as: its title, or else its name cleaned of a release
+  name's dots, year, resolution, and the like, keeping any season and episode.
+  Only people read it: search matches the title and name.
+
 **Title key**
 : A title or episode in an external catalog, such as TMDB or IMDb, as a
   path segment: `tmdb-movie-603`, `tmdb-tv-1399-s1e2`, or

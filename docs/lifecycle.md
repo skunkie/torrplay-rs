@@ -464,6 +464,22 @@ forces exit if it has not finished after 30 seconds:
 
 ## Library
 
+A torrent is shown under its display title. With a `title`, that is the title.
+Without one, it is the name, which is often a release name, read by the
+`parse-torrent-title` crate:
+
+- `Some.Show.S02.1080p.WEB-DL-GROUP` shows as `Some Show S02`, keeping the season
+  and episode that tell otherwise identical torrents apart. A year goes to
+  `display_year`.
+- Of a name listing several titles, as `Original / Translation`, the first is
+  shown.
+- A name with spaces and nothing about a release stays as written, without a
+  video file's extension. So does the name of a torrent of the `other` kind, one
+  that would leave nothing, and one over 512 bytes, whose parsing could take
+  seconds.
+
+Search matches the title and name, never the display title.
+
 A torrent's configuration also holds its library members: `title`, `kind`,
 `year`, `imdb_id`, `description`, `categories`, and `genres`. They are set
 at creation or by a merge patch, need no engine, and can change in any

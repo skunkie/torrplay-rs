@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
   import Hero from "../components/Hero.svelte";
   import type { AdditionSource } from "../lib/addition.svelte";
   import type { PreviewFile, StorageMode, Torrent, TorrentContents } from "../lib/backend";
-  import { torrentTitle } from "../lib/describe";
+  import { heroTitleClasses, torrentTitle } from "../lib/describe";
   import { firstVideo } from "../lib/episodes";
   import { formatBytes } from "../lib/format";
   import { t } from "../lib/i18n/index.svelte";
@@ -64,7 +64,7 @@ SPDX-License-Identifier: MIT
   const name = $derived(
     existing
       ? torrentTitle(existing)
-      : (preview?.name ??
+      : (preview?.display_title ??
           (source?.kind === "magnet"
             ? (source.magnet.name ?? t().add.magnet)
             : source?.file.name) ??
@@ -184,12 +184,7 @@ SPDX-License-Identifier: MIT
         <span>{facts}</span>
       {/if}
     </p>
-    <h1
-      id="adding"
-      tabindex="-1"
-      bind:this={heading}
-      class="max-w-3xl text-display-small font-bold tracking-tight wrap-break-word outline-none md:text-display"
-    >
+    <h1 id="adding" tabindex="-1" bind:this={heading} class="{heroTitleClasses(name)} outline-none">
       {name}
     </h1>
     {#if existing}

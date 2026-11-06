@@ -15,6 +15,7 @@ use axum::response::Response;
 use bytes::Bytes;
 use torrplay_api::types as api;
 use torrplay_core::engine::{Engine, Source};
+use torrplay_core::library::Library;
 use url::Url;
 
 use crate::app::App;
@@ -65,11 +66,19 @@ pub(crate) async fn create<E: Engine>(
         .find(|record| record.info_hash == inspection.info_hash)
         .map(|record| torrent_path(&record.id));
     let files = metadata.files();
+    let name = metadata.display_name();
+    let shown = representation::shown_name(
+        None,
+        Some(&name),
+        representation::reported_kind(&Library::default(), Some(&metadata)),
+    );
     let mut response = representation::json(
         StatusCode::OK,
         &api::TorrentPreview {
             info_hashes: info_hashes(&inspection.info_hash),
-            name: metadata.display_name(),
+            display_title: shown.title.unwrap_or_else(|| name.clone()),
+            display_year: shown.year,
+            name,
             size_bytes: count(metadata.size_bytes()),
             file_count: count(files.len() as u64),
             files: files.iter().take(FILE_LIMIT).map(preview_file).collect(),

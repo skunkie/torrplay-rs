@@ -68,7 +68,8 @@ SPDX-License-Identifier: MIT
   async function contentsOf(torrent: Torrent): Promise<TorrentContents> {
     const files = await backend.listFiles(torrent.id);
     return {
-      name: torrent.title ?? torrent.name ?? "",
+      name: torrent.name ?? "",
+      display_title: torrent.display_title ?? "",
       size_bytes: files.reduce((total, file) => total + file.size_bytes, 0),
       file_count: files.length,
       files,

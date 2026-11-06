@@ -97,6 +97,7 @@ document that schedules it.
 | API discovery from the host | None | Verified | `/.well-known/api-catalog` (RFC 9727), API-27, `api_catalog` |
 | Torrent statistics | `GET /api/stats/torrents/{hash}` | Verified | `statistics` |
 | Cache statistics | `GET /api/stats/memory` | Verified | CAC scenarios, `statistics` |
+| Display titles from release names | Not present | Implemented | `display_title` and `display_year` of a torrent, read by `parse-torrent-title`, shown by the client, DLNA, and Stremio; API-29 |
 | Piece and reader maps of a torrent | `pieces`, `readers` in statistics | Verified | `pieces`, `readers` in statistics, API-28, `statistics`, `statistics_map_pieces_and_readers` |
 | System information | `/api/system/info` | Verified | `/api/v1/system`, OBS-01; its URLs, OBS-11 |
 | Global statistics | `/api/system/metrics` | Verified | `/api/v1/statistics`, OBS-02 |

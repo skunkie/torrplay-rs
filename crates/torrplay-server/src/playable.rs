@@ -26,6 +26,10 @@ pub(crate) struct PlayableTorrent {
     pub(crate) title: Option<String>,
     /// Its name from its metadata.
     pub(crate) name: String,
+    /// What it is shown as.
+    pub(crate) display_title: String,
+    /// The year to show beside it.
+    pub(crate) display_year: Option<i32>,
     pub(crate) kind: Option<Kind>,
     /// Its library IMDb ID, if it has one.
     pub(crate) imdb_id: Option<String>,
@@ -107,9 +111,13 @@ pub(crate) async fn torrents<E: Engine>(
             // without a pattern last, metadata order breaking ties.
             files.sort_by_key(|(index, file)| (file.episode.is_none(), file.episode, *index));
         }
+        let name = metadata.display_name();
+        let shown = representation::shown_name(library.title.as_deref(), Some(&name), kind);
         torrents.push(PlayableTorrent {
             title: library.title.clone(),
-            name: metadata.display_name(),
+            display_title: shown.title.unwrap_or_else(|| name.clone()),
+            display_year: library.year.map(i32::from).or(shown.year),
+            name,
             kind,
             imdb_id: library.imdb_id.clone(),
             categories: library.categories.clone(),

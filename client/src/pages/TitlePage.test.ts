@@ -527,3 +527,29 @@ describe("deleting", () => {
     });
   });
 });
+
+it("shows a cleaned name large and the torrent's own name under it", async () => {
+  const release = torrent(1, {
+    title: null,
+    name: "Harbor.Lights.2024.1080p.WEB-DL",
+    display_title: "Harbor Lights",
+    display_year: 2024,
+  });
+  navigate(titlePath(release.id));
+  render(App, { backend: backend(() => release, [], []) });
+
+  expect(
+    await screen.findByRole("heading", { level: 1, name: "Harbor Lights" }),
+  ).toBeInTheDocument();
+  expect(screen.getByText("Harbor.Lights.2024.1080p.WEB-DL")).toBeInTheDocument();
+  expect(screen.getByText(/^2024/)).toBeInTheDocument();
+});
+
+it("does not repeat a name that is what the torrent is shown as", async () => {
+  const plain = torrent(1, { title: null, name: "Holiday Photos" });
+  navigate(titlePath(plain.id));
+  render(App, { backend: backend(() => plain, [], []) });
+
+  await screen.findByRole("heading", { level: 1, name: "Holiday Photos" });
+  expect(screen.getAllByText("Holiday Photos")).toHaveLength(1);
+});

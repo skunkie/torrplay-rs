@@ -13,6 +13,7 @@ SPDX-License-Identifier: MIT
     type TorrentConfigurationPatch,
   } from "../lib/backend";
   import { useBackend } from "../lib/context";
+  import { torrentTitle } from "../lib/describe";
   import { failureMessage, t } from "../lib/i18n/index.svelte";
   import { navigate } from "../lib/navigation.svelte";
   import { playbackGrants, withGrant } from "../lib/playback";
@@ -125,7 +126,7 @@ SPDX-License-Identifier: MIT
     <EditView
       {configuration}
       name={torrent.name ?? t().common.untitled}
-      torrentTitle={torrent.title ?? torrent.name ?? ""}
+      torrentTitle={torrentTitle(torrent)}
       poster={torrent.poster && grant !== null ? withGrant(torrent.links.poster, grant) : undefined}
       hasPoster={Boolean(torrent.poster)}
       cancelHref={titlePath(torrentId)}

@@ -1382,6 +1382,17 @@ export interface components {
              */
             name: string;
             /**
+             * @description What to show the torrent as, read from its name as display_title of a torrent is without a title.
+             * @example Example Film
+             */
+            display_title: string;
+            /**
+             * Format: int32
+             * @description The year a release name gives, or null if it gives none.
+             * @example 2026
+             */
+            display_year: number | null;
+            /**
              * Format: int64
              * @description The total size of the torrent's files.
              * @example 2147481600
@@ -1612,6 +1623,17 @@ export interface components {
              * @example Example Collection
              */
             readonly name: string | null;
+            /**
+             * @description What to show the torrent as: its title, or else its name without a release name's dots, year, resolution, and the like, keeping any season and episode, as in Example Show S02. Of a name that lists several titles, as Original / Translation, only the first is kept. A video file's extension goes. A name a person wrote, with spaces and nothing about a release, stays otherwise as written. The name of a torrent of the other kind stays as it is, and so does one that would leave nothing or is over 512 bytes. It is null while the torrent has neither title nor name. Search matches title and name, not this.
+             * @example Example Film
+             */
+            display_title: string | null;
+            /**
+             * Format: int32
+             * @description The year to show beside display_title: its year, or else, without a title, the one a release name gives, or null if neither does.
+             * @example 2026
+             */
+            display_year: number | null;
             /**
              * @description The torrent's protocol identifiers.
              * @example [

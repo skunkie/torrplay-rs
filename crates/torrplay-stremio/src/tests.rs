@@ -27,6 +27,8 @@ fn torrent(id: &str, name: &str, kind: Kind, genres: &[&str], files: Vec<File>) 
         id: id.into(),
         title: None,
         name: name.into(),
+        display_title: name.into(),
+        display_year: None,
         kind,
         imdb_id: None,
         genres: genres.iter().map(|&genre| genre.to_owned()).collect(),
@@ -45,6 +47,7 @@ fn library() -> Library {
         vec![file("fil_1", "Sintel.mkv", "video/x-matroska", None)],
     );
     sintel.title = Some("Sintel".into());
+    sintel.display_title = "Sintel".into();
     sintel.has_poster = true;
     Library {
         torrents: vec![
@@ -387,4 +390,12 @@ fn imdb_ids_stream_the_linked_files() {
             .ends_with("/stremio/play/trr_a/fil_e1/Show.S01E01.mp4")
     );
     assert_eq!(stream.behavior_hints.binge_group, "torrplay-trr_a");
+}
+
+#[test]
+fn a_preview_gives_the_year_when_there_is_one() {
+    let mut film = torrent("trr_y", "Dune", Kind::Movie, &[], Vec::new());
+    assert_eq!(preview(&film, BASE).release_info, None);
+    film.display_year = Some(2021);
+    assert_eq!(preview(&film, BASE).release_info.as_deref(), Some("2021"));
 }

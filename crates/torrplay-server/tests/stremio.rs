@@ -201,7 +201,16 @@ async fn the_addon_presents_movies_and_series() {
     assert_eq!(movies["metas"][0]["genres"], json!(["Fantasy", "Drama"]));
     let shows = document(&server, "/stremio/catalog/series/torrplay-series.json").await;
     assert_eq!(ids(&shows), [format!("torrplay:{show}")]);
-    assert_eq!(shows["metas"][0]["name"], "Show.S01");
+    assert_eq!(
+        shows["metas"][0]["name"], "Show S01",
+        "its release name, cleaned"
+    );
+    // API-29: the native API shows the same, and search still finds the name.
+    let native = server.get(&format!("/api/v1/torrents/{show}")).await.json();
+    assert_eq!(native["display_title"], "Show S01");
+    assert_eq!(native["name"], "Show.S01");
+    let found = server.get("/api/v1/torrents?search=Show.S01").await.json();
+    assert_eq!(found["items"].as_array().map(Vec::len), Some(1), "{found}");
     let unknown = document(&server, "/stremio/catalog/movie/elsewhere.json").await;
     assert!(ids(&unknown).is_empty());
 

@@ -254,6 +254,11 @@ impl AsRef<str> for TorrentReaderState {
 ///What adding a torrent file would create. Its files carry the IDs the torrent's files would have, but no links, since no torrent exists.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TorrentPreview {
+    ///What to show the torrent as, read from its name as display_title of a torrent is without a title.
+    pub display_title: String,
+    ///The year a release name gives, or null if it gives none.
+    ///Constraint: minimum=1800, maximum=2200
+    pub display_year: Option<i32>,
     ///The number of files, including any that files leaves out.
     ///Constraint: minimum=1
     pub file_count: i64,
@@ -822,6 +827,11 @@ pub struct Torrent {
     ///When the torrent was created, in UTC.
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub description: Option<Description>,
+    ///What to show the torrent as: its title, or else its name without a release name's dots, year, resolution, and the like, keeping any season and episode, as in Example Show S02. Of a name that lists several titles, as Original / Translation, only the first is kept. A video file's extension goes. A name a person wrote, with spaces and nothing about a release, stays otherwise as written. The name of a torrent of the other kind stays as it is, and so does one that would leave nothing or is over 512 bytes. It is null while the torrent has neither title nor name. Search matches title and name, not this.
+    pub display_title: Option<String>,
+    ///The year to show beside display_title: its year, or else, without a title, the one a release name gives, or null if neither does.
+    ///Constraint: minimum=1800, maximum=2200
+    pub display_year: Option<i32>,
     ///Why the torrent failed, or null unless its observed state is failed. Pausing and then starting the torrent clears it.
     pub failure: Option<TorrentFailure>,
     ///The number of files, or null until metadata is available.

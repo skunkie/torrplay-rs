@@ -195,7 +195,8 @@ fn evaluate(expression: &Expression, object: &Object) -> Option<Option<Rank>> {
             (left, right) => left.or(right),
         },
         Expression::Title(query, contains) => {
-            let rank = query.rank([object.title.as_str()]);
+            let rank =
+                query.rank(std::iter::once(object.title.as_str()).chain(object.name.as_deref()));
             match (rank, contains) {
                 (Some(rank), true) => Some(Some(rank)),
                 (None, false) => Some(None),
@@ -432,6 +433,7 @@ mod tests {
             id: format!("id {title}"),
             parent: "all".into(),
             title: title.into(),
+            name: None,
             class,
             date: Some(date.into()),
             genres: genres.iter().map(|&genre| genre.to_owned()).collect(),

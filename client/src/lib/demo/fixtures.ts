@@ -51,11 +51,33 @@ function torrentLinks(id: string): Torrent["links"] {
   };
 }
 
+/** What a torrent is shown as. The server's cleaning of release names is more
+ * thorough; this one is enough for the names the demo holds and the sample
+ * magnet links. */
+export function shownName(
+  title: string | null,
+  name: string | null,
+  year: number | null,
+): Pick<Torrent, "display_title" | "display_year"> {
+  if (title !== null || name === null) {
+    return { display_title: title, display_year: year };
+  }
+  const [first = name] = name.replace(/\.(?:mkv|mp4|webm|avi)$/i, "").split(" / ");
+  const text = first.includes(" ") ? first : first.replace(/[._]/g, " ");
+  const release = /\s(?:(?:19|20)\d\d|S\d+(?:E\d+)?|\d{3,4}[pi])\b/i.exec(text);
+  const found = /\s((?:19|20)\d\d)\b/.exec(text);
+  const season = /\sS\d+(?:E\d+)?\b/i.exec(text);
+  return {
+    display_title: `${release ? text.slice(0, release.index) : text}${season?.[0].toUpperCase() ?? ""}`,
+    display_year: year ?? (found?.[1] ? Number(found[1]) : null),
+  };
+}
+
 /** A torrent as the application would report it, `members` replacing what the
  * fixture sets. */
 export function makeTorrent(n: number, members: Partial<Torrent>): Torrent {
   const id = torrentId(n);
-  return {
+  const made: Omit<Torrent, "display_title" | "display_year"> = {
     id,
     name: null,
     info_hashes: [{ algorithm: "sha1", value: String(n).padStart(40, "0") }],
@@ -79,6 +101,7 @@ export function makeTorrent(n: number, members: Partial<Torrent>): Torrent {
     links: torrentLinks(id),
     ...members,
   };
+  return { ...shownName(made.title, made.name, made.year), ...made };
 }
 
 /** A file of a torrent that plays the sample, or its subtitles for a name

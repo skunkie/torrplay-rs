@@ -8,12 +8,22 @@ import { t } from "./i18n/index.svelte";
 
 /** The name a torrent is shown under. */
 export function torrentTitle(torrent: Torrent): string {
-  return torrent.title ?? torrent.name ?? t().common.untitled;
+  return torrent.display_title ?? t().common.untitled;
+}
+
+/** The classes of a title that heads a hero, sized to fit: a long one steps
+ * down, and a very long one stops at three lines unless `whole`, for the page
+ * that is the place to read it. */
+export function heroTitleClasses(title: string, whole = false): string {
+  const shape = "max-w-3xl font-bold tracking-tight text-balance wrap-break-word";
+  if (title.length <= 30) return `${shape} text-display-small md:text-display`;
+  if (title.length <= 60) return `${shape} text-display-small md:text-display-medium`;
+  return `${shape} ${whole ? "" : "line-clamp-3"} text-xl md:text-display-small`;
 }
 
 /** A torrent's year and kind, such as "2026 · Series". */
 export function torrentDetails(torrent: Torrent): string {
-  return [torrent.year, torrent.kind ? t().kinds[torrent.kind] : undefined]
+  return [torrent.display_year, torrent.kind ? t().kinds[torrent.kind] : undefined]
     .filter((part) => part !== null && part !== undefined)
     .join(" · ");
 }
@@ -48,8 +58,17 @@ export function progressLabel(
 ): string | undefined {
   if (!progress) return undefined;
   if (progress.viewed && progress.position_seconds === 0) return t().progress.viewed;
+  return timeLeftLabel(progress) ?? t().progress.resume;
+}
+
+/** How long is left of a file, such as "24 min left", or `undefined` at its end
+ * or before it starts. */
+export function timeLeftLabel(
+  progress: Schemas["Progress"] | null | undefined,
+): string | undefined {
+  if (!progress) return undefined;
   const left = Math.ceil((progress.duration_seconds - progress.position_seconds) / 60);
-  return left > 0 ? t().progress.minutesLeft(left) : t().progress.resume;
+  return left > 0 ? t().progress.minutesLeft(left) : undefined;
 }
 
 /** Why an entry is listed, such as "Next episode" or "24 min left". */

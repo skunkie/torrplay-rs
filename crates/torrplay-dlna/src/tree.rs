@@ -37,8 +37,10 @@ pub struct Catalog {
 pub struct Torrent {
     /// Its native ID.
     pub id: String,
-    /// Its library title, or else its name.
+    /// What it is shown as.
     pub title: String,
+    /// Its name from its metadata, which title searches match too.
+    pub name: String,
     /// Its reported kind.
     pub kind: Option<Kind>,
     /// Its normalized categories.
@@ -334,6 +336,7 @@ impl Catalog {
             id: id.to_string(),
             parent: parent.to_owned(),
             title,
+            name: None,
             class: CONTAINER_CLASS,
             date: None,
             genres: Vec::new(),
@@ -462,6 +465,7 @@ impl Object {
             id: ObjectId::Torrent(torrent.id.clone()).to_string(),
             parent: parent.to_owned(),
             title: torrent.title.clone(),
+            name: Some(torrent.name.clone()),
             class: CONTAINER_CLASS,
             date: Some(didl::date(torrent.created_at)),
             genres: torrent.genres.clone(),
@@ -487,6 +491,7 @@ impl Object {
             id: ObjectId::File(torrent.id.clone(), file.id.clone()).to_string(),
             parent: parent.to_owned(),
             title: file.name.clone(),
+            name: None,
             class: file.class(),
             date: Some(didl::date(torrent.created_at)),
             genres: torrent.genres.clone(),
@@ -521,6 +526,7 @@ mod tests {
         let torrent = |id: &str, kind, categories: &[&str]| Torrent {
             id: id.into(),
             title: format!("Title {id}"),
+            name: format!("Name.{id}"),
             kind: Some(kind),
             categories: categories.iter().map(|&name| name.to_owned()).collect(),
             genres: vec!["Drama".into()],
@@ -781,6 +787,24 @@ mod tests {
         assert_eq!(files.total, 1);
         assert_eq!(search("t:trr_z", "*", ""), Err(NoSuchObject));
         assert_eq!(search("f:trr_a:fil_1", "*", "").unwrap().total, 0);
+    }
+
+    #[test]
+    fn a_title_search_matches_the_name_as_well_as_what_is_shown() {
+        let mut catalog = catalog();
+        catalog.torrents[0].title = "Harbor S01".into();
+        catalog.torrents[0].name = "Harbor.S01.2160p.WEB-DL".into();
+        let criteria = Criteria::parse(r#"dc:title contains "2160p""#).unwrap();
+        let found = catalog
+            .search(
+                &ObjectId::Root,
+                &criteria,
+                Page::default(),
+                &SortCriteria::default(),
+                BASE,
+            )
+            .unwrap();
+        assert_eq!(found.total, 1);
     }
 
     #[test]

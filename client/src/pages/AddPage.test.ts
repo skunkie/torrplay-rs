@@ -31,6 +31,8 @@ function previewFile(name: string, episode: number | null, media_type = "video/x
 const PREVIEW: TorrentPreview = {
   info_hashes: [{ algorithm: "sha1", value: HASH }],
   name: "Harbor.Lights.S01",
+  display_title: "Harbor Lights",
+  display_year: null,
   size_bytes: 3 << 30,
   file_count: 3,
   files: [
@@ -105,7 +107,7 @@ it("lists a torrent file's contents and plays the first episode, temporarily", a
   open(fake);
   await chooseFile();
 
-  expect(await screen.findByRole("heading", { level: 1, name: "Harbor.Lights.S01" })).toHaveFocus();
+  expect(await screen.findByRole("heading", { level: 1, name: "Harbor Lights" })).toHaveFocus();
   expect(fake.previewTorrent).toHaveBeenCalledWith(torrentFile);
   expect(screen.getByText("notes.txt")).toBeInTheDocument();
   expect(fake.createTorrent).not.toHaveBeenCalled();
@@ -475,7 +477,7 @@ it("stays on the page when a temporary torrent cannot be kept", async () => {
 it("goes back from a torrent to choosing, staying on the page", async () => {
   open(backend());
   await chooseFile();
-  await screen.findByRole("heading", { level: 1, name: "Harbor.Lights.S01" });
+  await screen.findByRole("heading", { level: 1, name: "Harbor Lights" });
 
   await fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
@@ -500,7 +502,7 @@ it("opens the add page with a torrent file dropped on any page", async () => {
   await fireEvent.drop(window, { dataTransfer });
 
   expect(
-    await screen.findByRole("heading", { level: 1, name: "Harbor.Lights.S01" }),
+    await screen.findByRole("heading", { level: 1, name: "Harbor Lights" }),
   ).toBeInTheDocument();
   expect(location.path).toBe("/add");
   expect(screen.queryByText("Drop to add")).not.toBeInTheDocument();

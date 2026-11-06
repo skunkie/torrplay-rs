@@ -17,6 +17,9 @@ pub(crate) struct Object {
     pub(crate) id: String,
     pub(crate) parent: String,
     pub(crate) title: String,
+    /// What a title search also matches, the way REST and Stremio do: a
+    /// torrent's own name, of which the title may show only part.
+    pub(crate) name: Option<String>,
     pub(crate) class: &'static str,
     /// `dc:date`, as `YYYY-MM-DD`.
     pub(crate) date: Option<String>,

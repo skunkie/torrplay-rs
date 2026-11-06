@@ -281,3 +281,18 @@ it("says when the torrent cannot be read, and tries again", async () => {
 
   expect(await screen.findByRole("heading", { level: 1, name: "Edit" })).toBeInTheDocument();
 });
+
+it("shows a torrent without a poster under what it is shown as", async () => {
+  const untitled = torrent(1, {
+    name: "Harbor.Lights.S01.1080p",
+    title: null,
+    display_title: "Harbor Lights S01",
+  });
+  await open(
+    backend(configuration(), {
+      getTorrent: vi.fn(async () => ({ unchanged: false as const, data: untitled, etag: '"t"' })),
+    }),
+  );
+
+  expect(await screen.findByText("Harbor Lights S01")).toBeInTheDocument();
+});

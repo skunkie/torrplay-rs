@@ -38,6 +38,7 @@ import {
   progressFixtures,
   SAMPLE_SECONDS,
   settingsFixture,
+  shownName,
 } from "./fixtures";
 
 /** How long a torrent takes to download from nothing. */
@@ -192,6 +193,9 @@ export function demoBackend(now: () => number = Date.now): Backend {
       item.since = now();
       changed(item);
     }
+    // Reads anew, as the server's does, since a patch can change these.
+    const { title, name, year } = item.torrent;
+    Object.assign(item.torrent, shownName(title, name, year));
     return item;
   }
 
@@ -681,11 +685,14 @@ export function demoBackend(now: () => number = Date.now): Backend {
 
     async previewTorrent(file) {
       const name = file.name.replace(/\.torrent$/i, "");
+      const shown = shownName(null, name, null);
       const contents = contentsOf(0, name);
       const existing = all().find((item) => item.identity === name);
       return {
         info_hashes: [],
         name,
+        display_title: shown.display_title ?? name,
+        display_year: shown.display_year,
         size_bytes: contents.torrent.size_bytes ?? 0,
         file_count: 1,
         files: contents.files.map(({ id, path, size_bytes, media_type, episode }) => ({

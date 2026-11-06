@@ -105,6 +105,7 @@ milestones. Later milestones keep every scenario passing.
 | API-26 | Read every operation's summary, description, parameters, and request body description | Every status the prose says a request receives, and every problem type it names, is a response the operation documents or the conventions assign to it |
 | API-27 | GET and HEAD `/.well-known/api-catalog`, follow its links, GET it accepting only `application/json`, and GET it with a password set and no credential | `200` `no-cache` as `application/linkset+json` of the RFC 9727 profile, one link context `/api/v1` whose `service-desc`, `service-doc`, and `status` targets answer `200` as their links' media types; the entry point links it as `api-catalog`; HEAD without a body; `406`; `200` |
 | API-28 | GET a torrent's statistics before metadata, with pieces partly held, during a stream, and after it ends | `pieces` is `null` before metadata and then has `piece_count` and two lowercase hexadecimal bitfields in BEP 3's order that share no piece; `readers` names each reader's `file_id`, `offset_bytes`, `piece_index`, and `state`, `active` during the stream and `idle` after it |
+| API-29 | Read a torrent named as a release, one with a title, one holding no video, and one whose name has spaces and nothing about a release | `display_title` drops the release's dots and details and keeps its season, `display_year` holds its year, and title search still finds the raw name; a title wins; the other two stay as they are |
 
 ### Lifecycle
 
