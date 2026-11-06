@@ -116,6 +116,43 @@ test.describe("on a device whose system prefers dark", () => {
   });
 });
 
+test.describe("system", () => {
+  test("shows the run, finds a record, and changes the log level", async ({ page }) => {
+    await page.goto("/settings");
+    await page.getByRole("link", { name: "System" }).click();
+    await expect(page).toHaveURL("/settings/system");
+
+    await expect(page.getByText(/^Version .+ · .+ .+$/)).toBeVisible();
+    await expect(page.getByRole("img", { name: /evictions/ })).toBeVisible();
+
+    await page.getByLabel("Search the log").fill("the API is listening");
+    const records = page.getByRole("listitem");
+    await expect(records.first()).toContainText("the API is listening");
+
+    // Responses that succeed are debug messages, so only this level shows them.
+    const level = page.getByLabel("Log level", { exact: true });
+    await expect(level).toHaveValue("info");
+    await level.selectOption("debug");
+    await page.getByLabel("Lowest level shown").selectOption("debug");
+    await page.getByLabel("Search the log").fill("/api/v1/log-records");
+    // The next poll's requests are logged at the new level at the latest.
+    await expect(records.first()).toContainText("response", { timeout: 15_000 });
+
+    await page.reload();
+    await expect(level).toHaveValue("debug");
+
+    // The tests share one application.
+    const saved = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/v1/settings") && response.request().method() === "PATCH",
+    );
+    await level.selectOption("info");
+    await saved;
+    await page.reload();
+    await expect(level).toHaveValue("info");
+  });
+});
+
 test.describe("settings", () => {
   test("saves a change the application keeps", async ({ page }) => {
     await page.goto("/library");
