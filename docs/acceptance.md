@@ -438,7 +438,7 @@ These scenarios accept [the MCP contract](mcp.md) (M7).
 
 | ID | Scenario | Expected |
 |---|---|---|
-| MCP-01 | List the tools, resources, and resource templates | The thirteen tools, `delete_torrent` destructive and the reads read-only; the five resources and the torrent template |
+| MCP-01 | List the tools, resources, and resource templates | The fourteen tools, `delete_torrent` destructive and the reads read-only; the five resources and the torrent template |
 | MCP-02 | Add a torrent with a title, find it with a typo, read it as a tool and a resource, and play the URL `get_stream_url` returns, without a password | The torrent, its files, and its statistics; the URL streams the file and carries no token |
 | MCP-03 | Update a torrent's kind and year, clear the year with `null`, and delete it | Omitted members kept; the year cleared; then `404` as a tool error |
 | MCP-04 | Preload a file twice, then cancel its preloads twice | The same preload both times; it is canceled, then nothing is |
@@ -448,6 +448,7 @@ These scenarios accept [the MCP contract](mcp.md) (M7).
 | MCP-08 | Run `torrplay mcp` with `TORRPLAY_URL` and `TORRPLAY_TOKEN`, initialize, call a tool, and close its input | Only JSON-RPC lines on standard output; a tool error naming the origin; exit status 0; the token never in its log |
 | MCP-09 | Read the system and the statistics as tools and resources, write log records, and list them with a level, a substring, a small limit and its cursor, and `after_sequence`, then with an unknown level | The run ID and torrent count the API reports; the matching records newest first, the next page, and only the newer records; then `Invalid argument` |
 | MCP-10 | Run `torrplay mcp --transport http`, and send SIGTERM once it listens | Exit status 0 |
+| MCP-11 | Set a poster from a URL with `set_torrent_poster`, twice, then from mislabeled bytes, and for an unknown torrent, which contacts no image host; then give an unparsable URL, plain `http`, `file`, credentials, literal loopback, private, link-local, and IPv4-mapped addresses, and a name resolving to loopback; and download through a redirect, to a private address, in a loop, a page, an SVG, an untyped answer, and one over 1 MiB with and without a length | The poster reads back; `422` and `404` as tool errors; `Invalid argument` before any request, then a tool error saying there is no public address; the redirect is followed, and the rest are tool errors saying why, with nothing sent to the refused address |
 
 ### Observability
 

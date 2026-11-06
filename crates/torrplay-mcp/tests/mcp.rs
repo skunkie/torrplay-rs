@@ -267,6 +267,7 @@ async fn tools_and_resources_are_listed() {
             "list_log_records",
             "list_torrents",
             "list_up_next",
+            "set_torrent_poster",
             "update_torrent",
         ]
     );
@@ -475,6 +476,56 @@ async fn failures_are_reported() {
     assert!(profiles["items"].is_array(), "the profiles to choose from");
     let statistics = session.ok("get_cache_statistics", json!({})).await;
     assert!(statistics.is_object());
+    session.close().await;
+    application.stop().await;
+}
+
+/// MCP-11: an image's URL is refused before anything is requested when it
+/// is not https or names this machine or its network, however it is spelled.
+#[tokio::test]
+async fn poster_urls_are_refused_outside_the_public_internet() {
+    let application = Application::start().await;
+    let session = Session::open(application.origin.clone(), None).await;
+    let (torrent_id, _) = session.add(&catalog::single_small(), "A title").await;
+
+    for image_url in [
+        "not a URL",
+        "http://images.example/poster.png",
+        "file:///etc/passwd",
+        "https://user:secret@images.example/poster.png",
+        "https://127.0.0.1/poster.png",
+        "https://2130706433/poster.png",
+        "https://[::1]/poster.png",
+        "https://[::ffff:127.0.0.1]/poster.png",
+        "https://10.0.0.1/poster.png",
+        "https://192.168.1.1/poster.png",
+        "https://169.254.169.254/latest/meta-data",
+    ] {
+        let (failed, refused) = session
+            .call(
+                "set_torrent_poster",
+                json!({ "torrent_id": torrent_id, "image_url": image_url }),
+            )
+            .await;
+        assert!(failed, "{image_url}");
+        assert_eq!(refused["title"], "Invalid argument", "{image_url}");
+    }
+
+    // A name is judged by what it resolves to.
+    let (failed, refused) = session
+        .call(
+            "set_torrent_poster",
+            json!({ "torrent_id": torrent_id, "image_url": "https://localhost/poster.png" }),
+        )
+        .await;
+    assert!(failed);
+    let title = refused["title"].as_str().expect("a title");
+    assert!(title.contains("no public address"), "{title}");
+
+    let torrent = session
+        .ok("get_torrent", json!({ "torrent_id": torrent_id }))
+        .await;
+    assert!(torrent["torrent"]["poster"].is_null(), "no poster was set");
     session.close().await;
     application.stop().await;
 }
