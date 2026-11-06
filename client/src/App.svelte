@@ -7,19 +7,21 @@ SPDX-License-Identifier: MIT
   import { untrack } from "svelte";
 
   import AppMenu from "./components/AppMenu.svelte";
+  import DemoIntro from "./components/DemoIntro.svelte";
   import EngineBanner from "./components/EngineBanner.svelte";
   import Logo from "./components/Logo.svelte";
   import { addFromTransfer, addition, clearAddition } from "./lib/addition.svelte";
   import { createHttp } from "./lib/api/http";
   import { type Backend, httpBackend } from "./lib/backend";
   import { provideBackend } from "./lib/context";
+  import { intro } from "./lib/demo-intro.svelte";
   import { checkEngine, engine } from "./lib/engine.svelte";
   import { i18n, t } from "./lib/i18n/index.svelte";
   import { formatQuery } from "./lib/library-query";
   import { here, location, navigate, startNavigation } from "./lib/navigation.svelte";
   import { poll } from "./lib/poll";
   import { loadProfiles, profiles, resetProfiles } from "./lib/profile.svelte";
-  import { match } from "./lib/routes";
+  import { addPath, demo, homePath, libraryPath, match, pagePath, signInPath } from "./lib/routes";
   import { session, signOut } from "./lib/session.svelte";
   import { followSystem } from "./lib/theme.svelte";
   import AddPage from "./pages/AddPage.svelte";
@@ -42,8 +44,8 @@ SPDX-License-Identifier: MIT
   function unauthorized(): void {
     signOut();
     resetProfiles();
-    if (match(location.path)?.name !== "signIn") {
-      navigate(`/sign-in?${new URLSearchParams({ next: here() })}`);
+    if (match(pagePath(location.path))?.name !== "signIn") {
+      navigate(`${signInPath}?${new URLSearchParams({ next: here() })}`);
     }
   }
 
@@ -63,7 +65,7 @@ SPDX-License-Identifier: MIT
     return untrack(() => poll(() => checkEngine(backend), interval));
   });
 
-  const page = $derived(match(location.path));
+  const page = $derived(match(pagePath(location.path)));
   /** Whether the page offers the main navigation and search. */
   const browsing = $derived(
     page?.name === "home" || page?.name === "library" || page?.name === "add",
@@ -141,17 +143,17 @@ SPDX-License-Identifier: MIT
 </script>
 
 {#snippet navigation(classes: string)}
-  <a href="/" class={classes} aria-current={page?.name === "home" ? "page" : undefined}
+  <a href={homePath} class={classes} aria-current={page?.name === "home" ? "page" : undefined}
     >{t().nav.home}</a
   >
-  <a href="/library" class={classes} aria-current={page?.name === "library" ? "page" : undefined}
+  <a href={libraryPath} class={classes} aria-current={page?.name === "library" ? "page" : undefined}
     >{t().nav.library}</a
   >
 {/snippet}
 
 {#if page?.name === "title"}
   <div class="absolute inset-x-0 top-0 z-10 flex items-center justify-between p-4 md:px-10">
-    <a href="/" data-hero aria-label={t().player.back} class="btn size-11 btn-glass px-0">
+    <a href={homePath} data-hero aria-label={t().player.back} class="btn size-11 btn-glass px-0">
       <svg
         class="size-5"
         viewBox="0 0 24 24"
@@ -185,10 +187,15 @@ SPDX-License-Identifier: MIT
   </div>
 {:else if page?.name !== "watch"}
   <header class="flex h-16 items-center gap-3 px-4 md:h-19 md:gap-5 md:px-10">
-    <a href="/" class="flex items-center gap-2.5 text-lg font-bold md:text-xl">
+    <a href={homePath} class="flex items-center gap-2.5 text-lg font-bold md:text-xl">
       <Logo />
       TorrPlay
     </a>
+    {#if demo}
+      <span class="rounded-inner bg-tile px-2 py-1 mono text-accent-text uppercase">
+        {t().demo.label}
+      </span>
+    {/if}
     {#if browsing}
       <nav class="segments hidden md:flex" aria-label={t().nav.main}>
         {@render navigation("segment")}
@@ -197,7 +204,7 @@ SPDX-License-Identifier: MIT
     <div class="ml-auto flex items-center gap-2.5 md:gap-3">
       {#if browsing && page?.name !== "add"}
         <a
-          href="/add"
+          href={addPath}
           aria-label={t().add.action}
           class="btn size-11 btn-primary px-0 md:w-auto md:px-4"
         >
@@ -212,7 +219,7 @@ SPDX-License-Identifier: MIT
             event.preventDefault();
             const search = headerSearch.trim();
             headerSearch = "";
-            navigate(`/library?${formatQuery({ search })}`);
+            navigate(`${libraryPath}?${formatQuery({ search })}`);
           }}
         >
           <svg
@@ -232,7 +239,7 @@ SPDX-License-Identifier: MIT
           />
         </form>
         <a
-          href="/library"
+          href={libraryPath}
           aria-label={t().library.search}
           class="btn size-11 bg-tile px-0 text-text md:hidden"
         >
@@ -253,6 +260,9 @@ SPDX-License-Identifier: MIT
 
 <main class={overHero ? "" : "px-4 pt-1 pb-24 md:px-10 md:pb-10"}>
   {#if page?.name === "home"}
+    {#if demo && intro.shown}
+      <DemoIntro />
+    {/if}
     <HomePage />
   {:else if page?.name === "library"}
     <LibraryPage />

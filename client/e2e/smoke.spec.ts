@@ -115,3 +115,119 @@ test.describe("on a device whose system prefers dark", () => {
     await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", "#f8fafc");
   });
 });
+
+test.describe("the demo", () => {
+  test("runs the pages and plays its video without the API", async ({ page }) => {
+    const reached: string[] = [];
+    page.on("request", (request) => {
+      const { pathname } = new URL(request.url());
+      if (pathname.startsWith("/api/") || pathname === "/readyz") reached.push(pathname);
+    });
+
+    await page.goto("/demo");
+    await expect(page.getByText("Demo", { exact: true })).toBeVisible();
+
+    await page.getByRole("link", { name: "Library", exact: true }).first().click();
+    await expect(page).toHaveURL("/demo/library");
+    await page.getByRole("link", { name: /Glass Harbor/ }).click();
+    await expect(page).toHaveURL(/\/demo\/titles\//);
+
+    await page
+      .getByRole("link", { name: /^(Resume|Play)/ })
+      .first()
+      .click();
+    await expect(page).toHaveURL(/\/demo\/watch\//);
+    await page.getByRole("button", { name: "Play now" }).click();
+    const video = page.locator("video");
+    const time = () => video.evaluate((media: HTMLVideoElement) => media.currentTime);
+    // It resumes partway, so only moving on from there shows it plays.
+    await expect.poll(time).toBeGreaterThan(0);
+    const resumed = await time();
+    await expect.poll(time, { message: "the sample plays" }).toBeGreaterThan(resumed);
+
+    expect(reached).toEqual([]);
+  });
+
+  test("offers the sample's audio tracks and subtitles", async ({ page }) => {
+    await page.goto("/demo");
+    await page.getByRole("link", { name: "Resume" }).first().click();
+    await page.getByRole("button", { name: "Play now" }).click();
+    const video = page.locator("video");
+    await expect
+      .poll(() => video.evaluate((media: HTMLVideoElement) => media.currentTime))
+      .toBeGreaterThan(10);
+
+    await page.mouse.move(300, 300);
+    await page.getByRole("button", { name: "Audio" }).click();
+    await page.getByRole("menuitemradio", { name: /^Russian/ }).click();
+    await page.mouse.move(310, 300);
+    await page.getByRole("button", { name: "Subtitles" }).click();
+    await page.getByRole("menuitemradio", { name: "English (SRT)" }).click();
+
+    await expect
+      .poll(() =>
+        video.evaluate((media: HTMLVideoElement) => {
+          const shown = [...media.textTracks].find((track) => track.mode === "showing");
+          return shown?.cues?.length ?? 0;
+        }),
+      )
+      .toBeGreaterThan(0);
+    await expect(page.getByText("could not be played")).toBeHidden();
+    expect(await video.evaluate((media: HTMLVideoElement) => media.paused)).toBe(false);
+  });
+
+  test("introduces itself once, and again when asked", async ({ page }) => {
+    await page.goto("/demo");
+    const heading = page.getByRole("heading", { name: "This is a demo of TorrPlay" });
+    await expect(heading).toBeVisible();
+
+    await page.getByRole("button", { name: "Got it" }).click();
+    await expect(heading).toBeHidden();
+    await page.reload();
+    await expect(page.getByRole("link", { name: "Resume" }).first()).toBeVisible();
+    await expect(heading).toBeHidden();
+
+    await page.getByRole("button", { name: "Profile: Anna" }).click();
+    await page.getByRole("button", { name: "About the demo" }).click();
+    await expect(heading).toBeVisible();
+  });
+
+  test("adds the intro's sample magnet link as a magnet link would", async ({ page }) => {
+    await page.goto("/demo");
+    await page.getByRole("button", { name: "Add a torrent from a sample magnet link." }).click();
+
+    await expect(page).toHaveURL("/demo/add");
+    await expect(page.getByRole("heading", { name: /Night.Ferry/, level: 1 })).toBeVisible();
+    // Its file arrives after a moment, as metadata does.
+    await page.getByRole("button", { name: /^Play/ }).first().click();
+    await expect(page).toHaveURL(/\/demo\/watch\//);
+  });
+
+  test("leaves the real profile and session alone", async ({ page }) => {
+    await page.goto("/library");
+    await page.evaluate(() => {
+      localStorage.setItem("torrplay.profile", "prf_real");
+      localStorage.setItem("torrplay.access-token", "secret");
+    });
+
+    await page.goto("/demo");
+    await page.getByRole("button", { name: "Profile: Anna" }).click();
+    await page.locator("#app-menu").getByLabel("Profile").selectOption({ label: "Ben" });
+    await expect(page.getByRole("button", { name: "Profile: Ben" })).toBeVisible();
+
+    const kept = await page.evaluate(() => [
+      localStorage.getItem("torrplay.profile"),
+      localStorage.getItem("torrplay.access-token"),
+    ]);
+    expect(kept).toEqual(["prf_real", "secret"]);
+  });
+
+  test("leaves through the menu, back to the real client", async ({ page }) => {
+    await page.goto("/demo/library");
+    await page.getByRole("button", { name: /^(Menu|Profile)/ }).click();
+    await page.getByRole("link", { name: "Leave the demo" }).click();
+
+    await expect(page).toHaveURL("/");
+    await expect(page.getByText("Demo", { exact: true })).toBeHidden();
+  });
+});

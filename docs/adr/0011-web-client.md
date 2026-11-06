@@ -90,7 +90,11 @@ seek index. The plan keeps them.
 - The containers reach the API through one interface with two
   implementations: the HTTP client, and an in-memory demo backend with
   fixtures, simulated downloads, and audio-track samples. `/demo` runs the
-  real containers and layouts over the demo backend.
+  real containers and layouts over the demo backend. Paths carry its prefix, and
+  it reads nothing from the API. It keeps its own profile choice and no session,
+  so it leaves the device's alone, and what is changed in it lasts until the page
+  reloads. It opens as its first person, without asking, on Home with a short
+  introduction a visitor can dismiss and bring back from the menu.
 - Search filters the cached listing at once with a TypeScript port of the
   server's non-fuzzy matcher, checked against the same language-neutral
   fixtures as the Rust matcher, and asks the server for fuzzy matches.
