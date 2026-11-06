@@ -431,6 +431,7 @@ These scenarios accept [the DLNA contract](dlna.md) (M7).
 | DLNA-18 | Browse the root | `recently-viewed` follows `recent`, with its child count |
 | DLNA-19 | Bind the SSDP port as a UPnP media player does, after the media server starts and before it starts | Both bind, on macOS and the BSDs as on Linux and Windows |
 | DLNA-20 | Browse a file in progress, in its torrent and in `recently-viewed`, and once it is viewed | `upnp:lastPlaybackPosition` and `sec:dcmInfo` `BM=` with its saved position in both; neither once viewed |
+| DLNA-21 | Listen on every interface with a VPN tunnel holding multicast's route, then with a public address and a container bridge, then have the address change while it runs | The local network's address is advertised; the media server is not announced and the log says why; it announces again on the new address |
 
 ### MCP
 

@@ -8,11 +8,11 @@
 //! events are sent every 2 seconds.
 
 use std::future::Future;
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
 use tokio::sync::{oneshot, watch};
-use torrplay_dlna::network::advertised_address;
+use torrplay_dlna::network::{AddressError, advertised_address};
 use torrplay_dlna::ssdp::{Announcer, Config};
 use torrplay_server::MediaServerSetting;
 
@@ -40,18 +40,30 @@ pub(crate) async fn supervise<F, Fut>(
     F: Fn() -> Fut,
     Fut: Future<Output = ()>,
 {
-    // The announcer and the name it announced.
-    let mut running: Option<(Announcer, String)> = None;
+    // The announcer, the name it announced, and the address it advertises.
+    let mut running: Option<(Announcer, String, Ipv4Addr)> = None;
     let mut failures = AnnounceFailures::default();
     let mut interval = tokio::time::interval(EVENT_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         let wanted = setting.borrow_and_update().clone();
+        // Read each time: a network that comes up after the application, or
+        // a new lease, changes which address televisions can reach.
+        let address = if wanted.enabled {
+            Some(read_address(listen).await)
+        } else {
+            None
+        };
         let renamed = running
             .as_ref()
-            .is_some_and(|(_, name)| *name != wanted.name);
-        if (!wanted.enabled || renamed)
-            && let Some((announcer, _)) = running.take()
+            .is_some_and(|(_, name, _)| *name != wanted.name);
+        let moved = running.as_ref().is_some_and(|(_, _, advertised)| {
+            address
+                .as_ref()
+                .is_some_and(|address| has_moved(*advertised, address))
+        });
+        if (!wanted.enabled || renamed || moved)
+            && let Some((announcer, _, _)) = running.take()
         {
             // Saying goodbye first makes televisions read the description,
             // and so the new name, when it is announced again.
@@ -60,10 +72,12 @@ pub(crate) async fn supervise<F, Fut>(
         if !wanted.enabled {
             failures = AnnounceFailures::default();
         }
-        if wanted.enabled && running.is_none() {
-            running = start(&uuid, listen, &mut failures)
+        if let Some(address) = address
+            && running.is_none()
+        {
+            running = start(&uuid, listen, address, &mut failures)
                 .await
-                .map(|announcer| (announcer, wanted.name.clone()));
+                .map(|(announcer, address)| (announcer, wanted.name.clone(), address));
         }
         tokio::select! {
             changed = setting.changed() => {
@@ -75,9 +89,23 @@ pub(crate) async fn supervise<F, Fut>(
             _ = &mut stop => break,
         }
     }
-    if let Some((announcer, _)) = running {
+    if let Some((announcer, _, _)) = running {
         stopped(announcer.stop().await);
     }
+}
+
+/// The address to advertise, read off the async workers.
+async fn read_address(listen: SocketAddr) -> Result<Ipv4Addr, AddressError> {
+    tokio::task::spawn_blocking(move || advertised_address(listen))
+        .await
+        .unwrap_or_else(|error| Err(AddressError::NoRoute(std::io::Error::other(error))))
+}
+
+/// Whether an announcer on `advertised` should start again for what was `read`.
+/// A failed read keeps it: a network that drops for a moment usually returns
+/// with the same address, and televisions keep what they found.
+fn has_moved(advertised: Ipv4Addr, read: &Result<Ipv4Addr, AddressError>) -> bool {
+    matches!(read, Ok(address) if *address != advertised)
 }
 
 /// A run of failed attempts to announce, which warns once, after
@@ -101,9 +129,10 @@ impl AnnounceFailures {
 async fn start(
     uuid: &str,
     listen: SocketAddr,
+    address: Result<Ipv4Addr, AddressError>,
     failures: &mut AnnounceFailures,
-) -> Option<Announcer> {
-    let address = match advertised_address(listen) {
+) -> Option<(Announcer, Ipv4Addr)> {
+    let address = match address {
         Ok(address) => address,
         Err(error) => {
             if failures.failed(Instant::now()) {
@@ -119,7 +148,7 @@ async fn start(
         Ok(announcer) => {
             tracing::info!(%location, "the DLNA media server is announced");
             *failures = AnnounceFailures::default();
-            Some(announcer)
+            Some((announcer, address))
         }
         Err(error) => {
             if failures.failed(Instant::now()) {
@@ -154,6 +183,17 @@ mod tests {
             !failures.failed(start + ANNOUNCE_GRACE * 2),
             "attempts repeat every few seconds"
         );
+    }
+
+    #[test]
+    fn only_a_new_address_starts_the_announcer_again() {
+        let at = Ipv4Addr::new(172, 17, 0, 1);
+        assert!(has_moved(at, &Ok(Ipv4Addr::new(192, 168, 1, 233))));
+        assert!(!has_moved(at, &Ok(at)));
+        assert!(!has_moved(
+            at,
+            &Err(AddressError::NoRoute(std::io::Error::other("no route")))
+        ));
     }
 
     #[tokio::test]

@@ -26,9 +26,13 @@ below; everything it does not name is unsupported.
   resource `404 Not Found`.
 - It needs a listen address that a television can reach: one that is not
   loopback. On an unspecified address such as `0.0.0.0`, the application
-  advertises the IPv4 address of the interface that routes to the SSDP
-  multicast group. The advertised address must be private: in RFC 1918
-  ranges or link-local. Otherwise the media server is not announced and
+  advertises the first IPv4 address of `urls` in the system resource, which
+  puts a local network before a VPN that takes multicast's route. With none, it
+  advertises the address of the interface that routes to the SSDP multicast
+  group. It reads this every 2 seconds and announces again when the address
+  changes, as when the network comes up after the application or a lease
+  changes. The advertised address must be private: in RFC 1918 ranges or
+  link-local. Otherwise the media server is not announced and
   the application logs why, while its resources still answer and the
   setting keeps its value.
 - The `dlna_name` setting is the device's friendly name, `TorrPlay` by
