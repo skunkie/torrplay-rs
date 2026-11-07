@@ -4,18 +4,14 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
-  import {
-    cursorOf,
-    type PlaybackGrant,
-    type TorrentPage,
-    type TorrentQuery,
-  } from "../lib/backend";
+  import { cursorOf, type TorrentPage, type TorrentQuery } from "../lib/backend";
   import { useBackend } from "../lib/context";
   import { pollFailure } from "../lib/engine.svelte";
+  import { imageGrant, refreshGrant } from "../lib/grant.svelte";
   import { failureMessage } from "../lib/i18n/index.svelte";
   import { formatQuery, parseQuery } from "../lib/library-query";
   import { location, replaceQuery } from "../lib/navigation.svelte";
-  import { playbackGrants, withGrant } from "../lib/playback";
+  import { posterUrl } from "../lib/playback";
   import { poll } from "../lib/poll";
   import { searchTorrents } from "../lib/search";
   import LibraryView from "./LibraryView.svelte";
@@ -25,16 +21,13 @@ SPDX-License-Identifier: MIT
   const SEARCH_DELAY_MS = 250;
 
   const backend = useBackend();
-  const grants = playbackGrants(backend);
 
   const query = $derived(parseQuery(location.search));
-  let pages = $state<TorrentPage[]>([]);
+  let pages = $state.raw<TorrentPage[]>([]);
   /** The search `pages` were read for. */
   let readSearch = $state("");
   let loading = $state(true);
   let error = $state<string>();
-  /** The grant poster URLs carry; `null` until it is known. */
-  let grant = $state<PlaybackGrant | undefined | null>(null);
   /** The search as typed, ahead of the page's query while it waits. */
   let searchText = $state(parseQuery(location.search).search ?? "");
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -121,10 +114,7 @@ SPDX-License-Identifier: MIT
   $effect(() => poll(refresh, POLL_MS));
 
   $effect(() => {
-    grants.current().then(
-      (current) => (grant = current),
-      () => (grant = undefined),
-    );
+    void refreshGrant(backend);
     return () => clearTimeout(searchTimer);
   });
 
@@ -150,8 +140,7 @@ SPDX-License-Identifier: MIT
   {loading}
   {error}
   hasMore={answered && cursorOf(pages.at(-1)?.links.next) !== undefined}
-  poster={(torrent) =>
-    torrent.poster && grant !== null ? withGrant(torrent.links.poster, grant) : undefined}
+  poster={(torrent) => posterUrl(torrent, imageGrant.current)}
   onsearch={search}
   onfilter={(filters) => {
     const { search: _, ...rest } = filters;

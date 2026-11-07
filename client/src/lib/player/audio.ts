@@ -107,9 +107,8 @@ function languageOf(code: string): string | undefined {
 
 /** How a menu names `track`: its name, language, codec, and channels. */
 export function trackLabel(track: AudioTrack): string {
-  const messages = t().audio;
   const details = [codecName(track.codec), channelsName(track.channels)];
-  const language = track.language ? languageName(track.language) : messages.unknownLanguage;
+  const language = track.language ? languageName(track.language) : t().common.unknownLanguage;
   return track.name
     ? `${track.name} (${[language, ...details].join(", ")})`
     : `${language} (${details.join(", ")})`;

@@ -9,6 +9,7 @@ SPDX-License-Identifier: MIT
   import { t } from "../lib/i18n/index.svelte";
   import { settingsPath } from "../lib/routes";
   import { SETTINGS_PAGES, type SettingsPage } from "../lib/settings";
+  import Icon from "./Icon.svelte";
 
   interface Props {
     /** The section in the URL, or `undefined` on the page of sections, which a
@@ -54,14 +55,7 @@ SPDX-License-Identifier: MIT
         aria-label={t().settings.title}
         class="btn size-11 bg-tile px-0 text-text md:hidden"
       >
-        <svg
-          class="size-5"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.2"
-          aria-hidden="true"><path d="M15 6l-6 6 6 6" /></svg
-        >
+        <Icon name="back" />
       </a>
       <h1 class="text-display-small font-bold">{t().settings.sections[current]}</h1>
     </div>

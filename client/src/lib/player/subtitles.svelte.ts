@@ -8,6 +8,7 @@
 
 import type { TorrentFile } from "../backend";
 import { i18n, t } from "../i18n/index.svelte";
+import { readStored, writeStored } from "../storage";
 import { isRussian, languageName } from "./languages";
 import type { HostedTrack, SubtitleHost } from "./media";
 import { subtitleFormat, type SubtitleModifier, subtitleName } from "./subtitle-files";
@@ -80,22 +81,6 @@ function primaryLanguage(code: string | undefined): string | undefined {
   }
 }
 
-function remembered(): string | undefined {
-  try {
-    return localStorage.getItem(KEY) ?? undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function remember(language: string): void {
-  try {
-    localStorage.setItem(KEY, language);
-  } catch {
-    // Private windows may refuse storage; the choice lasts the page.
-  }
-}
-
 function fileTrack(file: TorrentFile, format: SubtitleFormat): SubtitleTrack {
   const name = subtitleName(file);
   return {
@@ -127,7 +112,7 @@ export function subtitleLabel(track: SubtitleTrack): string {
   const messages = t().subtitles;
   const language = track.language ? languageName(track.language) : undefined;
   const parts = [
-    language ?? (track.name ? undefined : t().audio.unknownLanguage),
+    language ?? (track.name ? undefined : t().common.unknownLanguage),
     track.name !== language ? track.name : undefined,
     ...track.modifiers.map((modifier) => messages[modifier]),
   ].filter(Boolean);
@@ -184,7 +169,7 @@ export class Subtitles {
 
   /** Shows track `id`, or none for `null`, and remembers the choice. */
   select(id: string | null): void {
-    remember(primaryLanguage(this.#track(id)?.language) ?? "off");
+    writeStored(KEY, primaryLanguage(this.#track(id)?.language) ?? "off");
     this.#show(id);
   }
 
@@ -210,7 +195,7 @@ export class Subtitles {
       host.onChange(() => this.#changed()),
       host.onSeek(() => this.#sought()),
     );
-    const language = remembered();
+    const language = readStored(KEY);
     if (!language || language === "off") return;
     const matching = tracks.filter(
       (track) => !track.unsupported && primaryLanguage(track.language) === language,
@@ -238,7 +223,7 @@ export class Subtitles {
       return;
     }
     const id = shown[0] ?? null;
-    remember(primaryLanguage(this.#track(id)?.language) ?? "off");
+    writeStored(KEY, primaryLanguage(this.#track(id)?.language) ?? "off");
     this.#show(id);
   }
 

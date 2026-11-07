@@ -9,6 +9,7 @@ SPDX-License-Identifier: MIT
   import AppMenu from "./components/AppMenu.svelte";
   import DemoIntro from "./components/DemoIntro.svelte";
   import EngineBanner from "./components/EngineBanner.svelte";
+  import Icon from "./components/Icon.svelte";
   import Logo from "./components/Logo.svelte";
   import { addFromTransfer, addition, clearAddition } from "./lib/addition.svelte";
   import { createHttp } from "./lib/api/http";
@@ -16,11 +17,12 @@ SPDX-License-Identifier: MIT
   import { provideBackend } from "./lib/context";
   import { intro } from "./lib/demo-intro.svelte";
   import { checkEngine, engine } from "./lib/engine.svelte";
+  import { refreshGrant } from "./lib/grant.svelte";
   import { i18n, t } from "./lib/i18n/index.svelte";
   import { formatQuery } from "./lib/library-query";
   import { here, location, navigate, startNavigation } from "./lib/navigation.svelte";
   import { poll } from "./lib/poll";
-  import { loadProfiles, profiles, refreshAvatarGrant, resetProfiles } from "./lib/profile.svelte";
+  import { loadProfiles, profiles, resetProfiles } from "./lib/profile.svelte";
   import { addPath, demo, homePath, libraryPath, match, pagePath, signInPath } from "./lib/routes";
   import { session, signOut } from "./lib/session.svelte";
   import { isSettingSection, type SettingSection } from "./lib/settings";
@@ -42,7 +44,7 @@ SPDX-License-Identifier: MIT
   const ENGINE_POLL_MS = 5000;
   const ENGINE_DOWN_POLL_MS = 2000;
   /** Grants are renewed an hour before they expire. */
-  const AVATAR_GRANT_POLL_MS = 30 * 60 * 1000;
+  const IMAGE_GRANT_POLL_MS = 30 * 60 * 1000;
 
   interface Props {
     /** The backend the pages use; the API's by default. */
@@ -89,8 +91,8 @@ SPDX-License-Identifier: MIT
 
   $effect(() => {
     const timer = setInterval(() => {
-      if (profiles.people) void refreshAvatarGrant(backend);
-    }, AVATAR_GRANT_POLL_MS);
+      if (profiles.people) void refreshGrant(backend);
+    }, IMAGE_GRANT_POLL_MS);
     return () => clearInterval(timer);
   });
 
@@ -182,15 +184,8 @@ SPDX-License-Identifier: MIT
 
 {#if page?.name === "title"}
   <div class="absolute inset-x-0 top-0 z-10 flex items-center justify-between p-4 md:px-10">
-    <a href={homePath} data-hero aria-label={t().player.back} class="btn size-11 btn-glass px-0">
-      <svg
-        class="size-5"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.2"
-        aria-hidden="true"><path d="M15 6l-6 6 6 6" /></svg
-      >
+    <a href={homePath} data-hero aria-label={t().common.back} class="btn size-11 btn-glass px-0">
+      <Icon name="back" />
     </a>
     <AppMenu overHero />
   </div>
@@ -199,18 +194,11 @@ SPDX-License-Identifier: MIT
     <button
       type="button"
       data-hero
-      aria-label={t().player.back}
+      aria-label={t().common.back}
       class="btn size-11 btn-glass px-0"
       onclick={clearAddition}
     >
-      <svg
-        class="size-5"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.2"
-        aria-hidden="true"><path d="M15 6l-6 6 6 6" /></svg
-      >
+      <Icon name="back" />
     </button>
     <AppMenu overHero />
   </div>
@@ -251,14 +239,7 @@ SPDX-License-Identifier: MIT
             navigate(`${libraryPath}?${formatQuery({ search })}`);
           }}
         >
-          <svg
-            class="size-4 shrink-0"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg
-          >
+          <Icon name="search" class="size-4 shrink-0" />
           <input
             type="search"
             bind:value={headerSearch}
@@ -272,14 +253,7 @@ SPDX-License-Identifier: MIT
           aria-label={t().library.search}
           class="btn size-11 bg-tile px-0 text-text md:hidden"
         >
-          <svg
-            class="size-4.5"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg
-          >
+          <Icon name="search" class="size-4.5" />
         </a>
       {/if}
       <AppMenu />

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import { demo } from "./routes";
+import { readStored, removeStored, writeStored } from "./storage";
 
 /** Where the access token's secret is kept between visits. */
 const KEY = "torrplay.access-token";
@@ -11,12 +12,7 @@ const ID_KEY = "torrplay.access-token-id";
 
 function stored(key: string): string | undefined {
   // The demo signs in to nothing, so it leaves this device's session alone.
-  if (demo) return undefined;
-  try {
-    return localStorage.getItem(key) ?? undefined;
-  } catch {
-    return undefined;
-  }
+  return demo ? undefined : readStored(key);
 }
 
 /** The signed-in access token, if any. Without a password the API needs
@@ -31,12 +27,8 @@ export function signIn(token: { secret: string; id: string }): void {
   session.token = token.secret;
   session.tokenId = token.id;
   if (demo) return;
-  try {
-    localStorage.setItem(KEY, token.secret);
-    localStorage.setItem(ID_KEY, token.id);
-  } catch {
-    // Private windows may refuse storage; the session lasts the page.
-  }
+  writeStored(KEY, token.secret);
+  writeStored(ID_KEY, token.id);
 }
 
 /** Forgets the access token, as when the API no longer accepts it. */
@@ -44,10 +36,6 @@ export function signOut(): void {
   session.token = undefined;
   session.tokenId = undefined;
   if (demo) return;
-  try {
-    localStorage.removeItem(KEY);
-    localStorage.removeItem(ID_KEY);
-  } catch {
-    // Nothing was stored.
-  }
+  removeStored(KEY);
+  removeStored(ID_KEY);
 }

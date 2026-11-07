@@ -8,12 +8,12 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { ApiError } from "../lib/api/http";
 import type { Backend, Profile } from "../lib/backend";
 import { backendContext } from "../lib/context";
+import { imageGrant, refreshGrant } from "../lib/grant.svelte";
 import {
   avatarUrl,
   chooseProfile,
   loadProfiles,
   profiles,
-  refreshAvatarGrant,
   resetProfiles,
 } from "../lib/profile.svelte";
 import { fakeBackend, profile } from "../testing";
@@ -177,17 +177,17 @@ it("asks for a new grant, and keeps the one held if that fails", async () => {
   const grant = { token: "tpk_a", expiresAt: new Date(Date.now() + 86_400_000) };
   const playbackGrant = vi.fn(async () => grant);
   const backend = fakeBackend({ playbackGrant });
-  await refreshAvatarGrant(backend);
-  expect(profiles.grant).toEqual(grant);
+  await refreshGrant(backend);
+  expect(imageGrant.current).toEqual(grant);
 
   const failing = fakeBackend({
     playbackGrant: vi.fn(async () => {
       throw new TypeError("offline");
     }),
   });
-  await refreshAvatarGrant(failing);
+  await refreshGrant(failing);
 
-  expect(profiles.grant).toEqual(grant);
+  expect(imageGrant.current).toEqual(grant);
 });
 
 it("cancels a rename", async () => {
@@ -318,13 +318,19 @@ const withAvatar: Profile = {
   avatar: { media_type: "image/png", size_bytes: 1, updated_at: "2026-11-06T00:00:00Z" },
 };
 
-it("carries a grant's token when one is needed", () => {
-  const versioned = { ...withAvatar, links: { ...withAvatar.links, avatar: "/avatar?v=1" } };
+it("makes a new avatar a new URL, with a grant's token when one is needed", () => {
+  const link = withAvatar.links.avatar;
+  const version = "2026-11-06T00%3A00%3A00Z";
+  const replaced = {
+    ...withAvatar,
+    avatar: { media_type: "image/png" as const, size_bytes: 1, updated_at: "2026-11-07T00:00:00Z" },
+  };
 
-  expect(avatarUrl(versioned, undefined)).toBe("/avatar?v=1");
-  expect(avatarUrl(versioned, { token: "tpk_a", expiresAt: new Date() })).toBe(
-    "/avatar?v=1&token=tpk_a",
+  expect(avatarUrl(withAvatar, undefined)).toBe(`${link}?v=${version}`);
+  expect(avatarUrl(withAvatar, { token: "tpk_a", expiresAt: new Date() })).toBe(
+    `${link}?v=${version}&token=tpk_a`,
   );
+  expect(avatarUrl(replaced, undefined)).not.toBe(avatarUrl(withAvatar, undefined));
 });
 
 it("has no URL without an avatar or before the grant is known", () => {
@@ -339,7 +345,7 @@ it("shows the avatar once the grant is known, and the initial if it cannot load"
   const row = screen.getByText("Anna").closest("li");
   const image = row?.querySelector("img");
   if (!image) throw new Error("the avatar is shown");
-  expect(image).toHaveAttribute("src", anna.links.avatar);
+  expect(image).toHaveAttribute("src", avatarUrl(withAvatar, undefined));
 
   await fireEvent.error(image);
 

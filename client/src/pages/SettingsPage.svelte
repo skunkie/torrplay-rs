@@ -80,7 +80,7 @@ SPDX-License-Identifier: MIT
     const warn = (event: BeforeUnloadEvent) => event.preventDefault();
     window.addEventListener("beforeunload", warn);
     // Moving between the sections of this form keeps what was typed.
-    const stop = guardNavigation((path) => staysInForm(path) || confirm(t().settings.leave));
+    const stop = guardNavigation((path) => staysInForm(path) || confirm(t().common.leave));
     return () => {
       window.removeEventListener("beforeunload", warn);
       stop();

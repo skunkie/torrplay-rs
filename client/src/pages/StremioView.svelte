@@ -7,10 +7,14 @@ SPDX-License-Identifier: MIT
   import { tick } from "svelte";
 
   import ConfirmDialog from "../components/ConfirmDialog.svelte";
+  import InlineError from "../components/InlineError.svelte";
+  import RetryAlert from "../components/RetryAlert.svelte";
   import SettingsShell from "../components/SettingsShell.svelte";
   import type { AccessToken } from "../lib/backend";
+  import { canCopy, copyText } from "../lib/clipboard";
   import { formatFromNow } from "../lib/format";
   import { t } from "../lib/i18n/index.svelte";
+  import { PASSWORD_MAX_LENGTH } from "../lib/limits";
   import { addressLabel, type LinkAddresses, manifestUrl, openUrl } from "../lib/stremio";
 
   interface Props {
@@ -55,18 +59,9 @@ SPDX-License-Identifier: MIT
 
   const address = $derived(chosen && addresses.includes(chosen) ? chosen : addresses[0]);
   const url = $derived(address ? manifestUrl(address, secret) : "");
-  /** Copying needs a secure context, which a plain address on a home network
-   * is not; there the field is selected for copying by hand. */
-  const canCopy = navigator.clipboard !== undefined;
 
   async function copy(): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(url);
-      copied = url;
-    } catch {
-      // The browser refused, so this leaves it ready to copy by hand.
-      field?.select();
-    }
+    if (await copyText(url, field)) copied = url;
   }
 
   async function create(event: SubmitEvent): Promise<void> {
@@ -83,19 +78,15 @@ SPDX-License-Identifier: MIT
   }
 </script>
 
-{#snippet alert(message: string)}
-  <p role="alert" class="text-meta text-arriving-text">{message}</p>
-{/snippet}
-
 {#snippet createForm(action: string, classes: string)}
   <form class="flex flex-col gap-2 md:flex-row md:items-end" onsubmit={create}>
     <label class="flex flex-col gap-1.5 text-meta font-semibold md:w-65">
-      {t().security.currentPassword}
+      {t().common.currentPassword}
       <input
         type="password"
         autocomplete="current-password"
         required
-        maxlength="256"
+        maxlength={PASSWORD_MAX_LENGTH}
         bind:value={password}
         class="field bg-surface font-normal"
       />
@@ -142,9 +133,9 @@ SPDX-License-Identifier: MIT
       class="field h-auto min-w-0 grow resize-none bg-surface py-2.5 font-mono wrap-anywhere"
       onfocus={selectAll}></textarea>
     <div class="flex shrink-0 gap-2">
-      {#if canCopy}
+      {#if canCopy()}
         <button type="button" class="btn btn-secondary" onclick={copy}>
-          {copied === url ? t().security.copied : t().security.copy}
+          {copied === url ? t().common.copied : t().common.copy}
         </button>
       {/if}
       <a href={openUrl(url)} class="btn btn-primary">{t().stremio.open}</a>
@@ -164,15 +155,10 @@ SPDX-License-Identifier: MIT
     </section>
     <p class="text-sm text-text-muted">{t().stremio.revokeNote}</p>
   {:else if loadError}
-    <div class="flex flex-col items-start gap-3">
-      {@render alert(loadError)}
-      <button type="button" class="btn btn-secondary" onclick={onretry}>
-        {t().common.retry}
-      </button>
-    </div>
+    <RetryAlert message={loadError} {onretry} />
   {:else if loaded}
     {#if failure}
-      {@render alert(failure)}
+      <InlineError message={failure} />
     {/if}
 
     {#if !passwordSet}
@@ -207,7 +193,7 @@ SPDX-License-Identifier: MIT
                 disabled={busy}
                 onclick={() => (revoking = token)}
               >
-                {t().security.revoke}
+                {t().common.revoke}
               </button>
             </li>
           {/each}
@@ -216,14 +202,16 @@ SPDX-License-Identifier: MIT
         {@render createForm(t().stremio.createAnother, "btn-secondary")}
       </section>
     {/if}
+  {:else}
+    <p role="status" class="text-text-muted">{t().common.loading}</p>
   {/if}
 </SettingsShell>
 
 <ConfirmDialog
   open={revoking !== undefined}
   title={t().stremio.revokeTitle}
-  confirm={t().security.revoke}
-  cancel={t().edit.cancel}
+  confirm={t().common.revoke}
+  cancel={t().common.cancel}
   {busy}
   onconfirm={async () => {
     if (revoking) await onrevoke(revoking);

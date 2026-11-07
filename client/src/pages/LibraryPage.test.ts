@@ -63,7 +63,7 @@ it("lists the library's torrents with their posters and loads more", async () =>
   const { container } = render(LibraryPage, { context: backendContext(fake) });
   await waitFor(() =>
     expect(container.querySelector("img")?.getAttribute("src")).toBe(
-      `${first[0]?.links.poster}?token=tpk_test`,
+      `${first[0]?.links.poster}?v=&token=tpk_test`,
     ),
   );
   expect(screen.getByText("Title 1")).toBeInTheDocument();

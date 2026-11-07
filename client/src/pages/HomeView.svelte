@@ -5,7 +5,9 @@ SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
   import Hero from "../components/Hero.svelte";
+  import Icon from "../components/Icon.svelte";
   import Poster from "../components/Poster.svelte";
+  import RetryAlert from "../components/RetryAlert.svelte";
   import WatchedBar from "../components/WatchedBar.svelte";
   import type { Torrent, UpNextEntry } from "../lib/backend";
   import {
@@ -60,12 +62,7 @@ SPDX-License-Identifier: MIT
 
 <div class="flex flex-col gap-6">
   {#if error}
-    <div role="alert" class="alert">
-      <span>{error}</span>
-      <button type="button" class="font-semibold text-accent-text underline" onclick={onretry}
-        >{t().common.retry}</button
-      >
-    </div>
+    <RetryAlert message={error} {onretry} />
   {/if}
 
   {#if entries === undefined}
@@ -101,10 +98,8 @@ SPDX-License-Identifier: MIT
       {/if}
       <div class="mt-2 flex flex-wrap items-center gap-3 md:gap-4">
         <a href={watchPath(lead.torrent.id, lead.file.id)} class="btn btn-hero">
-          <svg class="size-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
-            ><path d="M7 4.5v15l13-7.5z" /></svg
-          >
-          {lead.reason === "next_episode" ? t().player.playNext : t().progress.resume}
+          <Icon name="play" class="size-4" />
+          {lead.reason === "next_episode" ? t().common.play : t().progress.resume}
         </a>
         <a href={titlePath(lead.torrent.id)} class="btn h-12 rounded-button btn-glass px-5">
           {lead.torrent.kind === "series" ? t().home.episodes : t().home.details}

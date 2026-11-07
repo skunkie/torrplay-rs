@@ -52,7 +52,7 @@ export function stateLabel(torrent: Torrent): string | undefined {
 }
 
 /** A file's name, the last component of its path. */
-export function fileName(file: Schemas["TorrentFile"]): string {
+export function fileName(file: Pick<Schemas["TorrentFile"], "path">): string {
   return file.path.at(-1) ?? "";
 }
 

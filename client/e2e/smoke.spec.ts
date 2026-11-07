@@ -473,6 +473,37 @@ test.describe("backup", () => {
   });
 });
 
+test.describe("on the real server", () => {
+  test("shows a poster at once when it is replaced", async ({ page }) => {
+    await page.goto("/add");
+    await page.locator('input[type="file"]').setInputFiles(environment("TORRPLAY_E2E_TORRENT"));
+    await page.getByRole("button", { name: "Add to library" }).click();
+    await expect(page).toHaveURL(/\/titles\//);
+
+    const setPoster = async (): Promise<string> => {
+      await page.getByRole("link", { name: "Edit" }).click();
+      await page.getByLabel("Poster").setInputFiles({
+        name: "poster.png",
+        mimeType: "image/png",
+        buffer: PIXEL,
+      });
+      await page.getByRole("button", { name: "Save" }).click();
+      await expect(page).toHaveURL(/\/titles\/[^/]+$/);
+      const poster = page.locator("[data-hero] img").last();
+      await expect
+        .poll(() => poster.evaluate((image: HTMLImageElement) => image.naturalWidth))
+        .toBeGreaterThan(0);
+      return (await poster.getAttribute("src")) ?? "";
+    };
+
+    const first = await setPoster();
+    // Its upload time, to the second, is what makes a new image a new URL.
+    await page.waitForTimeout(1100);
+    expect(await setPoster()).not.toBe(first);
+    await deleteFromTitlePage(page);
+  });
+});
+
 test.describe("the demo", () => {
   test("runs the pages and plays its video without the API", async ({ page }) => {
     const reached: string[] = [];
@@ -660,7 +691,7 @@ test.describe("the demo", () => {
 
   test("shows posters it serves itself, and a tile for a torrent with none", async ({ page }) => {
     await page.goto("/demo/library");
-    const poster = page.locator('img[src="/demo-media/posters/paper-moons.webp"]').first();
+    const poster = page.locator('img[src^="/demo-media/posters/paper-moons.webp"]').first();
     await expect(poster).toBeVisible();
     await expect
       .poll(() => poster.evaluate((image: HTMLImageElement) => image.naturalWidth))

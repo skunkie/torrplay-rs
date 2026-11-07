@@ -31,8 +31,8 @@ SPDX-License-Identifier: MIT
 
   const backend = useBackend();
 
-  let preview = $state<TorrentContents>();
-  let existing = $state<Torrent>();
+  let preview = $state.raw<TorrentContents>();
+  let existing = $state.raw<Torrent>();
   let storage = $state<StorageMode>("memory");
   let busy = $state(false);
   let waiting = $state(false);
@@ -149,7 +149,7 @@ SPDX-License-Identifier: MIT
         if (!playWhenKnown) return;
         const file = firstVideo(contents.files);
         if (file) open(watchPath(torrentId, file.id));
-        else fail(t().title.noVideos);
+        else fail(t().common.noVideos);
       } catch (failure) {
         if (mine === generation) fail(failureMessage(failure));
       }

@@ -81,6 +81,11 @@ export function unwrap<T>(result: { data?: T; error?: unknown; response: Respons
   throw new ApiError(result.response.status, problem(result.error));
 }
 
+/** Throws an `ApiError` unless a response that carries no data succeeded. */
+export function succeeded(result: { error?: unknown; response: Response }): void {
+  if (!result.response.ok) throw new ApiError(result.response.status, problem(result.error));
+}
+
 /** A conditional read's result: `unchanged` for `304`, the data and its
  * ETag for a success, and an `ApiError` otherwise. */
 export function conditional<T>(result: {

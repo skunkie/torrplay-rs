@@ -4,19 +4,13 @@
 
 import type { Backend, PlaybackGrant, Profile } from "./backend";
 import { pollFailure } from "./engine.svelte";
-import { playbackGrants, withGrant } from "./playback";
+import { refreshGrant, resetGrant } from "./grant.svelte";
+import { imageUrl } from "./playback";
 import { demo } from "./routes";
+import { readStored, writeStored } from "./storage";
 
 /** Where this device keeps the ID of the profile it watches as. */
 const KEY = demo ? "torrplay.demo.profile" : "torrplay.profile";
-
-function stored(): string | undefined {
-  try {
-    return localStorage.getItem(KEY) ?? undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 /** The person profiles, the ones someone watches as; the device profile
  * holds inferred progress and is never offered. */
@@ -39,25 +33,14 @@ export const profiles = $state<{
   current: Profile | undefined;
   /** Whether the last read failed. */
   failed: boolean;
-  /** The grant avatars are read with; `null` until it is known. */
-  grant: PlaybackGrant | undefined | null;
-}>({ people: undefined, current: undefined, failed: false, grant: null });
+}>({ people: undefined, current: undefined, failed: false });
 
-/** The URL of `profile`'s avatar, or `undefined` while it has none or the grant
- * to read it is not known. */
+/** The URL of `profile`'s avatar; see {@link imageUrl}. */
 export function avatarUrl(
   profile: Profile,
   grant: PlaybackGrant | undefined | null,
 ): string | undefined {
-  return profile.avatar && grant !== null ? withGrant(profile.links.avatar, grant) : undefined;
-}
-
-/** Asks for a new grant if the one held is close to expiring, so avatars keep
- * loading on a page left open. A failure keeps the grant held. */
-export async function refreshAvatarGrant(backend: Backend): Promise<void> {
-  profiles.grant = await playbackGrants(backend)
-    .current()
-    .catch(() => profiles.grant);
+  return imageUrl(profile.links.avatar, profile.avatar, grant);
 }
 
 /** Reads the profiles and picks the one to watch as. */
@@ -68,7 +51,7 @@ export async function loadProfiles(backend: Backend): Promise<void> {
     profiles.failed = false;
     // The demo opens on something to see, not on a question.
     const current =
-      pick(people, profiles.current?.id ?? stored()) ?? (demo ? people[0] : undefined);
+      pick(people, profiles.current?.id ?? readStored(KEY)) ?? (demo ? people[0] : undefined);
     if (current) {
       // Kept even when it was the only one, so a profile added later
       // does not make this device ask again.
@@ -77,7 +60,7 @@ export async function loadProfiles(backend: Backend): Promise<void> {
       profiles.current = undefined;
     }
     // After the choice, which everything waits for, and avatars need not.
-    await refreshAvatarGrant(backend);
+    await refreshGrant(backend);
   } catch (error) {
     // Tells the banner at once, whose polling then sees the engine return,
     // which is when the application reads the profiles again.
@@ -89,11 +72,7 @@ export async function loadProfiles(backend: Backend): Promise<void> {
 /** Watches as `profile` on this device from now on. */
 export function chooseProfile(profile: Profile): void {
   profiles.current = profile;
-  try {
-    localStorage.setItem(KEY, profile.id);
-  } catch {
-    // Private windows may refuse storage; the choice lasts the page.
-  }
+  writeStored(KEY, profile.id);
 }
 
 /** Forgets the profiles read, as after signing out. */
@@ -101,5 +80,5 @@ export function resetProfiles(): void {
   profiles.people = undefined;
   profiles.current = undefined;
   profiles.failed = false;
-  profiles.grant = null;
+  resetGrant();
 }

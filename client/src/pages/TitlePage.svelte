@@ -10,7 +10,6 @@ SPDX-License-Identifier: MIT
   import {
     type Backend,
     changeTorrent,
-    type PlaybackGrant,
     type Progress,
     type Torrent,
     type TorrentFile,
@@ -20,9 +19,10 @@ SPDX-License-Identifier: MIT
   import { fileName } from "../lib/describe";
   import { engine, pollFailure } from "../lib/engine.svelte";
   import { playables } from "../lib/episodes";
+  import { imageGrant, refreshGrant } from "../lib/grant.svelte";
   import { failureMessage } from "../lib/i18n/index.svelte";
   import { navigate } from "../lib/navigation.svelte";
-  import { playbackGrants, withGrant } from "../lib/playback";
+  import { posterUrl } from "../lib/playback";
   import { poll } from "../lib/poll";
   import { profiles } from "../lib/profile.svelte";
   import { libraryPath } from "../lib/routes";
@@ -39,24 +39,20 @@ SPDX-License-Identifier: MIT
   let { torrentId }: Props = $props();
 
   const backend = useBackend();
-  const grants = playbackGrants(backend);
 
-  let torrent = $state<Torrent>();
-  let files = $state<TorrentFile[]>();
-  let progress = $state<Progress[]>([]);
+  let torrent = $state.raw<Torrent>();
+  let files = $state.raw<TorrentFile[]>();
+  let progress = $state.raw<Progress[]>([]);
   let missing = $state(false);
   let error = $state<string>();
   /** Why the last change failed. Polling clears `error`, but this stays until
    * the next change, so it can be read. */
   let actionError = $state<string>();
-  let statistics = $state<TorrentStatistics>();
+  let statistics = $state.raw<TorrentStatistics>();
   let busy = $state(false);
   let piecesOpen = $state(false);
-  /** The grant poster URLs carry; `null` until it is known. */
-  let grant = $state<PlaybackGrant | undefined | null>(null);
   let etag: string | undefined;
-  /** Counts torrent and profile changes, so a response for an earlier
-   * one is ignored. */
+  /** Counts profile changes, so a response for an earlier one is ignored. */
   let generation = 0;
 
   /** Reads the measurements, whose absence only leaves the panel's old ones. */
@@ -120,15 +116,8 @@ SPDX-License-Identifier: MIT
     const id = torrentId;
     const profileId = profiles.current?.id;
     const mine = ++generation;
+    // The application remakes this page for another title.
     untrack(() => {
-      // Another title starts empty; another profile keeps the torrent.
-      if (torrent?.id !== id) {
-        torrent = undefined;
-        files = undefined;
-        statistics = undefined;
-        missing = false;
-        etag = undefined;
-      }
       progress = [];
       error = undefined;
     });
@@ -140,15 +129,11 @@ SPDX-License-Identifier: MIT
   $effect(() => {
     if (!piecesOpen) return;
     const id = torrentId;
-    const mine = generation;
-    return poll(() => readStatistics(id, mine), PIECES_POLL_MS);
+    return poll(() => readStatistics(id, generation), PIECES_POLL_MS);
   });
 
   $effect(() => {
-    grants.current().then(
-      (current) => (grant = current),
-      () => (grant = undefined),
-    );
+    void refreshGrant(backend);
   });
 </script>
 
@@ -157,7 +142,7 @@ SPDX-License-Identifier: MIT
   items={files ? playables(files, progress) : undefined}
   {missing}
   {error}
-  poster={torrent?.poster && grant !== null ? withGrant(torrent.links.poster, grant) : undefined}
+  poster={torrent && posterUrl(torrent, imageGrant.current)}
   {actionError}
   {statistics}
   busy={busy || engine.status !== "ready"}

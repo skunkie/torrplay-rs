@@ -4,6 +4,8 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import InlineError from "../components/InlineError.svelte";
+  import RetryAlert from "../components/RetryAlert.svelte";
   import SettingsShell from "../components/SettingsShell.svelte";
   import { t } from "../lib/i18n/index.svelte";
   import {
@@ -87,7 +89,7 @@ SPDX-License-Identifier: MIT
   function problemText(problem: SettingProblem): string {
     return problem.kind === "range"
       ? t().settings.range(problem.min, problem.max)
-      : t().settings.required;
+      : t().common.nameRequired;
   }
 </script>
 
@@ -108,9 +110,9 @@ SPDX-License-Identifier: MIT
         {/if}
       </p>
       {#if problem}
-        <p id={errorId} role="alert" class="text-meta text-arriving-text">{problemText(problem)}</p>
+        <InlineError id={errorId} message={problemText(problem)} />
       {:else if refused}
-        <p id={errorId} role="alert" class="text-meta text-arriving-text">{refused}</p>
+        <InlineError id={errorId} message={refused} />
       {/if}
     </div>
     <div class="flex shrink-0 items-center gap-2">
@@ -166,12 +168,7 @@ SPDX-License-Identifier: MIT
 
 <SettingsShell {section} {current} {marked}>
   {#if loadError}
-    <div class="flex flex-col items-start gap-3">
-      <p role="alert" class="text-arriving-text">{loadError}</p>
-      <button type="button" class="btn btn-secondary" onclick={onretry}>
-        {t().common.retry}
-      </button>
-    </div>
+    <RetryAlert message={loadError} {onretry} />
   {:else if !loaded}
     <p role="status" class="text-text-muted">{t().common.loading}</p>
   {:else}
@@ -224,7 +221,7 @@ SPDX-License-Identifier: MIT
             class="btn btn-primary"
             disabled={busy || invalid}
           >
-            {t().settings.save}
+            {t().common.save}
           </button>
         </span>
       {:else}

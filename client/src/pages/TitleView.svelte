@@ -8,6 +8,8 @@ SPDX-License-Identifier: MIT
   import ConfirmDialog from "../components/ConfirmDialog.svelte";
   import DownloadPanel from "../components/DownloadPanel.svelte";
   import Hero from "../components/Hero.svelte";
+  import Icon from "../components/Icon.svelte";
+  import RetryAlert from "../components/RetryAlert.svelte";
   import WatchedBar from "../components/WatchedBar.svelte";
   import type { Torrent, TorrentStatistics } from "../lib/backend";
   import {
@@ -213,10 +215,8 @@ SPDX-License-Identifier: MIT
         {#if resume}
           {@const episode = resume.file.episode}
           <a href={watchPath(torrent.id, resume.file.id)} class="btn btn-hero">
-            <svg class="size-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
-              ><path d="M7 4.5v15l13-7.5z" /></svg
-            >
-            {started ? t().progress.resume : t().player.playNext}
+            <Icon name="play" class="size-4" />
+            {started ? t().progress.resume : t().common.play}
             {#if torrent.kind === "series" && episode}
               {t().episodes.short(episode.season, episode.number)}
             {/if}
@@ -233,12 +233,7 @@ SPDX-License-Identifier: MIT
 
   <div class="flex flex-col gap-6 px-4 py-6 md:px-10">
     {#if error}
-      <div role="alert" class="alert">
-        <span>{error}</span>
-        <button type="button" class="font-semibold text-accent-text underline" onclick={onretry}
-          >{t().common.retry}</button
-        >
-      </div>
+      <RetryAlert message={error} {onretry} />
     {/if}
 
     {#if actionError}
@@ -311,7 +306,7 @@ SPDX-License-Identifier: MIT
                 : t().common.loading}
             </p>
           {:else if items.length === 0}
-            <p class="text-text-muted">{t().title.noVideos}</p>
+            <p class="text-text-muted">{t().common.noVideos}</p>
           {:else}
             {#if grouped.seasons.length > 1 && openSeason}
               <div class="flex flex-col gap-3.5">
@@ -394,7 +389,7 @@ SPDX-License-Identifier: MIT
         title={withFiles
           ? t().download.deleteWithFiles(torrentTitle(torrent))
           : t().download.deleteTitle(torrentTitle(torrent))}
-        confirm={t().download.delete}
+        confirm={t().common.delete}
         cancel={t().download.keepIt}
         {busy}
         onconfirm={() => {

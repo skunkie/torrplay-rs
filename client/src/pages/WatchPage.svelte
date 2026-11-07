@@ -12,7 +12,7 @@ SPDX-License-Identifier: MIT
   import { nextEpisode, playables } from "../lib/episodes";
   import { failureMessage, t } from "../lib/i18n/index.svelte";
   import { navigate } from "../lib/navigation.svelte";
-  import { playbackGrants, withGrant } from "../lib/playback";
+  import { playbackGrants, posterUrl, withGrant } from "../lib/playback";
   import { trackLabel } from "../lib/player/audio";
   import { AudioTracks } from "../lib/player/audio-tracks.svelte";
   import { subtitleHost } from "../lib/player/media";
@@ -34,11 +34,13 @@ SPDX-License-Identifier: MIT
   const backend = useBackend();
   const grants = playbackGrants(backend);
 
-  let torrent = $state<Torrent>();
-  let files = $state<TorrentFile[]>();
+  let torrent = $state.raw<Torrent>();
+  let files = $state.raw<TorrentFile[]>();
   /** The profile's progress of the file, once read; `null` before. */
-  let progress = $state<Progress | undefined | null>(null);
-  let grant = $state<PlaybackGrant | undefined | null>(null);
+  let progress = $state.raw<Progress | undefined | null>(null);
+  /** Read once rather than the renewed one: a new token in the content's URL would
+   * load the file playing again. */
+  let grant = $state.raw<PlaybackGrant | undefined | null>(null);
   let error = $state<string>();
   let adding = $state(false);
   let added = $state(false);
@@ -190,7 +192,7 @@ SPDX-License-Identifier: MIT
   {startAt}
   backHref={titlePath(torrentId)}
   {next}
-  poster={torrent?.poster && grant !== null ? withGrant(torrent.links.poster, grant) : undefined}
+  poster={torrent && posterUrl(torrent, grant)}
   preloading={preload && !preload.settled
     ? {
         completedBytes: preload.current?.completed_bytes ?? 0,

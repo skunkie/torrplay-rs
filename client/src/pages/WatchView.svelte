@@ -10,6 +10,7 @@ SPDX-License-Identifier: MIT
   import "../lib/player/labels";
 
   import Hero from "../components/Hero.svelte";
+  import Icon from "../components/Icon.svelte";
   import TrackMenu from "../components/TrackMenu.svelte";
   import { heroTitleClasses } from "../lib/describe";
   import { formatBytes } from "../lib/format";
@@ -159,15 +160,8 @@ SPDX-License-Identifier: MIT
 
 {#snippet topBar()}
   <div class="flex items-center gap-4 player-gutter pt-4 md:pt-6">
-    <a href={backHref} aria-label={t().player.back} class="btn size-11 btn-glass px-0">
-      <svg
-        class="size-5"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.2"
-        aria-hidden="true"><path d="M15 6l-6 6 6 6" /></svg
-      >
+    <a href={backHref} aria-label={t().common.back} class="btn size-11 btn-glass px-0">
+      <Icon name="back" />
     </a>
     <div class="flex min-w-0 flex-col gap-0.5">
       <h1 class="truncate font-bold md:text-lg">{title}</h1>
@@ -202,7 +196,7 @@ SPDX-License-Identifier: MIT
           stroke-width="2.2"
           aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg
         >
-        <span class="max-md:sr-only">{t().add.addToLibrary}</span>
+        <span class="max-md:sr-only">{t().common.addToLibrary}</span>
       </button>
     {/if}
   </div>
@@ -433,7 +427,7 @@ SPDX-License-Identifier: MIT
                   <div class="mt-1 flex gap-2.5">
                     <!-- svelte-ignore a11y_autofocus -->
                     <a href={next.href} autofocus class="btn btn-hero grow">
-                      {staying ? t().player.playNext : t().player.playNow}
+                      {staying ? t().common.play : t().player.playNow}
                     </a>
                     {#if !staying}
                       <button
@@ -449,7 +443,7 @@ SPDX-License-Identifier: MIT
                   <h2 id="after-episode" class="text-display-small font-bold">
                     {t().player.finished}
                   </h2>
-                  <a href={backHref} class="btn btn-hero">{t().player.back}</a>
+                  <a href={backHref} class="btn btn-hero">{t().common.back}</a>
                 {/if}
               </section>
             </div>
@@ -494,17 +488,10 @@ SPDX-License-Identifier: MIT
     >
       <a
         href={backHref}
-        aria-label={t().player.back}
+        aria-label={t().common.back}
         class="absolute top-4 left-4 btn size-11 btn-glass px-0 md:top-6 md:left-10"
       >
-        <svg
-          class="size-5"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.2"
-          aria-hidden="true"><path d="M15 6l-6 6 6 6" /></svg
-        >
+        <Icon name="back" />
       </a>
       <p class="flex flex-wrap gap-2 mono text-accent-text uppercase">
         <span>{t().player.preloading}</span>
@@ -548,9 +535,7 @@ SPDX-License-Identifier: MIT
       </p>
       <!-- svelte-ignore a11y_autofocus -->
       <button type="button" autofocus class="mt-1 btn btn-hero self-start" onclick={onskippreload}>
-        <svg class="size-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
-          ><path d="M7 4.5v15l13-7.5z" /></svg
-        >
+        <Icon name="play" class="size-4" />
         {t().player.playNow}
       </button>
     </Hero>

@@ -4,18 +4,19 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import RetryAlert from "../components/RetryAlert.svelte";
   import { ApiError } from "../lib/api/http";
   import {
     errorsOf,
-    type PlaybackGrant,
     type Torrent,
     type TorrentConfiguration,
     type TorrentConfigurationPatch,
   } from "../lib/backend";
   import { useBackend } from "../lib/context";
+  import { imageGrant, refreshGrant } from "../lib/grant.svelte";
   import { failureMessage, t } from "../lib/i18n/index.svelte";
   import { navigate } from "../lib/navigation.svelte";
-  import { playbackGrants, withGrant } from "../lib/playback";
+  import { posterUrl } from "../lib/playback";
   import { titlePath } from "../lib/routes";
   import EditView, { type EditValues, type PosterChange } from "./EditView.svelte";
 
@@ -26,12 +27,10 @@ SPDX-License-Identifier: MIT
   let { torrentId }: Props = $props();
 
   const backend = useBackend();
-  const grants = playbackGrants(backend);
 
-  let torrent = $state<Torrent>();
-  let configuration = $state<TorrentConfiguration>();
+  let torrent = $state.raw<Torrent>();
+  let configuration = $state.raw<TorrentConfiguration>();
   let etag: string | undefined;
-  let grant = $state<PlaybackGrant | undefined | null>(null);
   let loadError = $state<string>();
   let saveError = $state<string>();
   /** The server's objections to the values sent, by field. */
@@ -61,10 +60,7 @@ SPDX-License-Identifier: MIT
 
   $effect(() => {
     void load();
-    grants.current().then(
-      (current) => (grant = current),
-      () => (grant = undefined),
-    );
+    void refreshGrant(backend);
   });
 
   /** What differs from what was read, as a merge patch. */
@@ -126,7 +122,7 @@ SPDX-License-Identifier: MIT
       {configuration}
       name={torrent.name ?? t().common.untitled}
       torrentTitle={torrent.title ?? torrent.name ?? ""}
-      poster={torrent.poster && grant !== null ? withGrant(torrent.links.poster, grant) : undefined}
+      poster={posterUrl(torrent, imageGrant.current)}
       hasPoster={Boolean(torrent.poster)}
       cancelHref={titlePath(torrentId)}
       {busy}
@@ -138,12 +134,7 @@ SPDX-License-Identifier: MIT
     />
   {/key}
 {:else if loadError}
-  <div role="alert" class="alert">
-    <span>{loadError}</span>
-    <button type="button" class="font-semibold text-accent-text underline" onclick={load}
-      >{t().common.retry}</button
-    >
-  </div>
+  <RetryAlert message={loadError} onretry={load} />
 {:else}
   <p class="text-text-muted" role="status">{t().common.loading}</p>
 {/if}

@@ -17,12 +17,12 @@ SPDX-License-Identifier: MIT
 </script>
 
 <script lang="ts">
+  import Icon from "../components/Icon.svelte";
   import Poster from "../components/Poster.svelte";
+  import RetryAlert from "../components/RetryAlert.svelte";
   import ValuesField from "../components/ValuesField.svelte";
   import { t } from "../lib/i18n/index.svelte";
-
-  const POSTER_MAX_BYTES = 1048576;
-  const IMDB_ID = /^tt[0-9]{7,10}$/;
+  import { IMAGE_MAX_BYTES, IMAGE_TYPES, IMDB_ID, YEAR_MAX, YEAR_MIN } from "../lib/limits";
 
   interface Props {
     configuration: TorrentConfiguration;
@@ -108,7 +108,7 @@ SPDX-License-Identifier: MIT
     const parsedYear = Number(typedYear);
     yearError =
       typedYear !== "" &&
-      !(Number.isInteger(parsedYear) && parsedYear >= 1800 && parsedYear <= 2200)
+      !(Number.isInteger(parsedYear) && parsedYear >= YEAR_MIN && parsedYear <= YEAR_MAX)
         ? t().edit.yearInvalid
         : undefined;
     const typedImdb = imdbId.trim();
@@ -137,28 +137,16 @@ SPDX-License-Identifier: MIT
 
 <form class="mx-auto flex max-w-5xl flex-col gap-5" onsubmit={submit}>
   <div class="flex flex-wrap items-center gap-3">
-    <a href={cancelHref} aria-label={t().player.back} class="btn size-11 bg-tile px-0 text-text">
-      <svg
-        class="size-5"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.2"
-        aria-hidden="true"><path d="M15 6l-6 6 6 6" /></svg
-      >
+    <a href={cancelHref} aria-label={t().common.back} class="btn size-11 bg-tile px-0 text-text">
+      <Icon name="back" />
     </a>
     <h1 class="mr-auto text-2xl font-bold md:text-3xl">{t().edit.title}</h1>
-    <a href={cancelHref} class="btn bg-tile font-semibold text-text">{t().edit.cancel}</a>
-    <button type="submit" class="btn btn-primary" disabled={busy}>{t().edit.save}</button>
+    <a href={cancelHref} class="btn bg-tile font-semibold text-text">{t().common.cancel}</a>
+    <button type="submit" class="btn btn-primary" disabled={busy}>{t().common.save}</button>
   </div>
 
   {#if stale}
-    <div role="alert" class="alert">
-      <span>{t().edit.changedElsewhere}</span>
-      <button type="button" class="font-semibold text-accent-text underline" onclick={onreload}
-        >{t().edit.reload}</button
-      >
-    </div>
+    <RetryAlert message={t().edit.changedElsewhere} onretry={onreload} action={t().common.reload} />
   {:else if error}
     <p role="alert" class="alert">{error}</p>
   {/if}
@@ -171,14 +159,14 @@ SPDX-License-Identifier: MIT
       <input
         bind:this={picker}
         type="file"
-        accept="image/avif,image/gif,image/jpeg,image/png,image/webp"
+        accept={IMAGE_TYPES}
         class="hidden"
         aria-label={t().edit.poster}
         onchange={(event) => {
           const file = event.currentTarget.files?.[0];
           event.currentTarget.value = "";
           if (!file) return;
-          if (file.size > POSTER_MAX_BYTES) {
+          if (file.size > IMAGE_MAX_BYTES) {
             posterError = t().edit.posterTooLarge;
             return;
           }

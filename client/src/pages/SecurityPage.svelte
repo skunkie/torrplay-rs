@@ -4,6 +4,7 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import { Actions } from "../lib/action.svelte";
   import type { AccessToken, Password } from "../lib/backend";
   import { useBackend } from "../lib/context";
   import { failureMessage, t } from "../lib/i18n/index.svelte";
@@ -16,8 +17,8 @@ SPDX-License-Identifier: MIT
   let password = $state.raw<Password>();
   let tokens = $state.raw<AccessToken[]>();
   let loadError = $state<string>();
-  let failure = $state<SecurityFailure>();
-  let busy = $state(false);
+  /** A failure's place is the part of the page that shows it. */
+  const actions = new Actions<SecurityFailure["place"]>(load);
   let secret = $state<string>();
 
   async function load(): Promise<void> {
@@ -35,25 +36,6 @@ SPDX-License-Identifier: MIT
   $effect(() => {
     void load();
   });
-
-  /** Runs `action`, then reads the page again. Returns whether it worked. */
-  async function act(
-    place: SecurityFailure["place"],
-    action: () => Promise<unknown>,
-  ): Promise<boolean> {
-    busy = true;
-    failure = undefined;
-    try {
-      await action();
-      await load();
-      return true;
-    } catch (error) {
-      failure = { place, message: failureMessage(error) };
-      return false;
-    } finally {
-      busy = false;
-    }
-  }
 </script>
 
 <SecurityView
@@ -61,12 +43,12 @@ SPDX-License-Identifier: MIT
   {tokens}
   ownToken={session.tokenId}
   {loadError}
-  {failure}
-  {busy}
+  failure={actions.failure}
+  busy={actions.busy}
   {secret}
   onretry={load}
   onsetpassword={(entry) =>
-    act("password", async () => {
+    actions.run("password", async () => {
       await backend.setPassword({
         password: entry.password,
         revoke_access_tokens: entry.revoke,
@@ -85,16 +67,16 @@ SPDX-License-Identifier: MIT
       }
     })}
   onremovepassword={() =>
-    void act("password", async () => {
+    void actions.run("password", async () => {
       await backend.deletePassword();
       // The token is revoked, and avatars need no playback token now.
       signOut();
       resetProfiles();
     })}
   oncreate={(creation) =>
-    act("token", async () => {
+    actions.run("token", async () => {
       secret = (await backend.createAccessToken(creation)).secret;
     })}
-  onrevoke={(token) => void act("token", () => backend.deleteAccessToken(token.id))}
+  onrevoke={(token) => void actions.run("token", () => backend.deleteAccessToken(token.id))}
   ondismiss={() => (secret = undefined)}
 />

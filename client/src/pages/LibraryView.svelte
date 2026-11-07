@@ -5,6 +5,7 @@ SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
   import Poster from "../components/Poster.svelte";
+  import RetryAlert from "../components/RetryAlert.svelte";
   import type { Schemas } from "../lib/api/http";
   import type { Torrent, TorrentKind, TorrentQuery } from "../lib/backend";
   import { stateLabel, torrentDetails, torrentTitle } from "../lib/describe";
@@ -142,12 +143,7 @@ SPDX-License-Identifier: MIT
   </div>
 
   {#if error}
-    <div role="alert" class="alert">
-      <span>{error}</span>
-      <button type="button" class="font-semibold text-accent-text underline" onclick={onretry}
-        >{t().common.retry}</button
-      >
-    </div>
+    <RetryAlert message={error} {onretry} />
   {/if}
 
   {#if total === 0 && !loading}
