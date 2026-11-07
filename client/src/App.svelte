@@ -19,6 +19,7 @@ SPDX-License-Identifier: MIT
   import { type Backend, httpBackend, type System } from "./lib/backend";
   import { provideBackend } from "./lib/context";
   import { intro } from "./lib/demo-intro.svelte";
+  import { followDesktop } from "./lib/desktop-inbox";
   import { checkEngine, engine } from "./lib/engine.svelte";
   import { refreshGrant } from "./lib/grant.svelte";
   import { i18n, t } from "./lib/i18n/index.svelte";
@@ -205,6 +206,7 @@ SPDX-License-Identifier: MIT
         event.preventDefault();
       }
     };
+    const unfollow = followDesktop((active) => (dropping = active));
     window.addEventListener("dragenter", entered);
     window.addEventListener("dragover", over);
     window.addEventListener("dragleave", left);
@@ -212,6 +214,7 @@ SPDX-License-Identifier: MIT
     document.addEventListener("paste", pasted);
     return () => {
       dropping = false;
+      unfollow();
       window.removeEventListener("dragenter", entered);
       window.removeEventListener("dragover", over);
       window.removeEventListener("dragleave", left);
