@@ -23,6 +23,7 @@ SPDX-License-Identifier: MIT
   import { refreshGrant } from "./lib/grant.svelte";
   import { i18n, t } from "./lib/i18n/index.svelte";
   import { formatQuery } from "./lib/library-query";
+  import { librarySearch } from "./lib/library-search.svelte";
   import { here, listPath, location, navigate, startNavigation } from "./lib/navigation.svelte";
   import { pageTitle } from "./lib/page-title.svelte";
   import { poll } from "./lib/poll";
@@ -157,6 +158,15 @@ SPDX-License-Identifier: MIT
     page?.name === "title" || page?.name === "watch" || (page?.name === "add" && addition.source),
   );
   let headerSearch = $state("");
+
+  /** The header's search: Library's own while it is open, or else a way to it. */
+  function searchHeader(event: SubmitEvent): void {
+    event.preventDefault();
+    if (page?.name === "library") return;
+    const search = headerSearch.trim();
+    headerSearch = "";
+    navigate(`${libraryPath}?${formatQuery({ search })}`);
+  }
   /** Whether a file is being dragged over the window. */
   let dropping = $state(false);
 
@@ -303,33 +313,35 @@ SPDX-License-Identifier: MIT
           +<span class="hidden md:inline">&nbsp;{t().add.action}</span>
         </a>
       {/if}
-      {#if browsing && page?.name !== "library" && page?.name !== "add"}
+      {#if browsing && page?.name !== "add"}
         <form
           role="search"
           class="hidden field w-65 items-center gap-2 text-text-muted outline-focus focus-within:outline-3 focus-within:outline-offset-2 lg:flex"
-          onsubmit={(event) => {
-            event.preventDefault();
-            const search = headerSearch.trim();
-            headerSearch = "";
-            navigate(`${libraryPath}?${formatQuery({ search })}`);
-          }}
+          onsubmit={searchHeader}
         >
           <Icon name="search" class="size-4 shrink-0" />
           <input
             type="search"
-            bind:value={headerSearch}
+            value={page?.name === "library" ? librarySearch.text : headerSearch}
+            oninput={(event) => {
+              const text = event.currentTarget.value;
+              if (page?.name === "library") librarySearch.input(text);
+              else headerSearch = text;
+            }}
             aria-label={t().library.search}
             placeholder={t().library.searchPlaceholder}
             class="w-full text-text outline-none placeholder:text-text-muted"
           />
         </form>
-        <a
-          href={libraryPath}
-          aria-label={t().library.search}
-          class="btn size-11 bg-tile px-0 text-text lg:hidden"
-        >
-          <Icon name="search" class="size-4.5" />
-        </a>
+        {#if page?.name !== "library"}
+          <a
+            href={libraryPath}
+            aria-label={t().library.search}
+            class="btn size-11 bg-tile px-0 text-text lg:hidden"
+          >
+            <Icon name="search" class="size-4.5" />
+          </a>
+        {/if}
       {/if}
       <AppMenu />
     </div>
