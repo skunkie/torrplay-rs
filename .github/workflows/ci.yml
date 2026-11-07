@@ -184,7 +184,7 @@ jobs:
         run: cargo doc --locked --workspace --all-features --no-deps
 
   desktop:
-    name: Desktop application
+    name: Desktop application (ubuntu-26.04)
     needs: stage
     if: needs.stage.outputs.rust == 'true'
     runs-on: ubuntu-26.04

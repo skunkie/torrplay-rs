@@ -284,8 +284,19 @@ class Environment:
 
     def kill_processes(self):
         """Ends what this environment started, and no other copy of the application:
-        only its processes name its data directory on their command lines."""
-        subprocess.run(["pkill", "-f", re.escape(self.data)], check=False)
+        only its processes name its data directory on their command lines. Waits until
+        they are gone, not just the port, since one that still runs would take the next
+        launch for a second one. Outright, since these tests' data does not matter."""
+        pattern = re.escape(self.data)
+        subprocess.run(["pkill", "-KILL", "-f", pattern], check=False)
+        wait_until(
+            lambda: subprocess.run(
+                ["pgrep", "-f", pattern], capture_output=True, check=False
+            ).returncode
+            != 0,
+            20,
+            "the application to end",
+        )
 
     def remove(self):
         shutil.rmtree(self.root, ignore_errors=True)
