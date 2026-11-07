@@ -611,21 +611,28 @@ SPDX-License-Identifier: MIT
       {title}
       labelledby="preloading"
       class="size-full"
-      gutter="md:px-10 md:py-12"
-      posterSize="self-stretch portrait:md:hidden"
+      gutter="md:px-10 md:py-12 short:md:py-4"
+      posterEverywhere
     >
-      <a
-        href={backHref}
-        data-returns
-        aria-label={t().common.back}
-        class="absolute top-4 left-4 btn size-11 btn-glass px-0 md:top-6 md:left-10"
-      >
-        <Icon name="back" />
-      </a>
+      {#snippet corner()}
+        <a
+          href={backHref}
+          data-returns
+          aria-label={t().common.back}
+          class="absolute top-4 left-4 z-10 btn size-11 btn-glass px-0 md:top-6 md:left-10"
+        >
+          <Icon name="back" />
+        </a>
+      {/snippet}
       <p class="mono text-accent-text uppercase">
         <Dotted parts={[t().player.preloading, subtitle]} />
       </p>
-      <h1 id="preloading" class={heroTitleClasses(title)}>
+      <h1
+        id="preloading"
+        class="{heroTitleClasses(
+          title,
+        )} short:line-clamp-2 short:text-display-small/tight md:short:text-display-small/tight"
+      >
         {title}
       </h1>
       <div
