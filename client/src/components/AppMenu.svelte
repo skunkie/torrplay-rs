@@ -70,6 +70,11 @@ SPDX-License-Identifier: MIT
 <div
   id="app-menu"
   popover
+  ontoggle={(event) => {
+    // Into the menu, for a remote, whose arrows stay among what an open menu holds.
+    if (event.newState === "open")
+      event.currentTarget.querySelector<HTMLElement>("select, a, button")?.focus();
+  }}
   class="inset-auto top-18 right-4 m-0 w-64 max-w-[calc(100vw-2rem)] flex-col gap-3 rounded-panel bg-tile p-4 text-text open:flex md:right-10"
 >
   {#if profiles.current && profiles.people && profiles.people.length > 1}

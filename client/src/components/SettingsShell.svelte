@@ -26,6 +26,7 @@ SPDX-License-Identifier: MIT
 
 <div class="flex flex-col gap-6 md:flex-row md:gap-10">
   <nav
+    data-arrows-column
     aria-label={t().settings.title}
     class="w-full shrink-0 flex-col gap-0.5 md:flex md:w-58 {section ? 'hidden' : 'flex'}"
   >

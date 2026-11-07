@@ -116,7 +116,8 @@ seek index. The plan keeps them.
   switches from the header.
 - **Phone, desktop, and television.** Layouts work from 360 pixels wide to
   a television, every action works from the keyboard with visible focus,
-  and arrow keys move between items in grids and rows, as a remote does.
+  and arrow keys move to the nearest item in that direction, as a remote does,
+  on every page. See "Moving around and leaving".
 - **Honest state.** While the engine starts, restores, or stops, a banner
   says so and actions that need it wait, disabled, rather than failing one by
   one. Readiness does not tell starting from stopping, so the banner names both.
@@ -284,10 +285,45 @@ the tokens.
 
 ### Moving around and leaving
 
+- Arrow keys move focus within an open dialog or menu while there is one. Up and
+  down go to the nearest item straight ahead, and otherwise to the nearest row.
+  Left and right stay in the row; with nothing there, focus stays. Sideways never
+  leads between the header and the page's content, so the header is reached by up.
+- A page marks what stands beside its content as a column: Settings' list of
+  sections, a title's download panel, and the Edit page's poster. Up and down stay
+  in a column while it has something that way, and left and right cross between
+  columns, entering the list of sections on the current one. A narrow window that
+  stacks a column with the content makes it simply more of the page.
+- The first arrow or confirming key on a page starts at its main action: the
+  hero's play link, the Library's first card, or else the first item in its
+  content, among what is on screen. Where nothing lies that way, the arrow
+  scrolls the page.
+- Up and down leave a text field, and left and right leave it from the ends of
+  its text. A text area keeps up and down until the first or last line, a long
+  line that wraps counting as one. A dropdown does not change as focus passes
+  through it; the confirming key opens it. Tabs, the seek bar, and menus keep the
+  arrows they use themselves. A key held down stops at a text field, so leaving one
+  takes a fresh press.
+- For someone moving around by keys, the back and forward buttons and a title's
+  back arrow return focus to the link last followed within the page's content.
+  Coming back to a page by another link, or to the player, starts it afresh.
+- In the player with the bars closed, left and right move 10 seconds, as they
+  do on the seek bar, the confirming key plays or pauses, and up or down opens the bars on the play
+  button. Volume has no arrow key, since a remote has its own: `m` mutes, and Tab
+  reaches the slider, which the arrows pass over because it would keep left and
+  right from the controls beyond it. With focus in the bars, arrows move among the
+  controls, and the bars stay until 5 seconds without a key while playing. Escape
+  or a remote's back key, including LG's and Samsung's key codes, goes back through
+  the history, or to the title for a video opened directly, once any menu is closed
+  and, for Escape, fullscreen has ended; on other pages that key is left to the
+  browser.
 - The back and forward buttons return a page to where it was scrolled, once its
   content is tall enough; a link opens a new page at its top.
 - A title's back arrow returns to the list it was reached from, Home or the
   Library with its filters, and to Home when it was opened directly.
+- That arrow and the player's Back links go back through the history when the
+  previous entry is where they lead, so a remote's back key does not then return to
+  the page just left. Otherwise they open that page as a new entry.
 - A page holding something unsaved, Settings or Edit, asks before a link, the
   back and forward buttons, a dropped file, or closing takes it away.
 - A dropped or pasted file opens the Add page unless its type names something

@@ -15,6 +15,17 @@ export function sampleOf(media: HTMLMediaElement): Sample {
   return { position: media.currentTime, duration: media.duration };
 }
 
+/** Whether `media` is paused. */
+export function isPaused(media: HTMLMediaElement): boolean {
+  return media.paused;
+}
+
+/** Moves `media` by `seconds`, within its length. */
+export function seekBy(media: HTMLMediaElement, seconds: number): void {
+  const moved = Math.max(0, media.currentTime + seconds);
+  media.currentTime = Number.isFinite(media.duration) ? Math.min(moved, media.duration) : moved;
+}
+
 /** What `media`'s browser says of playing `type`, a media type with its codecs. */
 export function canPlay(media: HTMLMediaElement, type: string): string {
   return media.canPlayType(type);

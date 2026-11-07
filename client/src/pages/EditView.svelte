@@ -182,7 +182,7 @@ SPDX-License-Identifier: MIT
   {/if}
 
   <div class="flex flex-col gap-8 md:flex-row">
-    <div class="flex shrink-0 flex-col gap-2.5 md:w-60">
+    <div data-arrows-column class="flex shrink-0 flex-col gap-2.5 md:w-60">
       <div class="w-40 md:w-full">
         <Poster url={shown} title={torrentTitle} />
       </div>

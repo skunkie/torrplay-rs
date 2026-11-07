@@ -201,7 +201,8 @@
   @apply absolute inset-0 flex flex-col justify-between transition-opacity duration-200;
   pointer-events: none;
 
-  &:not([data-visible]) {
+  /* Held open while a remote moves among the controls. */
+  &:not([data-visible]):not([data-held]) {
     @apply opacity-0;
   }
 
@@ -273,7 +274,7 @@
 @utility player-buffering-edge {
   @apply inset-x-0 bottom-0 z-10 h-0.75;
 
-  media-container:has(media-controls[data-visible]) &[data-visible] {
+  media-container:has(media-controls:is([data-visible], [data-held])) &[data-visible] {
     display: none;
   }
 }
@@ -316,7 +317,8 @@
     transition: translate 200ms ease-out;
   }
 
-  media-container:has(media-controls[data-visible]) video::-webkit-media-text-track-container {
+  media-container:has(media-controls:is([data-visible], [data-held]))
+    video::-webkit-media-text-track-container {
     translate: 0 -6rem;
   }
 }
