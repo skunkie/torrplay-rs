@@ -186,7 +186,10 @@ with what to watch.
 - **Heroes.** A hero shows its poster whole at the right, with its colors blurred
   behind the content, because a poster usually has words on it, which a crop
   would set behind the hero's own title. A phone has no room beside the content,
-  so it shows the colors alone.
+  so it shows the colors alone. The preload screen is the exception, since it has
+  the window to itself: at every size, its poster is at the right from a 4:3
+  window up and above the content otherwise. In all of them, a poster that fails
+  to load gives way to the title's color, as if it had none.
 - **Home.** The first up next entry is a banner that resumes it; the others
   are rows under it, and recently added titles are posters. Home and Library
   use the window's whole width: their grids add columns as it grows. So do the

@@ -695,6 +695,90 @@ test.describe("on the real server", () => {
     expect((await speed.boundingBox())?.height).toBeLessThan(36);
   });
 
+  test.describe("on the preload screen", () => {
+    const WATCH = "/demo/watch/trr_aaaaaaaaaaaaaaaaaaaaaaaaa1/fil_aaaaaaaaaaaaaaaaaaaaaa1003";
+
+    /** Opens it with the demo's clock held, so its preload stays on screen. */
+    async function open(page: Page, width: number, height: number) {
+      await page.clock.setFixedTime(Date.now());
+      await page.setViewportSize({ width, height });
+      await page.goto(WATCH);
+      await expect(page.getByRole("button", { name: "Play now" })).toBeVisible();
+      return page.locator("section[data-hero]");
+    }
+
+    for (const [shape, width, height] of [
+      ["tall", 360, 640],
+      ["wide", 667, 375],
+    ] as const) {
+      test(`shows the whole poster in a ${shape} phone's window`, async ({ page }) => {
+        const hero = await open(page, width, height);
+        const poster = await hero.locator("img").last().boundingBox();
+        const heading = await hero.getByRole("heading").boundingBox();
+        const back = await hero.getByRole("link", { name: "Back" }).boundingBox();
+        const button = await hero.getByRole("button", { name: "Play now" }).boundingBox();
+        if (!poster || !heading || !back || !button) throw new Error("not laid out");
+
+        // On top, not dimmed by the hero's shade.
+        const onTop = await page.evaluate(
+          ([x, y]) => document.elementFromPoint(x ?? 0, y ?? 0)?.tagName,
+          [poster.x + poster.width / 2, poster.y + poster.height / 2],
+        );
+        expect(onTop).toBe("IMG");
+        expect(poster.width / poster.height).toBeCloseTo(2 / 3, 1);
+        expect(poster.x).toBeGreaterThanOrEqual(0);
+        expect(poster.x + poster.width).toBeLessThanOrEqual(width);
+        expect(poster.y + poster.height).toBeLessThanOrEqual(height);
+        expect(button.y + button.height).toBeLessThanOrEqual(height);
+        if (shape === "tall") {
+          expect(poster.y).toBeGreaterThanOrEqual(back.y + back.height);
+          expect(poster.y + poster.height).toBeLessThanOrEqual(heading.y);
+          expect(poster.height).toBeGreaterThan(height / 3);
+        } else {
+          expect(poster.x).toBeGreaterThanOrEqual(heading.x + heading.width);
+          expect(poster.height).toBeGreaterThan(height / 2);
+        }
+      });
+    }
+
+    test("keeps the poster above the text in a nearly square window", async ({ page }) => {
+      const hero = await open(page, 420, 400);
+      const poster = await hero.locator("img").last().boundingBox();
+      const heading = await hero.getByRole("heading").boundingBox();
+      const button = await hero.getByRole("button", { name: "Play now" }).boundingBox();
+      expect((poster?.y ?? 0) + (poster?.height ?? 0)).toBeLessThanOrEqual(heading?.y ?? 0);
+      expect(heading?.width).toBeGreaterThan(300);
+      expect(button?.height).toBeLessThan(60);
+    });
+
+    test("falls back to the title's color when the poster fails to load", async ({ page }) => {
+      await page.route("**/*", (route) =>
+        route.request().resourceType() === "image" ? route.abort() : route.continue(),
+      );
+      const hero = await open(page, 390, 844);
+      await expect(hero.locator("img")).toHaveCount(0);
+      const background = await hero.evaluate((held) => held.style.background);
+      expect(background).not.toBe("");
+    });
+
+    test("keeps a long title clear of the back link in a short window", async ({ page }) => {
+      for (const [width, height] of [
+        [844, 390],
+        [568, 320],
+      ] as const) {
+        const hero = await open(page, width, height);
+        await hero
+          .getByRole("heading")
+          .evaluate((held) => (held.textContent = "An Invented Title ".repeat(4).trim()));
+        const back = await hero.getByRole("link", { name: "Back" }).boundingBox();
+        const label = await hero.locator("p").first().boundingBox();
+        const button = await hero.getByRole("button", { name: "Play now" }).boundingBox();
+        expect(label?.y).toBeGreaterThanOrEqual((back?.y ?? 0) + (back?.height ?? 0));
+        expect((button?.y ?? 0) + (button?.height ?? 0)).toBeLessThanOrEqual(height);
+      }
+    });
+  });
+
   test("signing out revokes the device's token", async ({ page, request }) => {
     const PASSWORD = "an invented test passphrase";
     expect((await request.put("/api/v1/password", { data: { password: PASSWORD } })).ok()).toBe(

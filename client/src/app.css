@@ -10,6 +10,13 @@
    raw colors, so the themes change in one place. Dark is the default; the
    root's data-theme, which public/theme.js sets before the first paint, picks
    light. contrast.test.ts checks every pair in both themes. */
+/* When a preload's whole poster sits beside its content and when above it: a window only
+   a little wider than it is tall would leave the content too narrow beside the poster. */
+@custom-variant poster-beside (@media (min-aspect-ratio: 4/3));
+@custom-variant poster-above (@media not all and (min-aspect-ratio: 4/3));
+/* A window with little height, such as a phone on its side. */
+@custom-variant short (@media (max-height: 30rem));
+
 @theme {
   /* Only these colors exist: Tailwind's palette is removed. */
   --color-*: initial;
@@ -214,6 +221,17 @@
     /* Not read aloud: the separator between parts is, and this one is only drawn. */
     content: "·" / "";
   }
+}
+
+/* The room `Hero` measures for a whole poster above its content; `w-poster-fit` fills it. */
+@utility poster-space {
+  @variant poster-above {
+    container-type: size;
+  }
+}
+
+@utility w-poster-fit {
+  width: min(100cqw, 100cqh * 2 / 3);
 }
 
 @utility dotted-gap {
