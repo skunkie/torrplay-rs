@@ -74,8 +74,8 @@ pub const SHUTDOWN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(30);
 /// How long connections may finish once the listener has closed, before they
 /// are closed by force. It only has to cover responses already under way, and
 /// comes out of the shutdown's limit, as the drain period does. A running
-/// handler extends it, up to [`SHUTDOWN_FINISH_RESERVE`] before the limit,
-/// unless shutdown is hurried, when handlers get just this long.
+/// handler extends it, up to 5 seconds before the limit, unless shutdown is
+/// hurried, when handlers get just this long.
 pub const CONNECTION_WAIT_DEFAULT: Duration = Duration::from_secs(2);
 
 /// What the shutdown's limit always leaves for stopping the engine and
