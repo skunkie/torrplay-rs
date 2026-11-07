@@ -6,6 +6,7 @@ import { expect, it } from "vitest";
 
 import { file, progress, torrent, upNext } from "../testing";
 import {
+  breakParts,
   entryReason,
   entrySubject,
   heroTitleClasses,
@@ -80,4 +81,14 @@ it.each([
   ["a name too long for it", { title: null, name: "x".repeat(501) }, "x".repeat(501)],
 ])("shows below the title for %s", (_, members, expected) => {
   expect(nameBelowTitle(torrent(1, members))).toBe(expected);
+});
+
+it.each([
+  ["The.Long-Name_2024", ["The.", "Long-", "Name_", "2024"]],
+  ["Plain words", ["Plain words"]],
+  ["Keepers of the L.I.G.H.T. House", ["Keepers of the L.I.G.H.T. House"]],
+  ["S01.E01..mkv", ["S01.", "E01..", "mkv"]],
+  ["", []],
+])("splits %s after its separators", (name, parts) => {
+  expect(breakParts(name)).toEqual(parts);
 });

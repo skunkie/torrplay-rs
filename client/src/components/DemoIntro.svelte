@@ -27,7 +27,7 @@ SPDX-License-Identifier: MIT
   </div>
   <div class="flex flex-col gap-2">
     <h3 class="font-semibold">{t().demo.tryHeading}</h3>
-    <ul class="flex list-disc flex-col gap-2 pl-5 text-text-muted">
+    <ul class="flex list-disc flex-col gap-2 pl-5 text-pretty text-text-muted">
       <li>{t().demo.tryPlay}</li>
       <li>
         <a href={libraryPath} class="font-semibold text-accent-text underline">

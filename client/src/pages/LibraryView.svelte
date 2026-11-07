@@ -4,6 +4,7 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import Dotted from "../components/Dotted.svelte";
   import Poster from "../components/Poster.svelte";
   import RetryAlert from "../components/RetryAlert.svelte";
   import type { Schemas } from "../lib/api/http";
@@ -164,7 +165,7 @@ SPDX-License-Identifier: MIT
           class="flex flex-col gap-2 rounded-button"
         >
           <Poster {url} title={torrentTitle(torrent)} badge={stateLabel(torrent)} />
-          <span class="text-xs text-text-muted">{torrentDetails(torrent)}</span>
+          <Dotted parts={torrentDetails(torrent)} class="text-xs text-text-muted" />
         </a>
       </li>
     {/each}

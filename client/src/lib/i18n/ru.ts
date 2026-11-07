@@ -237,7 +237,7 @@ export const ru: Messages = {
     reading: "Чтение торрент-файла…",
     notInLibrary: "Нет в библиотеке",
     inLibrary: "Уже в библиотеке",
-    magnetUnknown: "Magnet-ссылка · размер и файлы пока неизвестны",
+    magnetUnknown: ["Magnet-ссылка", "размер и файлы пока неизвестны"],
     files: (count: number) =>
       `${count}\u00A0${plural("ru", count, { one: "файл", few: "файла", many: "файлов", other: "файла" })}`,
     moreFiles: (count: number) =>
@@ -269,8 +269,10 @@ export const ru: Messages = {
     showPieces: (percent: number) =>
       `Загружено ${percentText("ru-RU", percent)}, показать все части`,
     hidePieces: (percent: number) => `Загружено ${percentText("ru-RU", percent)}, скрыть все части`,
-    piecesSummary: (downloaded: number, total: number, arriving: number) =>
-      `${downloaded.toLocaleString("ru-RU")}\u00A0из\u00A0${total.toLocaleString("ru-RU")} · загружается: ${arriving.toLocaleString("ru-RU")}`,
+    piecesSummary: (downloaded: number, total: number, arriving: number) => [
+      `${downloaded.toLocaleString("ru-RU")}\u00A0из\u00A0${total.toLocaleString("ru-RU")}`,
+      `загружается: ${arriving.toLocaleString("ru-RU")}`,
+    ],
     pieceHover: (piece: number, state: string) =>
       `Часть ${piece.toLocaleString("ru-RU")}: ${state}`,
     readerActive: "Активен",
@@ -414,18 +416,23 @@ export const ru: Messages = {
     urls: "Как подключиться к TorrPlay с других устройств",
     readers: "Потоки чтения",
     activeReaders: (count: number) => `Активных: ${count}`,
-    otherReaders: (idle: number, waiting: number) => `Простаивают: ${idle} · ждут: ${waiting}`,
+    otherReaders: (idle: number, waiting: number) => [`Простаивают: ${idle}`, `ждут: ${waiting}`],
     speed: "Скорость",
-    upload: (rate: string, peers: number) => `Отдача ${rate} · пиров: ${peers}`,
+    upload: (rate: string, peers: number) => [`Отдача ${rate}`, `пиров: ${peers}`],
     torrents: "Торренты",
     state: (name: string, count: number) => `${name}: ${count}`,
     downloading: "Загружается",
     transferred: "Загружено с запуска",
-    uploaded: (uploaded: string, streamed: string) =>
-      `Отдано ${uploaded} · передано в потоках ${streamed}`,
+    uploaded: (uploaded: string, streamed: string) => [
+      `Отдано ${uploaded}`,
+      `передано в потоках ${streamed}`,
+    ],
     cache: "Кеш частей",
-    cacheUse: (usage: string, capacity: string, pinned: string, evictions: string) =>
-      `${usage} / ${capacity} · закреплено ${pinned} · вытеснений: ${evictions}`,
+    cacheUse: (usage: string, capacity: string, pinned: string, evictions: string) => [
+      `${usage} / ${capacity}`,
+      `закреплено ${pinned}`,
+      `вытеснений: ${evictions}`,
+    ],
     log: "Журнал",
     logSearch: "Поиск по журналу",
     logFilter: "Показывать начиная с уровня",

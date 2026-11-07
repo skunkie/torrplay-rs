@@ -9,6 +9,7 @@ SPDX-License-Identifier: MIT
   import "@videojs/html/video/ui";
   import "../lib/player/labels";
 
+  import Dotted from "../components/Dotted.svelte";
   import Hero from "../components/Hero.svelte";
   import Icon from "../components/Icon.svelte";
   import TrackMenu from "../components/TrackMenu.svelte";
@@ -621,12 +622,8 @@ SPDX-License-Identifier: MIT
       >
         <Icon name="back" />
       </a>
-      <p class="flex flex-wrap gap-2 mono text-accent-text uppercase">
-        <span>{t().player.preloading}</span>
-        {#if subtitle}
-          <span aria-hidden="true">·</span>
-          <span>{subtitle}</span>
-        {/if}
+      <p class="mono text-accent-text uppercase">
+        <Dotted parts={[t().player.preloading, subtitle]} />
       </p>
       <h1 id="preloading" class={heroTitleClasses(title)}>
         {title}
@@ -654,9 +651,12 @@ SPDX-License-Identifier: MIT
         {#if preloading.queued}
           {t().player.preloadQueued}
         {:else if preloading.targetBytes > 0}
-          {t().common.percent(percent)} · {formatBytes(preloading.completedBytes)} / {formatBytes(
-            preloading.targetBytes,
-          )}
+          <Dotted
+            parts={[
+              t().common.percent(percent),
+              `${formatBytes(preloading.completedBytes)} / ${formatBytes(preloading.targetBytes)}`,
+            ]}
+          />
         {:else}
           {t().common.loading}
         {/if}

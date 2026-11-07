@@ -7,6 +7,7 @@ SPDX-License-Identifier: MIT
   import type { TorrentStatistics } from "../lib/backend";
   import { t } from "../lib/i18n/index.svelte";
   import { pieceCounts, pieceState } from "../lib/pieces";
+  import Dotted from "./Dotted.svelte";
   import PieceLegend from "./PieceLegend.svelte";
   import PieceMap from "./PieceMap.svelte";
 
@@ -26,7 +27,7 @@ SPDX-License-Identifier: MIT
   const summary = $derived(
     pieces && counts
       ? t().download.piecesSummary(counts.downloaded, pieces.piece_count, counts.arriving)
-      : "",
+      : [],
   );
 
   function stateLabel(state: "downloaded" | "arriving" | "missing"): string {
@@ -39,14 +40,14 @@ SPDX-License-Identifier: MIT
   <section aria-labelledby="all-pieces" class="flex flex-col gap-3 rounded-panel bg-tile p-4.5">
     <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
       <h2 id="all-pieces" class="font-bold">{t().download.allPieces}</h2>
-      <span class="mr-auto mono text-text-muted">{summary}</span>
+      <Dotted parts={summary} class="mr-auto mono text-text-muted" />
       <button type="button" class="btn btn-secondary" onclick={onhide}>{t().download.hide}</button>
     </div>
 
     <PieceMap
       {statistics}
       {muted}
-      label={summary}
+      label={summary.join(" · ")}
       describe={(piece) => t().download.pieceHover(piece, stateLabel(pieceState(pieces, piece)))}
     />
 

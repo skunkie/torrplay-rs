@@ -4,6 +4,7 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import Dotted from "../components/Dotted.svelte";
   import InlineError from "../components/InlineError.svelte";
   import SettingsShell from "../components/SettingsShell.svelte";
   import type {
@@ -14,7 +15,7 @@ SPDX-License-Identifier: MIT
     Statistics,
     System,
   } from "../lib/backend";
-  import { formatBuild, formatBytes, formatDuration, formatLogTime } from "../lib/format";
+  import { buildParts, formatBytes, formatDuration, formatLogTime } from "../lib/format";
   import { i18n, t } from "../lib/i18n/index.svelte";
   import { LOG_SEARCH_MAX_LENGTH } from "../lib/limits";
   import { LOG_LEVELS } from "../lib/logs";
@@ -79,12 +80,10 @@ SPDX-License-Identifier: MIT
       paused: t().states.paused,
       failed: t().states.failed,
     };
-    return Object.entries(names)
-      .flatMap(([state, name]) => {
-        const count = counts[state] ?? 0;
-        return count > 0 ? [t().system.state(name, count)] : [];
-      })
-      .join(" · ");
+    return Object.entries(names).flatMap(([state, name]) => {
+      const count = counts[state] ?? 0;
+      return count > 0 ? [t().system.state(name, count)] : [];
+    });
   });
 
   /** Today: unlike `now`, it changes only when the day does, so the rows are
@@ -108,11 +107,13 @@ SPDX-License-Identifier: MIT
   }
 </script>
 
-{#snippet tile(label: string, value: string | undefined, hint: string | undefined)}
+{#snippet tile(label: string, value: string | undefined, hint: string[] | undefined)}
   <div class="flex min-w-0 flex-col gap-1 rounded-2xl bg-tile px-4 py-3.5">
     <span class="text-xs text-text-muted">{label}</span>
-    <span class="font-mono text-xl font-medium">{value ?? "—"}</span>
-    <span class="text-xs text-text-muted">{hint ?? ""}</span>
+    <span class="font-mono text-base font-medium min-[360px]:text-lg sm:text-xl"
+      >{value ?? "—"}</span
+    >
+    <Dotted parts={hint ?? []} class="text-xs text-text-muted" />
   </div>
 {/snippet}
 
@@ -128,7 +129,7 @@ SPDX-License-Identifier: MIT
     {@render tile(
       t().system.memory,
       system?.resident_memory_bytes == null ? undefined : formatBytes(system.resident_memory_bytes),
-      t().system.memoryHint,
+      [t().system.memoryHint],
     )}
     {@render tile(
       t().system.readers,
@@ -161,7 +162,7 @@ SPDX-License-Identifier: MIT
   {#if system}
     <section aria-label={t().system.build} class="flex flex-col gap-2 rounded-2xl bg-tile p-4">
       <span class="text-sm font-semibold">{t().system.build}</span>
-      <p class="mono text-text-muted">{formatBuild(system)}</p>
+      <Dotted parts={buildParts(system)} class="mono text-text-muted" />
     </section>
   {/if}
 
@@ -186,9 +187,13 @@ SPDX-License-Identifier: MIT
     <section aria-label={t().system.cache} class="flex flex-col gap-2 rounded-2xl bg-tile p-4">
       <div class="flex flex-wrap justify-between gap-x-4 gap-y-1 text-sm">
         <span class="font-semibold">{t().system.cache}</span>
-        <span class="mono text-text-muted">{use}</span>
+        <Dotted parts={use} class="mono text-text-muted" />
       </div>
-      <div role="img" aria-label={use} class="flex h-3 overflow-hidden rounded-md bg-empty">
+      <div
+        role="img"
+        aria-label={use.join(" · ")}
+        class="flex h-3 overflow-hidden rounded-md bg-empty"
+      >
         <span class="bg-accent" style:width={share(cache.pinned_bytes, cache.capacity_bytes)}
         ></span>
         <span
@@ -285,7 +290,7 @@ SPDX-License-Identifier: MIT
               >
               <span class="w-11 shrink-0 mono {levelColor(record.level)}">{record.level}</span>
               <span
-                class="min-w-0 mono text-text-muted max-md:grow md:w-40 md:shrink-0 md:truncate"
+                class="min-w-0 mono text-text-muted max-md:w-full md:w-40 md:shrink-0 md:truncate"
                 title={record.target}>{record.target}</span
               >
               <span class="flex min-w-0 grow flex-col gap-0.5 max-md:w-full">

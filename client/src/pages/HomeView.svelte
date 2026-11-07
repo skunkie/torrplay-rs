@@ -4,6 +4,7 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import Dotted from "../components/Dotted.svelte";
   import Hero from "../components/Hero.svelte";
   import Icon from "../components/Icon.svelte";
   import Poster from "../components/Poster.svelte";
@@ -78,16 +79,10 @@ SPDX-License-Identifier: MIT
     >
       <!-- Resuming needs no words here: the button says it. -->
       {#if lead.reason === "next_episode" || subject}
-        <p class="flex flex-wrap gap-2 mono text-accent-text uppercase">
-          {#if lead.reason === "next_episode"}
-            <span>{t().progress.nextEpisode}</span>
-            {#if subject}
-              <span aria-hidden="true">·</span>
-            {/if}
-          {/if}
-          {#if subject}
-            <span>{subject}</span>
-          {/if}
+        <p class="mono text-accent-text uppercase">
+          <Dotted
+            parts={[lead.reason === "next_episode" ? t().progress.nextEpisode : undefined, subject]}
+          />
         </p>
       {/if}
       <h1 id="continue" class={heroTitleClasses(torrentTitle(lead.torrent))}>
@@ -160,7 +155,7 @@ SPDX-License-Identifier: MIT
   {/if}
 
   <section aria-labelledby="recent" class="flex flex-col gap-3">
-    <div class="flex items-baseline gap-3">
+    <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
       <h2 id="recent" class="text-lg font-bold">{t().home.recent}</h2>
       <a href={libraryPath} class="text-sm font-semibold text-accent-text">{t().home.seeLibrary}</a>
     </div>
@@ -174,7 +169,7 @@ SPDX-License-Identifier: MIT
           <li>
             <a href={titlePath(torrent.id)} class="flex flex-col gap-2 rounded-button">
               <Poster url={poster(torrent)} title={torrentTitle(torrent)} />
-              <span class="text-xs text-text-muted">{torrentDetails(torrent)}</span>
+              <Dotted parts={torrentDetails(torrent)} class="text-xs text-text-muted" />
             </a>
           </li>
         {/each}

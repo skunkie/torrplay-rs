@@ -167,8 +167,11 @@ SPDX-License-Identifier: MIT
       <Icon name="back" />
     </a>
     <h1 class="mr-auto text-2xl font-bold md:text-3xl">{t().edit.title}</h1>
-    <a href={cancelHref} class="btn bg-tile font-semibold text-text">{t().common.cancel}</a>
-    <button type="submit" class="btn btn-primary" disabled={busy}>{t().common.save}</button>
+    <!-- Together, so a narrow window moves them to the next row as a pair. -->
+    <div class="ml-auto flex gap-3">
+      <a href={cancelHref} class="btn bg-tile font-semibold text-text">{t().common.cancel}</a>
+      <button type="submit" class="btn btn-primary" disabled={busy}>{t().common.save}</button>
+    </div>
   </div>
 
   {#if stale}
@@ -238,7 +241,7 @@ SPDX-License-Identifier: MIT
       <div class="flex flex-col gap-2 text-sm font-semibold">
         <span id="kind-label">{t().edit.kind}</span>
         <div
-          class="segments max-w-full self-start overflow-x-auto"
+          class="segments max-w-full flex-wrap self-start"
           role="group"
           aria-labelledby="kind-label"
         >

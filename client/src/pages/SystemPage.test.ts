@@ -69,10 +69,12 @@ it("shows the run, its statistics, and the cache", async () => {
   );
 
   expect(await screen.findByText("2 d 4 h")).toBeTruthy();
-  expect(screen.getByText(/^TorrPlay.0\.1\.0 · 5c5f18f/)).toBeTruthy();
+  expect(screen.getByText("TorrPlay 0.1.0")).toBeTruthy();
   expect(await screen.findByText("1 active")).toBeTruthy();
-  expect(screen.getByText("2 idle · 3 waiting")).toBeTruthy();
-  expect(screen.getByText("Downloading: 2 · Paused: 1")).toBeTruthy();
+  expect(screen.getByText("2 idle")).toBeTruthy();
+  expect(screen.getByText("3 waiting")).toBeTruthy();
+  expect(screen.getByText("Downloading: 2")).toBeTruthy();
+  expect(screen.getByText("Paused: 1")).toBeTruthy();
   const bar = await screen.findByRole("img");
   expect(bar.getAttribute("aria-label")).toContain("256\u00A0MiB");
   expect(bar.getAttribute("aria-label")).toContain("evictions: 1,204");
@@ -354,7 +356,7 @@ it("shows no memory figure on a platform that cannot measure it", async () => {
 
   const tile = (await screen.findByText("Memory in use")).parentElement;
   await waitFor(() => {
-    expect(screen.getByText(/^TorrPlay.0\.1\.0 · 5c5f18f/)).toBeTruthy();
+    expect(screen.getByText("TorrPlay 0.1.0")).toBeTruthy();
   });
   expect(tile?.textContent).toContain("—");
 });
@@ -525,6 +527,6 @@ it("lists the addresses other devices reach it at, and nothing without any", asy
 it("leaves out the addresses when there are none", async () => {
   show(fakeBackend({ getSystem: vi.fn(async () => system({ urls: [] })) }));
 
-  await screen.findByText(/^TorrPlay.0\.1\.0 · 5c5f18f/);
+  await screen.findByText("TorrPlay 0.1.0");
   expect(screen.queryByText("Other devices reach TorrPlay at")).toBeNull();
 });

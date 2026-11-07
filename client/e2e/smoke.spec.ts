@@ -590,6 +590,111 @@ test.describe("on the real server", () => {
     await expect(footer).toHaveCount(0);
   });
 
+  test("keeps text whole on a small phone, in the longer language", async ({ page }) => {
+    await page.setViewportSize({ width: 360, height: 800 });
+    await page.addInitScript(() => localStorage.setItem("torrplay.locale", "ru"));
+    const title = "/demo/titles/trr_aaaaaaaaaaaaaaaaaaaaaaaaa1";
+
+    // A poster's badge inside its card, and its title not cut.
+    await page.goto("/demo/library");
+    const badge = page.getByText("Приостановлен");
+    const card = badge.locator("xpath=ancestor::a");
+    const badgeBox = await badge.boundingBox();
+    const cardBox = await card.boundingBox();
+    expect((badgeBox?.x ?? 0) + (badgeBox?.width ?? 0)).toBeLessThanOrEqual(
+      (cardBox?.x ?? 0) + (cardBox?.width ?? 0),
+    );
+    const caption = page.getByText("The Lighthouse Keepers", { exact: true }).last();
+    expect(await caption.evaluate((held) => held.scrollHeight <= held.clientHeight)).toBe(true);
+
+    // An episode's file keeps the end of its name, where episodes differ.
+    await page.goto(title);
+    const files = page.locator("bdi");
+    await expect(files.first()).toBeVisible();
+    const shownEnd = await files.first().evaluate((held) => {
+      const range = document.createRange();
+      range.selectNodeContents(held);
+      return (
+        range.getBoundingClientRect().right -
+        (held.parentElement?.getBoundingClientRect().right ?? 0)
+      );
+    });
+    expect(Math.abs(shownEnd)).toBeLessThan(2);
+
+    // Every kind on screen, and the page's actions together.
+    await page.goto(`${title}/edit`);
+    const other = page.getByRole("button", { name: "Другое" });
+    expect(
+      ((await other.boundingBox())?.x ?? 0) + ((await other.boundingBox())?.width ?? 0),
+    ).toBeLessThanOrEqual(360);
+    const cancel = await page.getByRole("link", { name: "Отмена" }).boundingBox();
+    const save = await page.getByRole("button", { name: "Сохранить" }).boundingBox();
+    expect(cancel?.y).toBe(save?.y);
+
+    // A number stays with its unit, and a row of parts starts with no dot.
+    await page.goto("/demo/settings/security");
+    await expect(page.getByText(/3\u00A0часа назад/).first()).toBeVisible();
+    await page.goto("/demo/settings/system");
+    const value = page.getByText("Активных: 1", { exact: true });
+    expect((await value.boundingBox())?.height).toBeLessThan(36);
+    const parts = page.getByRole("region", { name: "Сборка" }).locator(".dotted");
+    await expect(parts.first()).toContainText("TorrPlay");
+    const rows = await parts.evaluateAll((held) => {
+      const clip = held[0]?.parentElement?.parentElement as HTMLElement;
+      const box = clip.getBoundingClientRect();
+      const tops = held.map((part) => part.getBoundingClientRect().top);
+      return {
+        count: new Set(tops).size,
+        clipped: getComputedStyle(clip).overflowX === "hidden",
+        rightEdge: Math.max(...held.map((part) => part.getBoundingClientRect().right)) - box.right,
+        // How much of each dot's space lies inside the clip, for those starting a row.
+        dotShown: held.flatMap((part, index) =>
+          tops[index] === tops[index - 1]
+            ? []
+            : [
+                part.getBoundingClientRect().left +
+                  parseFloat(getComputedStyle(part, "::before").width) -
+                  box.left,
+              ],
+        ),
+      };
+    });
+    expect(rows.count).toBeGreaterThan(1);
+    expect(rows.clipped).toBe(true);
+    expect(rows.rightEdge).toBeLessThanOrEqual(1);
+    expect(Math.max(...rows.dotShown)).toBeLessThanOrEqual(1);
+
+    // It copies as one line, for a bug report.
+    const copied = await page.getByRole("region", { name: "Сборка" }).evaluate((section) => {
+      const parts = section.querySelector(".dotted")?.parentElement as HTMLElement;
+      const selection = getSelection();
+      selection?.selectAllChildren(parts);
+      return selection?.toString() ?? "";
+    });
+    expect(copied).toMatch(/^TorrPlay.+ · .+ · .+ · .+$/);
+    expect(copied).not.toContain("\n");
+
+    // A screen reader gets one dot between parts, and none before the first.
+    const read = await page.getByRole("region", { name: "Сборка" }).ariaSnapshot();
+    expect(read.match(/·/g)).toHaveLength(3);
+
+    // A part with no spaces wraps inside the box instead of being cut off.
+    const longPart = await parts.first().evaluate((part) => {
+      part.textContent = "The.Invented.Very.Long.Lighthouse.Keepers.S01.1080p.WEB-DL.x265";
+      return (
+        part.getBoundingClientRect().right -
+        (part.parentElement?.parentElement?.getBoundingClientRect().right ?? 0)
+      );
+    });
+    expect(longPart).toBeLessThanOrEqual(1);
+
+    // The narrowest phones still keep a tile's value on one line.
+    await page.setViewportSize({ width: 320, height: 800 });
+    expect((await value.boundingBox())?.height).toBeLessThan(36);
+    const speed = page.getByText(/МиБ\/с$/).first();
+    expect((await speed.boundingBox())?.height).toBeLessThan(36);
+  });
+
   test("signing out revokes the device's token", async ({ page, request }) => {
     const PASSWORD = "an invented test passphrase";
     expect((await request.put("/api/v1/password", { data: { password: PASSWORD } })).ok()).toBe(
