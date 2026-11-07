@@ -408,8 +408,7 @@ export const ru: Messages = {
   system: {
     updates: "Обновляется, пока страница открыта.",
     uptime: "Работает",
-    build: (version: string, os: string, architecture: string) =>
-      `Версия ${version} · ${os} ${architecture}`,
+    build: "Сборка",
     memory: "Занято памяти",
     memoryHint: "Весь процесс",
     urls: "Как подключиться к TorrPlay с других устройств",

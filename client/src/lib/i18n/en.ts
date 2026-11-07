@@ -402,8 +402,7 @@ export const en = {
   system: {
     updates: "Updates while this page is open.",
     uptime: "Running for",
-    build: (version: string, os: string, architecture: string) =>
-      `Version ${version} · ${os} ${architecture}`,
+    build: "Build",
     memory: "Memory in use",
     memoryHint: "The whole process",
     urls: "Other devices reach TorrPlay at",

@@ -3100,6 +3100,17 @@ export interface components {
              */
             version: string;
             /**
+             * @description The abbreviated Git commit the build came from, followed by -dirty if the sources had uncommitted changes, or null for a build from outside a Git checkout, such as a source archive.
+             * @example 5c5f18f
+             */
+            commit: string | null;
+            /**
+             * Format: date
+             * @description The date of that commit, in UTC, or null when commit is null. It says how old the code is, whenever it was compiled.
+             * @example 2026-11-07
+             */
+            commit_date: string | null;
+            /**
              * @description The operating system the build targets, as Rust names it, such as linux, macos, windows, or android.
              * @example linux
              */

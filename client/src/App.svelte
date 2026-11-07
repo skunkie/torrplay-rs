@@ -7,6 +7,7 @@ SPDX-License-Identifier: MIT
   import { tick, untrack } from "svelte";
 
   import AppMenu from "./components/AppMenu.svelte";
+  import BuildInfo from "./components/BuildInfo.svelte";
   import DemoIntro from "./components/DemoIntro.svelte";
   import EngineBanner from "./components/EngineBanner.svelte";
   import Icon from "./components/Icon.svelte";
@@ -15,7 +16,7 @@ SPDX-License-Identifier: MIT
   import { addFromTransfer, addition, clearAddition } from "./lib/addition.svelte";
   import { createHttp } from "./lib/api/http";
   import { startArrowNavigation } from "./lib/arrows";
-  import { type Backend, httpBackend } from "./lib/backend";
+  import { type Backend, httpBackend, type System } from "./lib/backend";
   import { provideBackend } from "./lib/context";
   import { intro } from "./lib/demo-intro.svelte";
   import { checkEngine, engine } from "./lib/engine.svelte";
@@ -214,6 +215,23 @@ SPDX-License-Identifier: MIT
     document.documentElement.lang = i18n.locale;
   });
 
+  /** The running build, which the page's last line names. */
+  let build = $state.raw<System>();
+  let readingBuild = false;
+
+  $effect(() => {
+    // Needs a credential too. A line nobody needs is not worth reporting a failure.
+    if (page?.name === "signIn" || readingBuild || untrack(() => build)) return;
+    readingBuild = true;
+    backend
+      .getSystem()
+      .then(
+        (system) => (build = system),
+        () => {},
+      )
+      .finally(() => (readingBuild = false));
+  });
+
   $effect(() => {
     // The profiles need a credential while a password is set, so they are
     // read on any page but sign-in, and again after signing in.
@@ -321,7 +339,7 @@ SPDX-License-Identifier: MIT
 <main
   bind:this={main}
   tabindex="-1"
-  class="outline-none {overHero ? '' : 'px-4 pt-1 pb-24 md:px-10 md:pb-10'}"
+  class="grow outline-none {overHero ? '' : 'px-4 pt-1 pb-6 md:px-10'}"
 >
   {#if page?.name === "home"}
     {#if demo && intro.shown}
@@ -375,7 +393,12 @@ SPDX-License-Identifier: MIT
   {/if}
 </main>
 
+{#if build && page?.name !== "signIn" && page?.name !== "watch"}
+  <BuildInfo system={build} />
+{/if}
 {#if browsing}
+  <!-- The end of the page, clear of the bar below. -->
+  <div class="h-20 md:hidden"></div>
   <!-- Phones reach the main pages from a bar under the thumb. -->
   <nav
     class="fixed inset-x-0 bottom-0 z-10 grid grid-cols-2 gap-1 bg-tile p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:hidden"

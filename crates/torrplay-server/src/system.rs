@@ -37,6 +37,10 @@ const EXPOSITION: &str = "text/plain; version=0.0.4; charset=utf-8";
 /// The application's version.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// The commit being built and its date, which `build.rs` records if it can.
+const COMMIT: Option<&str> = option_env!("TORRPLAY_COMMIT");
+const COMMIT_DATE: Option<&str> = option_env!("TORRPLAY_COMMIT_DATE");
+
 fn system_path() -> String {
     format!("{BASE}/system")
 }
@@ -61,6 +65,8 @@ pub(crate) async fn get_system<E: Engine>(
     let run = app.run();
     let representation = api::System {
         version: VERSION.to_owned(),
+        commit: COMMIT.map(str::to_owned),
+        commit_date: COMMIT_DATE.and_then(|date| date.parse().ok()),
         os: std::env::consts::OS.to_owned(),
         architecture: std::env::consts::ARCH.to_owned(),
         run_id: run.id().to_string(),

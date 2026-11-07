@@ -15,7 +15,7 @@ import { location, navigate, replaceQuery } from "./lib/navigation.svelte";
 import { resetProfiles } from "./lib/profile.svelte";
 import { addPath, homePath, libraryPath, settingsPath, titlePath } from "./lib/routes";
 import { signIn, signOut } from "./lib/session.svelte";
-import { fakeBackend, profile, torrent } from "./testing";
+import { fakeBackend, profile, system, torrent } from "./testing";
 
 const shown = torrent(1);
 
@@ -290,4 +290,25 @@ it("revokes this device's token on signing out, and signs out even if that fails
 
   await waitFor(() => expect(location.path).toBe("/sign-in"));
   expect(deleteAccessToken).toHaveBeenCalledWith("tok_1");
+});
+
+it("ends a page with the build, and goes without it when it cannot be read", async () => {
+  navigate(libraryPath);
+  const shownBuild = render(App, { props: { backend: backend() } });
+  expect(await screen.findByText(/TorrPlay 0\.1\.0 · 5c5f18f/)).toBeInTheDocument();
+  shownBuild.unmount();
+
+  render(App, {
+    props: { backend: backend({ getSystem: vi.fn(() => Promise.reject(new Error("no"))) }) },
+  });
+  await screen.findByRole("heading", { name: en.nav.library });
+  expect(screen.queryByText(/TorrPlay 0\.1\.0/)).not.toBeInTheDocument();
+});
+
+it("does not read the build on the sign-in page, which has no credential yet", async () => {
+  navigate("/sign-in");
+  const getSystem = vi.fn(async () => system());
+  render(App, { props: { backend: backend({ getSystem }) } });
+  await tick();
+  expect(getSystem).not.toHaveBeenCalled();
 });

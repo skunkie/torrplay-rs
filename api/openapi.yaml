@@ -2923,6 +2923,8 @@ paths:
                   summary: A day after starting on Linux
                   value:
                     version: 0.1.0
+                    commit: 5c5f18f
+                    commit_date: '2026-11-07'
                     os: linux
                     architecture: aarch64
                     run_id: run_q4m2kzb6hxw3rjpt5yc4ula7na
@@ -7239,12 +7241,26 @@ components:
     System:
       type: object
       description: The running process's build, platform, and resource use.
-      required: [version, os, architecture, run_id, started_at, uptime_seconds, resident_memory_bytes, urls, links]
+      required: [version, commit, commit_date, os, architecture, run_id, started_at, uptime_seconds, resident_memory_bytes, urls, links]
       properties:
         version:
           type: string
           description: The application's version, as its package declares it.
           examples: [0.1.0]
+        commit:
+          type: [string, 'null']
+          description: >-
+            The abbreviated Git commit the build came from, followed by -dirty
+            if the sources had uncommitted changes, or null for a build from
+            outside a Git checkout, such as a source archive.
+          examples: [5c5f18f]
+        commit_date:
+          type: [string, 'null']
+          format: date
+          description: >-
+            The date of that commit, in UTC, or null when commit is null. It
+            says how old the code is, whenever it was compiled.
+          examples: ['2026-11-07']
         os:
           type: string
           description: >-

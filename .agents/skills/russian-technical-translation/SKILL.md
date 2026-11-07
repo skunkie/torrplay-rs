@@ -160,6 +160,7 @@ English message.
 | Background download | Фоновая загрузка | |
 | Addon (Stremio) | Аддон | `Stremio` stays in Latin letters, as do `MCP`, `localhost`, and a local address |
 | Log / log record | Журнал / запись | Never `лог` |
+| Build (of the application) | Сборка | Never `билд` |
 | Log level: error, warn, info, debug, trace | Уровень журнала: error, warn, info, debug, trace | The names stay in Latin letters, as the records show them |
 | Pinned / eviction (cache) | Закреплено / вытеснение | |
 
