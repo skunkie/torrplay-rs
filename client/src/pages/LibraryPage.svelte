@@ -12,6 +12,7 @@ SPDX-License-Identifier: MIT
   import { imageGrant, refreshGrant } from "../lib/grant.svelte";
   import { failureMessage } from "../lib/i18n/index.svelte";
   import { formatQuery, parseQuery } from "../lib/library-query";
+  import { librarySearch } from "../lib/library-search.svelte";
   import { location, replaceQuery } from "../lib/navigation.svelte";
   import { posterUrl } from "../lib/playback";
   import { poll } from "../lib/poll";
@@ -102,6 +103,12 @@ SPDX-License-Identifier: MIT
       if (mine === generation) loading = false;
     }
   }
+
+  /** The header's search box shows this page's search. */
+  $effect(() => {
+    librarySearch.text = searchText;
+    librarySearch.input = search;
+  });
 
   function search(text: string): void {
     searchText = text;

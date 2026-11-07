@@ -76,8 +76,8 @@ fn main() -> ExitCode {
 
 async fn run(config: &Config, startup: torrplay::Startup) -> anyhow::Result<()> {
     // Before the listener binds, so the API never answers without them.
-    let terminated = torrplay::termination();
-    torrplay::run_server(config, startup, |_| {}, terminated).await
+    let stop = torrplay::termination();
+    torrplay::run_server(config, startup, |_| {}, stop).await
 }
 
 /// Runs `torrplay password`, reading a new password from standard input.
@@ -237,7 +237,7 @@ fn mcp(config: McpConfig) -> ExitCode {
                 torrplay_mcp::serve_stdio(server).await?;
             }
             Some(address) => {
-                let shutdown = torrplay::termination();
+                let shutdown = torrplay::termination().shutdown;
                 let listener = torrplay_mcp::HttpListener::bind(address).await?;
                 tracing::info!(
                     application = %url,

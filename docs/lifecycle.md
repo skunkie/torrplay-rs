@@ -459,8 +459,18 @@ forces exit if it has not finished after 30 seconds:
    default; streams still running afterward are canceled.
 4. The listener closes, idle readers are released, and metadata retrieval
    is canceled.
-5. The engine closes its peer connections and stops.
-6. The process exits.
+5. Connections get 2 seconds to finish, and longer while a request handler is
+   running, so work under way completes, up to 25 seconds after the signal. Those
+   still open afterward are closed and logged with their peers' addresses, since
+   a peer that sent part of a request or stopped reading may never let one finish.
+6. The engine closes its peer connections and stops.
+7. The store records the clean shutdown, and the process exits.
+
+A second termination signal skips the rest of the drain period and leaves
+running handlers only those 2 seconds, since one may be waiting for a peer that
+has stalled. Connections with no handler running close at once, and the later
+steps still run. A termination signal that arrives after startup has already failed, or in the
+desktop application after its window has closed, does the same.
 
 ## Library
 

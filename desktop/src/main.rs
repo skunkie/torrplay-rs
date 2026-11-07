@@ -194,7 +194,10 @@ fn serve(
     let result = runtime.block_on(async {
         // Before the listener binds, as in the executable. Logging out sends these, and
         // the store must still record a clean shutdown.
-        let terminated = torrplay::termination();
+        // A dropped sender means the application is ending too.
+        let torrplay::StopRequests { shutdown, hurry } = torrplay::termination_or(async {
+            let _ = stop.await;
+        });
         torrplay::run_server(
             config,
             startup,
@@ -207,13 +210,12 @@ fn serve(
                     shell.request_stop();
                 }
             },
-            async {
-                tokio::select! {
-                    // A dropped sender means the application is ending too.
-                    _ = stop => {}
-                    () = terminated => {}
-                }
-                stopping.state::<Shell>().advance(Stage::Stopping);
+            torrplay::StopRequests {
+                shutdown: async {
+                    shutdown.await;
+                    stopping.state::<Shell>().advance(Stage::Stopping);
+                },
+                hurry,
             },
         )
         .await

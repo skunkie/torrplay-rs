@@ -614,9 +614,10 @@ class LifecycleTests(unittest.TestCase):
             # Long enough to be stopping: a window's helpers stay listed, so this can't wait
             # for the list to empty.
             time.sleep(1)
-            second = self.start()
-            second.wait(20)
-            # The first ends with no dialog to wait on, then starts the new run.
+            # Either the first takes this as a second launch and starts a new run when it
+            # has stopped, or it has already stopped and this is the new run.
+            self.start()
+            # The first ends with no dialog to wait on.
             process.wait(STOP_SECONDS)
         wait_until(listening, READY_SECONDS, "a new run")
         wait_until(self.windows.closable, READY_SECONDS, "a new window")
@@ -654,8 +655,7 @@ class LifecycleTests(unittest.TestCase):
             time.sleep(0.3)
             process.send_signal(signal.SIGTERM)
             time.sleep(0.5)
-            second = self.start()
-            second.wait(20)
+            self.start()
             process.wait(STOP_SECONDS)
         wait_until(listening, READY_SECONDS, "a new run")
 

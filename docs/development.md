@@ -281,8 +281,11 @@ knowledge, and it opens before the engine is ready, so `/readyz` answers
 `503` until the engine has started. SIGTERM, SIGINT, or Ctrl+C starts the
 lifecycle's shutdown: `/readyz` answers `503` and state changes are refused
 while reads continue, streams in progress get a 10-second drain period and
-are then canceled with the idle readers, the listener closes, and the engine
-stops. The process exits with an error if that takes longer than 30 seconds.
+are then canceled with the idle readers, the listener closes, connections get
+2 seconds to finish, longer for a running handler, and are then closed, and the
+engine stops. A second signal skips the drain and gives running handlers only
+those 2 seconds. The process exits with an error if that takes longer than
+30 seconds.
 
 `scripts/play.sh` plays a torrent through a running instance with curl and jq:
 it adds a magnet URI or torrent file, reusing a torrent TorrPlay already has,
