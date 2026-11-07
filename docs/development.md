@@ -222,7 +222,7 @@ cargo-deny --manifest-path desktop/Cargo.toml --locked check
 
 The smoke test drives a built application through WebKitWebDriver on a virtual
 display, in a private temporary home, so nothing appears on your desktop. It needs
-`webkit2gtk-driver`, `xvfb`, `dbus-daemon`, `python3-gi` with `gir1.2-gtk-3.0`, and
+`webkit2gtk-driver` (`webkitgtk-webdriver` on Ubuntu), `xvfb`, `dbus-daemon`, `python3-gi` with `gir1.2-gtk-3.0`, and
 GStreamer's plugins. It stops only what it started. From `desktop/`:
 
 ```sh
