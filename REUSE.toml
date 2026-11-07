@@ -6,7 +6,7 @@ version = 1
 
 # Cargo generates the lockfile, and its format has no place for a header.
 [[annotations]]
-path = "Cargo.lock"
+path = ["Cargo.lock", "desktop/Cargo.lock"]
 SPDX-FileCopyrightText = "2026 TorrPlay"
 SPDX-License-Identifier = "MIT"
 
@@ -80,5 +80,13 @@ SPDX-License-Identifier = "MIT"
 # and CI fails when they differ from its output.
 [[annotations]]
 path = "client/src/lib/api/schema.d.ts"
+SPDX-FileCopyrightText = "2026 TorrPlay"
+SPDX-License-Identifier = "MIT"
+
+# Tauri reads the desktop app's configuration as JSON, which has no comments, and
+# generates the schemas under gen, which Git ignores. Its icon is
+# client/public/favicon.svg rendered as an image, which has no place for a header.
+[[annotations]]
+path = ["desktop/tauri.conf.json", "desktop/icons/*.png", "desktop/gen/**"]
 SPDX-FileCopyrightText = "2026 TorrPlay"
 SPDX-License-Identifier = "MIT"

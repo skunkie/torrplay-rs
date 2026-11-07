@@ -183,6 +183,35 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --locked --workspace --all-features --no-deps
 
+  desktop:
+    name: Desktop application
+    needs: stage
+    if: needs.stage.outputs.rust == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          components: clippy, rustfmt
+          build-warnings: warn
+          cache-workspaces: desktop
+      - name: Install WebKitGTK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev librsvg2-dev
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Lint
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --locked
+
   generated:
     name: Generated wire types
     needs: stage
@@ -236,6 +265,8 @@ jobs:
           echo "${RUNNER_TEMP}/${name}" >> "$GITHUB_PATH"
       - name: Check licenses, advisories, bans, and sources
         run: cargo-deny --locked check
+      - name: Check the desktop application's dependencies
+        run: cargo-deny --manifest-path desktop/Cargo.toml --locked check
 
   browser:
     name: Browser smoke test

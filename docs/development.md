@@ -199,6 +199,30 @@ the server without the client. While developing, `pnpm dev` serves the client wi
 passes `/api`, `/livez`, and `/readyz` to a running TorrPlay at
 `TORRPLAY_URL`, by default `http://127.0.0.1:8642`.
 
+## Desktop application
+
+`desktop/` is a Tauri application around the server. It has its own Cargo workspace
+and lockfile, so the main workspace builds without WebKitGTK. On Debian or Ubuntu,
+install what it needs:
+
+```sh
+sudo apt install libwebkit2gtk-4.1-dev libxdo-dev librsvg2-dev
+```
+
+Build the client first, then run or check it from `desktop/`. It takes the server's
+command line:
+
+```sh
+cargo run -- --data-dir /tmp/torrplay-desktop
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+cargo-deny --manifest-path desktop/Cargo.toml --locked check
+```
+
+Run the last command from the repository root. Setting `CARGO_TARGET_DIR=../target`
+shares the main workspace's build directory.
+
 ## Running TorrPlay
 
 ```bash

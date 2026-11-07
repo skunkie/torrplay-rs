@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# cargo-deny policy for the desktop application's dependency graph: the root
+# policy, plus what Tauri and its GTK bindings bring and only they need.
+#
+# cargo-deny policy for the workspace's dependency graph. Extend the license
+# list only for licenses compatible with distributing the project under MIT,
+# and say why in the commit that adds one.
+
+[advisories]
+yanked = "deny"
+ignore = [
+    # Advisories about maintenance, not vulnerabilities, in crates Tauri's plugins
+    # and GTK bindings pin. Revisit when those move to zbus 6 and GTK 4.
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error: a build-time macro of the GTK bindings" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant: merged into zbus 6, which the plugins do not use yet" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names: merged into zbus 6, which the plugins do not use yet" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: merged into zbus 6, which the plugins do not use yet" },
+    # ringbuf 0.4 in librqbit-utp; the fix needs ringbuf 0.5, which only a
+    # librqbit change can bring. TorrPlay listens and connects over TCP only,
+    # so the uTP code that uses ringbuf never runs. Revisit with the fork.
+    { id = "RUSTSEC-2026-0293", reason = "uTP is unused; fixing it needs a librqbit change" },
+]
+
+[licenses]
+# Permissive licenses that librqbit's dependencies use and that allow
+# distributing the project under MIT with their notices preserved.
+allow = [
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.9
+exceptions = [
+    # MPL-2.0 is file-level copyleft and compatible with a larger MIT work;
+    # it is allowed only for this unmodified dependency.
+    { crate = "option-ext", allow = ["MPL-2.0"] },
+    { crate = "cssparser", allow = ["MPL-2.0"] },
+    { crate = "cssparser-macros", allow = ["MPL-2.0"] },
+    { crate = "dtoa-short", allow = ["MPL-2.0"] },
+    { crate = "selectors", allow = ["MPL-2.0"] },
+    # The LLVM exception only loosens Apache-2.0 for binaries.
+    { crate = "target-lexicon", allow = ["Apache-2.0 WITH LLVM-exception"] },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# librqbit from the fork ADR 2 pins.
+allow-git = ["https://github.com/skunkie/rqbit"]
