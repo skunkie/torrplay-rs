@@ -6,6 +6,7 @@ SPDX-License-Identifier: MIT
 <script lang="ts">
   import AllPieces from "../components/AllPieces.svelte";
   import ConfirmDialog from "../components/ConfirmDialog.svelte";
+  import Dotted from "../components/Dotted.svelte";
   import DownloadPanel from "../components/DownloadPanel.svelte";
   import Hero from "../components/Hero.svelte";
   import Icon from "../components/Icon.svelte";
@@ -146,7 +147,8 @@ SPDX-License-Identifier: MIT
         <span class="truncate font-semibold">{label}</span>
         <span class="flex gap-1.5 text-xs text-text-muted">
           {#if detail}
-            <span class="truncate">{detail}</span>
+            <!-- Cut from its start, since a season's files differ near their ends. -->
+            <span class="truncate text-left [direction:rtl]"><bdi>{detail}</bdi></span>
             <span aria-hidden="true">·</span>
           {/if}
           <span class="shrink-0">{formatBytes(item.file.size_bytes)}</span>
@@ -200,7 +202,7 @@ SPDX-License-Identifier: MIT
     {#if torrent}
       {@const label = stateLabel(torrent)}
       <p class="flex flex-wrap items-center gap-2 mono text-accent-text uppercase">
-        <span>{torrentDetails(torrent)}</span>
+        <Dotted parts={torrentDetails(torrent)} />
         {#if label}
           <span class="rounded-lg bg-scrim/80 px-2 py-1 text-hero-text">{label}</span>
         {/if}

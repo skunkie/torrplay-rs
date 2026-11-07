@@ -35,11 +35,10 @@ export function nameBelowTitle(torrent: Torrent): string | undefined {
   return replaced || name.length > 500 ? name : undefined;
 }
 
-/** A torrent's year and kind, such as "2026 · Series". */
-export function torrentDetails(torrent: Torrent): string {
-  return [torrent.year, torrent.kind ? t().kinds[torrent.kind] : undefined]
-    .filter((part) => part !== null && part !== undefined)
-    .join(" · ");
+/** A torrent's year and kind, such as ["2026", "Series"], for `Dotted`. Either may be
+ * missing. */
+export function torrentDetails(torrent: Torrent): (string | undefined)[] {
+  return [torrent.year?.toString(), torrent.kind ? t().kinds[torrent.kind] : undefined];
 }
 
 /** A short label for a torrent's observed state where it matters to
@@ -93,4 +92,12 @@ function timeLeftLabel(progress: Schemas["Progress"] | null | undefined): string
 export function entryReason(entry: UpNextEntry): string {
   if (entry.reason === "next_episode" || !entry.progress) return t().progress.nextEpisode;
   return progressLabel(entry.progress) ?? t().progress.resume;
+}
+
+/** `name` in the parts a line may break between: after each dot, underscore, or hyphen
+ * when it has no spaces, as a torrent's name may not. Spaces are enough otherwise, and
+ * a dot there may be inside an abbreviation. */
+export function breakParts(name: string): string[] {
+  if (/\s/.test(name)) return [name];
+  return name.match(/[^._-]*[._-]*/g)?.filter(Boolean) ?? [];
 }

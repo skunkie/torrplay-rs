@@ -7,6 +7,7 @@ SPDX-License-Identifier: MIT
   import { tick } from "svelte";
 
   import ConfirmDialog from "../components/ConfirmDialog.svelte";
+  import Dotted from "../components/Dotted.svelte";
   import InlineError from "../components/InlineError.svelte";
   import RetryAlert from "../components/RetryAlert.svelte";
   import SettingsShell from "../components/SettingsShell.svelte";
@@ -181,10 +182,14 @@ SPDX-License-Identifier: MIT
           {#each tokens as token (token.id)}
             <li class="flex items-center gap-3 border-t border-empty py-2 text-meta">
               <span id="link-{token.id}" class="min-w-0 grow">
-                {t().stremio.created(formatFromNow(token.created_at))} ·
-                {token.last_used_at
-                  ? t().stremio.lastUsed(formatFromNow(token.last_used_at))
-                  : t().stremio.notUsed}
+                <Dotted
+                  parts={[
+                    t().stremio.created(formatFromNow(token.created_at)),
+                    token.last_used_at
+                      ? t().stremio.lastUsed(formatFromNow(token.last_used_at))
+                      : t().stremio.notUsed,
+                  ]}
+                />
               </span>
               <button
                 type="button"

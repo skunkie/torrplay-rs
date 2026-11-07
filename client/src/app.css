@@ -33,8 +33,13 @@
   --color-scrim: #050c14;
   --color-player: #000000;
 
+  /* The space a part of `Dotted` keeps for its dot, wide enough on a monospaced line. */
+  --spacing-dot: 1.5em;
+
   --font-sans: "Onest Variable", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  /* Its ligatures draw a gap inside "://", which reads as a space in a URL. */
+  --font-mono--font-feature-settings: "calt" 0;
 
   --text-display: 3.25rem;
   --text-display--line-height: 1;
@@ -108,6 +113,18 @@
 @layer base {
   body {
     @apply bg-surface text-body text-text min-h-dvh font-sans antialiased;
+  }
+
+  /* No word alone on the last line of a heading, a label, or a paragraph. */
+  h1,
+  h2,
+  h3,
+  label {
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
   }
 
   /* The build's line stays at the bottom of a page shorter than the window. */
@@ -184,6 +201,23 @@
 @utility list-grid {
   @apply grid gap-2;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 38rem), 1fr));
+}
+
+/* Parts with a dot between them, in `Dotted`. Each part's dot lies in the space before it,
+   which the line's start clips. */
+@utility dotted {
+  @apply relative inline-block max-w-full pl-dot wrap-break-word;
+
+  &::before {
+    @apply absolute left-0 w-dot text-center;
+    content: "·";
+    /* Not read aloud: the separator between parts is, and this one is only drawn. */
+    content: "·" / "";
+  }
+}
+
+@utility dotted-gap {
+  font-size: 0;
 }
 
 @utility mono {

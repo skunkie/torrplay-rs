@@ -4,6 +4,7 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import Dotted from "../components/Dotted.svelte";
   import Hero from "../components/Hero.svelte";
   import Icon from "../components/Icon.svelte";
   import RetryAlert from "../components/RetryAlert.svelte";
@@ -74,9 +75,7 @@ SPDX-License-Identifier: MIT
   );
   const first = $derived(preview ? firstVideo(preview.files) : undefined);
   const facts = $derived(
-    preview
-      ? `${formatBytes(preview.size_bytes)} · ${t().add.files(preview.file_count)}`
-      : undefined,
+    preview ? [formatBytes(preview.size_bytes), t().add.files(preview.file_count)] : [],
   );
   const label = $derived(
     existing ? t().add.inLibrary : preview ? t().add.notInLibrary : t().add.magnetUnknown,
@@ -169,15 +168,11 @@ SPDX-License-Identifier: MIT
     class="min-h-85 pt-16"
     gutter="md:px-10 md:pb-8"
   >
-    <p class="flex flex-wrap gap-2 mono text-accent-text uppercase">
+    <p class="mono text-accent-text uppercase">
       {#if known}
-        <span>{label}</span>
+        <Dotted parts={[label, ...facts].flat()} />
       {:else}
         <span role="status">{t().add.reading}</span>
-      {/if}
-      {#if facts}
-        <span aria-hidden="true">·</span>
-        <span>{facts}</span>
       {/if}
     </p>
     <h1

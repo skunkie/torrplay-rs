@@ -229,8 +229,8 @@ it("lists tokens by scope and times, marking this device's", async () => {
   const other = screen.getByText("Scraper").closest("tr") as HTMLElement;
   expect(within(other).queryByText("This device")).toBeNull();
   expect(within(other).getAllByText("Metrics only").length).toBeGreaterThan(0);
-  expect(other.textContent).toContain("2 days ago");
-  expect(other.textContent).toContain("in 3 days");
+  expect(other.textContent).toContain("2\u00A0days ago");
+  expect(other.textContent).toContain("in 3\u00A0days");
 });
 
 it("creates a token with the password and shows its secret once", async () => {

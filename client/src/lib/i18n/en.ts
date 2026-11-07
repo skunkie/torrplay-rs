@@ -236,7 +236,7 @@ export const en = {
     reading: "Reading the torrent file…",
     notInLibrary: "Not in the library",
     inLibrary: "Already in the library",
-    magnetUnknown: "Magnet link · size and files not known yet",
+    magnetUnknown: ["Magnet link", "size and files not known yet"],
     files: (count: number) =>
       `${count}\u00A0${plural("en-US", count, { one: "file", other: "files" })}`,
     moreFiles: (count: number) =>
@@ -266,8 +266,10 @@ export const en = {
     hide: "Hide",
     showPieces: (percent: number) => `${percentText("en-US", percent)} downloaded, show all pieces`,
     hidePieces: (percent: number) => `${percentText("en-US", percent)} downloaded, hide all pieces`,
-    piecesSummary: (downloaded: number, total: number, arriving: number) =>
-      `${downloaded.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} · ${arriving.toLocaleString("en-US")} arriving`,
+    piecesSummary: (downloaded: number, total: number, arriving: number) => [
+      `${downloaded.toLocaleString("en-US")} of ${total.toLocaleString("en-US")}`,
+      `${arriving.toLocaleString("en-US")} arriving`,
+    ],
     pieceHover: (piece: number, state: string) =>
       `Piece ${piece.toLocaleString("en-US")}: ${state}`,
     readerActive: "Active",
@@ -408,17 +410,20 @@ export const en = {
     urls: "Other devices reach TorrPlay at",
     readers: "Readers",
     activeReaders: (count: number) => `${count} active`,
-    otherReaders: (idle: number, waiting: number) => `${idle} idle · ${waiting} waiting`,
+    otherReaders: (idle: number, waiting: number) => [`${idle} idle`, `${waiting} waiting`],
     speed: "Speed",
-    upload: (rate: string, peers: number) => `Up ${rate} · peers: ${peers}`,
+    upload: (rate: string, peers: number) => [`Up ${rate}`, `peers: ${peers}`],
     torrents: "Torrents",
     state: (name: string, count: number) => `${name}: ${count}`,
     downloading: "Downloading",
     transferred: "Downloaded since start",
-    uploaded: (uploaded: string, streamed: string) => `Up ${uploaded} · streamed ${streamed}`,
+    uploaded: (uploaded: string, streamed: string) => [`Up ${uploaded}`, `streamed ${streamed}`],
     cache: "Piece cache",
-    cacheUse: (usage: string, capacity: string, pinned: string, evictions: string) =>
-      `${usage} / ${capacity} · ${pinned} pinned · evictions: ${evictions}`,
+    cacheUse: (usage: string, capacity: string, pinned: string, evictions: string) => [
+      `${usage} / ${capacity}`,
+      `${pinned} pinned`,
+      `evictions: ${evictions}`,
+    ],
     log: "Log",
     logSearch: "Search the log",
     logFilter: "Lowest level shown",

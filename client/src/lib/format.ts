@@ -19,17 +19,25 @@ export function formatShortBuild(system: System): string {
   return [`TorrPlay ${system.version}`, system.commit].filter(Boolean).join(" · ");
 }
 
-/** The build on one line: application and version, commit, the commit's date in the
- * page's language, and platform. It breaks only between those, where it must. */
-export function formatBuild(system: System): string {
+/** The build's parts: application and version, commit, the commit's date in the page's
+ * language, and platform. */
+export function buildParts(system: System): string[] {
   const date =
     system.commit_date &&
     new Intl.DateTimeFormat(i18n.locale, { dateStyle: "medium", timeZone: "UTC" }).format(
       new Date(`${system.commit_date}T00:00:00Z`),
     );
-  return [`TorrPlay ${system.version}`, system.commit, date, `${system.os} ${system.architecture}`]
-    .flatMap((part) => (part ? [part.replaceAll(" ", "\u00A0")] : []))
-    .join(" · ");
+  return [
+    `TorrPlay ${system.version}`,
+    system.commit,
+    date,
+    `${system.os} ${system.architecture}`,
+  ].flatMap((part) => (part ? [part.replaceAll(" ", "\u00A0")] : []));
+}
+
+/** `text` with no line break between a number and the word after it. */
+function keepNumberWithUnit(text: string): string {
+  return text.replace(/(\d) /g, "$1\u00A0");
 }
 
 /** How far `at` is from `now`, such as "2 days ago" or "in 3 months", to the
@@ -38,10 +46,10 @@ export function formatFromNow(at: string, now: number = Date.now()): string {
   let amount = (new Date(at).getTime() - now) / HOUR_MS;
   const format = new Intl.RelativeTimeFormat(i18n.locale, { numeric: "auto" });
   for (const [unit, next] of TIME_UNITS) {
-    if (Math.abs(amount) < next) return format.format(Math.round(amount), unit);
+    if (Math.abs(amount) < next) return keepNumberWithUnit(format.format(Math.round(amount), unit));
     amount /= next;
   }
-  return format.format(Math.round(amount), "year");
+  return keepNumberWithUnit(format.format(Math.round(amount), "year"));
 }
 
 /** `bytes` in binary units, in the page's language, such as "13.2 MiB". */

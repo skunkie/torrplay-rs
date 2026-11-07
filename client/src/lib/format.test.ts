@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { system } from "../testing";
 import {
-  formatBuild,
+  buildParts,
   formatBytes,
   formatDuration,
   formatFromNow,
@@ -36,11 +36,11 @@ const NOW = Date.parse("2026-11-06T12:00:00Z");
 
 it.each([
   ["2026-11-06T11:50:00Z", "this hour"],
-  ["2026-11-06T09:00:00Z", "3 hours ago"],
-  ["2026-11-04T12:00:00Z", "2 days ago"],
-  ["2026-11-09T12:00:00Z", "in 3 days"],
-  ["2026-08-08T12:00:00Z", "3 months ago"],
-  ["2029-11-06T12:00:00Z", "in 3 years"],
+  ["2026-11-06T09:00:00Z", "3\u00A0hours ago"],
+  ["2026-11-04T12:00:00Z", "2\u00A0days ago"],
+  ["2026-11-09T12:00:00Z", "in 3\u00A0days"],
+  ["2026-08-08T12:00:00Z", "3\u00A0months ago"],
+  ["2029-11-06T12:00:00Z", "in 3\u00A0years"],
 ])("tells %s as %s", (at, told) => {
   expect(formatFromNow(at, NOW)).toBe(told);
 });
@@ -74,18 +74,21 @@ describe("formatLogTime", () => {
 
 describe("the build's line", () => {
   it("names the application, version, commit, date, and platform", () => {
-    expect(formatBuild(system())).toBe(
-      "TorrPlay\u00A00.1.0 · 5c5f18f · Nov\u00A07,\u00A02026 · linux\u00A0aarch64",
-    );
+    expect(buildParts(system())).toEqual([
+      "TorrPlay\u00A00.1.0",
+      "5c5f18f",
+      "Nov\u00A07,\u00A02026",
+      "linux\u00A0aarch64",
+    ]);
   });
 
   it("does not move the commit's date by the viewer's time zone", () => {
-    expect(formatBuild(system({ commit_date: "2026-01-01" }))).toContain("Jan\u00A01,\u00A02026");
+    expect(buildParts(system({ commit_date: "2026-01-01" }))).toContain("Jan\u00A01,\u00A02026");
   });
 
   it("leaves out what a build from outside a checkout does not know", () => {
     const unknown = system({ commit: null, commit_date: null });
-    expect(formatBuild(unknown)).toBe("TorrPlay\u00A00.1.0 · linux\u00A0aarch64");
+    expect(buildParts(unknown)).toEqual(["TorrPlay\u00A00.1.0", "linux\u00A0aarch64"]);
   });
 
   it("is only the name, version, and commit in its short form", () => {
