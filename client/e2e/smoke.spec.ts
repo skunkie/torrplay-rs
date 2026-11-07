@@ -779,6 +779,30 @@ test.describe("on the real server", () => {
     });
   });
 
+  test("keeps the search box in one place on Home and Library", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/demo");
+    const box = page.getByRole("banner").getByRole("searchbox");
+    const atHome = await box.boundingBox();
+    await page.getByRole("link", { name: "Library" }).first().click();
+    await expect(page).toHaveURL(/\/demo\/library/);
+    expect(await box.boundingBox()).toEqual(atHome);
+
+    // There is one box, and it searches the page.
+    await expect(page.getByRole("searchbox")).toHaveCount(1);
+    await box.fill("orchard");
+    await expect(page).toHaveURL(/q=orchard/);
+    await expect(page.getByRole("link", { name: /Orchard Road/ })).toBeVisible();
+    await expect(page.getByRole("link", { name: /Glass Harbor/ })).toHaveCount(0);
+    await page.reload();
+    await expect(box).toHaveValue("orchard");
+
+    // A phone has no box in its header, so the page has one.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByRole("banner").getByRole("searchbox")).toHaveCount(0);
+    await expect(page.getByRole("main").getByRole("searchbox")).toHaveValue("orchard");
+  });
+
   test("signing out revokes the device's token", async ({ page, request }) => {
     const PASSWORD = "an invented test passphrase";
     expect((await request.put("/api/v1/password", { data: { password: PASSWORD } })).ok()).toBe(

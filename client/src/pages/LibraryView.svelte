@@ -81,7 +81,8 @@ SPDX-License-Identifier: MIT
 <div class="flex flex-col gap-4">
   <div class="flex flex-wrap items-center gap-3">
     <h1 class="mr-auto text-2xl font-bold">{t().library.title}</h1>
-    <label class="flex items-center gap-2">
+    <!-- From 1024 pixels, the header's search box is this one. -->
+    <label class="flex items-center gap-2 lg:hidden">
       <span class="sr-only">{t().library.search}</span>
       <input
         type="search"

@@ -186,7 +186,9 @@ with what to watch.
   reports each torrent's download.
 - **Navigation.** From 768 pixels wide, the header holds the logo, a segmented
   Home and Library, Add, search, and the menu; search is a box from 1024 pixels,
-  and a button to the Library below that. Narrower, a bar at the bottom holds
+  in the same place on both pages, where on Library it searches as you type. Below
+  that it is a button to the Library, which has its box in the page. Narrower, a
+  bar at the bottom holds
   Home and Library. The menu, under the profile's initial, switches profile
   and language and signs out. The title page replaces the header with a back
   link and the menu over its hero.
