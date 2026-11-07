@@ -987,17 +987,82 @@ pub fn termination() -> impl std::future::Future<Output = ()> {
     }
 }
 
+/// In the failure of [`run_server`] or [`serve`], says the engine never started, as
+/// opposed to the application failing after it had.
+#[derive(Debug, thiserror::Error)]
+#[error("the engine did not start")]
+pub struct EngineDidNotStart;
+
+/// How long exiting waits for blocking tasks still running after shutdown: they
+/// must not hold the process.
+pub const RUNTIME_SHUTDOWN: Duration = Duration::from_secs(1);
+
+/// What [`start_logging`] hands to [`run_server`].
+#[derive(Debug)]
+pub struct Startup {
+    /// Changes the logs' level, and flushes them before the process ends.
+    pub log: LogControl,
+    /// The process run.
+    pub run: Run,
+    /// The log files, if they could be opened.
+    pub log_files: Option<LogFiles>,
+}
+
+/// Starts logging for `config` in `format`, to the data directory's log files and
+/// standard error, and raises the open file limit, as anything that runs the server
+/// does first. Without a data directory, records go to standard error alone, and the
+/// failure is logged once logging starts.
+pub fn start_logging(config: &Config, format: LogFormat) -> Startup {
+    let run = Run::draw();
+    let files = config
+        .data_dir()
+        .and_then(|data_dir| Ok(LogFiles::open(&data_dir.join("logs"))?));
+    let (files, files_failed) = match files {
+        Ok(files) => (Some(files), None),
+        Err(error) => (None, Some(error)),
+    };
+    let log_files = files.as_ref().map(|(files, _)| files.clone());
+    let log = init_logging(
+        config.log_level.unwrap_or_default(),
+        config.log_filter.as_deref(),
+        format,
+        &run,
+        files,
+    );
+    if let Some(error) = files_failed {
+        tracing::warn!(
+            error = %format!("{error:#}"),
+            "the log files could not be opened; logs go to standard error only"
+        );
+    }
+    match torrplay_engine::raise_open_file_limit() {
+        Ok(limit) => tracing::info!(limit, "open file limit"),
+        Err(error) => tracing::warn!(
+            error = %format!("{error:#}"),
+            "the open file limit could not be raised; busy torrents may exhaust it"
+        ),
+    }
+    Startup {
+        log,
+        run,
+        log_files,
+    }
+}
+
 /// Runs the application for `config` until `shutdown` completes: opens the store in
 /// the data directory, binds the API's listener, calls `listening` with its address,
 /// and [`serve`]s. The executable and the desktop shell both start this way.
 pub async fn run_server(
     config: &Config,
-    log: LogControl,
-    run: Run,
-    log_files: Option<LogFiles>,
+    startup: Startup,
     listening: impl FnOnce(SocketAddr),
     shutdown: impl Future<Output = ()>,
 ) -> anyhow::Result<()> {
+    let Startup {
+        log,
+        run,
+        log_files,
+    } = startup;
     let data_dir = config.data_dir()?;
     let opening = data_dir.clone();
     let (store, contents) = tokio::task::spawn_blocking(move || Store::open(&opening))
@@ -1176,7 +1241,7 @@ pub async fn serve(
     app.apply_dht().await.context("configuring the DHT")?;
 
     let started = tokio::select! {
-        started = engine.start() => started.context("the engine did not start"),
+        started = engine.start() => started.context(EngineDidNotStart),
         () = &mut shutdown => Ok(()),
         served = &mut server => Err(server_ended(served)),
     };

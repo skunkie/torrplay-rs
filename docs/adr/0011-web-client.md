@@ -68,7 +68,8 @@ seek index. The plan keeps them.
   stored sign-in and language belong to its origin. Around that page, the window
   does what a browser would: a download goes to the downloads directory, and any
   address but its own goes to the system, except schemes the client never uses,
-  which it refuses.
+  which it refuses. It listens as `torrplay` does, on every interface, so DLNA and
+  other devices keep working; a password is what protects it on a shared network.
 
 ### API access
 

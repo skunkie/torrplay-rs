@@ -188,7 +188,65 @@ jobs:
     needs: stage
     if: needs.stage.outputs.rust == 'true'
     runs-on: ubuntu-26.04
-    timeout-minutes: 30
+    timeout-minutes: 45
+    env:
+      # Corepack fetches the pnpm release package.json names and checks it
+      # against the SHA-512 written there.
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: client/.node-version
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          components: clippy, rustfmt
+          build-warnings: warn
+          cache-workspaces: desktop
+      - name: Install WebKitGTK and what the smoke test drives it with
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev librsvg2-dev \
+            webkit2gtk-driver xvfb dbus-daemon python3-gi gir1.2-gtk-3.0 \
+            gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Lint
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --locked
+      - name: Enable pnpm
+        working-directory: client
+        run: corepack enable pnpm
+      - name: Install the client's dependencies
+        working-directory: client
+        run: pnpm install --frozen-lockfile
+      - name: Build the client
+        working-directory: client
+        run: pnpm build
+      # A release build embeds the client, as what ships does.
+      - name: Build the application
+        run: cargo build --release --locked
+      - name: Run the smoke test
+        run: dbus-run-session -- python3 tests/smoke.py target/release/torrplay-desktop
+
+  desktop-platforms:
+    name: Desktop application (${{ matrix.os }})
+    needs: stage
+    if: needs.stage.outputs.rust == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - macos-latest
     defaults:
       run:
         working-directory: desktop
@@ -198,17 +256,8 @@ jobs:
           persist-credentials: false
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
-          components: clippy, rustfmt
           build-warnings: warn
           cache-workspaces: desktop
-      - name: Install WebKitGTK
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev librsvg2-dev
-      - name: Check formatting
-        run: cargo fmt --check
-      - name: Lint
-        run: cargo clippy --locked --all-targets -- -D warnings
       - name: Test
         run: cargo test --locked
 
@@ -265,6 +314,8 @@ jobs:
           echo "${RUNNER_TEMP}/${name}" >> "$GITHUB_PATH"
       - name: Check licenses, advisories, bans, and sources
         run: cargo-deny --locked check
+      - name: Check that the desktop application's policy follows the root's
+        run: scripts/check-desktop-deny.sh
       - name: Check the desktop application's dependencies
         run: cargo-deny --manifest-path desktop/Cargo.toml --locked check
 

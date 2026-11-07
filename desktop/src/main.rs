@@ -9,22 +9,21 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::io::IsTerminal;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use tauri::webview::DownloadEvent;
-use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::oneshot;
-use torrplay::{Command, Config, LogFormat};
-
-/// How long exiting waits for blocking tasks still running after shutdown.
-const RUNTIME_SHUTDOWN: Duration = Duration::from_secs(5);
+use torrplay::{Command, Config, EngineDidNotStart, LogFormat};
 
 /// The label of the application's one window.
 const MAIN_WINDOW: &str = "main";
@@ -83,6 +82,18 @@ fn unused_path(directory: &Path, name: &str) -> PathBuf {
         .unwrap_or(candidate)
 }
 
+/// Says that a download failed, since the page has already finished its part and
+/// someone may otherwise think they have the file.
+fn notify_download_failed(app: &AppHandle) {
+    app.dialog()
+        .message(notice_text(
+            Notice::DownloadFailed,
+            sys_locale::get_locale().as_deref(),
+        ))
+        .kind(MessageDialogKind::Error)
+        .show(|_| {});
+}
+
 /// Sends a download to the system's downloads directory, which a page's link has no
 /// way to choose here, and shows the file when it is done.
 fn handle_download(app: &AppHandle, event: DownloadEvent<'_>) -> bool {
@@ -107,6 +118,7 @@ fn handle_download(app: &AppHandle, event: DownloadEvent<'_>) -> bool {
                 }
                 Err(error) => {
                     tracing::error!(%error, "no downloads directory");
+                    notify_download_failed(app);
                     false
                 }
             }
@@ -115,12 +127,18 @@ fn handle_download(app: &AppHandle, event: DownloadEvent<'_>) -> bool {
             if success {
                 if let Some(path) = path {
                     tracing::info!(path = %path.display(), "a download finished");
-                    if let Err(error) = app.opener().reveal_item_in_dir(&path) {
-                        tracing::warn!(%error, "the download cannot be shown");
-                    }
+                    // On its own thread, since this runs on the window's and it waits for
+                    // the file manager to answer.
+                    let app = app.clone();
+                    std::thread::spawn(move || {
+                        if let Err(error) = app.opener().reveal_item_in_dir(&path) {
+                            tracing::warn!(%error, "the download cannot be shown");
+                        }
+                    });
                 }
             } else {
                 tracing::warn!("a download failed");
+                notify_download_failed(app);
             }
             true
         }
@@ -136,6 +154,8 @@ fn open_window(app: &AppHandle, listening: SocketAddr) -> anyhow::Result<()> {
         .title("TorrPlay")
         .inner_size(1280.0, 800.0)
         .min_inner_size(360.0, 480.0)
+        // The client takes dropped torrents itself, which this handler would keep from it.
+        .disable_drag_drop_handler()
         .on_navigation(move |url| match navigation(url, &own) {
             Navigation::Stay => true,
             Navigation::Outside => {
@@ -157,50 +177,34 @@ fn open_window(app: &AppHandle, listening: SocketAddr) -> anyhow::Result<()> {
 
 /// Runs the server until `stop` fires, its sender is gone, or a termination signal
 /// arrives. The application waits for this before it exits.
-fn serve(config: &Config, app: &AppHandle, stop: oneshot::Receiver<()>) -> anyhow::Result<()> {
-    let process_run = torrplay::Run::draw();
-    let files = config
-        .data_dir()
-        .and_then(|data_dir| Ok(torrplay::LogFiles::open(&data_dir.join("logs"))?));
-    let (files, files_failed) = match files {
-        Ok(files) => (Some(files), None),
-        Err(error) => (None, Some(error)),
-    };
-    let log_files = files.as_ref().map(|(files, _)| files.clone());
-    let log = torrplay::init_logging(
-        config.log_level.unwrap_or_default(),
-        config.log_filter.as_deref(),
-        config.log_format.unwrap_or(LogFormat::Text),
-        &process_run,
-        files,
-    );
-    if let Some(error) = files_failed {
-        tracing::warn!(
-            error = %format!("{error:#}"),
-            "the log files could not be opened; logs go to standard error only"
-        );
-    }
-    if let Err(error) = torrplay_engine::raise_open_file_limit() {
-        tracing::warn!(error = %format!("{error:#}"), "the open file limit could not be raised");
-    }
+fn serve(
+    config: &Config,
+    format: LogFormat,
+    app: &AppHandle,
+    stop: oneshot::Receiver<()>,
+) -> anyhow::Result<()> {
+    let startup = torrplay::start_logging(config, format);
+    let log = startup.log.clone();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("starting the runtime")?;
     let opener = app.clone();
+    let stopping = app.clone();
     let result = runtime.block_on(async {
         // Before the listener binds, as in the executable. Logging out sends these, and
         // the store must still record a clean shutdown.
         let terminated = torrplay::termination();
         torrplay::run_server(
             config,
-            log.clone(),
-            process_run,
-            log_files,
+            startup,
             move |listening| {
+                let shell = opener.state::<Shell>();
+                shell.advance(Stage::Running);
                 if let Err(error) = open_window(&opener, listening) {
-                    tracing::error!(error = %format!("{error:#}"), "no window");
-                    opener.exit(1);
+                    // Stops in order like any other way out, and is reported then.
+                    shell.fail_window(error);
+                    shell.request_stop();
                 }
             },
             async {
@@ -209,54 +213,194 @@ fn serve(config: &Config, app: &AppHandle, stop: oneshot::Receiver<()>) -> anyho
                     _ = stop => {}
                     () = terminated => {}
                 }
+                stopping.state::<Shell>().advance(Stage::Stopping);
             },
         )
         .await
     });
-    runtime.shutdown_timeout(RUNTIME_SHUTDOWN);
+    runtime.shutdown_timeout(torrplay::RUNTIME_SHUTDOWN);
     log.flush();
     result
 }
 
-/// The heading of the dialog about a failed start, in `locale` like `ru-RU`. The
-/// reason under it stays in the logs' English.
-fn start_failed_title(locale: Option<&str>) -> &'static str {
-    match locale {
-        Some(locale) if locale.starts_with("ru") => "Не удалось запустить TorrPlay",
-        _ => "TorrPlay could not start",
+/// Runs `work`, with a panic as its error, so that the application hears of it and
+/// does not stay running without its server.
+fn catching_panic(work: impl FnOnce() -> anyhow::Result<()>) -> anyhow::Result<()> {
+    catch_unwind(AssertUnwindSafe(work)).unwrap_or_else(|panic| {
+        let message = panic
+            .downcast_ref::<&str>()
+            .map(ToString::to_string)
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "no message".to_owned());
+        Err(anyhow!("the server panicked: {message}"))
+    })
+}
+
+/// How far the server has got, which says what a failure means.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Stage {
+    Starting,
+    Running,
+    Stopping,
+}
+
+/// Something to tell the user.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Notice {
+    CouldNotStart,
+    StoppedWorking,
+    DownloadFailed,
+}
+
+/// `notice` in `locale`, like `ru-RU`. A failure's reason under it stays in the logs'
+/// English.
+fn notice_text(notice: Notice, locale: Option<&str>) -> &'static str {
+    let russian = locale.is_some_and(|locale| locale.starts_with("ru"));
+    match (notice, russian) {
+        (Notice::CouldNotStart, false) => "TorrPlay could not start",
+        (Notice::CouldNotStart, true) => "Не удалось запустить TorrPlay",
+        (Notice::StoppedWorking, false) => "TorrPlay stopped working",
+        (Notice::StoppedWorking, true) => "TorrPlay перестал работать",
+        (Notice::DownloadFailed, false) => "The file could not be saved",
+        (Notice::DownloadFailed, true) => "Не удалось сохранить файл",
     }
 }
 
-/// Says why the application cannot run, since nothing shows standard error to someone
-/// who opened it from a menu.
-fn report_failure(app: &AppHandle, error: &anyhow::Error) {
-    tracing::error!(error = %format!("{error:#}"), "torrplay failed");
-    eprintln!("torrplay-desktop: {error:#}");
-    app.dialog()
-        .message(format!("{error:#}"))
-        .title(start_failed_title(sys_locale::get_locale().as_deref()))
-        .kind(MessageDialogKind::Error)
-        .blocking_show();
+/// What to tell the user about `error` at `stage`, if anything: nobody is waiting on
+/// an application they already closed, whose failure to stop is in the logs. The
+/// listener opens before the engine starts, so running alone does not mean it worked.
+fn failure_notice(stage: Stage, error: &anyhow::Error) -> Option<Notice> {
+    match stage {
+        Stage::Starting => Some(Notice::CouldNotStart),
+        Stage::Running if error.downcast_ref::<EngineDidNotStart>().is_some() => {
+            Some(Notice::CouldNotStart)
+        }
+        Stage::Running => Some(Notice::StoppedWorking),
+        Stage::Stopping => None,
+    }
 }
 
-/// Holds the signal that stops the server until the application asks to exit.
-struct Stop(Mutex<Option<oneshot::Sender<()>>>);
+/// Logs why the application is ending and, with a `notice`, says so in a dialog, since
+/// nothing shows standard error to someone who opened it from a menu. The window goes
+/// first, since its server has gone and it would only show a blank page behind this.
+fn report_failure(app: &AppHandle, error: &anyhow::Error, notice: Option<Notice>) {
+    tracing::error!(error = %format!("{error:#}"), "torrplay failed");
+    eprintln!("torrplay-desktop: {error:#}");
+    if let Some(notice) = notice {
+        if let Some(window) = app.get_webview_window(MAIN_WINDOW)
+            && let Err(error) = window.hide()
+        {
+            tracing::warn!(%error, "the window cannot be hidden");
+        }
+        app.dialog()
+            .message(format!("{error:#}"))
+            .title(notice_text(notice, sys_locale::get_locale().as_deref()))
+            .kind(MessageDialogKind::Error)
+            .blocking_show();
+    }
+}
+
+/// What the window, the server's thread, and a second launch share.
+struct Shell {
+    /// Stops the server, until the application asks to exit.
+    stop: Mutex<Option<oneshot::Sender<()>>>,
+    stage: Mutex<Stage>,
+    /// Whether someone launched the application again while it was stopping.
+    relaunch: AtomicBool,
+    /// Why the window could not open.
+    window_failure: Mutex<Option<anyhow::Error>>,
+}
+
+impl Shell {
+    fn new(stop: oneshot::Sender<()>) -> Self {
+        Self {
+            stop: Mutex::new(Some(stop)),
+            stage: Mutex::new(Stage::Starting),
+            relaunch: AtomicBool::new(false),
+            window_failure: Mutex::new(None),
+        }
+    }
+
+    /// Stops the server, if that has not been asked already.
+    fn request_stop(&self) {
+        self.advance(Stage::Stopping);
+        if let Some(stop) = self.stop.lock().ok().and_then(|mut stop| stop.take()) {
+            let _ = stop.send(());
+        }
+    }
+
+    fn fail_window(&self, error: anyhow::Error) {
+        if let Ok(mut failure) = self.window_failure.lock() {
+            *failure = Some(error);
+        }
+    }
+
+    fn take_window_failure(&self) -> Option<anyhow::Error> {
+        self.window_failure.lock().ok()?.take()
+    }
+
+    fn stage(&self) -> Stage {
+        self.stage.lock().map_or(Stage::Stopping, |stage| *stage)
+    }
+
+    /// Moves on to `stage`, never back.
+    fn advance(&self, stage: Stage) {
+        if let Ok(mut current) = self.stage.lock() {
+            *current = stage.max(*current);
+        }
+    }
+
+    /// What a second launch does: while this process is stopping, a new one starts when
+    /// it has, whatever window it still shows. Otherwise the window comes forward, or
+    /// is on its way.
+    fn second_launch(&self, window: Option<WebviewWindow>) {
+        if self.stage() == Stage::Stopping {
+            self.relaunch.store(true, Ordering::Relaxed);
+        } else if let Some(window) = window
+            && let Err(error) = window.unminimize().and_then(|()| window.set_focus())
+        {
+            tracing::warn!(%error, "the window cannot be brought forward");
+        }
+    }
+}
 
 fn main() -> ExitCode {
     let listen_variable = std::env::var_os(torrplay::LISTEN_VARIABLE)
         .map(|value| value.to_string_lossy().into_owned());
     let config = match torrplay::parse_args(std::env::args().skip(1), listen_variable) {
         Ok(Command::Run(config)) => config,
+        Ok(Command::Help) => {
+            println!(
+                "torrplay-desktop takes the options of `torrplay [OPTIONS]` below. The other \
+                 commands are only in the `torrplay` executable.\n"
+            );
+            print!("{}", torrplay::USAGE);
+            return ExitCode::SUCCESS;
+        }
+        Ok(Command::Version) => {
+            println!("torrplay-desktop {}", env!("CARGO_PKG_VERSION"));
+            return ExitCode::SUCCESS;
+        }
         Ok(_) => {
-            eprintln!("torrplay-desktop: the desktop application only runs the server");
+            eprintln!("torrplay-desktop: only the `torrplay` executable has this command");
             return ExitCode::from(2);
         }
         Err(error) => {
-            eprintln!("torrplay-desktop: {error}");
+            eprintln!("torrplay-desktop: {error}\n\n{}", torrplay::USAGE);
             return ExitCode::from(2);
         }
     };
-    match run(config) {
+    let variable = std::env::var_os(torrplay::LOG_FORMAT_VARIABLE)
+        .map(|value| value.to_string_lossy().into_owned());
+    let format =
+        match torrplay::log_format(config.log_format, variable, std::io::stderr().is_terminal()) {
+            Ok(format) => format,
+            Err(error) => {
+                eprintln!("torrplay-desktop: {error}\n\n{}", torrplay::USAGE);
+                return ExitCode::from(2);
+            }
+        };
+    match run(config, format) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("torrplay-desktop: {error:#}");
@@ -265,32 +409,37 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(config: Config) -> anyhow::Result<()> {
+fn run(config: Config, format: LogFormat) -> anyhow::Result<()> {
     let (stop, stopped) = oneshot::channel();
     let app = tauri::Builder::default()
         // First, so a second launch ends before the rest of it starts anything.
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            if let Some(window) = app.get_webview_window(MAIN_WINDOW)
-                && let Err(error) = window.unminimize().and_then(|()| window.set_focus())
-            {
-                tracing::warn!(%error, "the window cannot be brought forward");
-            }
+            app.state::<Shell>()
+                .second_launch(app.get_webview_window(MAIN_WINDOW));
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(Stop(Mutex::new(Some(stop))))
+        .manage(Shell::new(stop))
         .setup(move |app| {
             let handle = app.handle().clone();
             // The window opens from here once the server listens.
             std::thread::spawn(move || {
-                let code = match serve(&config, &handle, stopped) {
-                    Ok(()) => 0,
-                    Err(error) => {
-                        report_failure(&handle, &error);
-                        1
-                    }
+                let result = catching_panic(|| serve(&config, format, &handle, stopped));
+                let shell = handle.state::<Shell>();
+                let code = if let Some(error) = shell.take_window_failure() {
+                    report_failure(&handle, &error, Some(Notice::CouldNotStart));
+                    1
+                } else if let Err(error) = result {
+                    report_failure(&handle, &error, failure_notice(shell.stage(), &error));
+                    1
+                } else {
+                    0
                 };
-                handle.exit(code);
+                if shell.relaunch.load(Ordering::Relaxed) {
+                    handle.request_restart();
+                } else {
+                    handle.exit(code);
+                }
             });
             Ok(())
         })
@@ -304,15 +453,7 @@ fn run(config: Config) -> anyhow::Result<()> {
             // The last window closed: the server shuts down in order first, and
             // ends the application with a code when it has.
             api.prevent_exit();
-            if let Some(stop) = app
-                .state::<Stop>()
-                .0
-                .lock()
-                .ok()
-                .and_then(|mut stop| stop.take())
-            {
-                let _ = stop.send(());
-            }
+            app.state::<Shell>().request_stop();
         }
     });
     Ok(())
@@ -378,13 +519,76 @@ mod tests {
     }
 
     #[test]
-    fn the_failure_heading_follows_the_systems_language() {
-        assert_eq!(
-            start_failed_title(Some("ru-RU")),
-            "Не удалось запустить TorrPlay"
-        );
-        for locale in [Some("en-US"), Some("de-DE"), None] {
-            assert_eq!(start_failed_title(locale), "TorrPlay could not start");
+    fn notices_follow_the_systems_language() {
+        for notice in [
+            Notice::CouldNotStart,
+            Notice::StoppedWorking,
+            Notice::DownloadFailed,
+        ] {
+            let english = notice_text(notice, Some("en-US"));
+            assert_eq!(notice_text(notice, None), english);
+            assert_eq!(notice_text(notice, Some("de-DE")), english);
+            assert_ne!(notice_text(notice, Some("ru-RU")), english, "{notice:?}");
         }
+    }
+
+    #[test]
+    fn a_failure_says_what_it_means_at_each_stage() {
+        let other = || anyhow!("invented");
+        let engine = || other().context(EngineDidNotStart);
+        assert_eq!(
+            failure_notice(Stage::Starting, &other()),
+            Some(Notice::CouldNotStart)
+        );
+        assert_eq!(
+            failure_notice(Stage::Running, &other()),
+            Some(Notice::StoppedWorking)
+        );
+        assert_eq!(
+            failure_notice(Stage::Running, &engine()),
+            Some(Notice::CouldNotStart)
+        );
+        assert_eq!(failure_notice(Stage::Stopping, &other()), None);
+        assert_eq!(failure_notice(Stage::Stopping, &engine()), None);
+    }
+
+    #[test]
+    fn asking_to_stop_twice_stops_once() {
+        let (stop, mut stopped) = oneshot::channel();
+        let shell = Shell::new(stop);
+        shell.request_stop();
+        shell.request_stop();
+        assert_eq!(shell.stage(), Stage::Stopping);
+        assert_eq!(stopped.try_recv(), Ok(()));
+    }
+
+    #[test]
+    fn a_stage_never_goes_back() {
+        let (stop, _stopped) = oneshot::channel();
+        let shell = Shell::new(stop);
+        shell.advance(Stage::Stopping);
+        shell.advance(Stage::Running);
+        assert_eq!(shell.stage(), Stage::Stopping);
+    }
+
+    #[test]
+    fn a_second_launch_starts_a_new_run_only_while_stopping() {
+        let (stop, _stopped) = oneshot::channel();
+        let shell = Shell::new(stop);
+        shell.second_launch(None);
+        assert!(
+            !shell.relaunch.load(Ordering::Relaxed),
+            "the window is coming"
+        );
+        shell.advance(Stage::Stopping);
+        shell.second_launch(None);
+        assert!(shell.relaunch.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn a_panic_becomes_an_error() {
+        let error = catching_panic(|| panic!("invented")).map_err(|error| error.to_string());
+        assert_eq!(error, Err("the server panicked: invented".to_owned()));
+        assert!(catching_panic(|| Ok(())).is_ok());
     }
 }

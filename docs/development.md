@@ -220,6 +220,15 @@ cargo test --locked
 cargo-deny --manifest-path desktop/Cargo.toml --locked check
 ```
 
+The smoke test drives a built application through WebKitWebDriver on a virtual
+display, in a private temporary home, so nothing appears on your desktop. It needs
+`webkit2gtk-driver`, `xvfb`, `dbus-daemon`, `python3-gi` with `gir1.2-gtk-3.0`, and
+GStreamer's plugins. It stops only what it started. From `desktop/`:
+
+```sh
+dbus-run-session -- python3 tests/smoke.py ../target/debug/torrplay-desktop
+```
+
 Run the last command from the repository root. Setting `CARGO_TARGET_DIR=../target`
 shares the main workspace's build directory.
 

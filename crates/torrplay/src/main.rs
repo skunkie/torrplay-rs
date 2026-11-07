@@ -11,14 +11,10 @@
 
 use std::io::IsTerminal;
 use std::process::ExitCode;
-use std::time::Duration;
 
 use torrplay::{
     BackupAction, Command, Config, LogLevel, McpConfig, PasswordChange, PasswordChanged, USAGE,
 };
-
-/// How long exiting waits for blocking tasks still running after shutdown.
-const RUNTIME_SHUTDOWN: Duration = Duration::from_secs(1);
 
 fn main() -> ExitCode {
     let listen_variable = std::env::var_os(torrplay::LISTEN_VARIABLE)
@@ -51,37 +47,8 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             }
         };
-    let process_run = torrplay::Run::draw();
-    // The log files live in the data directory; without one, records go to
-    // standard error alone, and the failure is logged once logging starts.
-    let files = config
-        .data_dir()
-        .and_then(|data_dir| Ok(torrplay::LogFiles::open(&data_dir.join("logs"))?));
-    let (files, files_failed) = match files {
-        Ok(files) => (Some(files), None),
-        Err(error) => (None, Some(error)),
-    };
-    let log_files = files.as_ref().map(|(files, _)| files.clone());
-    let log = torrplay::init_logging(
-        config.log_level.unwrap_or_default(),
-        config.log_filter.as_deref(),
-        format,
-        &process_run,
-        files,
-    );
-    if let Some(error) = files_failed {
-        tracing::warn!(
-            error = %format!("{error:#}"),
-            "the log files could not be opened; logs go to standard error only"
-        );
-    }
-    match torrplay_engine::raise_open_file_limit() {
-        Ok(limit) => tracing::info!(limit, "open file limit"),
-        Err(error) => tracing::warn!(
-            error = %format!("{error:#}"),
-            "the open file limit could not be raised; busy torrents may exhaust it"
-        ),
-    }
+    let startup = torrplay::start_logging(&config, format);
+    let log = startup.log.clone();
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -92,10 +59,10 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let result = runtime.block_on(run(&config, log.clone(), process_run, log_files));
+    let result = runtime.block_on(run(&config, startup));
     // Shutdown has stopped the engine; blocking work still running must not
     // hold the process.
-    runtime.shutdown_timeout(RUNTIME_SHUTDOWN);
+    runtime.shutdown_timeout(torrplay::RUNTIME_SHUTDOWN);
     let code = match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -107,15 +74,10 @@ fn main() -> ExitCode {
     code
 }
 
-async fn run(
-    config: &Config,
-    log: torrplay::LogControl,
-    run: torrplay::Run,
-    log_files: Option<torrplay::LogFiles>,
-) -> anyhow::Result<()> {
+async fn run(config: &Config, startup: torrplay::Startup) -> anyhow::Result<()> {
     // Before the listener binds, so the API never answers without them.
     let terminated = torrplay::termination();
-    torrplay::run_server(config, log, run, log_files, |_| {}, terminated).await
+    torrplay::run_server(config, startup, |_| {}, terminated).await
 }
 
 /// Runs `torrplay password`, reading a new password from standard input.
@@ -288,7 +250,7 @@ fn mcp(config: McpConfig) -> ExitCode {
         }
         anyhow::Ok(())
     });
-    runtime.shutdown_timeout(RUNTIME_SHUTDOWN);
+    runtime.shutdown_timeout(torrplay::RUNTIME_SHUTDOWN);
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
