@@ -12,11 +12,26 @@ export interface Cue {
 /** A subtitle file's format, by its extension. */
 export type SubtitleFormat = "srt" | "vtt" | "ass" | "ssa";
 
-/** Cleans ASS markup from `text`: override tags such as `{\i1}`, and its
- * escapes for line breaks and hard spaces. */
+/** `text` without its override tags, such as `{\i1}`, and without what `{\p1}`
+ * up to `{\p0}` holds, which is drawing commands rather than words. */
+function withoutOverrides(text: string): string {
+  let drawing = false;
+  let words = "";
+  for (const [part, tags] of text.matchAll(/\{([^}]*)\}|[^{]+|\{/g)) {
+    if (tags === undefined) {
+      if (!drawing) words += part;
+      continue;
+    }
+    const scale = /\\p(\d+)/.exec(tags)?.[1];
+    if (scale !== undefined) drawing = Number(scale) > 0;
+  }
+  return words;
+}
+
+/** Cleans ASS markup from `text`: override tags and drawings, and its escapes for
+ * line breaks and hard spaces. */
 function cleanAss(text: string): string {
-  return text
-    .replace(/\{[^}]*\}/g, "")
+  return withoutOverrides(text)
     .replace(/\\[Nn]/g, "\n")
     .replace(/\\h/g, "\u00A0")
     .trim();

@@ -4,6 +4,7 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import { useBackend } from "../lib/context";
   import { showIntro } from "../lib/demo-intro.svelte";
   import { chooseLocale, i18n, isLocale, locales, profileName, t } from "../lib/i18n/index.svelte";
   import { navigate } from "../lib/navigation.svelte";
@@ -20,7 +21,28 @@ SPDX-License-Identifier: MIT
 
   let { overHero = false }: Props = $props();
 
+  /** How long signing out waits for the server to revoke the token. */
+  const REVOKE_WAIT_MS = 3000;
+
+  const backend = useBackend();
+
   const name = $derived(profiles.current ? profileName(profiles.current) : undefined);
+
+  /** Revokes this device's access token, whose secret would otherwise go on
+   * working, and forgets it even if the server cannot be told, without waiting long
+   * for a server that does not answer. */
+  async function leave(): Promise<void> {
+    document.getElementById("app-menu")?.hidePopover();
+    if (session.tokenId) {
+      await Promise.race([
+        backend.deleteAccessToken(session.tokenId).catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, REVOKE_WAIT_MS)),
+      ]);
+    }
+    signOut();
+    resetProfiles();
+    navigate(signInPath);
+  }
 </script>
 
 <!-- The browser's popover restores focus to the button when it closes. -->
@@ -121,16 +143,7 @@ SPDX-License-Identifier: MIT
     <a href="/" class="btn btn-secondary">{t().demo.leave}</a>
   {/if}
   {#if session.token}
-    <button
-      type="button"
-      class="btn btn-secondary"
-      onclick={() => {
-        document.getElementById("app-menu")?.hidePopover();
-        signOut();
-        resetProfiles();
-        navigate(signInPath);
-      }}
-    >
+    <button type="button" class="btn btn-secondary" onclick={leave}>
       {t().nav.signOut}
     </button>
   {/if}

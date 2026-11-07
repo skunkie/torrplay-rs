@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-import type { Backend, PlaybackGrant } from "./backend";
+import type { Backend, PlaybackGrant, Torrent } from "./backend";
 import { session } from "./session.svelte";
 
 /** How long before its expiry a grant is replaced. */
@@ -56,4 +56,26 @@ export function withGrant(path: string, grant: PlaybackGrant | undefined): strin
   }
   const separator = path.includes("?") ? "&" : "?";
   return `${path}${separator}token=${encodeURIComponent(grant.token)}`;
+}
+
+/** The URL of an uploaded `image` at `link`, or `undefined` while there is none or
+ * the grant to read it is not known. Its upload time is part of it, so a new image is
+ * a new URL: an element keeps showing what a URL it already has gave. The demo's
+ * picked images are local URLs, new each time, which take no query. */
+export function imageUrl(
+  link: string,
+  image: { updated_at: string } | null | undefined,
+  grant: PlaybackGrant | undefined | null,
+): string | undefined {
+  if (!image || grant === null) return undefined;
+  if (link.startsWith("blob:")) return link;
+  return withGrant(`${link}?v=${encodeURIComponent(image.updated_at)}`, grant);
+}
+
+/** The URL of `torrent`'s poster; see {@link imageUrl}. */
+export function posterUrl(
+  torrent: Pick<Torrent, "poster" | "links">,
+  grant: PlaybackGrant | undefined | null,
+): string | undefined {
+  return imageUrl(torrent.links.poster, torrent.poster, grant);
 }

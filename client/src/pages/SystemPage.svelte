@@ -17,6 +17,7 @@ SPDX-License-Identifier: MIT
     type System,
   } from "../lib/backend";
   import { useBackend } from "../lib/context";
+  import { pollFailure } from "../lib/engine.svelte";
   import { failureMessage } from "../lib/i18n/index.svelte";
   import { LOG_LEVELS, withNewer } from "../lib/logs";
   import { poll } from "../lib/poll";
@@ -72,11 +73,20 @@ SPDX-License-Identifier: MIT
       }
     };
     await Promise.all([
-      reading(backend.getSystem, (value) => (system = value)),
-      reading(backend.getStatistics, (value) => (statistics = value)),
-      reading(backend.getCacheStatistics, (value) => (cache = value)),
+      reading(
+        () => backend.getSystem(),
+        (value) => (system = value),
+      ),
+      reading(
+        () => backend.getStatistics(),
+        (value) => (statistics = value),
+      ),
+      reading(
+        () => backend.getCacheStatistics(),
+        (value) => (cache = value),
+      ),
     ]);
-    readError = failures.length > 0 ? failureMessage(failures[0]) : undefined;
+    readError = failures.length > 0 ? pollFailure(failures[0]) : undefined;
   }
 
   function currentQuery(): LogQuery {
@@ -98,7 +108,7 @@ SPDX-License-Identifier: MIT
       logError = undefined;
     } catch (failure) {
       if (mine !== logQuery) return;
-      logError = failureMessage(failure);
+      logError = pollFailure(failure);
       // They may answer another query. The next poll reads again.
       records = undefined;
       olderCursor = undefined;
@@ -140,7 +150,7 @@ SPDX-License-Identifier: MIT
         await loadLog();
       }
     } catch (failure) {
-      if (mine === logQuery) logError = failureMessage(failure);
+      if (mine === logQuery) logError = pollFailure(failure);
     }
   }
 

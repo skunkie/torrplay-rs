@@ -60,45 +60,6 @@ it("does not take a proxy's 502 for the application's own answer", async () => {
   await expect(backend.getReadiness()).rejects.toBeInstanceOf(ApiError);
 });
 
-function page(avatar: object | null): Response {
-  return Response.json({
-    items: [
-      {
-        id: "prf_a",
-        name: "Anna",
-        kind: "person",
-        created_at: "2026-10-31T00:00:00Z",
-        avatar,
-        links: {
-          self: "",
-          avatar: "/api/v1/profiles/prf_a/avatar",
-          up_next: "",
-          title_progress: "",
-        },
-      },
-    ],
-    links: { self: "" },
-  });
-}
-
-it("makes a new avatar a new URL, since an element keeps what a URL gave", async () => {
-  const uploaded = (updated_at: string) => ({ media_type: "image/png", size_bytes: 1, updated_at });
-  const read = async (avatar: object) =>
-    (await answering(() => page(avatar)).backend.listProfiles())[0]?.links.avatar;
-
-  const first = await read(uploaded("2026-11-06T00:00:00Z"));
-  const second = await read(uploaded("2026-11-07T00:00:00Z"));
-
-  expect(first).toContain("/api/v1/profiles/prf_a/avatar?v=");
-  expect(second).not.toBe(first);
-});
-
-it("leaves the link of a profile without an avatar as it is", async () => {
-  const [profile] = await answering(() => page(null)).backend.listProfiles();
-
-  expect(profile?.links.avatar).toBe("/api/v1/profiles/prf_a/avatar");
-});
-
 it("tells an open server from a password read that failed", async () => {
   const open = answering(() => new Response(null, { status: 404 }));
   await expect(open.backend.getPassword()).resolves.toBeUndefined();

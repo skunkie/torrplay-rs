@@ -4,18 +4,16 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
-  import {
-    cursorOf,
-    type PlaybackGrant,
-    type TorrentPage,
-    type TorrentQuery,
-  } from "../lib/backend";
+  import { untrack } from "svelte";
+
+  import { cursorOf, type TorrentPage, type TorrentQuery } from "../lib/backend";
   import { useBackend } from "../lib/context";
   import { pollFailure } from "../lib/engine.svelte";
+  import { imageGrant, refreshGrant } from "../lib/grant.svelte";
   import { failureMessage } from "../lib/i18n/index.svelte";
   import { formatQuery, parseQuery } from "../lib/library-query";
   import { location, replaceQuery } from "../lib/navigation.svelte";
-  import { playbackGrants, withGrant } from "../lib/playback";
+  import { posterUrl } from "../lib/playback";
   import { poll } from "../lib/poll";
   import { searchTorrents } from "../lib/search";
   import LibraryView from "./LibraryView.svelte";
@@ -25,16 +23,13 @@ SPDX-License-Identifier: MIT
   const SEARCH_DELAY_MS = 250;
 
   const backend = useBackend();
-  const grants = playbackGrants(backend);
 
   const query = $derived(parseQuery(location.search));
-  let pages = $state<TorrentPage[]>([]);
+  let pages = $state.raw<TorrentPage[]>([]);
   /** The search `pages` were read for. */
   let readSearch = $state("");
   let loading = $state(true);
   let error = $state<string>();
-  /** The grant poster URLs carry; `null` until it is known. */
-  let grant = $state<PlaybackGrant | undefined | null>(null);
   /** The search as typed, ahead of the page's query while it waits. */
   let searchText = $state(parseQuery(location.search).search ?? "");
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -42,12 +37,17 @@ SPDX-License-Identifier: MIT
   let etag: string | undefined;
   /** Counts loads, so a response to an earlier one is ignored. */
   let generation = 0;
+  /** Whether the last load failed with what the banner reports, which offers no
+   * way to retry, so the next poll does it. */
+  let retrying = false;
 
-  /** Reads the listing's first `count` pages for `filters`. */
-  async function load(filters: TorrentQuery, count = 1): Promise<void> {
+  /** Reads the listing's first `count` pages for `filters`, saying so unless
+   * `quietly`. */
+  async function load(filters: TorrentQuery, count = 1, quietly = false): Promise<void> {
     const mine = ++generation;
-    loading = true;
+    if (!quietly) loading = true;
     error = undefined;
+    retrying = false;
     try {
       const read: TorrentPage[] = [];
       let cursor: string | undefined;
@@ -68,7 +68,10 @@ SPDX-License-Identifier: MIT
         etag = tag;
       }
     } catch (failure) {
-      if (mine === generation) error = pollFailure(failure);
+      if (mine === generation) {
+        error = pollFailure(failure);
+        retrying = error === undefined;
+      }
     } finally {
       if (mine === generation) loading = false;
     }
@@ -76,8 +79,11 @@ SPDX-License-Identifier: MIT
 
   /** Reloads the pages held when the listing changed since the last read. */
   async function refresh(): Promise<void> {
-    if (etag === undefined || loading) return;
+    if (loading) return;
     const filters = query;
+    // Quietly: the banner already says what is wrong, every few seconds at that.
+    if (retrying) return load(filters, Math.max(pages.length, 1), true);
+    if (etag === undefined) return;
     const page = await backend.listTorrents(filters, { pageSize: PAGE_SIZE, etag });
     if (!page.unchanged) await load(filters, Math.max(pages.length, 1));
   }
@@ -118,13 +124,12 @@ SPDX-License-Identifier: MIT
     if (searchTimer === undefined && typed !== searchText.trim()) searchText = typed;
   });
 
-  $effect(() => poll(refresh, POLL_MS));
+  // Started untracked: the page's state that polling reads and writes must not
+  // restart it.
+  $effect(() => untrack(() => poll(refresh, POLL_MS)));
 
   $effect(() => {
-    grants.current().then(
-      (current) => (grant = current),
-      () => (grant = undefined),
-    );
+    void refreshGrant(backend);
     return () => clearTimeout(searchTimer);
   });
 
@@ -150,8 +155,7 @@ SPDX-License-Identifier: MIT
   {loading}
   {error}
   hasMore={answered && cursorOf(pages.at(-1)?.links.next) !== undefined}
-  poster={(torrent) =>
-    torrent.poster && grant !== null ? withGrant(torrent.links.poster, grant) : undefined}
+  poster={(torrent) => posterUrl(torrent, imageGrant.current)}
   onsearch={search}
   onfilter={(filters) => {
     const { search: _, ...rest } = filters;

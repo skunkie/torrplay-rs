@@ -5,6 +5,7 @@ SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
   import ConfirmDialog from "../components/ConfirmDialog.svelte";
+  import InlineError from "../components/InlineError.svelte";
   import SettingsShell from "../components/SettingsShell.svelte";
   import { t } from "../lib/i18n/index.svelte";
 
@@ -40,7 +41,7 @@ SPDX-License-Identifier: MIT
       {downloading ? t().backup.downloading : t().backup.download}
     </button>
     {#if downloadError}
-      <p role="alert" class="text-meta text-arriving-text">{downloadError}</p>
+      <InlineError message={downloadError} />
     {/if}
   </section>
 
@@ -61,7 +62,7 @@ SPDX-License-Identifier: MIT
       />
     </label>
     {#if restoreError}
-      <p role="alert" class="text-meta text-arriving-text">{restoreError}</p>
+      <InlineError message={restoreError} />
     {/if}
     {#if restored}
       <p role="status" class="text-meta text-text-muted">{t().backup.restored}</p>
@@ -73,7 +74,7 @@ SPDX-License-Identifier: MIT
   open={chosen !== undefined}
   title={chosen ? t().backup.confirmTitle(chosen.name) : ""}
   confirm={t().backup.restore}
-  cancel={t().edit.cancel}
+  cancel={t().common.cancel}
   busy={restoring}
   onconfirm={() => {
     if (chosen) onrestore(chosen);

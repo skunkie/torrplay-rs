@@ -6,6 +6,7 @@ import "@testing-library/jest-dom/vitest";
 
 import { beforeEach, vi } from "vitest";
 
+import { resetGrant } from "./lib/grant.svelte";
 import { i18n } from "./lib/i18n/index.svelte";
 
 // jsdom has no layout, which Svelte's width bindings observe.
@@ -26,6 +27,12 @@ window.matchMedia = ((query: string) => ({
 // jsdom has no canvas, and complains when asked for one.
 HTMLCanvasElement.prototype.getContext = (() => null) as never;
 
+// jsdom has no layout to scroll.
+window.scrollTo = vi.fn();
+
+// jsdom does not implement popovers.
+HTMLElement.prototype.hidePopover = vi.fn();
+
 // jsdom does not implement modal dialogs.
 HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
   this.open = true;
@@ -38,4 +45,5 @@ HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
 // Tests read the English messages unless they choose another language.
 beforeEach(() => {
   i18n.locale = "en-US";
+  resetGrant();
 });

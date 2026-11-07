@@ -4,18 +4,21 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import RetryAlert from "../components/RetryAlert.svelte";
   import { ApiError } from "../lib/api/http";
   import {
-    errorsOf,
-    type PlaybackGrant,
+    memberErrors,
     type Torrent,
     type TorrentConfiguration,
     type TorrentConfigurationPatch,
   } from "../lib/backend";
   import { useBackend } from "../lib/context";
+  import { torrentTitle } from "../lib/describe";
+  import { imageGrant, refreshGrant } from "../lib/grant.svelte";
   import { failureMessage, t } from "../lib/i18n/index.svelte";
   import { navigate } from "../lib/navigation.svelte";
-  import { playbackGrants, withGrant } from "../lib/playback";
+  import { namePage } from "../lib/page-title.svelte";
+  import { posterUrl } from "../lib/playback";
   import { titlePath } from "../lib/routes";
   import EditView, { type EditValues, type PosterChange } from "./EditView.svelte";
 
@@ -23,15 +26,31 @@ SPDX-License-Identifier: MIT
     torrentId: string;
   }
 
+  /** The members the form shows a server's objection beside. */
+  const SHOWN_MEMBERS = new Set([
+    "title",
+    "kind",
+    "year",
+    "imdb_id",
+    "description",
+    "categories",
+    "genres",
+    "poster",
+  ]);
+  const ERRORLESS = { members: {}, other: undefined };
+
   let { torrentId }: Props = $props();
 
   const backend = useBackend();
-  const grants = playbackGrants(backend);
 
-  let torrent = $state<Torrent>();
-  let configuration = $state<TorrentConfiguration>();
+  let torrent = $state.raw<Torrent>();
+  let configuration = $state.raw<TorrentConfiguration>();
+  /** What the server holds, which saving compares with. A poster that failed
+   * after the rest saved moves it on, leaving the form as it is. */
+  let stored = $state.raw<TorrentConfiguration>();
+  /** Whether the last save stored all but the poster. */
+  let partlySaved = $state(false);
   let etag: string | undefined;
-  let grant = $state<PlaybackGrant | undefined | null>(null);
   let loadError = $state<string>();
   let saveError = $state<string>();
   /** The server's objections to the values sent, by field. */
@@ -53,6 +72,7 @@ SPDX-License-Identifier: MIT
       ]);
       if (!read.unchanged) torrent = read.data;
       configuration = held.data;
+      stored = held.data;
       etag = held.etag;
     } catch (failure) {
       loadError = failureMessage(failure);
@@ -61,15 +81,14 @@ SPDX-License-Identifier: MIT
 
   $effect(() => {
     void load();
-    grants.current().then(
-      (current) => (grant = current),
-      () => (grant = undefined),
-    );
+    void refreshGrant(backend);
   });
+
+  namePage(() => (torrent ? torrentTitle(torrent) : undefined));
 
   /** What differs from what was read, as a merge patch. */
   function changes(values: EditValues): TorrentConfigurationPatch {
-    const held = configuration;
+    const held = stored;
     const patch: TorrentConfigurationPatch = {};
     if (!held) return patch;
     if (values.title !== held.title) patch.title = values.title;
@@ -89,14 +108,12 @@ SPDX-License-Identifier: MIT
       stale = true;
       return;
     }
-    const errors = failure instanceof ApiError ? errorsOf(failure) : [];
-    if (errors.length > 0) {
-      fieldErrors = Object.fromEntries(
-        errors.map((error) => [(error.pointer ?? "").replace(/^\//, ""), error.detail]),
-      );
-    } else {
-      saveError = failureMessage(failure);
-    }
+    const { members, other } = failure instanceof ApiError ? memberErrors(failure) : ERRORLESS;
+    fieldErrors = members;
+    // What no field shows must still show, or saving would seem to do nothing.
+    const unshown = Object.entries(members).find(([member]) => !SHOWN_MEMBERS.has(member));
+    if (other ?? unshown) saveError = other ?? unshown?.[1];
+    else if (Object.keys(members).length === 0) saveError = failureMessage(failure);
   }
 
   async function save(values: EditValues, poster: PosterChange): Promise<void> {
@@ -104,16 +121,26 @@ SPDX-License-Identifier: MIT
     saveError = undefined;
     stale = false;
     fieldErrors = {};
+    partlySaved = false;
+    let saved = false;
     try {
       const patch = changes(values);
       if (etag && Object.keys(patch).length > 0) {
         await backend.updateConfiguration(torrentId, patch, etag);
+        saved = true;
       }
       if (poster.kind === "set") await backend.setPoster(torrentId, poster.file);
       else if (poster.kind === "remove") await backend.deletePoster(torrentId);
       navigate(titlePath(torrentId));
     } catch (failure) {
       report(failure);
+      if (saved) {
+        partlySaved = true;
+        // Only the poster is left to save; the rest must not look changed elsewhere.
+        const held = await backend.getConfiguration(torrentId).catch(() => undefined);
+        stored = held?.data ?? stored;
+        etag = held?.etag ?? etag;
+      }
     } finally {
       busy = false;
     }
@@ -124,9 +151,11 @@ SPDX-License-Identifier: MIT
   {#key configuration}
     <EditView
       {configuration}
+      stored={stored ?? configuration}
+      {partlySaved}
       name={torrent.name ?? t().common.untitled}
       torrentTitle={torrent.title ?? torrent.name ?? ""}
-      poster={torrent.poster && grant !== null ? withGrant(torrent.links.poster, grant) : undefined}
+      poster={posterUrl(torrent, imageGrant.current)}
       hasPoster={Boolean(torrent.poster)}
       cancelHref={titlePath(torrentId)}
       {busy}
@@ -138,12 +167,7 @@ SPDX-License-Identifier: MIT
     />
   {/key}
 {:else if loadError}
-  <div role="alert" class="alert">
-    <span>{loadError}</span>
-    <button type="button" class="font-semibold text-accent-text underline" onclick={load}
-      >{t().common.retry}</button
-    >
-  </div>
+  <RetryAlert message={loadError} onretry={load} />
 {:else}
   <p class="text-text-muted" role="status">{t().common.loading}</p>
 {/if}

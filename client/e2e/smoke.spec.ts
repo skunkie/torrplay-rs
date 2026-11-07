@@ -294,6 +294,25 @@ test.describe("settings", () => {
     await expect(page).toHaveURL("/settings/network");
   });
 
+  test("asks before the back button leaves unsaved changes", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: /^(Menu|Profile)/ }).click();
+    await page.getByRole("link", { name: "Settings" }).click();
+    const memory = page.getByLabel("Memory for pieces");
+    const held = await memory.inputValue();
+    await memory.fill(String(Number(held) + 1));
+
+    let accept = false;
+    page.on("dialog", (dialog) => void (accept ? dialog.accept() : dialog.dismiss()));
+    await page.goBack({ waitUntil: "commit" }).catch(() => undefined);
+    await expect(page).toHaveURL("/settings");
+    await expect(memory).toHaveValue(String(Number(held) + 1));
+
+    accept = true;
+    await page.goBack({ waitUntil: "commit" }).catch(() => undefined);
+    await expect(page).toHaveURL("/");
+  });
+
   test("holds back a value out of bounds", async ({ page }) => {
     await page.goto("/settings/playback");
     const memory = page.getByLabel("Memory for pieces");
@@ -473,6 +492,96 @@ test.describe("backup", () => {
   });
 });
 
+test.describe("on the real server", () => {
+  test("shows a poster at once when it is replaced", async ({ page }) => {
+    await page.goto("/add");
+    await page.locator('input[type="file"]').setInputFiles(environment("TORRPLAY_E2E_TORRENT"));
+    await page.getByRole("button", { name: "Add to library" }).click();
+    await expect(page).toHaveURL(/\/titles\//);
+
+    const setPoster = async (): Promise<string> => {
+      await page.getByRole("link", { name: "Edit" }).click();
+      await page.getByLabel("Poster").setInputFiles({
+        name: "poster.png",
+        mimeType: "image/png",
+        buffer: PIXEL,
+      });
+      await page.getByRole("button", { name: "Save" }).click();
+      await expect(page).toHaveURL(/\/titles\/[^/]+$/);
+      const poster = page.locator("[data-hero] img").last();
+      await expect
+        .poll(() => poster.evaluate((image: HTMLImageElement) => image.naturalWidth))
+        .toBeGreaterThan(0);
+      return (await poster.getAttribute("src")) ?? "";
+    };
+
+    const first = await setPoster();
+    // Its upload time, to the second, is what makes a new image a new URL.
+    await page.waitForTimeout(1100);
+    expect(await setPoster()).not.toBe(first);
+    await deleteFromTitlePage(page);
+  });
+
+  test("goes back to its place in a list that takes time to read", async ({ page }) => {
+    await page.goto("/add");
+    await page.locator('input[type="file"]').setInputFiles(environment("TORRPLAY_E2E_TORRENT"));
+    await page.getByRole("button", { name: "Add to library" }).click();
+    await expect(page).toHaveURL(/\/titles\//);
+    await page.route("**/api/v1/torrents?*", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      await route.fallback();
+    });
+    await page.setViewportSize({ width: 320, height: 240 });
+    await page.goto("/library");
+    const card = page.locator("a[href*='/titles/']").first();
+    await card.waitFor();
+    await page.evaluate(() => window.scrollTo(0, 150));
+    const place = await page.evaluate(() => window.scrollY);
+    expect(place).toBeGreaterThan(50);
+
+    // Not a pointer's click, which would scroll the card into view first.
+    await card.evaluate((link: HTMLElement) => link.click());
+    await expect(page).toHaveURL(/\/titles\//);
+    await expect
+      .poll(() => page.evaluate(() => window.scrollY), "a new page starts at its top")
+      .toBe(0);
+    await page.goBack();
+    await card.waitFor();
+
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(place);
+    await page.unroute("**/api/v1/torrents?*");
+  });
+
+  test("signing out revokes the device's token", async ({ page, request }) => {
+    const PASSWORD = "an invented test passphrase";
+    expect((await request.put("/api/v1/password", { data: { password: PASSWORD } })).ok()).toBe(
+      true,
+    );
+    try {
+      await page.goto("/");
+      await page.getByLabel("Password").fill(PASSWORD);
+      await page.getByRole("button", { name: "Sign in" }).click();
+      await expect(page).toHaveURL("/");
+      const secret = await page.evaluate(() => localStorage.getItem("torrplay.access-token"));
+      const headers = { Authorization: `Bearer ${secret}` };
+      expect((await request.get("/api/v1/settings", { headers })).ok()).toBe(true);
+
+      await page.getByRole("button", { name: /^(Menu|Profile)/ }).click();
+      await page.getByRole("button", { name: "Sign out" }).click();
+
+      await expect(page).toHaveURL(/\/sign-in/);
+      expect((await request.get("/api/v1/settings", { headers })).status()).toBe(401);
+    } finally {
+      const signedIn = await request.post("/api/v1/access-tokens", {
+        data: { password: PASSWORD, name: "Cleanup", scope: "api" },
+      });
+      const { secret } = (await signedIn.json()) as { secret: string };
+      const headers = { Authorization: `Bearer ${secret}` };
+      expect((await request.delete("/api/v1/password", { headers })).ok()).toBe(true);
+    }
+  });
+});
+
 test.describe("the demo", () => {
   test("runs the pages and plays its video without the API", async ({ page }) => {
     const reached: string[] = [];
@@ -503,6 +612,22 @@ test.describe("the demo", () => {
     await expect.poll(time, { message: "the sample plays" }).toBeGreaterThan(resumed);
 
     expect(reached).toEqual([]);
+  });
+
+  test("answers the keyboard as soon as a video opens", async ({ page }) => {
+    await page.goto("/demo");
+    await page.locator("a[href*='/watch/']").first().click();
+    const video = page.locator("video");
+    const skip = page.getByRole("button", { name: "Play now" });
+    await expect(video.or(skip)).toBeVisible();
+    if (await skip.isVisible()) await skip.click();
+    await expect(video).toBeVisible();
+    const paused = () => video.evaluate((element: HTMLVideoElement) => element.paused);
+    await expect.poll(paused).toBe(false);
+
+    await page.keyboard.press("k");
+
+    await expect.poll(paused).toBe(true);
   });
 
   test("offers the sample's audio tracks and subtitles", async ({ page }) => {
@@ -658,9 +783,51 @@ test.describe("the demo", () => {
     await expect(peers).toHaveValue("50");
   });
 
+  test("keeps every page within its window, at any width, in either language", async ({
+    browser,
+  }) => {
+    test.setTimeout(180_000);
+    const overflowing: string[] = [];
+    for (const locale of ["en-US", "ru"]) {
+      const context = await browser.newContext();
+      await context.addInitScript(
+        (value) => localStorage.setItem("torrplay.locale", value),
+        locale,
+      );
+      const page = await context.newPage();
+      await page.goto("/demo/library");
+      const title = await page.locator("a[href*='/titles/']").first().getAttribute("href");
+      const paths = [
+        "/demo",
+        "/demo/library",
+        "/demo/add",
+        "/demo/settings",
+        ...["playback", "network", "stremio", "profiles", "security", "backup", "system"].map(
+          (section) => `/demo/settings/${section}`,
+        ),
+        "/demo/sign-in",
+        `${title}`,
+        `${title}/edit`,
+      ];
+      for (const width of [320, 375, 768, 820, 1024, 1280]) {
+        await page.setViewportSize({ width, height: 800 });
+        for (const path of paths) {
+          await page.goto(path);
+          await page.locator("main > *").first().waitFor();
+          const over = await page.evaluate(
+            () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          );
+          if (over > 0) overflowing.push(`${locale} ${width} ${path}: ${over} px`);
+        }
+      }
+      await context.close();
+    }
+    expect(overflowing).toEqual([]);
+  });
+
   test("shows posters it serves itself, and a tile for a torrent with none", async ({ page }) => {
     await page.goto("/demo/library");
-    const poster = page.locator('img[src="/demo-media/posters/paper-moons.webp"]').first();
+    const poster = page.locator('img[src^="/demo-media/posters/paper-moons.webp"]').first();
     await expect(poster).toBeVisible();
     await expect
       .poll(() => poster.evaluate((image: HTMLImageElement) => image.naturalWidth))

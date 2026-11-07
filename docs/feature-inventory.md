@@ -92,7 +92,7 @@ document that schedules it.
 | Peer port, listen address, data and download directories | Settings and flags | Implemented | Command-line flags of `torrplay` |
 | Transfer rate limits, connection limits, uTP, PEX, seeding switches | `torrent_client` | Deferred | With the global peer budget |
 | Default trackers for magnet URIs | `torrent_trackers` | Deferred | After the global peer budget |
-| CORS origins | `cors_allowed_origins` | Planned | With the client |
+| CORS origins | `cors_allowed_origins` | Planned | With the Tauri clients; the web client shares the server's origin |
 | Health checks | `GET /api/system/health` | Verified | `/livez`, `/readyz`, `service_endpoints` |
 | API discovery from the host | None | Verified | `/.well-known/api-catalog` (RFC 9727), API-27, `api_catalog` |
 | Torrent statistics | `GET /api/stats/torrents/{hash}` | Verified | `statistics` |
@@ -130,7 +130,7 @@ document that schedules it.
 
 | Feature | Go TorrPlay | Status | Evidence or plan |
 |---|---|---|---|
-| Web interface: torrent grid, filters, sorting, and search | Next.js client | Planned | A Svelte client of its own pages, as [ADR 11](adr/0011-web-client.md) decides; `torrplay` serves its bundle (WEB-01 to WEB-03) |
+| Web interface: torrent grid, filters, sorting, and search | Next.js client | Implemented | A Svelte client of its own pages, as [ADR 11](adr/0011-web-client.md) decides; `torrplay` serves its bundle (WEB-01 to WEB-03) |
 | Player with native and demuxed audio tracks | Vidstack and Mediabunny | Implemented | The player page in `client/src/pages/WatchPage.svelte`, on Video.js 10, which replaces the deprecated Vidstack, plays natively, resumes, saves progress, and offers the next episode; `client/src/lib/player/audio*.ts` lists a file's audio tracks and plays a track the browser cannot play or switch to through Mediabunny's decoders, kept in sync with the video |
 | Subtitle tracks from Matroska and WebVTT | `mkv-subtitles` | Implemented | `client/src/lib/player/subtitle*.ts` offers a file's Matroska text tracks, read through bounded ranges and the seek index as playback approaches, and the SubRip, WebVTT, and ASS files that belong to it, decoded from UTF-8 or the likely legacy encoding; subtitles start off, and each device remembers the language chosen last |
 | Settings, statistics, and logs pages | Client | Implemented | Playback and network settings are in `client/src/pages/SettingsPage.svelte`, profiles with avatars in `ProfilesPage.svelte`, the password and access tokens in `SecurityPage.svelte`, backups in `BackupPage.svelte`, the Stremio link in `StremioPage.svelte`, and the run, statistics, cache, log records, and log level in `SystemPage.svelte` |

@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
+import { readStored, writeStored } from "./storage";
+
 /** The themes a device can choose; `system` follows its preference. */
 export const themes = ["system", "light", "dark"] as const;
 
@@ -18,12 +20,8 @@ export function isTheme(value: string | null): value is Theme {
 }
 
 function stored(): Theme | undefined {
-  try {
-    const value = localStorage.getItem(KEY);
-    return isTheme(value) ? value : undefined;
-  } catch {
-    return undefined;
-  }
+  const value = readStored(KEY) ?? null;
+  return isTheme(value) ? value : undefined;
 }
 
 /** The theme chosen on this device. */
@@ -45,11 +43,7 @@ function apply(): void {
 /** Shows `choice` on this device from now on. */
 export function chooseTheme(choice: Theme): void {
   theme.choice = choice;
-  try {
-    localStorage.setItem(KEY, choice);
-  } catch {
-    // Private windows may refuse storage; the choice lasts the page.
-  }
+  writeStored(KEY, choice);
   apply();
 }
 

@@ -7,6 +7,7 @@ SPDX-License-Identifier: MIT
   import type { TorrentStatistics } from "../lib/backend";
   import { t } from "../lib/i18n/index.svelte";
   import { pieceCounts, pieceState } from "../lib/pieces";
+  import PieceLegend from "./PieceLegend.svelte";
   import PieceMap from "./PieceMap.svelte";
 
   interface Props {
@@ -49,23 +50,7 @@ SPDX-License-Identifier: MIT
       describe={(piece) => t().download.pieceHover(piece, stateLabel(pieceState(pieces, piece)))}
     />
 
-    <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted" aria-hidden="true">
-      <span class="flex items-center gap-1.5"
-        ><span class="size-2.5 rounded-[3px] bg-accent"></span>{t().download.tileDownloaded}</span
-      >
-      <span class="flex items-center gap-1.5"
-        ><span class="size-2.5 rounded-[3px] bg-arriving"></span>{t().download.tileArriving}</span
-      >
-      <span class="flex items-center gap-1.5"
-        ><span class="size-2.5 rounded-[3px] bg-empty"></span>{t().download.tileMissing}</span
-      >
-      {#if statistics.readers.length > 0}
-        <span class="flex items-center gap-1.5"
-          ><span class="size-2.5 rounded-[3px] outline-2 -outline-offset-1 outline-focus"
-          ></span>{t().download.tileReading}</span
-        >
-      {/if}
-    </div>
+    <PieceLegend missing reading={statistics.readers.length > 0} />
 
     {#if statistics.readers.length > 0}
       <ul class="flex flex-col" aria-label={t().download.readers}>

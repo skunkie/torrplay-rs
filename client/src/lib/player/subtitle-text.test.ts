@@ -104,3 +104,17 @@ describe("decodeSubtitles", () => {
     expect(decodeSubtitles(bytes, russian)).toBe(expected);
   });
 });
+
+describe("a drawing in ASS", () => {
+  it("leaves out its commands, and the words around it stay", () => {
+    expect(dialogueText("0,0,Sign,,0,0,0,,{\\p1}m 0 0 l 100 0 100 50{\\p0}Exit")).toBe("Exit");
+  });
+
+  it("leaves nothing of a line that only draws", () => {
+    expect(dialogueText("0,0,Sign,,0,0,0,,{\\an8\\p2}m 0 0 l 100 0")).toBe("");
+  });
+
+  it("keeps a brace that opens no tag", () => {
+    expect(dialogueText("0,0,Sign,,0,0,0,,{\\i1}a{b")).toBe("a{b");
+  });
+});

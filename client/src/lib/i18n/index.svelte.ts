@@ -4,6 +4,7 @@
 
 import { ApiError } from "../api/http";
 import type { Profile } from "../backend";
+import { readStored, writeStored } from "../storage";
 import { en, type Messages } from "./en";
 import { ru } from "./ru";
 
@@ -24,12 +25,8 @@ export function isLocale(value: string | null): value is Locale {
 }
 
 function stored(): Locale | undefined {
-  try {
-    const value = localStorage.getItem(KEY);
-    return isLocale(value) ? value : undefined;
-  } catch {
-    return undefined;
-  }
+  const value = readStored(KEY) ?? null;
+  return isLocale(value) ? value : undefined;
 }
 
 /** The language for the browser's preferences, `languages` in order:
@@ -58,11 +55,7 @@ export function t(): Messages {
 /** Shows `locale` on this device from now on. */
 export function chooseLocale(locale: Locale): void {
   i18n.locale = locale;
-  try {
-    localStorage.setItem(KEY, locale);
-  } catch {
-    // Private windows may refuse storage; the choice lasts the page.
-  }
+  writeStored(KEY, locale);
 }
 
 /** What to tell the user about a failed request: the client's message for

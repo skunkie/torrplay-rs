@@ -4,23 +4,27 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
 
   import AppMenu from "./components/AppMenu.svelte";
   import DemoIntro from "./components/DemoIntro.svelte";
   import EngineBanner from "./components/EngineBanner.svelte";
+  import Icon from "./components/Icon.svelte";
   import Logo from "./components/Logo.svelte";
+  import RetryAlert from "./components/RetryAlert.svelte";
   import { addFromTransfer, addition, clearAddition } from "./lib/addition.svelte";
   import { createHttp } from "./lib/api/http";
   import { type Backend, httpBackend } from "./lib/backend";
   import { provideBackend } from "./lib/context";
   import { intro } from "./lib/demo-intro.svelte";
   import { checkEngine, engine } from "./lib/engine.svelte";
+  import { refreshGrant } from "./lib/grant.svelte";
   import { i18n, t } from "./lib/i18n/index.svelte";
   import { formatQuery } from "./lib/library-query";
-  import { here, location, navigate, startNavigation } from "./lib/navigation.svelte";
+  import { here, listPath, location, navigate, startNavigation } from "./lib/navigation.svelte";
+  import { pageTitle } from "./lib/page-title.svelte";
   import { poll } from "./lib/poll";
-  import { loadProfiles, profiles, refreshAvatarGrant, resetProfiles } from "./lib/profile.svelte";
+  import { loadProfiles, profiles, resetProfiles } from "./lib/profile.svelte";
   import { addPath, demo, homePath, libraryPath, match, pagePath, signInPath } from "./lib/routes";
   import { session, signOut } from "./lib/session.svelte";
   import { isSettingSection, type SettingSection } from "./lib/settings";
@@ -42,7 +46,7 @@ SPDX-License-Identifier: MIT
   const ENGINE_POLL_MS = 5000;
   const ENGINE_DOWN_POLL_MS = 2000;
   /** Grants are renewed an hour before they expire. */
-  const AVATAR_GRANT_POLL_MS = 30 * 60 * 1000;
+  const IMAGE_GRANT_POLL_MS = 30 * 60 * 1000;
 
   interface Props {
     /** The backend the pages use; the API's by default. */
@@ -89,12 +93,58 @@ SPDX-License-Identifier: MIT
 
   $effect(() => {
     const timer = setInterval(() => {
-      if (profiles.people) void refreshAvatarGrant(backend);
-    }, AVATAR_GRANT_POLL_MS);
+      if (profiles.people) void refreshGrant(backend);
+    }, IMAGE_GRANT_POLL_MS);
     return () => clearInterval(timer);
   });
 
   const page = $derived(match(pagePath(location.path)));
+  /** What the document's title names, or `undefined` for the application alone. */
+  const documentSubject = $derived.by(() => {
+    switch (page?.name) {
+      case undefined:
+        return t().notFound.title;
+      case "home":
+        return undefined;
+      case "library":
+        return t().nav.library;
+      case "add":
+        return t().add.action;
+      case "settings":
+        return t().settings.title;
+      case "settingsSection": {
+        const { sections } = t().settings;
+        const section = page.params.section ?? "";
+        return Object.hasOwn(sections, section)
+          ? sections[section as keyof typeof sections]
+          : t().notFound.title;
+      }
+      case "signIn":
+        return t().signIn.title;
+      default:
+        return pageTitle.subject;
+    }
+  });
+
+  $effect(() => {
+    document.title = documentSubject ? `${documentSubject} — TorrPlay` : "TorrPlay";
+  });
+
+  let main = $state<HTMLElement>();
+  /** The path focus last moved for; the first page's stays where the browser put it. */
+  let focusedFor = location.path;
+
+  $effect(() => {
+    const path = location.path;
+    if (path === focusedFor) return;
+    focusedFor = path;
+    // A new page starts reading from its content, unless it chose what has focus,
+    // or the link followed is still there inside it, as a section's is.
+    void tick().then(() => {
+      if (!main?.contains(document.activeElement)) main?.focus({ preventScroll: true });
+    });
+  });
+
   /** Whether the page offers the main navigation and search. */
   const browsing = $derived(
     page?.name === "home" || page?.name === "library" || page?.name === "add",
@@ -182,15 +232,13 @@ SPDX-License-Identifier: MIT
 
 {#if page?.name === "title"}
   <div class="absolute inset-x-0 top-0 z-10 flex items-center justify-between p-4 md:px-10">
-    <a href={homePath} data-hero aria-label={t().player.back} class="btn size-11 btn-glass px-0">
-      <svg
-        class="size-5"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.2"
-        aria-hidden="true"><path d="M15 6l-6 6 6 6" /></svg
-      >
+    <a
+      href={listPath.value}
+      data-hero
+      aria-label={t().common.back}
+      class="btn size-11 btn-glass px-0"
+    >
+      <Icon name="back" />
     </a>
     <AppMenu overHero />
   </div>
@@ -199,18 +247,11 @@ SPDX-License-Identifier: MIT
     <button
       type="button"
       data-hero
-      aria-label={t().player.back}
+      aria-label={t().common.back}
       class="btn size-11 btn-glass px-0"
       onclick={clearAddition}
     >
-      <svg
-        class="size-5"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.2"
-        aria-hidden="true"><path d="M15 6l-6 6 6 6" /></svg
-      >
+      <Icon name="back" />
     </button>
     <AppMenu overHero />
   </div>
@@ -218,7 +259,8 @@ SPDX-License-Identifier: MIT
   <header class="flex h-16 items-center gap-3 px-4 md:h-19 md:gap-5 md:px-10">
     <a href={homePath} class="flex items-center gap-2.5 text-lg font-bold md:text-xl">
       <Logo />
-      TorrPlay
+      <!-- A phone has no room for this beside the demo's label. -->
+      <span class={demo ? "max-sm:sr-only" : ""}>TorrPlay</span>
     </a>
     {#if demo}
       <span class="rounded-inner bg-tile px-2 py-1 mono text-accent-text uppercase">
@@ -243,7 +285,7 @@ SPDX-License-Identifier: MIT
       {#if browsing && page?.name !== "library" && page?.name !== "add"}
         <form
           role="search"
-          class="hidden field w-65 items-center gap-2 text-text-muted md:flex"
+          class="hidden field w-65 items-center gap-2 text-text-muted lg:flex"
           onsubmit={(event) => {
             event.preventDefault();
             const search = headerSearch.trim();
@@ -251,14 +293,7 @@ SPDX-License-Identifier: MIT
             navigate(`${libraryPath}?${formatQuery({ search })}`);
           }}
         >
-          <svg
-            class="size-4 shrink-0"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg
-          >
+          <Icon name="search" class="size-4 shrink-0" />
           <input
             type="search"
             bind:value={headerSearch}
@@ -270,16 +305,9 @@ SPDX-License-Identifier: MIT
         <a
           href={libraryPath}
           aria-label={t().library.search}
-          class="btn size-11 bg-tile px-0 text-text md:hidden"
+          class="btn size-11 bg-tile px-0 text-text lg:hidden"
         >
-          <svg
-            class="size-4.5"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg
-          >
+          <Icon name="search" class="size-4.5" />
         </a>
       {/if}
       <AppMenu />
@@ -287,7 +315,11 @@ SPDX-License-Identifier: MIT
   </header>
 {/if}
 
-<main class={overHero ? "" : "px-4 pt-1 pb-24 md:px-10 md:pb-10"}>
+<main
+  bind:this={main}
+  tabindex="-1"
+  class="outline-none {overHero ? '' : 'px-4 pt-1 pb-24 md:px-10 md:pb-10'}"
+>
   {#if page?.name === "home"}
     {#if demo && intro.shown}
       <DemoIntro />
@@ -297,8 +329,6 @@ SPDX-License-Identifier: MIT
     <LibraryPage />
   {:else if page?.name === "add"}
     <AddPage />
-  {:else if page?.name === "settings"}
-    <SettingsPage section={undefined} />
   {:else if page?.name === "settingsSection" && page.params.section === "profiles"}
     <ProfilesPage />
   {:else if page?.name === "settingsSection" && page.params.section === "security"}
@@ -309,8 +339,9 @@ SPDX-License-Identifier: MIT
     <StremioPage />
   {:else if page?.name === "settingsSection" && page.params.section === "system"}
     <SystemPage />
-  {:else if page?.name === "settingsSection" && isSettingSection(page.params.section ?? "")}
-    <SettingsPage section={page.params.section as SettingSection} />
+  {:else if page?.name === "settings" || (page?.name === "settingsSection" && isSettingSection(page.params.section ?? ""))}
+    <!-- One branch for both, since the form keeps what was typed between them. -->
+    <SettingsPage section={page.params.section as SettingSection | undefined} />
   {:else if page?.name === "edit"}
     {#key page.params.torrent_id}
       <EditPage torrentId={page.params.torrent_id ?? ""} />
@@ -321,10 +352,18 @@ SPDX-License-Identifier: MIT
     {/key}
   {:else if page?.name === "watch"}
     <!-- The player and its library load only when a file is played. -->
-    {#await import("./pages/WatchPage.svelte") then { default: WatchPage }}
+    {#await import("./pages/WatchPage.svelte")}
+      <p role="status" class="p-4 text-text-muted md:p-10">{t().common.loading}</p>
+    {:then { default: WatchPage }}
       {#key `${page.params.torrent_id}/${page.params.file_id}`}
         <WatchPage torrentId={page.params.torrent_id ?? ""} fileId={page.params.file_id ?? ""} />
       {/key}
+    {:catch}
+      <!-- As after an upgrade, when an open page asks for what is no longer there. -->
+      <div class="flex flex-col items-start gap-4 p-4 md:p-10">
+        <RetryAlert message={t().player.loadFailed} onretry={() => window.location.reload()} />
+        <a href={homePath} class="font-semibold text-accent-text">{t().notFound.home}</a>
+      </div>
     {/await}
   {:else if page?.name === "signIn"}
     <SignInPage />

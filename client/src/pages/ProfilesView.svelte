@@ -7,22 +7,25 @@ SPDX-License-Identifier: MIT
   import { tick } from "svelte";
 
   import ConfirmDialog from "../components/ConfirmDialog.svelte";
+  import InlineError from "../components/InlineError.svelte";
   import ProfileAvatar from "../components/ProfileAvatar.svelte";
+  import RetryAlert from "../components/RetryAlert.svelte";
   import SettingsShell from "../components/SettingsShell.svelte";
   import type { Profile } from "../lib/backend";
   import { profileName, t } from "../lib/i18n/index.svelte";
+  import { IMAGE_TYPES, NAME_MAX_LENGTH } from "../lib/limits";
   import { profiles as chosen } from "../lib/profile.svelte";
 
   interface Props {
     /** Every profile, or `undefined` before they are read. */
     profiles: Profile[] | undefined;
     loadError: string | undefined;
-    failure: { profileId: string | undefined; message: string } | undefined;
+    /** What failed last, at the profile it is about, if any. */
+    failure: { place: string | undefined; message: string } | undefined;
     busy: boolean;
-    /** Changes when a profile was added, which clears the field. */
-    added: number;
     onretry: () => void;
-    onadd: (name: string) => void;
+    /** Resolves to whether the profile was added. */
+    onadd: (name: string) => Promise<boolean>;
     /** Resolves to whether the name was changed. */
     onrename: (profile: Profile, name: string) => Promise<boolean>;
     ondelete: (profile: Profile) => void;
@@ -35,7 +38,6 @@ SPDX-License-Identifier: MIT
     loadError,
     failure,
     busy,
-    added,
     onretry,
     onadd,
     onrename,
@@ -43,8 +45,6 @@ SPDX-License-Identifier: MIT
     onavatar,
     onremoveavatar,
   }: Props = $props();
-
-  const IMAGE_TYPES = "image/avif,image/gif,image/jpeg,image/png,image/webp";
 
   let newName = $state("");
   let renaming = $state<string>();
@@ -65,19 +65,12 @@ SPDX-License-Identifier: MIT
 
   /** The last person cannot be deleted, as the contract says. */
   const persons = $derived(profiles?.filter((profile) => profile.kind === "person").length ?? 0);
-
-  $effect(() => {
-    if (added > 0) newName = "";
-  });
 </script>
 
 <SettingsShell section="profiles" current="profiles">
   <p class="-mt-5 text-text-muted">{t().profiles.intro}</p>
   {#if loadError}
-    <div class="flex flex-col items-start gap-3">
-      <p role="alert" class="text-arriving-text">{loadError}</p>
-      <button type="button" class="btn btn-secondary" onclick={onretry}>{t().common.retry}</button>
-    </div>
+    <RetryAlert message={loadError} {onretry} />
   {:else if !profiles}
     <p role="status" class="text-text-muted">{t().common.loading}</p>
   {:else}
@@ -104,16 +97,16 @@ SPDX-License-Identifier: MIT
                   type="text"
                   bind:value={renamed}
                   autofocus
-                  maxlength="64"
+                  maxlength={NAME_MAX_LENGTH}
                   aria-label={t().profiles.nameOf(name)}
                   aria-invalid={renameBlank}
                   class="field min-w-0 grow bg-surface"
                 />
                 <button type="submit" class="btn btn-primary" disabled={busy}>
-                  {t().settings.save}
+                  {t().common.save}
                 </button>
                 <button type="button" class="btn btn-secondary" onclick={() => endRename(profile)}>
-                  {t().edit.cancel}
+                  {t().common.cancel}
                 </button>
               </form>
             {:else}
@@ -179,7 +172,7 @@ SPDX-License-Identifier: MIT
                       disabled={busy}
                       onclick={() => (deleting = profile)}
                     >
-                      {t().download.delete}
+                      {t().common.delete}
                     </button>
                   {/if}
                 </span>
@@ -187,10 +180,10 @@ SPDX-License-Identifier: MIT
             {/if}
           </div>
           {#if renaming === profile.id && renameBlank}
-            <p role="alert" class="text-meta text-arriving-text">{t().settings.required}</p>
+            <InlineError message={t().common.nameRequired} />
           {/if}
-          {#if failure?.profileId === profile.id}
-            <p role="alert" class="text-meta text-arriving-text">{failure.message}</p>
+          {#if failure?.place === profile.id}
+            <InlineError message={failure.message} />
           {/if}
         </li>
       {/each}
@@ -198,10 +191,10 @@ SPDX-License-Identifier: MIT
 
     <form
       class="flex flex-col gap-2"
-      onsubmit={(event) => {
+      onsubmit={async (event) => {
         event.preventDefault();
         newBlank = newName.trim() === "";
-        if (!newBlank) onadd(newName.trim());
+        if (!newBlank && (await onadd(newName.trim()))) newName = "";
       }}
     >
       <div class="flex items-end gap-2.5">
@@ -210,7 +203,7 @@ SPDX-License-Identifier: MIT
           <input
             type="text"
             bind:value={newName}
-            maxlength="64"
+            maxlength={NAME_MAX_LENGTH}
             aria-invalid={newBlank}
             placeholder={t().profiles.namePlaceholder}
             class="field font-normal"
@@ -219,10 +212,10 @@ SPDX-License-Identifier: MIT
         <button type="submit" class="btn btn-primary" disabled={busy}>{t().profiles.add}</button>
       </div>
       {#if newBlank}
-        <p role="alert" class="text-meta text-arriving-text">{t().settings.required}</p>
+        <InlineError message={t().common.nameRequired} />
       {/if}
-      {#if failure && failure.profileId === undefined}
-        <p role="alert" class="text-meta text-arriving-text">{failure.message}</p>
+      {#if failure && failure.place === undefined}
+        <InlineError message={failure.message} />
       {/if}
     </form>
   {/if}
@@ -231,8 +224,8 @@ SPDX-License-Identifier: MIT
 <ConfirmDialog
   open={deleting !== undefined}
   title={deleting ? t().profiles.deleteTitle(profileName(deleting)) : ""}
-  confirm={t().download.delete}
-  cancel={t().edit.cancel}
+  confirm={t().common.delete}
+  cancel={t().common.cancel}
   {busy}
   onconfirm={() => {
     if (deleting) ondelete(deleting);

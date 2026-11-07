@@ -5,8 +5,9 @@ SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
   import type { Profile } from "../lib/backend";
+  import { imageGrant } from "../lib/grant.svelte";
   import { profileName } from "../lib/i18n/index.svelte";
-  import { avatarUrl, profiles } from "../lib/profile.svelte";
+  import { avatarUrl } from "../lib/profile.svelte";
   import { toneOf } from "../lib/tone";
 
   interface Props {
@@ -19,7 +20,7 @@ SPDX-License-Identifier: MIT
 
   const name = $derived(profileName(profile));
   const tone = $derived(toneOf(name));
-  const url = $derived(avatarUrl(profile, profiles.grant));
+  const url = $derived(avatarUrl(profile, imageGrant.current));
   /** The URL that could not be shown, as with an expired token; the initial
    * stands in for it. */
   let failed = $state<string>();

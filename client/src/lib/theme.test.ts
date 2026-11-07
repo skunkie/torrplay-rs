@@ -8,6 +8,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import AppMenu from "../components/AppMenu.svelte";
+import { fakeBackend } from "../testing";
+import { backendContext } from "./context";
 import { i18n } from "./i18n/index.svelte";
 import { chooseTheme, followSystem, theme, type Theme } from "./theme.svelte";
 
@@ -148,7 +150,7 @@ it("keeps a chosen theme when the system changes", () => {
 
 it("offers the themes in the menu and applies the one chosen", async () => {
   systemPrefers(false);
-  render(AppMenu);
+  render(AppMenu, { context: backendContext(fakeBackend()) });
 
   const select: HTMLSelectElement = screen.getByLabelText("Theme");
   expect(select.value).toBe("system");
@@ -161,7 +163,7 @@ it("offers the themes in the menu and applies the one chosen", async () => {
 
 it("names the themes in Russian", () => {
   i18n.locale = "ru";
-  render(AppMenu);
+  render(AppMenu, { context: backendContext(fakeBackend()) });
 
   const select: HTMLSelectElement = screen.getByLabelText("Тема");
 

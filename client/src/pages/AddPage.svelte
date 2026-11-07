@@ -17,7 +17,7 @@ SPDX-License-Identifier: MIT
     type TorrentSource,
   } from "../lib/backend";
   import { useBackend } from "../lib/context";
-  import { engine } from "../lib/engine.svelte";
+  import { engine, pollFailure } from "../lib/engine.svelte";
   import { firstVideo } from "../lib/episodes";
   import { failureMessage, t } from "../lib/i18n/index.svelte";
   import { type Magnet, parseMagnet } from "../lib/magnet";
@@ -31,13 +31,16 @@ SPDX-License-Identifier: MIT
 
   const backend = useBackend();
 
-  let preview = $state<TorrentContents>();
-  let existing = $state<Torrent>();
+  let preview = $state.raw<TorrentContents>();
+  let existing = $state.raw<Torrent>();
   let storage = $state<StorageMode>("memory");
   let busy = $state(false);
   let waiting = $state(false);
   let readError = $state<string>();
   let error = $state<string>();
+  /** Why the last read of a torrent waiting for its files failed, which the next
+   * read replaces. */
+  let waitError = $state<string>();
   /** Counts what is being added, so a response for an earlier one is ignored. */
   let generation = 0;
   let stopWaiting: (() => void) | undefined;
@@ -64,7 +67,7 @@ SPDX-License-Identifier: MIT
     }
   }
 
-  /** What `torrentId` holds, known once it has its metadata. */
+  /** What `torrent` holds, known once it has its metadata. */
   async function contentsOf(torrent: Torrent): Promise<TorrentContents> {
     const files = await backend.listFiles(torrent.id);
     return {
@@ -82,7 +85,8 @@ SPDX-License-Identifier: MIT
     if (magnet.infoHash) await findExisting(magnet.infoHash, mine);
     if (mine !== generation) return;
     if (existing) {
-      preview = await contentsOf(existing).catch(() => undefined);
+      const contents = await contentsOf(existing).catch(() => undefined);
+      if (mine === generation) preview = contents;
       return;
     }
     busy = true;
@@ -110,7 +114,8 @@ SPDX-License-Identifier: MIT
         if (!held.unchanged && held.data.retention !== "temporary") {
           temporary = undefined;
           existing = held.data;
-          preview = await contentsOf(held.data).catch(() => undefined);
+          const contents = await contentsOf(held.data).catch(() => undefined);
+          if (mine === generation) preview = contents;
           return;
         }
       }
@@ -128,6 +133,7 @@ SPDX-License-Identifier: MIT
   function watchForFiles(torrentId: string, mine: number): void {
     const fail = (message: string) => {
       error = message;
+      waitError = undefined;
       waiting = false;
       stopWaiting?.();
       stopWaiting = undefined;
@@ -136,6 +142,7 @@ SPDX-License-Identifier: MIT
       try {
         const read = await backend.getTorrent(torrentId);
         if (mine !== generation || read.unchanged) return;
+        waitError = undefined;
         if (read.data.observed_state === "failed") {
           fail(read.data.failure?.detail ?? t().states.failed);
           return;
@@ -149,9 +156,16 @@ SPDX-License-Identifier: MIT
         if (!playWhenKnown) return;
         const file = firstVideo(contents.files);
         if (file) open(watchPath(torrentId, file.id));
-        else fail(t().title.noVideos);
+        else fail(t().common.noVideos);
       } catch (failure) {
-        if (mine === generation) fail(failureMessage(failure));
+        if (mine !== generation) return;
+        // Only a torrent gone ends the wait, which can take minutes: anything else
+        // may pass, and the next read tries again.
+        if (failure instanceof ApiError && failure.type === "not-found") {
+          fail(failureMessage(failure));
+        } else {
+          waitError = pollFailure(failure);
+        }
       }
     }, WAIT_MS);
   }
@@ -206,6 +220,7 @@ SPDX-License-Identifier: MIT
       busy = false;
       waiting = false;
       error = undefined;
+      waitError = undefined;
       if (source) {
         readError = undefined;
         void read(source, mine);
@@ -274,7 +289,7 @@ SPDX-License-Identifier: MIT
   busy={busy || engine.status !== "ready"}
   {waiting}
   {readError}
-  {error}
+  error={error ?? waitError}
   onfile={(file) => add({ kind: "file", file })}
   onmagnet={(text, submitted) => {
     const magnet = parseMagnet(text);
@@ -311,16 +326,22 @@ SPDX-License-Identifier: MIT
   }}
   onadd={async () => {
     if (temporary) {
-      const { id } = temporary;
+      const held = temporary;
+      const mine = generation;
+      // Already on its way to the library: leaving now must not delete it.
+      temporary = undefined;
       busy = true;
       error = undefined;
       try {
-        await backend.keepTorrent(id, storage);
-        open(titlePath(id));
+        await backend.keepTorrent(held.id, storage);
+        if (mine === generation) navigate(titlePath(held.id));
       } catch (failure) {
-        error = failureMessage(failure);
+        if (mine === generation) {
+          temporary = held;
+          error = failureMessage(failure);
+        }
       } finally {
-        busy = false;
+        if (mine === generation) busy = false;
       }
       return;
     }

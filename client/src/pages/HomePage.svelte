@@ -4,12 +4,14 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import RetryAlert from "../components/RetryAlert.svelte";
   import { ApiError } from "../lib/api/http";
-  import type { PlaybackGrant, Torrent, UpNextEntry } from "../lib/backend";
+  import type { Torrent, UpNextEntry } from "../lib/backend";
   import { useBackend } from "../lib/context";
   import { pollFailure } from "../lib/engine.svelte";
+  import { imageGrant, refreshGrant } from "../lib/grant.svelte";
   import { failureMessage, t } from "../lib/i18n/index.svelte";
-  import { playbackGrants, withGrant } from "../lib/playback";
+  import { posterUrl } from "../lib/playback";
   import { poll } from "../lib/poll";
   import { chooseProfile, loadProfiles, profiles } from "../lib/profile.svelte";
   import HomeView from "./HomeView.svelte";
@@ -20,13 +22,10 @@ SPDX-License-Identifier: MIT
   const POLL_MS = 5000;
 
   const backend = useBackend();
-  const grants = playbackGrants(backend);
 
-  let entries = $state<UpNextEntry[]>();
-  let recent = $state<Torrent[]>();
+  let entries = $state.raw<UpNextEntry[]>();
+  let recent = $state.raw<Torrent[]>();
   let error = $state<string>();
-  /** The grant poster URLs carry; `null` until it is known. */
-  let grant = $state<PlaybackGrant | undefined | null>(null);
   let upNextTag: string | undefined;
   let recentTag: string | undefined;
   /** Counts profile changes, so a response for an earlier one is ignored. */
@@ -80,8 +79,12 @@ SPDX-License-Identifier: MIT
     await refresh(profileId, generation);
   }
 
+  /** Its ID alone, since reading the profiles again gives the same one anew, which
+   * must not start polling over. */
+  const watching = $derived(profiles.current?.id);
+
   $effect(() => {
-    const profileId = profiles.current?.id;
+    const profileId = watching;
     const mine = ++generation;
     entries = undefined;
     upNextTag = undefined;
@@ -90,10 +93,7 @@ SPDX-License-Identifier: MIT
   });
 
   $effect(() => {
-    grants.current().then(
-      (current) => (grant = current),
-      () => (grant = undefined),
-    );
+    void refreshGrant(backend);
   });
 </script>
 
@@ -102,8 +102,7 @@ SPDX-License-Identifier: MIT
     {entries}
     {recent}
     {error}
-    poster={(torrent) =>
-      torrent.poster && grant !== null ? withGrant(torrent.links.poster, grant) : undefined}
+    poster={(torrent) => posterUrl(torrent, imageGrant.current)}
     ondismiss={dismiss}
     onretry={() => {
       upNextTag = undefined;
@@ -115,12 +114,7 @@ SPDX-License-Identifier: MIT
 {:else if profiles.people && profiles.people.length > 0}
   <ProfileChooser people={profiles.people} onchoose={chooseProfile} />
 {:else if profiles.failed}
-  <div role="alert" class="alert">
-    <span>{t().profiles.readFailed}</span>
-    <button type="button" class="text-accent-text underline" onclick={() => loadProfiles(backend)}>
-      {t().common.retry}
-    </button>
-  </div>
+  <RetryAlert message={t().profiles.readFailed} onretry={() => loadProfiles(backend)} />
 {:else if profiles.people}
   <p class="text-text-muted">{t().profiles.none}</p>
 {:else}

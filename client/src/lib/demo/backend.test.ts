@@ -578,6 +578,16 @@ describe("profiles", () => {
     ).rejects.toMatchObject({ type: "unsupported-media-type" });
   });
 
+  it("refuses a poster that is not an image, as the application does", async () => {
+    const { backend } = start();
+    const listed = await backend.listTorrents({}, {});
+    const id = listed.unchanged ? "" : (listed.data.items[0]?.id ?? "");
+
+    await expect(
+      backend.setPoster(id, new File(["x"], "a.txt", { type: "text/plain" })),
+    ).rejects.toMatchObject({ type: "unsupported-media-type" });
+  });
+
   it("keeps and removes an avatar", async () => {
     vi.stubGlobal(
       "URL",

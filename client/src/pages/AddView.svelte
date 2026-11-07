@@ -5,9 +5,11 @@ SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
   import Hero from "../components/Hero.svelte";
+  import Icon from "../components/Icon.svelte";
+  import RetryAlert from "../components/RetryAlert.svelte";
   import type { AdditionSource } from "../lib/addition.svelte";
   import type { PreviewFile, StorageMode, Torrent, TorrentContents } from "../lib/backend";
-  import { heroTitleClasses, torrentTitle } from "../lib/describe";
+  import { fileName, heroTitleClasses, torrentTitle } from "../lib/describe";
   import { firstVideo } from "../lib/episodes";
   import { formatBytes } from "../lib/format";
   import { t } from "../lib/i18n/index.svelte";
@@ -91,12 +93,6 @@ SPDX-License-Identifier: MIT
     return file.episode ? t().episodes.short(file.episode.season, file.episode.number) : undefined;
   }
 </script>
-
-{#snippet playIcon()}
-  <svg class="size-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
-    ><path d="M7 4.5v15l13-7.5z" /></svg
-  >
-{/snippet}
 
 {#if !source}
   <section
@@ -206,8 +202,8 @@ SPDX-License-Identifier: MIT
             disabled={busy || waiting}
             onclick={() => onplay(first?.id)}
           >
-            {@render playIcon()}
-            {t().player.playNext}
+            <Icon name="play" class="size-4" />
+            {t().common.play}
             {#if first?.episode}
               {t().episodes.short(first.episode.season, first.episode.number)}
             {/if}
@@ -219,7 +215,7 @@ SPDX-License-Identifier: MIT
           disabled={busy || waiting}
           onclick={onadd}
         >
-          {t().add.addToLibrary}
+          {t().common.addToLibrary}
         </button>
         <div
           class="segments max-w-full overflow-x-auto md:ml-auto"
@@ -244,14 +240,7 @@ SPDX-License-Identifier: MIT
 
   <div class="flex flex-col gap-3 px-4 pt-6 pb-24 md:px-10 md:pb-6">
     {#if error}
-      <div role="alert" class="alert flex-wrap">
-        <span>{error}</span>
-        <button
-          type="button"
-          class="font-semibold whitespace-nowrap text-accent-text underline"
-          onclick={onreset}>{t().add.tryAnother}</button
-        >
-      </div>
+      <RetryAlert message={error} onretry={onreset} action={t().add.tryAnother} />
     {/if}
     {#if waiting}
       <p role="status" class="text-text-muted">{t().add.waitingForFiles}</p>
@@ -265,7 +254,7 @@ SPDX-License-Identifier: MIT
       <ul class="list-grid">
         {#each preview.files as file (file.id)}
           {@const episode = episodeLabel(file)}
-          {@const fileName = file.path.at(-1) ?? ""}
+          {@const base = fileName(file)}
           {#if file.media_type.startsWith("video/")}
             <li class="flex min-h-14 items-center gap-3 rounded-2xl bg-tile py-1 pr-1 pl-4">
               <span
@@ -274,32 +263,32 @@ SPDX-License-Identifier: MIT
                 {#if episode}
                   <span class="shrink-0 mono text-accent-text md:w-14">{episode}</span>
                 {/if}
-                <span class="truncate text-sm">{fileName}</span>
+                <span class="truncate text-sm">{base}</span>
               </span>
               <span class="shrink-0 mono text-text-muted">{formatBytes(file.size_bytes)}</span>
               {#if existing}
                 <a
                   href={watchPath(existing.id, file.id)}
-                  aria-label={t().add.playFile(fileName)}
+                  aria-label={t().add.playFile(base)}
                   class="btn size-11 shrink-0 px-0 text-text"
                 >
-                  {@render playIcon()}
+                  <Icon name="play" class="size-4" />
                 </a>
               {:else}
                 <button
                   type="button"
-                  aria-label={t().add.playFile(fileName)}
+                  aria-label={t().add.playFile(base)}
                   class="btn size-11 shrink-0 px-0 text-text"
                   disabled={busy}
                   onclick={() => onplay(file.id)}
                 >
-                  {@render playIcon()}
+                  <Icon name="play" class="size-4" />
                 </button>
               {/if}
             </li>
           {:else}
             <li class="flex min-h-11 items-center gap-3 py-1 pr-14 pl-4 text-text-muted">
-              <span class="min-w-0 grow truncate text-sm">{fileName}</span>
+              <span class="min-w-0 grow truncate text-sm">{base}</span>
               <span class="shrink-0 mono">{formatBytes(file.size_bytes)}</span>
             </li>
           {/if}

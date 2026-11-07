@@ -12,7 +12,8 @@ SPDX-License-Identifier: MIT
   import { nextEpisode, playables } from "../lib/episodes";
   import { failureMessage, t } from "../lib/i18n/index.svelte";
   import { navigate } from "../lib/navigation.svelte";
-  import { playbackGrants, withGrant } from "../lib/playback";
+  import { namePage } from "../lib/page-title.svelte";
+  import { playbackGrants, posterUrl, withGrant } from "../lib/playback";
   import { trackLabel } from "../lib/player/audio";
   import { AudioTracks } from "../lib/player/audio-tracks.svelte";
   import { subtitleHost } from "../lib/player/media";
@@ -34,11 +35,13 @@ SPDX-License-Identifier: MIT
   const backend = useBackend();
   const grants = playbackGrants(backend);
 
-  let torrent = $state<Torrent>();
-  let files = $state<TorrentFile[]>();
+  let torrent = $state.raw<Torrent>();
+  let files = $state.raw<TorrentFile[]>();
   /** The profile's progress of the file, once read; `null` before. */
-  let progress = $state<Progress | undefined | null>(null);
-  let grant = $state<PlaybackGrant | undefined | null>(null);
+  let progress = $state.raw<Progress | undefined | null>(null);
+  /** Read once rather than the renewed one: a new token in the content's URL would
+   * load the file playing again. */
+  let grant = $state.raw<PlaybackGrant | undefined | null>(null);
   let error = $state<string>();
   let adding = $state(false);
   let added = $state(false);
@@ -56,6 +59,7 @@ SPDX-License-Identifier: MIT
   const profileId = $derived(profiles.current?.id);
 
   async function load(): Promise<void> {
+    error = undefined;
     try {
       const [read, listed, held, current] = await Promise.all([
         backend.getTorrent(torrentId),
@@ -113,7 +117,10 @@ SPDX-License-Identifier: MIT
   }
 
   $effect(() => {
-    void load();
+    // Waits for the profiles, or it would start from the file's head and over. Once
+    // read, nothing is read again under the video, even if they arrive only now.
+    const known = profiles.people !== undefined || profiles.failed;
+    if (known && !untrack(() => torrent)) void load();
   });
 
   const startAt = $derived(progress === null ? 0 : startPosition(progress));
@@ -163,6 +170,8 @@ SPDX-License-Identifier: MIT
     };
   });
 
+  namePage(() => (torrent ? torrentTitle(torrent) : undefined));
+
   const items = $derived(files ? playables(files, []) : []);
   const next = $derived.by(() => {
     if (torrent?.kind !== "series") return undefined;
@@ -190,7 +199,7 @@ SPDX-License-Identifier: MIT
   {startAt}
   backHref={titlePath(torrentId)}
   {next}
-  poster={torrent?.poster && grant !== null ? withGrant(torrent.links.poster, grant) : undefined}
+  poster={torrent && posterUrl(torrent, grant)}
   preloading={preload && !preload.settled
     ? {
         completedBytes: preload.current?.completed_bytes ?? 0,

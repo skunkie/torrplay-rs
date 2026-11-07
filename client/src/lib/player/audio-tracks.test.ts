@@ -115,3 +115,16 @@ it("stops reading a file probed after it was closed", async () => {
   expect(files.dispose).toHaveBeenCalled();
   expect(tracks.tracks).toEqual([]);
 });
+
+it("stops reading the file's tracks when the file is left first", () => {
+  let signal: AbortSignal | undefined;
+  const tracks = new AudioTracks(media, "/content", (_url, given) => {
+    signal = given;
+    return new Promise(() => {});
+  });
+  expect(signal?.aborted).toBe(false);
+
+  tracks.destroy();
+
+  expect(signal?.aborted).toBe(true);
+});

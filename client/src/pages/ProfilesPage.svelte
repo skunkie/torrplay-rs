@@ -4,24 +4,25 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import { Actions } from "../lib/action.svelte";
   import type { Profile } from "../lib/backend";
   import { useBackend } from "../lib/context";
   import { failureMessage, t } from "../lib/i18n/index.svelte";
+  import { IMAGE_MAX_BYTES } from "../lib/limits";
   import { loadProfiles } from "../lib/profile.svelte";
   import ProfilesView from "./ProfilesView.svelte";
-
-  /** The most an avatar may be, as the contract says. */
-  const AVATAR_MAX_BYTES = 1048576;
 
   const backend = useBackend();
 
   let all = $state.raw<Profile[]>();
   let loadError = $state<string>();
-  /** What the last action failed with, and on which profile, if any. */
-  let failure = $state<{ profileId: string | undefined; message: string }>();
-  let busy = $state(false);
-  /** Bumped after adding a profile, to clear the field. */
-  let added = $state(0);
+  /** A failure's place is the profile it is about, if any. It shows what a change
+   * did here and everywhere else that shows profiles. */
+  const actions = new Actions<string | undefined>(() =>
+    Promise.all([load(), loadProfiles(backend)]),
+  );
+  /** Why an image was not sent, shown like a failure. */
+  let refused = $state<{ place: string; message: string }>();
 
   async function load(): Promise<void> {
     loadError = undefined;
@@ -36,42 +37,24 @@ SPDX-License-Identifier: MIT
     void load();
   });
 
-  /** Runs `action`, then shows what it changed here and everywhere else that
-   * shows profiles. Returns whether it worked. */
-  async function act(
-    profileId: string | undefined,
-    action: () => Promise<unknown>,
-  ): Promise<boolean> {
-    busy = true;
-    failure = undefined;
-    try {
-      await action();
-      await Promise.all([load(), loadProfiles(backend)]);
-      return true;
-    } catch (error) {
-      failure = { profileId, message: failureMessage(error) };
-      return false;
-    } finally {
-      busy = false;
-    }
+  function act(profileId: string | undefined, action: () => Promise<unknown>): Promise<boolean> {
+    refused = undefined;
+    return actions.run(profileId, action);
   }
 </script>
 
 <ProfilesView
   profiles={all}
   {loadError}
-  {failure}
-  {busy}
-  {added}
+  failure={refused ?? actions.failure}
+  busy={actions.busy}
   onretry={load}
-  onadd={async (name) => {
-    if (await act(undefined, () => backend.createProfile(name))) added += 1;
-  }}
+  onadd={(name) => act(undefined, () => backend.createProfile(name))}
   onrename={(profile, name) => act(profile.id, () => backend.renameProfile(profile.id, name))}
   ondelete={(profile) => act(profile.id, () => backend.deleteProfile(profile.id))}
   onavatar={(profile, image) => {
-    if (image.size > AVATAR_MAX_BYTES) {
-      failure = { profileId: profile.id, message: t().profiles.avatarTooLarge };
+    if (image.size > IMAGE_MAX_BYTES) {
+      refused = { place: profile.id, message: t().profiles.avatarTooLarge };
       return;
     }
     void act(profile.id, () => backend.setAvatar(profile.id, image));

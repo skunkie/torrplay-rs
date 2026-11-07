@@ -22,6 +22,7 @@ import type {
   UpNextEntry,
 } from "../backend";
 import { nextEpisode, playables } from "../episodes";
+import { IMAGE_TYPES } from "../limits";
 import { LOG_LEVELS } from "../logs";
 import { parseMagnet } from "../magnet";
 import { searchTorrents } from "../search";
@@ -62,8 +63,6 @@ const LOG_PAGE_SIZE = 50;
 /** The share of a file played that marks it viewed, as the server's default. */
 const VIEWED_RATIO = 0.9;
 const PAGE_SIZE = 24;
-/** What the application takes as an image. */
-const IMAGE_TYPES = ["image/avif", "image/gif", "image/jpeg", "image/png", "image/webp"];
 
 /** A zip archive with nothing in it: only its end-of-directory record. */
 const EMPTY_ZIP = new Uint8Array([0x50, 0x4b, 0x05, 0x06, ...new Array<number>(18).fill(0)]);
@@ -344,6 +343,12 @@ export function demoBackend(now: () => number = Date.now): Backend {
 
   function replaceProfile(profile: Profile): void {
     people[people.findIndex((other) => other.id === profile.id)] = profile;
+  }
+
+  function refuseOtherThanImage(image: File): void {
+    if (!IMAGE_TYPES.split(",").includes(image.type)) {
+      throw refused(415, "unsupported-media-type", "This file is not an image the demo can use.");
+    }
   }
 
   function refuseTaken(name: string, except?: string): void {
@@ -651,6 +656,7 @@ export function demoBackend(now: () => number = Date.now): Backend {
 
     async setPoster(torrentId, image) {
       const item = read(torrentId);
+      refuseOtherThanImage(image);
       const { torrent } = item;
       if (torrent.poster && torrent.links.poster.startsWith("blob:")) {
         URL.revokeObjectURL(torrent.links.poster);
@@ -786,9 +792,7 @@ export function demoBackend(now: () => number = Date.now): Backend {
 
     async setAvatar(profileId, image) {
       const profile = profileOf(profileId);
-      if (!IMAGE_TYPES.includes(image.type)) {
-        throw refused(415, "unsupported-media-type", "This file is not an image the demo can use.");
-      }
+      refuseOtherThanImage(image);
       if (profile.links.avatar.startsWith("blob:")) URL.revokeObjectURL(profile.links.avatar);
       replaceProfile({
         ...profile,

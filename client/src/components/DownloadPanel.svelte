@@ -8,6 +8,8 @@ SPDX-License-Identifier: MIT
   import { formatBytes } from "../lib/format";
   import { t } from "../lib/i18n/index.svelte";
   import { pieceTiles } from "../lib/pieces";
+  import InlineError from "./InlineError.svelte";
+  import PieceLegend from "./PieceLegend.svelte";
 
   const TILES = 96;
 
@@ -62,7 +64,7 @@ SPDX-License-Identifier: MIT
   const speedLabel = $derived.by(() => {
     if (state === "paused") return t().download.paused;
     if (state === "failed") return "—";
-    return t().download.rate(formatBytes(rate));
+    return t().common.rate(formatBytes(rate));
   });
   const failure = $derived(torrent.failure?.detail ?? torrent.storage_failure?.detail);
 </script>
@@ -104,24 +106,11 @@ SPDX-License-Identifier: MIT
         {/each}
       </span>
     </button>
-    <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted" aria-hidden="true">
-      <span class="flex items-center gap-1.5"
-        ><span class="size-2.5 rounded-[3px] bg-accent"></span>{t().download.tileDownloaded}</span
-      >
-      <span class="flex items-center gap-1.5"
-        ><span class="size-2.5 rounded-[3px] bg-arriving"></span>{t().download.tileArriving}</span
-      >
-      {#if readers.length > 0}
-        <span class="flex items-center gap-1.5"
-          ><span class="size-2.5 rounded-[3px] outline-2 -outline-offset-1 outline-focus"
-          ></span>{t().download.tileReading}</span
-        >
-      {/if}
-    </div>
+    <PieceLegend reading={readers.length > 0} />
   {/if}
 
   {#if failure}
-    <p role="alert" class="text-meta text-arriving-text">{failure}</p>
+    <InlineError message={failure} />
   {:else if moving}
     <p role="status" class="text-meta text-text-muted">{t().download.moving}</p>
   {/if}
@@ -152,7 +141,7 @@ SPDX-License-Identifier: MIT
   <div class="flex flex-wrap gap-2">
     {#if torrent.retention === "temporary"}
       <button type="button" class="btn grow btn-secondary" disabled={busy} onclick={onaddtolibrary}>
-        {t().add.addToLibrary}
+        {t().common.addToLibrary}
       </button>
     {:else if torrent.storage_mode === "memory" && !moving}
       <button type="button" class="btn grow btn-secondary" disabled={busy} onclick={onkeepondisk}>
@@ -182,7 +171,7 @@ SPDX-License-Identifier: MIT
       disabled={busy}
       onclick={ondelete}
     >
-      {t().download.delete}
+      {t().common.delete}
     </button>
   </div>
 </section>

@@ -4,6 +4,7 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import InlineError from "../components/InlineError.svelte";
   import SettingsShell from "../components/SettingsShell.svelte";
   import type {
     CacheStatistics,
@@ -15,6 +16,7 @@ SPDX-License-Identifier: MIT
   } from "../lib/backend";
   import { formatBytes, formatDuration, formatLogTime } from "../lib/format";
   import { i18n, t } from "../lib/i18n/index.svelte";
+  import { LOG_SEARCH_MAX_LENGTH } from "../lib/limits";
   import { LOG_LEVELS } from "../lib/logs";
 
   interface Props {
@@ -102,7 +104,7 @@ SPDX-License-Identifier: MIT
   }
 
   function rate(bytes: number): string {
-    return t().download.rate(formatBytes(bytes));
+    return t().common.rate(formatBytes(bytes));
   }
 </script>
 
@@ -118,7 +120,7 @@ SPDX-License-Identifier: MIT
   <p class="-mt-5 text-sm text-text-muted">{t().system.updates}</p>
 
   {#if readError}
-    <p role="alert" class="text-meta text-arriving-text">{readError}</p>
+    <InlineError message={readError} />
   {/if}
 
   <div class="grid grid-cols-2 gap-2.5 lg:grid-cols-3">
@@ -209,7 +211,7 @@ SPDX-License-Identifier: MIT
           {/if}
         </p>
         {#if levelError}
-          <p role="alert" class="text-meta text-arriving-text">{levelError}</p>
+          <InlineError message={levelError} />
         {/if}
       </div>
       <select
@@ -237,7 +239,7 @@ SPDX-License-Identifier: MIT
     <div class="flex flex-wrap items-center gap-2.5">
       <input
         type="search"
-        maxlength="256"
+        maxlength={LOG_SEARCH_MAX_LENGTH}
         aria-label={t().system.logSearch}
         placeholder={t().system.logSearch}
         class="field min-w-0 grow md:max-w-65"
@@ -257,7 +259,7 @@ SPDX-License-Identifier: MIT
     </div>
 
     {#if logError}
-      <p role="alert" class="text-meta text-arriving-text">{logError}</p>
+      <InlineError message={logError} />
     {/if}
 
     {#if records}

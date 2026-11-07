@@ -10,21 +10,22 @@ SPDX-License-Identifier: MIT
   import {
     type Backend,
     changeTorrent,
-    type PlaybackGrant,
     type Progress,
     type Torrent,
     type TorrentFile,
     type TorrentStatistics,
   } from "../lib/backend";
   import { useBackend } from "../lib/context";
-  import { fileName } from "../lib/describe";
+  import { fileName, torrentTitle } from "../lib/describe";
   import { engine, pollFailure } from "../lib/engine.svelte";
   import { playables } from "../lib/episodes";
-  import { failureMessage } from "../lib/i18n/index.svelte";
+  import { imageGrant, refreshGrant } from "../lib/grant.svelte";
+  import { failureMessage, t } from "../lib/i18n/index.svelte";
   import { navigate } from "../lib/navigation.svelte";
-  import { playbackGrants, withGrant } from "../lib/playback";
+  import { namePage } from "../lib/page-title.svelte";
+  import { posterUrl } from "../lib/playback";
   import { poll } from "../lib/poll";
-  import { profiles } from "../lib/profile.svelte";
+  import { loadProfiles, profiles } from "../lib/profile.svelte";
   import { libraryPath } from "../lib/routes";
   import TitleView from "./TitleView.svelte";
 
@@ -39,24 +40,20 @@ SPDX-License-Identifier: MIT
   let { torrentId }: Props = $props();
 
   const backend = useBackend();
-  const grants = playbackGrants(backend);
 
-  let torrent = $state<Torrent>();
-  let files = $state<TorrentFile[]>();
-  let progress = $state<Progress[]>([]);
+  let torrent = $state.raw<Torrent>();
+  let files = $state.raw<TorrentFile[]>();
+  let progress = $state.raw<Progress[]>([]);
   let missing = $state(false);
   let error = $state<string>();
   /** Why the last change failed. Polling clears `error`, but this stays until
    * the next change, so it can be read. */
   let actionError = $state<string>();
-  let statistics = $state<TorrentStatistics>();
+  let statistics = $state.raw<TorrentStatistics>();
   let busy = $state(false);
   let piecesOpen = $state(false);
-  /** The grant poster URLs carry; `null` until it is known. */
-  let grant = $state<PlaybackGrant | undefined | null>(null);
   let etag: string | undefined;
-  /** Counts torrent and profile changes, so a response for an earlier
-   * one is ignored. */
+  /** Counts profile changes, so a response for an earlier one is ignored. */
   let generation = 0;
 
   /** Reads the measurements, whose absence only leaves the panel's old ones. */
@@ -88,8 +85,11 @@ SPDX-License-Identifier: MIT
    * known, and the profile's progress, which playback elsewhere changes. */
   async function refresh(id: string, profileId: string | undefined, mine: number): Promise<void> {
     if (missing) return;
+    /** Whether the torrent answered, so what is not found after it is something else. */
+    let found = false;
     try {
       const read = await backend.getTorrent(id, etag);
+      found = true;
       if (mine !== generation) return;
       if (!read.unchanged) {
         torrent = read.data;
@@ -107,8 +107,11 @@ SPDX-License-Identifier: MIT
       error = undefined;
     } catch (failure) {
       if (mine !== generation) return;
-      if (failure instanceof ApiError && failure.type === "not-found" && !torrent) {
-        missing = true;
+      if (failure instanceof ApiError && failure.type === "not-found") {
+        // Never there, or gone since: a temporary torrent expires by itself. Past the
+        // torrent, it is the profile that was deleted elsewhere; choose again.
+        if (found) await loadProfiles(backend);
+        else missing = true;
       } else if (!(failure instanceof ApiError && failure.type === "lifecycle-conflict")) {
         // A lifecycle conflict means the metadata is not known yet.
         error = pollFailure(failure);
@@ -116,40 +119,35 @@ SPDX-License-Identifier: MIT
     }
   }
 
+  /** Its ID alone, since reading the profiles again gives the same one anew, which
+   * must not start polling over. */
+  const profileId = $derived(profiles.current?.id);
+
   $effect(() => {
     const id = torrentId;
-    const profileId = profiles.current?.id;
+    const watching = profileId;
     const mine = ++generation;
+    // The application remakes this page for another title.
     untrack(() => {
-      // Another title starts empty; another profile keeps the torrent.
-      if (torrent?.id !== id) {
-        torrent = undefined;
-        files = undefined;
-        statistics = undefined;
-        missing = false;
-        etag = undefined;
-      }
       progress = [];
       error = undefined;
     });
     // Started untracked: the page's state that polling reads and writes
     // must not restart it.
-    return untrack(() => poll(() => refresh(id, profileId, mine), POLL_MS));
+    return untrack(() => poll(() => refresh(id, watching, mine), POLL_MS));
   });
 
   $effect(() => {
     if (!piecesOpen) return;
     const id = torrentId;
-    const mine = generation;
-    return poll(() => readStatistics(id, mine), PIECES_POLL_MS);
+    return poll(() => readStatistics(id, generation), PIECES_POLL_MS);
   });
 
   $effect(() => {
-    grants.current().then(
-      (current) => (grant = current),
-      () => (grant = undefined),
-    );
+    void refreshGrant(backend);
   });
+
+  namePage(() => (missing ? t().title.notFound : torrent && torrentTitle(torrent)));
 </script>
 
 <TitleView
@@ -157,7 +155,7 @@ SPDX-License-Identifier: MIT
   items={files ? playables(files, progress) : undefined}
   {missing}
   {error}
-  poster={torrent?.poster && grant !== null ? withGrant(torrent.links.poster, grant) : undefined}
+  poster={torrent && posterUrl(torrent, imageGrant.current)}
   {actionError}
   {statistics}
   busy={busy || engine.status !== "ready"}

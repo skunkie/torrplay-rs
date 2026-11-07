@@ -177,7 +177,8 @@ with what to watch.
   it has the data, so the listing's posters have no tiles until the contract
   reports each torrent's download.
 - **Navigation.** From 768 pixels wide, the header holds the logo, a segmented
-  Home and Library, Add, search, and the menu. Narrower, a bar at the bottom holds
+  Home and Library, Add, search, and the menu; search is a box from 1024 pixels,
+  and a button to the Library below that. Narrower, a bar at the bottom holds
   Home and Library. The menu, under the profile's initial, switches profile
   and language and signs out. The title page replaces the header with a back
   link and the menu over its hero.
@@ -258,8 +259,8 @@ the tokens.
   or discards them together and sends only what changed, and they survive moving
   between sections. A value out of its bounds holds back saving, what the server
   refuses shows beside its setting, and a change made elsewhere comes in under
-  what was typed. A link that leaves with changes unsaved asks first, and so does
-  closing the page; the browser's Back button does not. DLNA says that it opens
+  what was typed. A link or the browser's Back button that leaves with changes
+  unsaved asks first, and so does closing the page. DLNA says that it opens
   the library to the local network.
 - **Profiles.** A section of the settings adds, renames, and deletes people, each
   with an avatar, which the menu and the chooser show in place of the initial.
@@ -280,6 +281,23 @@ the tokens.
 - **Editing.** Edit is a page of its own, because the library members and poster
   are too long a form for a dialog. It sends only what changed, with the ETag it
   read, so a change made elsewhere meanwhile is reported rather than overwritten.
+
+### Moving around and leaving
+
+- The back and forward buttons return a page to where it was scrolled, once its
+  content is tall enough; a link opens a new page at its top.
+- A title's back arrow returns to the list it was reached from, Home or the
+  Library with its filters, and to Home when it was opened directly.
+- A page holding something unsaved, Settings or Edit, asks before a link, the
+  back and forward buttons, a dropped file, or closing takes it away.
+- A dropped or pasted file opens the Add page unless its type names something
+  else, as an image's does. The Add page takes any file, and says when the
+  server refuses it, since the server has the last word on what a torrent is.
+- Signing out revokes this device's access token, whose secret would otherwise
+  go on working. Signing in creates one that does not expire, so a device stays
+  signed in until then.
+- A subtitle file over 16 MiB is offered as not supported and never read: it is
+  read whole, and a file that large is not subtitles.
 
 ### Carried over
 

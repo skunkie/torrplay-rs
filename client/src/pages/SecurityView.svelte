@@ -7,10 +7,14 @@ SPDX-License-Identifier: MIT
   import { tick } from "svelte";
 
   import ConfirmDialog from "../components/ConfirmDialog.svelte";
+  import InlineError from "../components/InlineError.svelte";
+  import RetryAlert from "../components/RetryAlert.svelte";
   import SettingsShell from "../components/SettingsShell.svelte";
   import type { AccessToken, AccessTokenCreation, Password } from "../lib/backend";
+  import { canCopy, copyText } from "../lib/clipboard";
   import { formatFromNow } from "../lib/format";
   import { t } from "../lib/i18n/index.svelte";
+  import { NAME_MAX_LENGTH, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from "../lib/limits";
 
   /** What failed last, and which part of the page shows it. */
   export interface SecurityFailure {
@@ -63,8 +67,6 @@ SPDX-License-Identifier: MIT
     ondismiss,
   }: Props = $props();
 
-  /** The fewest characters the contract allows in a password. */
-  const PASSWORD_MIN = 8;
   const DAY_SECONDS = 24 * 60 * 60;
   /** What a token may last, of what the contract allows. */
   const LIFETIMES = {
@@ -97,10 +99,6 @@ SPDX-License-Identifier: MIT
   let secretField = $state<HTMLInputElement>();
   let currentField = $state<HTMLInputElement>();
   let nameField = $state<HTMLInputElement>();
-
-  /** Copying needs a secure context, which a plain address on a home network
-   * is not; there the field is selected for copying by hand. */
-  const canCopy = navigator.clipboard !== undefined;
 
   async function openPasswordForm(): Promise<void> {
     changing = true;
@@ -142,7 +140,7 @@ SPDX-License-Identifier: MIT
 
   async function submitPassword(event: SubmitEvent): Promise<void> {
     event.preventDefault();
-    if (newPassword.length < PASSWORD_MIN) {
+    if (newPassword.length < PASSWORD_MIN_LENGTH) {
       passwordProblem = t().security.tooShort;
     } else if (newPassword !== repeated) {
       passwordProblem = t().security.mismatch;
@@ -173,13 +171,7 @@ SPDX-License-Identifier: MIT
 
   async function copy(): Promise<void> {
     if (!secret) return;
-    try {
-      await navigator.clipboard.writeText(secret);
-      copiedSecret = secret;
-    } catch {
-      // The browser refused, so this leaves it ready to copy by hand.
-      secretField?.select();
-    }
+    if (await copyText(secret, secretField)) copiedSecret = secret;
   }
 
   async function dismissSecret(): Promise<void> {
@@ -189,16 +181,9 @@ SPDX-License-Identifier: MIT
   }
 </script>
 
-{#snippet alert(message: string)}
-  <p role="alert" class="text-meta text-arriving-text">{message}</p>
-{/snippet}
-
 <SettingsShell section="security" current="security">
   {#if loadError}
-    <div class="flex flex-col items-start gap-3">
-      <p role="alert" class="text-arriving-text">{loadError}</p>
-      <button type="button" class="btn btn-secondary" onclick={onretry}>{t().common.retry}</button>
-    </div>
+    <RetryAlert message={loadError} {onretry} />
   {:else if !tokens}
     <p role="status" class="text-text-muted">{t().common.loading}</p>
   {:else}
@@ -212,14 +197,14 @@ SPDX-License-Identifier: MIT
           <form class="flex max-w-100 flex-col gap-3" onsubmit={submitPassword}>
             {#if password}
               <label class="flex flex-col gap-1.5 text-meta font-semibold">
-                {t().security.currentPassword}
+                {t().common.currentPassword}
                 <input
                   bind:this={currentField}
                   type="password"
                   autocomplete="current-password"
                   required
                   bind:value={currentPassword}
-                  maxlength="256"
+                  maxlength={PASSWORD_MAX_LENGTH}
                   class="field bg-surface font-normal"
                 />
               </label>
@@ -231,7 +216,7 @@ SPDX-License-Identifier: MIT
                 autocomplete="new-password"
                 required
                 bind:value={newPassword}
-                maxlength="256"
+                maxlength={PASSWORD_MAX_LENGTH}
                 aria-invalid={passwordProblem !== undefined}
                 class="field bg-surface font-normal"
               />
@@ -243,7 +228,7 @@ SPDX-License-Identifier: MIT
                 autocomplete="new-password"
                 required
                 bind:value={repeated}
-                maxlength="256"
+                maxlength={PASSWORD_MAX_LENGTH}
                 aria-invalid={passwordProblem !== undefined}
                 class="field bg-surface font-normal"
               />
@@ -258,10 +243,10 @@ SPDX-License-Identifier: MIT
               </label>
             {/if}
             {#if passwordProblem}
-              {@render alert(passwordProblem)}
+              <InlineError message={passwordProblem} />
             {/if}
             {#if failure?.place === "password"}
-              {@render alert(failure.message)}
+              <InlineError message={failure.message} />
             {/if}
             <span class="flex flex-wrap gap-2">
               <button type="submit" class="btn btn-primary" disabled={busy}>
@@ -269,14 +254,14 @@ SPDX-License-Identifier: MIT
               </button>
               {#if password}
                 <button type="button" class="btn btn-secondary" onclick={closePasswordForm}>
-                  {t().edit.cancel}
+                  {t().common.cancel}
                 </button>
               {/if}
             </span>
           </form>
         {:else}
           {#if failure?.place === "password"}
-            {@render alert(failure.message)}
+            <InlineError message={failure.message} />
           {/if}
           <span class="flex flex-wrap gap-2">
             <button
@@ -328,7 +313,7 @@ SPDX-License-Identifier: MIT
                   bind:this={nameField}
                   type="text"
                   bind:value={tokenName}
-                  maxlength="64"
+                  maxlength={NAME_MAX_LENGTH}
                   aria-invalid={nameBlank}
                   class="field bg-surface font-normal"
                 />
@@ -340,7 +325,7 @@ SPDX-License-Identifier: MIT
                   autocomplete="current-password"
                   required
                   bind:value={tokenPassword}
-                  maxlength="256"
+                  maxlength={PASSWORD_MAX_LENGTH}
                   class="field bg-surface font-normal"
                 />
               </label>
@@ -362,17 +347,17 @@ SPDX-License-Identifier: MIT
               </label>
             </div>
             {#if nameBlank}
-              {@render alert(t().settings.required)}
+              <InlineError message={t().common.nameRequired} />
             {/if}
             {#if failure?.place === "token"}
-              {@render alert(failure.message)}
+              <InlineError message={failure.message} />
             {/if}
             <span class="flex flex-wrap gap-2">
               <button type="submit" class="btn btn-primary" disabled={busy}>
                 {t().security.create}
               </button>
               <button type="button" class="btn btn-secondary" onclick={closeTokenForm}>
-                {t().edit.cancel}
+                {t().common.cancel}
               </button>
             </span>
           </form>
@@ -391,9 +376,9 @@ SPDX-License-Identifier: MIT
                 class="field min-w-0 grow bg-surface mono"
                 onfocus={(event) => event.currentTarget.select()}
               />
-              {#if canCopy}
+              {#if canCopy()}
                 <button type="button" class="btn btn-primary" onclick={copy}>
-                  {copiedSecret === secret ? t().security.copied : t().security.copy}
+                  {copiedSecret === secret ? t().common.copied : t().common.copy}
                 </button>
               {/if}
               <button type="button" class="btn btn-secondary" onclick={dismissSecret}>
@@ -404,26 +389,24 @@ SPDX-License-Identifier: MIT
         {/if}
 
         {#if !creating && failure?.place === "token"}
-          {@render alert(failure.message)}
+          <InlineError message={failure.message} />
         {/if}
 
         <div class="rounded-2xl bg-tile px-4 py-1">
           <table class="w-full text-left text-sm">
-            <thead class="text-meta text-text-muted max-md:sr-only">
+            <thead class="text-meta text-text-muted max-lg:sr-only">
               <tr>
                 <th scope="col" class="py-2.5 pr-3 font-semibold">{t().security.name}</th>
-                <th scope="col" class="py-2.5 pr-3 font-semibold max-md:hidden">
+                <th scope="col" class="py-2.5 pr-3 font-semibold max-lg:hidden">
                   {t().security.scope}
                 </th>
-                <th scope="col" class="py-2.5 pr-3 font-semibold max-md:hidden">
+                <th scope="col" class="py-2.5 pr-3 font-semibold max-lg:hidden">
                   {t().security.lastUsed}
                 </th>
-                <th scope="col" class="py-2.5 pr-3 font-semibold max-md:hidden">
+                <th scope="col" class="py-2.5 pr-3 font-semibold max-lg:hidden">
                   {t().security.expires}
                 </th>
-                <th scope="col" class="py-2.5"
-                  ><span class="sr-only">{t().security.revoke}</span></th
-                >
+                <th scope="col" class="py-2.5"><span class="sr-only">{t().common.revoke}</span></th>
               </tr>
             </thead>
             <tbody>
@@ -435,7 +418,7 @@ SPDX-License-Identifier: MIT
                 {@const expires = token.expires_at
                   ? formatFromNow(token.expires_at)
                   : t().security.noExpiry}
-                <tr class="border-t border-empty first:max-md:border-t-0">
+                <tr class="border-t border-empty first:max-lg:border-t-0">
                   <td class="py-3 pr-3 font-semibold wrap-anywhere">
                     {token.name}
                     {#if token.id === ownToken}
@@ -444,19 +427,19 @@ SPDX-License-Identifier: MIT
                       </span>
                     {/if}
                     <!-- A phone has no room for the columns, so they read as lines. -->
-                    <span class="block text-meta font-normal text-text-muted md:hidden">
+                    <span class="block text-meta font-normal text-text-muted lg:hidden">
                       {scope}
                     </span>
-                    <span class="block text-meta font-normal text-text-muted md:hidden">
+                    <span class="block text-meta font-normal text-text-muted lg:hidden">
                       {t().security.lastUsed}: {used}
                     </span>
-                    <span class="block text-meta font-normal text-text-muted md:hidden">
+                    <span class="block text-meta font-normal text-text-muted lg:hidden">
                       {t().security.expires}: {expires}
                     </span>
                   </td>
-                  <td class="py-3 pr-3 text-text-muted max-md:hidden">{scope}</td>
-                  <td class="py-3 pr-3 text-text-muted max-md:hidden">{used}</td>
-                  <td class="py-3 pr-3 text-text-muted max-md:hidden">{expires}</td>
+                  <td class="py-3 pr-3 text-text-muted max-lg:hidden">{scope}</td>
+                  <td class="py-3 pr-3 text-text-muted max-lg:hidden">{used}</td>
+                  <td class="py-3 pr-3 text-text-muted max-lg:hidden">{expires}</td>
                   <td class="py-3 text-right">
                     <button
                       type="button"
@@ -465,7 +448,7 @@ SPDX-License-Identifier: MIT
                       disabled={busy}
                       onclick={() => (revoking = token)}
                     >
-                      {t().security.revoke}
+                      {t().common.revoke}
                     </button>
                   </td>
                 </tr>
@@ -482,7 +465,7 @@ SPDX-License-Identifier: MIT
   open={removing}
   title={t().security.removeTitle}
   confirm={t().security.removePassword}
-  cancel={t().edit.cancel}
+  cancel={t().common.cancel}
   {busy}
   onconfirm={() => {
     removing = false;
@@ -496,8 +479,8 @@ SPDX-License-Identifier: MIT
 <ConfirmDialog
   open={revoking !== undefined}
   title={revoking ? t().security.revokeTitle(revoking.name) : ""}
-  confirm={t().security.revoke}
-  cancel={t().edit.cancel}
+  confirm={t().common.revoke}
+  cancel={t().common.cancel}
   {busy}
   onconfirm={() => {
     if (revoking) onrevoke(revoking);

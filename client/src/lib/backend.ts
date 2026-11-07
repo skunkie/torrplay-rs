@@ -8,6 +8,7 @@ import {
   conditional,
   type Http,
   type Schemas,
+  succeeded,
   unwrap,
 } from "./api/http";
 
@@ -206,23 +207,29 @@ export function cursorOf(next: string | undefined): string | undefined {
     : undefined;
 }
 
-/** `profile` with an avatar link its upload time is part of, so a new image is a
- * new URL: an element keeps showing what a URL it already has gave. */
-function withAvatarVersion(profile: Profile): Profile {
-  if (!profile.avatar) return profile;
-  const version = encodeURIComponent(profile.avatar.updated_at);
-  return {
-    ...profile,
-    links: { ...profile.links, avatar: `${profile.links.avatar}?v=${version}` },
-  };
-}
-
 /** What a refused change says is wrong with each of its members. */
 export function errorsOf(failure: ApiError): { pointer?: string; detail: string }[] {
   return (
     (failure.problem as { errors?: { pointer?: string; detail: string }[] } | undefined)?.errors ??
     []
   );
+}
+
+/** What a refused change says of each top-level member, the first detail of each:
+ * a pointer may name an item of a list, as `/categories/1` does. A failure
+ * naming no member has `undefined` in `other`. */
+export function memberErrors(failure: ApiError): {
+  members: Record<string, string>;
+  other: string | undefined;
+} {
+  const members: Record<string, string> = {};
+  let other: string | undefined;
+  for (const { pointer, detail } of errorsOf(failure)) {
+    const member = pointer?.split("/")[1];
+    if (member) members[member] ??= detail;
+    else other ??= detail;
+  }
+  return { members, other };
 }
 
 /** The ID of the torrent a creation found it already has, or `undefined`
@@ -256,8 +263,64 @@ function metainfoForm(file: File): FormData {
   return form;
 }
 
+/** The ETag of a response to a read a later change needs it from. */
+function etagOf(response: Response): string {
+  const etag = response.headers.get("ETag");
+  if (!etag) throw new ApiError(response.status, undefined);
+  return etag;
+}
+
+/** Every item of a listing, read a page at a time. */
+async function everyPage<T>(
+  read: (cursor: string | undefined) => Promise<{ items: T[]; links: { next?: string } }>,
+): Promise<T[]> {
+  const items: T[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await read(cursor);
+    items.push(...page.items);
+    cursor = cursorOf(page.links.next);
+  } while (cursor);
+  return items;
+}
+
+/** How many items a read of a whole listing asks for at a time. */
+const LISTING_PAGE_SIZE = 200;
+
+/** The query of one page of a whole listing. */
+function pageQuery(cursor: string | undefined): { page_size: number; cursor?: string } {
+  return { page_size: LISTING_PAGE_SIZE, ...(cursor ? { cursor } : {}) };
+}
+
+/** Request options that send `value` as it is: an image, an archive, or a form,
+ * which the contract types by its parts rather than as such an object. */
+function rawBody(value: Blob | FormData) {
+  return { body: {} as never, bodySerializer: () => value };
+}
+
 /** The backend over the API. */
 export function httpBackend(http: Http): Backend {
+  async function getConfiguration(torrentId: string) {
+    const read = await http.GET("/api/v1/torrents/{torrent_id}/configuration", {
+      params: { path: { torrent_id: torrentId } },
+    });
+    return { data: unwrap(read), etag: etagOf(read.response) };
+  }
+
+  async function updateConfiguration(
+    torrentId: string,
+    patch: TorrentConfigurationPatch,
+    etag: string,
+  ) {
+    unwrap(
+      await http.PATCH("/api/v1/torrents/{torrent_id}/configuration", {
+        params: { path: { torrent_id: torrentId }, header: { "If-Match": etag } },
+        headers: { "Content-Type": "application/merge-patch+json" },
+        body: patch,
+      }),
+    );
+  }
+
   return {
     async getReadiness() {
       const { response } = await http.GET("/readyz");
@@ -287,6 +350,17 @@ export function httpBackend(http: Http): Backend {
       );
     },
 
+    async getTorrent(torrentId, etag) {
+      return conditional(
+        await http.GET("/api/v1/torrents/{torrent_id}", {
+          params: {
+            path: { torrent_id: torrentId },
+            ...(etag ? { header: { "If-None-Match": etag } } : {}),
+          },
+        }),
+      );
+    },
+
     async createTorrent(source, keeping) {
       const options = {
         retention: keeping.retention,
@@ -301,19 +375,13 @@ export function httpBackend(http: Http): Backend {
       }
       const form = metainfoForm(source.file);
       for (const [name, value] of Object.entries(options)) form.set(name, value);
-      return unwrap(
-        await http.POST("/api/v1/torrents", {
-          // The form is the body; the contract types its parts, not FormData.
-          body: {} as never,
-          bodySerializer: () => form,
-        }),
-      );
+      return unwrap(await http.POST("/api/v1/torrents", rawBody(form)));
     },
 
     async keepTorrent(torrentId, storageMode) {
-      const { data, etag } = await this.getConfiguration(torrentId);
+      const { data, etag } = await getConfiguration(torrentId);
       if (data.retention !== "temporary") return;
-      await this.updateConfiguration(
+      await updateConfiguration(
         torrentId,
         {
           retention: "persisted",
@@ -325,12 +393,11 @@ export function httpBackend(http: Http): Backend {
     },
 
     async deleteTorrent(torrentId) {
-      const result = await http.DELETE("/api/v1/torrents/{torrent_id}", {
-        params: { path: { torrent_id: torrentId } },
-      });
-      if (!result.response.ok) {
-        unwrap(result);
-      }
+      succeeded(
+        await http.DELETE("/api/v1/torrents/{torrent_id}", {
+          params: { path: { torrent_id: torrentId } },
+        }),
+      );
     },
 
     async getTorrentStatistics(torrentId) {
@@ -341,23 +408,99 @@ export function httpBackend(http: Http): Backend {
       );
     },
 
-    async getConfiguration(torrentId) {
-      const read = await http.GET("/api/v1/torrents/{torrent_id}/configuration", {
-        params: { path: { torrent_id: torrentId } },
-      });
-      const data = unwrap(read);
-      const etag = read.response.headers.get("ETag");
-      if (!etag) throw new ApiError(read.response.status, undefined);
-      return { data, etag };
+    getConfiguration,
+    updateConfiguration,
+
+    async setPoster(torrentId, image) {
+      succeeded(
+        await http.PUT("/api/v1/torrents/{torrent_id}/poster", {
+          params: { path: { torrent_id: torrentId } },
+          headers: { "Content-Type": image.type },
+          ...rawBody(image),
+        }),
+      );
     },
 
-    async updateConfiguration(torrentId, patch, etag) {
-      unwrap(
-        await http.PATCH("/api/v1/torrents/{torrent_id}/configuration", {
-          params: { path: { torrent_id: torrentId }, header: { "If-Match": etag } },
-          headers: { "Content-Type": "application/merge-patch+json" },
-          body: patch,
+    async deletePoster(torrentId) {
+      succeeded(
+        await http.DELETE("/api/v1/torrents/{torrent_id}/poster", {
+          params: { path: { torrent_id: torrentId } },
         }),
+      );
+    },
+
+    async previewTorrent(file) {
+      return unwrap(await http.POST("/api/v1/torrent-previews", rawBody(metainfoForm(file))));
+    },
+
+    async listFiles(torrentId) {
+      return everyPage(async (cursor) =>
+        unwrap(
+          await http.GET("/api/v1/torrents/{torrent_id}/files", {
+            params: { path: { torrent_id: torrentId }, query: pageQuery(cursor) },
+          }),
+        ),
+      );
+    },
+
+    async listProgress(profileId, torrentId) {
+      return everyPage(async (cursor) =>
+        unwrap(
+          await http.GET("/api/v1/profiles/{profile_id}/torrents/{torrent_id}/progress", {
+            params: {
+              path: { profile_id: profileId, torrent_id: torrentId },
+              query: pageQuery(cursor),
+            },
+          }),
+        ),
+      );
+    },
+
+    async setProgress(profileId, torrentId, fileId, update, options) {
+      return unwrap(
+        await http.PUT("/api/v1/profiles/{profile_id}/torrents/{torrent_id}/progress/{file_id}", {
+          params: { path: { profile_id: profileId, torrent_id: torrentId, file_id: fileId } },
+          body: update,
+          ...(options?.keepalive ? { keepalive: true } : {}),
+        }),
+      );
+    },
+
+    async createPreload(torrentId, fileId, offset) {
+      const created = unwrap(
+        await http.POST("/api/v1/torrents/{torrent_id}/files/{file_id}/preloads", {
+          params: { path: { torrent_id: torrentId, file_id: fileId } },
+          body: {
+            expires_in_seconds: PRELOAD_SECONDS,
+            ...(offset === undefined ? {} : { offset_bytes: offset }),
+          },
+        }),
+      );
+      if (!created) throw new ApiError(500, undefined);
+      return created;
+    },
+
+    async getPreload(torrentId, fileId, preloadId) {
+      const read = unwrap(
+        await http.GET("/api/v1/torrents/{torrent_id}/files/{file_id}/preloads/{preload_id}", {
+          params: { path: { torrent_id: torrentId, file_id: fileId, preload_id: preloadId } },
+        }),
+      );
+      if (!read) throw new ApiError(500, undefined);
+      return read;
+    },
+
+    async deletePreload(torrentId, fileId, preloadId) {
+      succeeded(
+        await http.DELETE("/api/v1/torrents/{torrent_id}/files/{file_id}/preloads/{preload_id}", {
+          params: { path: { torrent_id: torrentId, file_id: fileId, preload_id: preloadId } },
+        }),
+      );
+    },
+
+    async listProfiles() {
+      return everyPage(async (cursor) =>
+        unwrap(await http.GET("/api/v1/profiles", { params: { query: pageQuery(cursor) } })),
       );
     },
 
@@ -369,11 +512,9 @@ export function httpBackend(http: Http): Backend {
       const path = { profile_id: profileId };
       const read = await http.GET("/api/v1/profiles/{profile_id}", { params: { path } });
       unwrap(read);
-      const etag = read.response.headers.get("ETag");
-      if (!etag) throw new ApiError(read.response.status, undefined);
       unwrap(
         await http.PATCH("/api/v1/profiles/{profile_id}", {
-          params: { path, header: { "If-Match": etag } },
+          params: { path, header: { "If-Match": etagOf(read.response) } },
           headers: { "Content-Type": "application/merge-patch+json" },
           body: { name },
         }),
@@ -381,28 +522,52 @@ export function httpBackend(http: Http): Backend {
     },
 
     async deleteProfile(profileId) {
-      const result = await http.DELETE("/api/v1/profiles/{profile_id}", {
-        params: { path: { profile_id: profileId } },
-      });
-      if (!result.response.ok) unwrap(result);
+      succeeded(
+        await http.DELETE("/api/v1/profiles/{profile_id}", {
+          params: { path: { profile_id: profileId } },
+        }),
+      );
     },
 
     async setAvatar(profileId, image) {
-      const result = await http.PUT("/api/v1/profiles/{profile_id}/avatar", {
-        params: { path: { profile_id: profileId } },
-        headers: { "Content-Type": image.type },
-        // The image is the body; the contract types it as a string.
-        body: image as unknown as string,
-        bodySerializer: (body) => body,
-      });
-      if (!result.response.ok) unwrap(result);
+      succeeded(
+        await http.PUT("/api/v1/profiles/{profile_id}/avatar", {
+          params: { path: { profile_id: profileId } },
+          headers: { "Content-Type": image.type },
+          ...rawBody(image),
+        }),
+      );
     },
 
     async deleteAvatar(profileId) {
-      const result = await http.DELETE("/api/v1/profiles/{profile_id}/avatar", {
-        params: { path: { profile_id: profileId } },
-      });
-      if (!result.response.ok) unwrap(result);
+      succeeded(
+        await http.DELETE("/api/v1/profiles/{profile_id}/avatar", {
+          params: { path: { profile_id: profileId } },
+        }),
+      );
+    },
+
+    async listUpNext(profileId, page) {
+      return conditional(
+        await http.GET("/api/v1/profiles/{profile_id}/up-next", {
+          params: {
+            path: { profile_id: profileId },
+            query: {
+              ...(page.cursor ? { cursor: page.cursor } : {}),
+              ...(page.pageSize ? { page_size: page.pageSize } : {}),
+            },
+            ...(page.etag ? { header: { "If-None-Match": page.etag } } : {}),
+          },
+        }),
+      );
+    },
+
+    async dismissUpNext(profileId, entryId) {
+      succeeded(
+        await http.DELETE("/api/v1/profiles/{profile_id}/up-next/{up_next_entry_id}", {
+          params: { path: { profile_id: profileId, up_next_entry_id: entryId } },
+        }),
+      );
     },
 
     async getSystem() {
@@ -435,10 +600,7 @@ export function httpBackend(http: Http): Backend {
 
     async getSettings() {
       const read = await http.GET("/api/v1/settings");
-      const data = unwrap(read);
-      const etag = read.response.headers.get("ETag");
-      if (!etag) throw new ApiError(read.response.status, undefined);
-      return { data, etag };
+      return { data: unwrap(read), etag: etagOf(read.response) };
     },
 
     async updateSettings(patch, etag) {
@@ -451,175 +613,12 @@ export function httpBackend(http: Http): Backend {
       );
     },
 
-    async setPoster(torrentId, image) {
-      const result = await http.PUT("/api/v1/torrents/{torrent_id}/poster", {
-        params: { path: { torrent_id: torrentId } },
-        headers: { "Content-Type": image.type },
-        // The image is the body; the contract types it as a string.
-        body: {} as never,
-        bodySerializer: () => image,
-      });
-      // A stored poster answers with no body, which `unwrap` would refuse.
-      if (!result.response.ok) {
-        unwrap(result);
-      }
-    },
-
-    async deletePoster(torrentId) {
-      const result = await http.DELETE("/api/v1/torrents/{torrent_id}/poster", {
-        params: { path: { torrent_id: torrentId } },
-      });
-      if (!result.response.ok) {
-        unwrap(result);
-      }
-    },
-
-    async previewTorrent(file) {
-      return unwrap(
-        await http.POST("/api/v1/torrent-previews", {
-          body: {} as never,
-          bodySerializer: () => metainfoForm(file),
-        }),
-      );
-    },
-
-    async getTorrent(torrentId, etag) {
-      return conditional(
-        await http.GET("/api/v1/torrents/{torrent_id}", {
-          params: {
-            path: { torrent_id: torrentId },
-            ...(etag ? { header: { "If-None-Match": etag } } : {}),
-          },
-        }),
-      );
-    },
-
-    async listFiles(torrentId) {
-      const files: TorrentFile[] = [];
-      let cursor: string | undefined;
-      do {
-        const page = unwrap(
-          await http.GET("/api/v1/torrents/{torrent_id}/files", {
-            params: {
-              path: { torrent_id: torrentId },
-              query: { page_size: 200, ...(cursor ? { cursor } : {}) },
-            },
-          }),
-        );
-        files.push(...page.items);
-        cursor = cursorOf(page.links.next);
-      } while (cursor);
-      return files;
-    },
-
-    async listProgress(profileId, torrentId) {
-      const progress: Progress[] = [];
-      let cursor: string | undefined;
-      do {
-        const page = unwrap(
-          await http.GET("/api/v1/profiles/{profile_id}/torrents/{torrent_id}/progress", {
-            params: {
-              path: { profile_id: profileId, torrent_id: torrentId },
-              query: { page_size: 200, ...(cursor ? { cursor } : {}) },
-            },
-          }),
-        );
-        progress.push(...page.items);
-        cursor = cursorOf(page.links.next);
-      } while (cursor);
-      return progress;
-    },
-
-    async setProgress(profileId, torrentId, fileId, update, options) {
-      return unwrap(
-        await http.PUT("/api/v1/profiles/{profile_id}/torrents/{torrent_id}/progress/{file_id}", {
-          params: { path: { profile_id: profileId, torrent_id: torrentId, file_id: fileId } },
-          body: update,
-          ...(options?.keepalive ? { keepalive: true } : {}),
-        }),
-      );
-    },
-
-    async listProfiles() {
-      const profiles: Profile[] = [];
-      let cursor: string | undefined;
-      do {
-        const page = unwrap(
-          await http.GET("/api/v1/profiles", {
-            params: { query: { page_size: 200, ...(cursor ? { cursor } : {}) } },
-          }),
-        );
-        profiles.push(...page.items.map(withAvatarVersion));
-        cursor = cursorOf(page.links.next);
-      } while (cursor);
-      return profiles;
-    },
-
-    async listUpNext(profileId, page) {
-      return conditional(
-        await http.GET("/api/v1/profiles/{profile_id}/up-next", {
-          params: {
-            path: { profile_id: profileId },
-            query: {
-              ...(page.cursor ? { cursor: page.cursor } : {}),
-              ...(page.pageSize ? { page_size: page.pageSize } : {}),
-            },
-            ...(page.etag ? { header: { "If-None-Match": page.etag } } : {}),
-          },
-        }),
-      );
-    },
-
-    async createPreload(torrentId, fileId, offset) {
-      const created = unwrap(
-        await http.POST("/api/v1/torrents/{torrent_id}/files/{file_id}/preloads", {
-          params: { path: { torrent_id: torrentId, file_id: fileId } },
-          body: {
-            expires_in_seconds: PRELOAD_SECONDS,
-            ...(offset === undefined ? {} : { offset_bytes: offset }),
-          },
-        }),
-      );
-      if (!created) throw new ApiError(500, undefined);
-      return created;
-    },
-
-    async getPreload(torrentId, fileId, preloadId) {
-      const read = unwrap(
-        await http.GET("/api/v1/torrents/{torrent_id}/files/{file_id}/preloads/{preload_id}", {
-          params: { path: { torrent_id: torrentId, file_id: fileId, preload_id: preloadId } },
-        }),
-      );
-      if (!read) throw new ApiError(500, undefined);
-      return read;
-    },
-
-    async deletePreload(torrentId, fileId, preloadId) {
-      const result = await http.DELETE(
-        "/api/v1/torrents/{torrent_id}/files/{file_id}/preloads/{preload_id}",
-        { params: { path: { torrent_id: torrentId, file_id: fileId, preload_id: preloadId } } },
-      );
-      if (!result.response.ok) {
-        unwrap(result);
-      }
-    },
-
-    async dismissUpNext(profileId, entryId) {
-      const result = await http.DELETE("/api/v1/profiles/{profile_id}/up-next/{up_next_entry_id}", {
-        params: { path: { profile_id: profileId, up_next_entry_id: entryId } },
-      });
-      if (!result.response.ok) {
-        unwrap(result);
-      }
-    },
-
     async signIn(password, name) {
-      const created = unwrap(
+      return unwrap(
         await http.POST("/api/v1/access-tokens", {
           body: { password, name, scope: "api", expires_in_seconds: null },
         }),
       );
-      return created;
     },
 
     async getPassword() {
@@ -634,23 +633,13 @@ export function httpBackend(http: Http): Backend {
     },
 
     async deletePassword() {
-      const result = await http.DELETE("/api/v1/password");
-      if (!result.response.ok) unwrap(result);
+      succeeded(await http.DELETE("/api/v1/password"));
     },
 
     async listAccessTokens() {
-      const tokens: AccessToken[] = [];
-      let cursor: string | undefined;
-      do {
-        const page = unwrap(
-          await http.GET("/api/v1/access-tokens", {
-            params: { query: { page_size: 200, ...(cursor ? { cursor } : {}) } },
-          }),
-        );
-        tokens.push(...page.items);
-        cursor = cursorOf(page.links.next);
-      } while (cursor);
-      return tokens;
+      return everyPage(async (cursor) =>
+        unwrap(await http.GET("/api/v1/access-tokens", { params: { query: pageQuery(cursor) } })),
+      );
     },
 
     async createAccessToken(creation) {
@@ -658,10 +647,11 @@ export function httpBackend(http: Http): Backend {
     },
 
     async deleteAccessToken(accessTokenId) {
-      const result = await http.DELETE("/api/v1/access-tokens/{access_token_id}", {
-        params: { path: { access_token_id: accessTokenId } },
-      });
-      if (!result.response.ok) unwrap(result);
+      succeeded(
+        await http.DELETE("/api/v1/access-tokens/{access_token_id}", {
+          params: { path: { access_token_id: accessTokenId } },
+        }),
+      );
     },
 
     async getBackup() {
@@ -674,14 +664,13 @@ export function httpBackend(http: Http): Backend {
     },
 
     async restoreBackup(archive) {
-      const result = await http.PUT("/api/v1/backup", {
-        // Not the file's own type, which some systems name differently.
-        headers: { "Content-Type": "application/zip" },
-        // The archive is the body; the contract types it as a string.
-        body: archive as unknown as string,
-        bodySerializer: (body) => body,
-      });
-      if (!result.response.ok) unwrap(result);
+      succeeded(
+        await http.PUT("/api/v1/backup", {
+          // Not the file's own type, which some systems name differently.
+          headers: { "Content-Type": "application/zip" },
+          ...rawBody(archive),
+        }),
+      );
     },
 
     async playbackGrant() {

@@ -4,6 +4,7 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import { Actions } from "../lib/action.svelte";
   import type { AccessToken, Password } from "../lib/backend";
   import { useBackend } from "../lib/context";
   import { failureMessage } from "../lib/i18n/index.svelte";
@@ -18,8 +19,7 @@ SPDX-License-Identifier: MIT
     addresses: LinkAddresses;
   }>();
   let loadError = $state<string>();
-  let failure = $state<string>();
-  let busy = $state(false);
+  const actions = new Actions(load);
   let secret = $state<string>();
 
   async function load(): Promise<void> {
@@ -37,22 +37,6 @@ SPDX-License-Identifier: MIT
   $effect(() => {
     void load();
   });
-
-  /** Runs `action`, then reads the page again. Returns whether it worked. */
-  async function act(action: () => Promise<unknown>): Promise<boolean> {
-    busy = true;
-    failure = undefined;
-    try {
-      await action();
-      await load();
-      return true;
-    } catch (error) {
-      failure = failureMessage(error);
-      return false;
-    } finally {
-      busy = false;
-    }
-  }
 </script>
 
 <StremioView
@@ -63,12 +47,12 @@ SPDX-License-Identifier: MIT
   note={read?.addresses.note}
   {secret}
   {loadError}
-  {failure}
-  {busy}
+  failure={actions.failure?.message}
+  busy={actions.busy}
   onretry={load}
   oncreate={(password) =>
-    act(async () => {
+    actions.run(undefined, async () => {
       secret = (await backend.createAccessToken(linkCreation(password))).secret;
     })}
-  onrevoke={(token) => act(() => backend.deleteAccessToken(token.id))}
+  onrevoke={(token) => actions.run(undefined, () => backend.deleteAccessToken(token.id))}
 />

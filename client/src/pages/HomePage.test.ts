@@ -9,7 +9,7 @@ import App from "../App.svelte";
 import { ApiError, type Conditional } from "../lib/api/http";
 import type { Backend, Profile, UpNextEntry, UpNextPage } from "../lib/backend";
 import { location, navigate } from "../lib/navigation.svelte";
-import { resetProfiles } from "../lib/profile.svelte";
+import { loadProfiles, resetProfiles } from "../lib/profile.svelte";
 import { titlePath } from "../lib/routes";
 import { fakeBackend, profile, torrent, upNext } from "../testing";
 
@@ -194,4 +194,16 @@ it("switches to Russian from the header and remembers it", async () => {
   expect(screen.getByText("Следующая серия")).toBeInTheDocument();
   expect(document.documentElement.lang).toBe("ru");
   expect(localStorage.getItem("torrplay.locale")).toBe("ru");
+});
+
+it("does not start polling over when the profiles are read again", async () => {
+  const fake = backend([profile(1, "Ana")]);
+  render(App, { backend: fake });
+  await vi.waitFor(() => expect(fake.listUpNext).toHaveBeenCalled());
+  const reads = vi.mocked(fake.listUpNext).mock.calls.length;
+
+  await loadProfiles(fake);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  expect(fake.listUpNext).toHaveBeenCalledTimes(reads);
 });

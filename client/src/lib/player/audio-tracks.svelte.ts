@@ -10,6 +10,7 @@ import {
   type ProbedAudio,
 } from "./audio";
 import { AudioSync, type AudioSyncOptions, type DecodedAudio } from "./audio-sync";
+import { canPlay } from "./media";
 
 /** Creates the decoded audio of a media element. */
 export type CreateSync = (
@@ -41,16 +42,18 @@ export class AudioTracks {
   #default = 0;
   #defaultNative = false;
   #closed = false;
+  /** Stops reading the file's tracks when the file is left first. */
+  #probe = new AbortController();
 
   constructor(
     media: HTMLMediaElement,
     url: string,
-    probe: (url: string) => Promise<ProbedAudio> = probeAudio,
+    probe: (url: string, signal: AbortSignal) => Promise<ProbedAudio> = probeAudio,
     createSync: CreateSync = (...args) => new AudioSync(...args),
   ) {
     this.#media = media;
     this.#createSync = createSync;
-    this.ready = probe(url).then(
+    this.ready = probe(url, this.#probe.signal).then(
       (probed) => this.#probedAs(probed),
       // Without its tracks, the file plays with the browser's audio alone.
       () => {},
@@ -68,6 +71,7 @@ export class AudioTracks {
   /** Stops decoded audio and reading the file. */
   destroy(): void {
     this.#closed = true;
+    this.#probe.abort();
     this.#sync?.destroy();
     this.#probed?.dispose();
   }
@@ -82,7 +86,7 @@ export class AudioTracks {
     this.#default = defaultTrack(tracks);
     const first = tracks[this.#default];
     this.#defaultNative =
-      first !== undefined && playsNatively(first, (type) => this.#media.canPlayType(type));
+      first !== undefined && playsNatively(first, (type) => canPlay(this.#media, type));
     this.tracks = tracks;
     this.selected = this.#default;
     if (first && !this.#defaultNative) this.#play(this.#default);
