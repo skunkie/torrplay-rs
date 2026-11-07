@@ -33,6 +33,7 @@ socket2.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 torrplay-core.workspace = true
 torrplay-dlna.workspace = true
 torrplay-engine.workspace = true

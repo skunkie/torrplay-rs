@@ -13,7 +13,9 @@
 //! On shutdown it follows the lifecycle's order: readiness ends and state
 //! changes are refused while the listener keeps accepting, streams in
 //! progress get the drain period to finish and are then canceled, the
-//! listener closes, and the engine stops. The whole sequence is bounded.
+//! listener closes, connections get a moment to finish and are then closed,
+//! and the engine stops. A second request to stop skips the waits. The whole
+//! sequence is bounded.
 
 use std::collections::HashSet;
 use std::future::{Future, IntoFuture};
@@ -24,6 +26,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use axum::serve::ListenerExt;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 pub use torrplay_core::credentials::AllowedHosts;
@@ -32,8 +35,10 @@ use url::Url;
 
 #[cfg(feature = "client")]
 mod client;
+mod connections;
 mod logging;
 mod media_server;
+use connections::ClosableListener;
 use torrplay_core::id::TorrentId;
 use torrplay_core::lifecycle::StorageMode;
 pub use torrplay_core::settings::{LogLevel, LogOverride, Overrides};
@@ -65,6 +70,18 @@ pub const LOG_FORMAT_VARIABLE: &str = "TORRPLAY_LOG_FORMAT";
 
 /// How long the whole shutdown may take before the process exits anyway.
 pub const SHUTDOWN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(30);
+
+/// How long connections may finish once the listener has closed, before they
+/// are closed by force. It only has to cover responses already under way, and
+/// comes out of the shutdown's limit, as the drain period does. A running
+/// handler extends it, up to 5 seconds before the limit, unless shutdown is
+/// hurried, when handlers get just this long.
+pub const CONNECTION_WAIT_DEFAULT: Duration = Duration::from_secs(2);
+
+/// What the shutdown's limit always leaves for stopping the engine and
+/// recording the clean shutdown, once connections are closed however they
+/// stand. The longest drain period leaves exactly this.
+const SHUTDOWN_FINISH_RESERVE: Duration = Duration::from_secs(5);
 
 /// How often the drain checks whether streams are still in progress.
 const DRAIN_POLL: Duration = Duration::from_millis(50);
@@ -908,6 +925,10 @@ pub struct ShutdownTimings {
     /// How long streams in progress may continue, for tests; `None` takes
     /// the drain period setting.
     pub drain: Option<Duration>,
+    /// How long connections may finish once the listener has closed; longer
+    /// while a handler runs, within what `timeout` leaves. A hurried shutdown
+    /// gives running handlers just this long.
+    pub connection_wait: Duration,
     /// How long the whole sequence may take.
     pub timeout: Duration,
 }
@@ -916,6 +937,7 @@ impl Default for ShutdownTimings {
     fn default() -> Self {
         Self {
             drain: None,
+            connection_wait: CONNECTION_WAIT_DEFAULT,
             timeout: SHUTDOWN_TIMEOUT_DEFAULT,
         }
     }
@@ -938,56 +960,126 @@ pub struct ServeOptions {
     pub log_files: Option<LogFiles>,
 }
 
-/// Waits for SIGTERM or SIGINT, or Ctrl+C on Windows. The handlers are
-/// installed when this is called, not when the future is first polled, so
-/// a signal that arrives once the API listens shuts down gracefully instead
-/// of ending the process.
-pub fn termination() -> impl std::future::Future<Output = ()> {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{SignalKind, signal};
-        let terminate = signal(SignalKind::terminate());
-        let interrupt = signal(SignalKind::interrupt());
-        async move {
-            match (terminate, interrupt) {
-                (Ok(mut terminate), Ok(mut interrupt)) => {
-                    tokio::select! {
-                        _ = terminate.recv() => {}
-                        _ = interrupt.recv() => {}
-                    }
-                }
-                (terminate, interrupt) => {
-                    if let Err(error) = terminate.as_ref().and(interrupt.as_ref()) {
-                        tracing::warn!(%error, "a termination signal cannot be handled");
-                    }
-                    match (terminate, interrupt) {
-                        (Ok(mut signal), Err(_)) | (Err(_), Ok(mut signal)) => {
-                            signal.recv().await;
-                        }
-                        _ => std::future::pending().await,
-                    }
-                }
-            }
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let interrupt = tokio::signal::windows::ctrl_c();
-        async move {
-            match interrupt {
-                Ok(mut interrupt) => {
-                    interrupt.recv().await;
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "Ctrl+C cannot be handled");
-                    std::future::pending().await
-                }
-            }
+/// The requests to stop that [`serve`] follows.
+#[derive(Debug)]
+pub struct StopRequests<S, H> {
+    /// Completes when shutdown should start.
+    pub shutdown: S,
+    /// Completes when shutdown, once started, should stop waiting for streams
+    /// and connections. Running handlers get only the connection wait, so a
+    /// peer that stalled partway through a request cannot hold it. It still
+    /// stops the engine and records the clean shutdown.
+    pub hurry: H,
+}
+
+impl<S> StopRequests<S, std::future::Pending<()>> {
+    /// Only `shutdown`, with nothing to hurry it.
+    pub fn new(shutdown: S) -> Self {
+        Self {
+            shutdown,
+            hurry: std::future::pending(),
         }
     }
 }
 
-/// Runs the application for `config` until `shutdown` completes: opens the store in
+/// The termination signals an application handles.
+struct Signals {
+    #[cfg(unix)]
+    terminate: io::Result<tokio::signal::unix::Signal>,
+    #[cfg(unix)]
+    interrupt: io::Result<tokio::signal::unix::Signal>,
+    #[cfg(not(unix))]
+    interrupt: io::Result<tokio::signal::windows::CtrlC>,
+}
+
+impl Signals {
+    fn install() -> Self {
+        #[cfg(unix)]
+        let signals = {
+            use tokio::signal::unix::{SignalKind, signal};
+            let signals = Self {
+                terminate: signal(SignalKind::terminate()),
+                interrupt: signal(SignalKind::interrupt()),
+            };
+            if let Err(error) = signals.terminate.as_ref().and(signals.interrupt.as_ref()) {
+                tracing::warn!(%error, "a termination signal cannot be handled");
+            }
+            signals
+        };
+        #[cfg(not(unix))]
+        let signals = {
+            let signals = Self {
+                interrupt: tokio::signal::windows::ctrl_c(),
+            };
+            if let Err(error) = &signals.interrupt {
+                tracing::warn!(%error, "Ctrl+C cannot be handled");
+            }
+            signals
+        };
+        signals
+    }
+
+    /// Waits for the next signal; forever if none can be handled.
+    async fn recv(&mut self) {
+        #[cfg(unix)]
+        match (&mut self.terminate, &mut self.interrupt) {
+            (Ok(terminate), Ok(interrupt)) => {
+                tokio::select! {
+                    _ = terminate.recv() => {}
+                    _ = interrupt.recv() => {}
+                }
+            }
+            (Ok(signal), Err(_)) | (Err(_), Ok(signal)) => {
+                signal.recv().await;
+            }
+            (Err(_), Err(_)) => std::future::pending().await,
+        }
+        #[cfg(not(unix))]
+        match &mut self.interrupt {
+            Ok(interrupt) => {
+                interrupt.recv().await;
+            }
+            Err(_) => std::future::pending().await,
+        }
+    }
+}
+
+/// SIGTERM, SIGINT, or Ctrl+C on Windows as requests to stop: the first
+/// starts shutdown, and the next hurries it, so a user need not wait for a
+/// stream nobody is watching, and the store still records a clean shutdown,
+/// which ending the process would not. The handlers are installed when this
+/// is called, not when the futures are first polled, so a signal that arrives
+/// once the API listens shuts down gracefully instead of ending the process.
+pub fn termination() -> StopRequests<impl Future<Output = ()>, impl Future<Output = ()>> {
+    termination_or(std::future::pending())
+}
+
+/// [`termination`], with `other` also starting shutdown. A signal after that
+/// still hurries it.
+pub fn termination_or(
+    other: impl Future<Output = ()>,
+) -> StopRequests<impl Future<Output = ()>, impl Future<Output = ()>> {
+    let mut signals = Signals::install();
+    let (handing, handed) = oneshot::channel();
+    StopRequests {
+        shutdown: async move {
+            tokio::select! {
+                () = other => {}
+                () = signals.recv() => {}
+            }
+            let _ = handing.send(signals);
+        },
+        hurry: async move {
+            match handed.await {
+                Ok(mut signals) => signals.recv().await,
+                // Whoever holds the first request stopped listening for it.
+                Err(_) => std::future::pending().await,
+            }
+        },
+    }
+}
+
+/// Runs the application for `config` until `stop` says so: opens the store in
 /// the data directory, binds the API's listener, calls `listening` with its address,
 /// and [`serve`]s. The executable and the desktop shell both start this way.
 pub async fn run_server(
@@ -996,7 +1088,7 @@ pub async fn run_server(
     run: Run,
     log_files: Option<LogFiles>,
     listening: impl FnOnce(SocketAddr),
-    shutdown: impl Future<Output = ()>,
+    stop: StopRequests<impl Future<Output = ()>, impl Future<Output = ()>>,
 ) -> anyhow::Result<()> {
     let data_dir = config.data_dir()?;
     let opening = data_dir.clone();
@@ -1036,16 +1128,19 @@ pub async fn run_server(
             log_files,
         },
         ShutdownTimings::default(),
-        shutdown,
+        stop,
     )
     .await
 }
 
 /// Serves the API on `listener` over `engine`, which must not be started
-/// yet, and `store` with what it held, with `options`, until `shutdown`
-/// completes, then shuts down in the lifecycle's order. The DLNA media
+/// yet, and `store` with what it held, with `options`, until `stop` asks for
+/// shutdown, then shuts down in the lifecycle's order. The DLNA media
 /// server is announced while its setting is on, and says goodbye before
-/// the listener closes.
+/// the listener closes. Connections that have not finished
+/// `timings.connection_wait` after that are closed, once no handler is
+/// running, too little of `timings.timeout` is left to wait for one, or a
+/// hurried shutdown has given the handlers `timings.connection_wait`.
 ///
 /// The stored settings apply at once. The listener serves before the engine
 /// starts, and the stored torrents are restored once it has. Fails if the engine cannot start, if restoring or
@@ -1057,8 +1152,9 @@ pub async fn serve(
     contents: Contents,
     options: ServeOptions,
     timings: ShutdownTimings,
-    shutdown: impl Future<Output = ()>,
+    stop: StopRequests<impl Future<Output = ()>, impl Future<Output = ()>>,
 ) -> anyhow::Result<()> {
+    let StopRequests { shutdown, hurry } = stop;
     let Contents {
         torrents,
         settings,
@@ -1154,10 +1250,13 @@ pub async fn serve(
         },
     ));
     let (close_listener, listener_closed) = oneshot::channel::<()>();
+    let (listener, connections) = ClosableListener::new(listener);
     let mut server = tokio::spawn(
         axum::serve(
-            listener,
-            torrplay_server::router(app.clone())
+            // Connect info knows other listeners' addresses only through this.
+            listener.tap_io(|_| {}),
+            connections
+                .counting_handlers(torrplay_server::router(app.clone()))
                 .into_make_service_with_connect_info::<SocketAddr>(),
         )
         .with_graceful_shutdown(async {
@@ -1217,9 +1316,29 @@ pub async fn serve(
     }
 
     tracing::info!("shutting down");
+    // Only a request to stop ends running without a failure. After a failure,
+    // the first request is the one that hurries.
+    let shutdown_requested = result.is_ok();
+    let mut hurried = std::pin::pin!(async {
+        if shutdown_requested {
+            hurry.await;
+        } else {
+            shutdown.await;
+        }
+        tracing::info!(
+            "asked again to stop; streams are canceled and connections closed once running \
+             handlers have had a moment"
+        );
+    });
+    let close_by =
+        tokio::time::Instant::now() + timings.timeout.saturating_sub(SHUTDOWN_FINISH_RESERVE);
     let sequence = async {
         app.begin_shutdown();
-        drain(&engine, timings.drain.unwrap_or_else(|| app.drain_period())).await;
+        let drain_period = timings.drain.unwrap_or_else(|| app.drain_period());
+        let hurrying = tokio::select! {
+            () = drain(&engine, drain_period) => false,
+            () = &mut hurried => true,
+        };
         engine.cancel_streams()?;
         let _ = stop_media_server.send(());
         media_server
@@ -1230,7 +1349,45 @@ pub async fn serve(
         // of time shows where it stopped.
         if !server.is_finished() {
             tracing::info!("waiting for connections to close");
-            server_result(server.await)?;
+            // Closing a connection drops the handler running on it, so handlers
+            // get to finish first: as long as the limit allows, or for a moment
+            // once hurried, as one may be waiting for a peer that has stalled.
+            let settled = async {
+                let hurried_by_now = hurrying
+                    || tokio::select! {
+                        () = async {
+                            tokio::time::sleep(timings.connection_wait).await;
+                            connections.handlers_finished().await;
+                        } => false,
+                        () = &mut hurried => true,
+                    };
+                if hurried_by_now {
+                    let _ = tokio::time::timeout(
+                        timings.connection_wait,
+                        connections.handlers_finished(),
+                    )
+                    .await;
+                }
+            };
+            let finished = tokio::select! {
+                served = &mut server => Some(served),
+                _ = tokio::time::timeout_at(close_by, settled) => None,
+            };
+            let served = match finished {
+                Some(served) => served,
+                None => {
+                    let (count, peers) = connections.open();
+                    tracing::warn!(
+                        connections = count,
+                        ?peers,
+                        running_handlers = connections.running_handlers(),
+                        "closing connections that did not finish"
+                    );
+                    connections.close();
+                    (&mut server).await
+                }
+            };
+            server_result(served)?;
         }
         tracing::info!("stopping the engine");
         engine.shutdown().await?;

@@ -191,7 +191,10 @@ fn serve(config: &Config, app: &AppHandle, stop: oneshot::Receiver<()>) -> anyho
     let result = runtime.block_on(async {
         // Before the listener binds, as in the executable. Logging out sends these, and
         // the store must still record a clean shutdown.
-        let terminated = torrplay::termination();
+        // A dropped sender means the application is ending too.
+        let stop = torrplay::termination_or(async {
+            let _ = stop.await;
+        });
         torrplay::run_server(
             config,
             log.clone(),
@@ -203,13 +206,7 @@ fn serve(config: &Config, app: &AppHandle, stop: oneshot::Receiver<()>) -> anyho
                     opener.exit(1);
                 }
             },
-            async {
-                tokio::select! {
-                    // A dropped sender means the application is ending too.
-                    _ = stop => {}
-                    () = terminated => {}
-                }
-            },
+            stop,
         )
         .await
     });

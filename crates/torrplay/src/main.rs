@@ -114,8 +114,8 @@ async fn run(
     log_files: Option<torrplay::LogFiles>,
 ) -> anyhow::Result<()> {
     // Before the listener binds, so the API never answers without them.
-    let terminated = torrplay::termination();
-    torrplay::run_server(config, log, run, log_files, |_| {}, terminated).await
+    let stop = torrplay::termination();
+    torrplay::run_server(config, log, run, log_files, |_| {}, stop).await
 }
 
 /// Runs `torrplay password`, reading a new password from standard input.
@@ -275,7 +275,7 @@ fn mcp(config: McpConfig) -> ExitCode {
                 torrplay_mcp::serve_stdio(server).await?;
             }
             Some(address) => {
-                let shutdown = torrplay::termination();
+                let shutdown = torrplay::termination().shutdown;
                 let listener = torrplay_mcp::HttpListener::bind(address).await?;
                 tracing::info!(
                     application = %url,

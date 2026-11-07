@@ -86,6 +86,7 @@ pub struct Running {
     pub address: SocketAddr,
     base: String,
     shutdown: Option<oneshot::Sender<()>>,
+    hurry: Option<oneshot::Sender<()>>,
     task: JoinHandle<anyhow::Result<()>>,
     _folder: TempDir,
     /// The data directory, which a restart keeps.
@@ -213,6 +214,7 @@ impl Running {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let address = listener.local_addr()?;
         let (shutdown, triggered) = oneshot::channel::<()>();
+        let (hurry, hurried) = oneshot::channel::<()>();
         let task = tokio::spawn(torrplay::serve(
             listener,
             engine.clone(),
@@ -220,8 +222,16 @@ impl Running {
             contents,
             torrplay::ServeOptions::default(),
             timings,
-            async {
-                let _ = triggered.await;
+            torrplay::StopRequests {
+                shutdown: async {
+                    let _ = triggered.await;
+                },
+                hurry: async {
+                    // Only a request hurries; a dropped sender does not.
+                    if hurried.await.is_err() {
+                        std::future::pending::<()>().await;
+                    }
+                },
             },
         ));
         Ok(Self {
@@ -229,6 +239,7 @@ impl Running {
             address,
             base: format!("http://{address}"),
             shutdown: Some(shutdown),
+            hurry: Some(hurry),
             task,
             _folder: folder,
             data,
@@ -265,6 +276,23 @@ impl Running {
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(());
         }
+    }
+
+    /// Asks to stop again, which hurries a shutdown under way.
+    pub fn hurry(&mut self) {
+        if let Some(hurry) = self.hurry.take() {
+            let _ = hurry.send(());
+        }
+    }
+
+    /// Stops the application and returns whether its store recorded a clean
+    /// shutdown.
+    pub async fn stop_and_read_clean_shutdown(self) -> anyhow::Result<bool> {
+        let data = Arc::clone(&self.data);
+        self.stop().await?;
+        let (store, contents) = torrplay_store::Store::open(data.path())?;
+        store.close().await?;
+        Ok(contents.clean_shutdown)
     }
 
     /// Triggers shutdown, if it has not begun, and returns the
