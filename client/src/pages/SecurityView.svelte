@@ -394,16 +394,16 @@ SPDX-License-Identifier: MIT
 
         <div class="rounded-2xl bg-tile px-4 py-1">
           <table class="w-full text-left text-sm">
-            <thead class="text-meta text-text-muted max-md:sr-only">
+            <thead class="text-meta text-text-muted max-lg:sr-only">
               <tr>
                 <th scope="col" class="py-2.5 pr-3 font-semibold">{t().security.name}</th>
-                <th scope="col" class="py-2.5 pr-3 font-semibold max-md:hidden">
+                <th scope="col" class="py-2.5 pr-3 font-semibold max-lg:hidden">
                   {t().security.scope}
                 </th>
-                <th scope="col" class="py-2.5 pr-3 font-semibold max-md:hidden">
+                <th scope="col" class="py-2.5 pr-3 font-semibold max-lg:hidden">
                   {t().security.lastUsed}
                 </th>
-                <th scope="col" class="py-2.5 pr-3 font-semibold max-md:hidden">
+                <th scope="col" class="py-2.5 pr-3 font-semibold max-lg:hidden">
                   {t().security.expires}
                 </th>
                 <th scope="col" class="py-2.5"><span class="sr-only">{t().common.revoke}</span></th>
@@ -418,7 +418,7 @@ SPDX-License-Identifier: MIT
                 {@const expires = token.expires_at
                   ? formatFromNow(token.expires_at)
                   : t().security.noExpiry}
-                <tr class="border-t border-empty first:max-md:border-t-0">
+                <tr class="border-t border-empty first:max-lg:border-t-0">
                   <td class="py-3 pr-3 font-semibold wrap-anywhere">
                     {token.name}
                     {#if token.id === ownToken}
@@ -427,19 +427,19 @@ SPDX-License-Identifier: MIT
                       </span>
                     {/if}
                     <!-- A phone has no room for the columns, so they read as lines. -->
-                    <span class="block text-meta font-normal text-text-muted md:hidden">
+                    <span class="block text-meta font-normal text-text-muted lg:hidden">
                       {scope}
                     </span>
-                    <span class="block text-meta font-normal text-text-muted md:hidden">
+                    <span class="block text-meta font-normal text-text-muted lg:hidden">
                       {t().security.lastUsed}: {used}
                     </span>
-                    <span class="block text-meta font-normal text-text-muted md:hidden">
+                    <span class="block text-meta font-normal text-text-muted lg:hidden">
                       {t().security.expires}: {expires}
                     </span>
                   </td>
-                  <td class="py-3 pr-3 text-text-muted max-md:hidden">{scope}</td>
-                  <td class="py-3 pr-3 text-text-muted max-md:hidden">{used}</td>
-                  <td class="py-3 pr-3 text-text-muted max-md:hidden">{expires}</td>
+                  <td class="py-3 pr-3 text-text-muted max-lg:hidden">{scope}</td>
+                  <td class="py-3 pr-3 text-text-muted max-lg:hidden">{used}</td>
+                  <td class="py-3 pr-3 text-text-muted max-lg:hidden">{expires}</td>
                   <td class="py-3 text-right">
                     <button
                       type="button"

@@ -206,7 +206,8 @@ SPDX-License-Identifier: MIT
   <header class="flex h-16 items-center gap-3 px-4 md:h-19 md:gap-5 md:px-10">
     <a href={homePath} class="flex items-center gap-2.5 text-lg font-bold md:text-xl">
       <Logo />
-      TorrPlay
+      <!-- A phone has no room for this beside the demo's label. -->
+      <span class={demo ? "max-sm:sr-only" : ""}>TorrPlay</span>
     </a>
     {#if demo}
       <span class="rounded-inner bg-tile px-2 py-1 mono text-accent-text uppercase">
@@ -231,7 +232,7 @@ SPDX-License-Identifier: MIT
       {#if browsing && page?.name !== "library" && page?.name !== "add"}
         <form
           role="search"
-          class="hidden field w-65 items-center gap-2 text-text-muted md:flex"
+          class="hidden field w-65 items-center gap-2 text-text-muted lg:flex"
           onsubmit={(event) => {
             event.preventDefault();
             const search = headerSearch.trim();
@@ -251,7 +252,7 @@ SPDX-License-Identifier: MIT
         <a
           href={libraryPath}
           aria-label={t().library.search}
-          class="btn size-11 bg-tile px-0 text-text md:hidden"
+          class="btn size-11 bg-tile px-0 text-text lg:hidden"
         >
           <Icon name="search" class="size-4.5" />
         </a>

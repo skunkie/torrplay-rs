@@ -35,9 +35,10 @@ SPDX-License-Identifier: MIT
         </a>
       </li>
       <li>
+        <!-- At the top of its line, or a list's marker sits by its last line. -->
         <button
           type="button"
-          class="cursor-pointer text-left font-semibold text-accent-text underline"
+          class="cursor-pointer text-left align-top font-semibold text-accent-text underline"
           onclick={addSample}
         >
           {t().demo.tryAdd}

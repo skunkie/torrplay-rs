@@ -57,7 +57,9 @@ SPDX-License-Identifier: MIT
       >
         <Icon name="back" />
       </a>
-      <h1 class="text-display-small font-bold">{t().settings.sections[current]}</h1>
+      <h1 class="min-w-0 text-display-small font-bold wrap-break-word hyphens-auto">
+        {t().settings.sections[current]}
+      </h1>
     </div>
     {@render children()}
   </div>

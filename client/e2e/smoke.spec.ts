@@ -705,6 +705,48 @@ test.describe("the demo", () => {
     await expect(peers).toHaveValue("50");
   });
 
+  test("keeps every page within its window, at any width, in either language", async ({
+    browser,
+  }) => {
+    test.setTimeout(180_000);
+    const overflowing: string[] = [];
+    for (const locale of ["en-US", "ru"]) {
+      const context = await browser.newContext();
+      await context.addInitScript(
+        (value) => localStorage.setItem("torrplay.locale", value),
+        locale,
+      );
+      const page = await context.newPage();
+      await page.goto("/demo/library");
+      const title = await page.locator("a[href*='/titles/']").first().getAttribute("href");
+      const paths = [
+        "/demo",
+        "/demo/library",
+        "/demo/add",
+        "/demo/settings",
+        ...["playback", "network", "stremio", "profiles", "security", "backup", "system"].map(
+          (section) => `/demo/settings/${section}`,
+        ),
+        "/demo/sign-in",
+        `${title}`,
+        `${title}/edit`,
+      ];
+      for (const width of [320, 375, 768, 820, 1024, 1280]) {
+        await page.setViewportSize({ width, height: 800 });
+        for (const path of paths) {
+          await page.goto(path);
+          await page.locator("main > *").first().waitFor();
+          const over = await page.evaluate(
+            () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          );
+          if (over > 0) overflowing.push(`${locale} ${width} ${path}: ${over} px`);
+        }
+      }
+      await context.close();
+    }
+    expect(overflowing).toEqual([]);
+  });
+
   test("shows posters it serves itself, and a tile for a torrent with none", async ({ page }) => {
     await page.goto("/demo/library");
     const poster = page.locator('img[src^="/demo-media/posters/paper-moons.webp"]').first();
