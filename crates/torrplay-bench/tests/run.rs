@@ -77,9 +77,9 @@ async fn a_trace_runs_against_torrplay_through_the_local_tracker() -> anyhow::Re
             ..torrplay::ServeOptions::default()
         },
         ShutdownTimings::default(),
-        async {
+        torrplay::StopRequests::new(async {
             let _ = triggered.await;
-        },
+        }),
     ));
     let client = reqwest::Client::new();
     tokio::time::timeout(Duration::from_secs(30), async {
