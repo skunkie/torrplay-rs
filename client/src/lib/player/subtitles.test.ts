@@ -137,6 +137,33 @@ describe("Subtitles", () => {
     expect(host.tracks.some((track) => track.showing)).toBe(false);
   });
 
+  it("offers no file too large to be subtitles, even in the language remembered", async () => {
+    localStorage.setItem("torrplay.subtitles", "ru");
+    const huge = { ...russian, size_bytes: 16 * 1024 * 1024 + 1 };
+    const fetchFn = server({});
+    const shown = subtitles([huge], fetchFn);
+    await shown.ready;
+
+    expect(shown.tracks[0]?.unsupported).toBe("size");
+    expect(host.tracks).toEqual([]);
+    expect(shown.selected).toBeNull();
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("stops reading a Matroska file's header when the file is left first", () => {
+    let signal: AbortSignal | null | undefined;
+    const fetchFn = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+      signal = init?.signal;
+      return new Promise<Response>(() => {});
+    });
+    const shown = subtitles([], fetchFn, "/content/movie.mkv");
+    expect(signal?.aborted).toBe(false);
+
+    shown.destroy();
+
+    expect(signal?.aborted).toBe(true);
+  });
+
   it("reads a file's cues when its track is first shown, with the credential", async () => {
     const fetchFn = server({ "/content/Movie.rus.srt?token=t": srt });
     const shown = subtitles([english, russian], fetchFn);

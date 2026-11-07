@@ -5,13 +5,19 @@
 import type { Sample } from "./progress";
 import type { Cue } from "./subtitle-text";
 
-// The one place the client reaches the media element the player wraps:
-// the player page and the audio and subtitle paths go through it, so a
-// change of player library changes only this module.
+// Where the client reaches the media element the player wraps: the player page
+// and the subtitle path go through this module, and decoded audio through
+// `audio-sync.ts`, which needs the whole standard element for Web Audio. A change
+// of player library changes only these two.
 
 /** Where `media` stands, with its duration once its metadata is known. */
 export function sampleOf(media: HTMLMediaElement): Sample {
   return { position: media.currentTime, duration: media.duration };
+}
+
+/** What `media`'s browser says of playing `type`, a media type with its codecs. */
+export function canPlay(media: HTMLMediaElement, type: string): string {
+  return media.canPlayType(type);
 }
 
 /** Moves `media` to `seconds` once its metadata is known, so a position

@@ -34,7 +34,7 @@ export interface SubtitleTrack {
   format: string;
   modifiers: SubtitleModifier[];
   /** Why the player cannot show the track, if it cannot. */
-  unsupported: "format" | "encoded" | undefined;
+  unsupported: "format" | "encoded" | "size" | undefined;
   source: { file: TorrentFile; format: SubtitleFormat } | { track: number };
 }
 
@@ -53,6 +53,9 @@ export interface SubtitleOptions {
 /** Where this device keeps the language of the subtitles chosen last, or
  * `off`. */
 const KEY = "torrplay.subtitles";
+/** The largest subtitle file read: it is read whole, and what is larger than any
+ * real one could be is not subtitles. */
+const SUBTITLE_FILE_MAX_BYTES = 16 * 1024 * 1024;
 /** How long seeks settle before reading resumes, so scrubbing does not
  * start a read at each step. */
 const SEEK_SETTLE_MS = 150;
@@ -89,7 +92,7 @@ function fileTrack(file: TorrentFile, format: SubtitleFormat): SubtitleTrack {
     name: name.language ? undefined : name.stem,
     format: format === "vtt" ? "WebVTT" : format.toUpperCase(),
     modifiers: name.modifiers,
-    unsupported: undefined,
+    unsupported: file.size_bytes > SUBTITLE_FILE_MAX_BYTES ? "size" : undefined,
     source: { file, format },
   };
 }
@@ -144,6 +147,8 @@ export class Subtitles {
   #cues = new Map<string, Set<string>>();
   #complete = new Set<string>();
   #scan: AbortController | undefined;
+  /** Stops reading the file's header when the file is left first. */
+  #probe = new AbortController();
   #settle: ReturnType<typeof setTimeout> | undefined;
   #unsubscribe: (() => void)[] = [];
   #closed = false;
@@ -158,7 +163,7 @@ export class Subtitles {
       return format ? [fileTrack(file, format)] : [];
     });
     const embedded = this.#cache
-      ? probeMatroskaSubtitles(this.#cache, this.#fetch).then(
+      ? probeMatroskaSubtitles(this.#cache, this.#fetch, this.#probe.signal).then(
           (tracks) => tracks.map(matroskaTrack),
           // A file whose header cannot be read offers its subtitle files.
           () => [],
@@ -176,6 +181,7 @@ export class Subtitles {
   /** Removes the tracks and stops reading. */
   destroy(): void {
     this.#closed = true;
+    this.#probe.abort();
     this.#scan?.abort();
     clearTimeout(this.#settle);
     for (const unsubscribe of this.#unsubscribe) unsubscribe();

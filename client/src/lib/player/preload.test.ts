@@ -123,3 +123,19 @@ it("cancels a preload created after the page left", async () => {
   expect(backend.deletePreload).toHaveBeenCalledTimes(1);
   expect(backend.getPreload).not.toHaveBeenCalled();
 });
+
+it("reads no progress when playback started before the preload was created", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const backend = fakeBackend({
+    createPreload: vi.fn(async () => preload("downloading", 0)),
+    getPreload: vi.fn(async () => preload("downloading", 1)),
+  });
+  const held = new PlaybackPreload(backend, "t", "f", undefined);
+  held.skip();
+
+  await vi.advanceTimersByTimeAsync(5000);
+
+  expect(backend.getPreload).not.toHaveBeenCalled();
+  held.destroy();
+  vi.useRealTimers();
+});

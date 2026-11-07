@@ -30,10 +30,15 @@ export interface ProbedAudio {
 }
 
 /** Reads the audio tracks of the file at `url` with bounded range
- * requests, through its seek index where the container has one. */
-export async function probeAudio(url: string): Promise<ProbedAudio> {
+ * requests, through its seek index where the container has one, until `signal`
+ * says the file was left. */
+export async function probeAudio(url: string, signal?: AbortSignal): Promise<ProbedAudio> {
   const { ALL_FORMATS, AudioSampleSink, Input, UrlSource } = await import("mediabunny");
+  signal?.throwIfAborted();
   const input = new Input({ formats: ALL_FORMATS, source: new UrlSource(url) });
+  // Disposing of an input cancels its reads, and a source takes no signal.
+  const cancel = () => input.dispose();
+  signal?.addEventListener("abort", cancel, { once: true });
   try {
     const raw = await input.getAudioTracks();
     const tracks = await Promise.all(
@@ -59,6 +64,8 @@ export async function probeAudio(url: string): Promise<ProbedAudio> {
   } catch (failure) {
     input.dispose();
     throw failure;
+  } finally {
+    signal?.removeEventListener("abort", cancel);
   }
 }
 

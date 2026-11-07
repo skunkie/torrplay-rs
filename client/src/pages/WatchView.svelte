@@ -259,15 +259,20 @@ SPDX-License-Identifier: MIT
           <media-gesture type="tap" action="togglePaused" pointer="mouse" region="center"
           ></media-gesture>
           <media-gesture type="doubletap" action="toggleFullscreen" region="center"></media-gesture>
-          <media-hotkey keys="Space" action="togglePaused"></media-hotkey>
-          <media-hotkey keys="k" action="togglePaused"></media-hotkey>
-          <media-hotkey keys="ArrowLeft" action="seekStep" value={-SEEK_SECONDS}></media-hotkey>
-          <media-hotkey keys="ArrowRight" action="seekStep" value={SEEK_SECONDS}></media-hotkey>
-          <media-hotkey keys="ArrowUp" action="volumeStep" value={0.05}></media-hotkey>
-          <media-hotkey keys="ArrowDown" action="volumeStep" value={-0.05}></media-hotkey>
-          <media-hotkey keys="m" action="toggleMuted"></media-hotkey>
-          <media-hotkey keys="f" action="toggleFullscreen"></media-hotkey>
-          <media-hotkey keys="c" action="toggleSubtitles"></media-hotkey>
+          <!-- On the whole page, since opening a video puts focus outside the player. -->
+          <media-hotkey target="document" keys="Space" action="togglePaused"></media-hotkey>
+          <media-hotkey target="document" keys="k" action="togglePaused"></media-hotkey>
+          <media-hotkey target="document" keys="ArrowLeft" action="seekStep" value={-SEEK_SECONDS}
+          ></media-hotkey>
+          <media-hotkey target="document" keys="ArrowRight" action="seekStep" value={SEEK_SECONDS}
+          ></media-hotkey>
+          <media-hotkey target="document" keys="ArrowUp" action="volumeStep" value={0.05}
+          ></media-hotkey>
+          <media-hotkey target="document" keys="ArrowDown" action="volumeStep" value={-0.05}
+          ></media-hotkey>
+          <media-hotkey target="document" keys="m" action="toggleMuted"></media-hotkey>
+          <media-hotkey target="document" keys="f" action="toggleFullscreen"></media-hotkey>
+          <media-hotkey target="document" keys="c" action="toggleSubtitles"></media-hotkey>
 
           <!-- Buffering shows along the video's bottom edge, and on the seek
                bar in its place while the bars show. -->

@@ -65,7 +65,8 @@ export class PlaybackPreload {
         this.destroy();
         return;
       }
-      if (this.#observe(created)) return;
+      // Playing already, as Play now does: nothing waits for its progress.
+      if (this.settled || this.#observe(created)) return;
       this.#stopPolling = poll(() => this.#read(created.id), POLL_MS);
     } catch {
       this.#settle();

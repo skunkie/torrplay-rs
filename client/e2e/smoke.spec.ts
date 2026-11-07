@@ -536,6 +536,22 @@ test.describe("the demo", () => {
     expect(reached).toEqual([]);
   });
 
+  test("answers the keyboard as soon as a video opens", async ({ page }) => {
+    await page.goto("/demo");
+    await page.locator("a[href*='/watch/']").first().click();
+    const video = page.locator("video");
+    const skip = page.getByRole("button", { name: "Play now" });
+    await expect(video.or(skip)).toBeVisible();
+    if (await skip.isVisible()) await skip.click();
+    await expect(video).toBeVisible();
+    const paused = () => video.evaluate((element: HTMLVideoElement) => element.paused);
+    await expect.poll(paused).toBe(false);
+
+    await page.keyboard.press("k");
+
+    await expect.poll(paused).toBe(true);
+  });
+
   test("offers the sample's audio tracks and subtitles", async ({ page }) => {
     await page.goto("/demo");
     await page.getByRole("link", { name: "Resume" }).first().click();
