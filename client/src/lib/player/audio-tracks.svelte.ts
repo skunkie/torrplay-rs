@@ -12,6 +12,15 @@ import {
 import { AudioSync, type AudioSyncOptions, type DecodedAudio } from "./audio-sync";
 import { canPlay } from "./media";
 
+/** How audio tracks are read and played, apart from the defaults. */
+export interface AudioTracksOptions {
+  /** Settles with whether the element plays the file's default track itself;
+   * a remux may leave it out. */
+  nativeAudio?: Promise<boolean>;
+  probe?: (url: string, signal: AbortSignal) => Promise<ProbedAudio>;
+  createSync?: CreateSync;
+}
+
 /** Creates the decoded audio of a media element. */
 export type CreateSync = (
   media: HTMLMediaElement,
@@ -48,13 +57,16 @@ export class AudioTracks {
   constructor(
     media: HTMLMediaElement,
     url: string,
-    probe: (url: string, signal: AbortSignal) => Promise<ProbedAudio> = probeAudio,
-    createSync: CreateSync = (...args) => new AudioSync(...args),
+    {
+      nativeAudio = Promise.resolve(true),
+      probe = probeAudio,
+      createSync = (...args) => new AudioSync(...args),
+    }: AudioTracksOptions = {},
   ) {
     this.#media = media;
     this.#createSync = createSync;
-    this.ready = probe(url, this.#probe.signal).then(
-      (probed) => this.#probedAs(probed),
+    this.ready = Promise.all([probe(url, this.#probe.signal), nativeAudio]).then(
+      ([probed, carried]) => this.#probedAs(probed, carried),
       // Without its tracks, the file plays with the browser's audio alone.
       () => {},
     );
@@ -76,7 +88,7 @@ export class AudioTracks {
     this.#probed?.dispose();
   }
 
-  #probedAs(probed: ProbedAudio): void {
+  #probedAs(probed: ProbedAudio, carried: boolean): void {
     if (this.#closed) {
       probed.dispose();
       return;
@@ -86,7 +98,7 @@ export class AudioTracks {
     this.#default = defaultTrack(tracks);
     const first = tracks[this.#default];
     this.#defaultNative =
-      first !== undefined && playsNatively(first, (type) => canPlay(this.#media, type));
+      carried && first !== undefined && playsNatively(first, (type) => canPlay(this.#media, type));
     this.tracks = tracks;
     this.selected = this.#default;
     if (first && !this.#defaultNative) this.#play(this.#default);

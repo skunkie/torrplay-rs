@@ -909,6 +909,41 @@ test.describe("the demo", () => {
     expect(await video.evaluate((media: HTMLVideoElement) => media.paused)).toBe(false);
   });
 
+  test("remuxes the sample where the browser cannot play Matroska, as Safari cannot", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      const answer = HTMLMediaElement.prototype.canPlayType;
+      HTMLMediaElement.prototype.canPlayType = function (type: string) {
+        return /^video\/(x-matroska|webm)/.test(type) ? "" : answer.call(this, type);
+      };
+    });
+    await page.goto("/demo");
+    await page.getByRole("link", { name: "Resume" }).first().click();
+    await page.getByRole("button", { name: "Play now" }).click();
+    const video = page.locator("video");
+    const time = () => video.evaluate((media: HTMLVideoElement) => media.currentTime);
+    await expect.poll(time, { message: "the remuxed sample plays" }).toBeGreaterThan(10);
+    expect(await video.evaluate((media: HTMLVideoElement) => media.src)).toMatch(/^blob:/);
+
+    // Back to the start and on again, within what is buffered or past it.
+    await video.evaluate((media: HTMLVideoElement) => (media.currentTime = 1));
+    await expect.poll(time).toBeLessThan(5);
+    await expect.poll(time, { message: "it plays on after a seek" }).toBeGreaterThan(3);
+    await video.evaluate((media: HTMLVideoElement) => (media.currentTime = 25));
+    await expect.poll(time, { message: "it plays on near the end" }).toBeGreaterThan(26);
+
+    await page.mouse.move(300, 300);
+    await page.getByRole("button", { name: "Audio" }).click();
+    await page.getByRole("menuitemradio", { name: /^Russian/ }).click();
+    await video.evaluate((media: HTMLVideoElement) => (media.currentTime = 2));
+    await expect.poll(time).toBeGreaterThan(4);
+    await expect(page.getByText("could not be played")).toBeHidden();
+    await expect(page.locator("media-error-dialog")).toBeHidden();
+    // Still remuxed, rather than handed the file after a failure.
+    expect(await video.evaluate((media: HTMLVideoElement) => media.src)).toMatch(/^blob:/);
+  });
+
   test("keeps a long title to one line where a large window has the room", async ({ page }) => {
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.goto("/demo/titles/trr_aaaaaaaaaaaaaaaaaaaaaaaaa1/edit");
