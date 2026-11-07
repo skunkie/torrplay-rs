@@ -211,7 +211,7 @@ test.describe("system", () => {
     await page.getByRole("link", { name: "System" }).click();
     await expect(page).toHaveURL("/settings/system");
 
-    await expect(page.getByText(/^Version .+ · .+ .+$/)).toBeVisible();
+    await expect(page.getByRole("region", { name: "Build" })).toContainText("TorrPlay");
     await expect(page.getByRole("img", { name: /evictions/ })).toBeVisible();
 
     await page.getByLabel("Search the log").fill("the API is listening");
@@ -550,6 +550,44 @@ test.describe("on the real server", () => {
 
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(place);
     await page.unroute("**/api/v1/torrents?*");
+  });
+
+  test("ends a page with the build, except on a phone, which has it on the System page", async ({
+    page,
+    request,
+  }) => {
+    const system = (await (await request.get("/api/v1/system")).json()) as {
+      version: string;
+      commit: string | null;
+      commit_date: string | null;
+    };
+    // This is a checkout, so the build must have found its commit.
+    expect(system.commit).toMatch(/^[0-9a-f]{7,}(-dirty)?$/);
+    expect(system.commit_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    const footer = page.locator("footer");
+
+    // A page shorter than the window: one line, at the window's bottom.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/settings/backup");
+    await expect(footer).toHaveText(`TorrPlay ${system.version} · ${system.commit ?? ""}`);
+    expect((await footer.locator("..").boundingBox())?.height).toBe(800);
+    const box = await footer.boundingBox();
+    expect(Math.round((box?.y ?? 0) + (box?.height ?? 0))).toBe(800);
+    expect(box?.height).toBeLessThan(48);
+
+    // A phone: not there, and on the System page instead.
+    await page.setViewportSize({ width: 360, height: 640 });
+    await expect(footer).toBeHidden();
+    await page.goto("/settings/system");
+    await expect(
+      page.getByRole("region", { name: "Build" }).getByText(system.commit ?? ""),
+    ).toBeVisible();
+
+    // Not over the player.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/demo/watch/trr_aaaaaaaaaaaaaaaaaaaaaaaaa1/fil_aaaaaaaaaaaaaaaaaaaaaa1003");
+    await expect(page.getByRole("button", { name: "Play now" })).toBeVisible();
+    await expect(footer).toHaveCount(0);
   });
 
   test("signing out revokes the device's token", async ({ page, request }) => {

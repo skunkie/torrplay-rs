@@ -96,7 +96,7 @@ SPDX-License-Identifier: MIT
 
 {#if !source}
   <section
-    class="flex flex-col gap-5 md:min-h-[calc(100dvh-6.5rem)] md:items-center md:justify-center md:rounded-3xl md:border-2 md:border-dashed md:border-empty md:p-6"
+    class="flex flex-col gap-5 md:min-h-[calc(100dvh-9.25rem)] md:items-center md:justify-center md:rounded-3xl md:border-2 md:border-dashed md:border-empty md:p-6"
   >
     <svg
       class="hidden size-8 text-text-muted md:block"

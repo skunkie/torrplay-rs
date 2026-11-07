@@ -1055,6 +1055,10 @@ pub struct TitleProgressLinks {
 pub struct System {
     ///The processor architecture the build targets, as Rust names it, such as x86_64 or aarch64.
     pub architecture: String,
+    ///The abbreviated Git commit the build came from, followed by -dirty if the sources had uncommitted changes, or null for a build from outside a Git checkout, such as a source archive.
+    pub commit: Option<String>,
+    ///The date of that commit, in UTC, or null when commit is null. It says how old the code is, whenever it was compiled.
+    pub commit_date: Option<chrono::NaiveDate>,
     ///Links from the system resource.
     pub links: SystemLinks,
     ///The operating system the build targets, as Rust names it, such as linux, macos, windows, or android.

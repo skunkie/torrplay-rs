@@ -4,7 +4,15 @@
 
 import { describe, expect, it } from "vitest";
 
-import { formatBytes, formatDuration, formatFromNow, formatLogTime } from "./format";
+import { system } from "../testing";
+import {
+  formatBuild,
+  formatBytes,
+  formatDuration,
+  formatFromNow,
+  formatLogTime,
+  formatShortBuild,
+} from "./format";
 import { i18n } from "./i18n/index.svelte";
 
 it.each([
@@ -61,5 +69,27 @@ describe("formatLogTime", () => {
     const words = formatLogTime(new Date(2026, 10, 5, 23, 59, 1).toISOString(), NOW);
     expect(words).toContain("23:59:01");
     expect(words).toContain("5");
+  });
+});
+
+describe("the build's line", () => {
+  it("names the application, version, commit, date, and platform", () => {
+    expect(formatBuild(system())).toBe(
+      "TorrPlay\u00A00.1.0 · 5c5f18f · Nov\u00A07,\u00A02026 · linux\u00A0aarch64",
+    );
+  });
+
+  it("does not move the commit's date by the viewer's time zone", () => {
+    expect(formatBuild(system({ commit_date: "2026-01-01" }))).toContain("Jan\u00A01,\u00A02026");
+  });
+
+  it("leaves out what a build from outside a checkout does not know", () => {
+    const unknown = system({ commit: null, commit_date: null });
+    expect(formatBuild(unknown)).toBe("TorrPlay\u00A00.1.0 · linux\u00A0aarch64");
+  });
+
+  it("is only the name, version, and commit in its short form", () => {
+    expect(formatShortBuild(system())).toBe("TorrPlay 0.1.0 · 5c5f18f");
+    expect(formatShortBuild(system({ commit: null, commit_date: null }))).toBe("TorrPlay 0.1.0");
   });
 });

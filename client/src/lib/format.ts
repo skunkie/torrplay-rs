@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
+import type { System } from "./backend";
 import { i18n, t } from "./i18n/index.svelte";
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -12,6 +13,24 @@ const TIME_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
   ["month", 12],
   ["year", Infinity],
 ];
+
+/** What names the build where there is little to say: application, version, commit. */
+export function formatShortBuild(system: System): string {
+  return [`TorrPlay ${system.version}`, system.commit].filter(Boolean).join(" · ");
+}
+
+/** The build on one line: application and version, commit, the commit's date in the
+ * page's language, and platform. It breaks only between those, where it must. */
+export function formatBuild(system: System): string {
+  const date =
+    system.commit_date &&
+    new Intl.DateTimeFormat(i18n.locale, { dateStyle: "medium", timeZone: "UTC" }).format(
+      new Date(`${system.commit_date}T00:00:00Z`),
+    );
+  return [`TorrPlay ${system.version}`, system.commit, date, `${system.os} ${system.architecture}`]
+    .flatMap((part) => (part ? [part.replaceAll(" ", "\u00A0")] : []))
+    .join(" · ");
+}
 
 /** How far `at` is from `now`, such as "2 days ago" or "in 3 months", to the
  * hour at best, in the page's language. */

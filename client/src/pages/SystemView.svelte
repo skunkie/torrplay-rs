@@ -14,7 +14,7 @@ SPDX-License-Identifier: MIT
     Statistics,
     System,
   } from "../lib/backend";
-  import { formatBytes, formatDuration, formatLogTime } from "../lib/format";
+  import { formatBuild, formatBytes, formatDuration, formatLogTime } from "../lib/format";
   import { i18n, t } from "../lib/i18n/index.svelte";
   import { LOG_SEARCH_MAX_LENGTH } from "../lib/limits";
   import { LOG_LEVELS } from "../lib/logs";
@@ -124,11 +124,7 @@ SPDX-License-Identifier: MIT
   {/if}
 
   <div class="grid grid-cols-2 gap-2.5 lg:grid-cols-3">
-    {@render tile(
-      t().system.uptime,
-      system && formatDuration(system.uptime_seconds),
-      system && t().system.build(system.version, system.os, system.architecture),
-    )}
+    {@render tile(t().system.uptime, system && formatDuration(system.uptime_seconds), undefined)}
     {@render tile(
       t().system.memory,
       system?.resident_memory_bytes == null ? undefined : formatBytes(system.resident_memory_bytes),
@@ -161,6 +157,13 @@ SPDX-License-Identifier: MIT
         ),
     )}
   </div>
+
+  {#if system}
+    <section aria-label={t().system.build} class="flex flex-col gap-2 rounded-2xl bg-tile p-4">
+      <span class="text-sm font-semibold">{t().system.build}</span>
+      <p class="mono text-text-muted">{formatBuild(system)}</p>
+    </section>
+  {/if}
 
   {#if system && system.urls.length > 0}
     <section aria-label={t().system.urls} class="flex flex-col gap-2 rounded-2xl bg-tile p-4">

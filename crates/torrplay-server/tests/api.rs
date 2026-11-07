@@ -2148,6 +2148,11 @@ mod scenario {
         let body = system.json();
         assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(body["os"], std::env::consts::OS);
+        // Null outside a Git checkout, and then together.
+        assert_eq!(body["commit"].is_null(), body["commit_date"].is_null());
+        if let Some(date) = body["commit_date"].as_str() {
+            assert_eq!(date.len(), "2026-11-07".len(), "a date, not a time");
+        }
         assert!(body["run_id"].as_str().unwrap().starts_with("run_"));
         if cfg!(target_os = "linux") {
             assert!(body["resident_memory_bytes"].as_u64().unwrap() > 0);

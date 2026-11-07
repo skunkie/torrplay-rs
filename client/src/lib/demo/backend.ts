@@ -519,6 +519,8 @@ export function demoBackend(now: () => number = Date.now): Backend {
 
     getSystem: async () => ({
       version: "0.1.0",
+      commit: "5c5f18f",
+      commit_date: "2026-11-07",
       os: "linux",
       architecture: "aarch64",
       run_id: DEMO_RUN,

@@ -282,6 +282,17 @@ the tokens.
   are too long a form for a dialog. It sends only what changed, with the ETag it
   read, so a change made elsewhere meanwhile is reported rather than overwritten.
 
+### The build's line
+
+Every page but the player and sign-in ends with one line naming the build: the
+application and version, and the commit. It is the page's last line, at the window's
+bottom when the page is shorter than the window, and not otherwise on screen. Below
+768 pixels it does not show. The System page's Build section, on any window, adds
+the commit's date and the platform, as a bug report needs them. A build with
+uncommitted changes marks its commit `-dirty`.
+It comes from `GET /api/v1/system`, which needs a credential while a password is
+set, so sign-in has none, and a failed read leaves it out.
+
 ### Moving around and leaving
 
 - The back and forward buttons return a page to where it was scrolled, once its

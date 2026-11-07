@@ -110,6 +110,11 @@
     @apply bg-surface text-body text-text min-h-dvh font-sans antialiased;
   }
 
+  /* The build's line stays at the bottom of a page shorter than the window. */
+  #app {
+    @apply flex min-h-dvh flex-col;
+  }
+
   /* Every focusable element shows focus, for keyboards and remotes. */
   :focus-visible {
     @apply outline-focus outline-3 outline-offset-2;

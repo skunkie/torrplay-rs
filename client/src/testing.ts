@@ -76,6 +76,8 @@ export function fakeBackend(members: Partial<Backend> = {}): Backend {
 export function system(members: Partial<System> = {}): System {
   return {
     version: "0.1.0",
+    commit: "5c5f18f",
+    commit_date: "2026-11-07",
     os: "linux",
     architecture: "aarch64",
     run_id: "run_a",
