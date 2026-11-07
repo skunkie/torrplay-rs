@@ -214,7 +214,7 @@ SPDX-License-Identifier: MIT
       <div class="mt-1 flex flex-wrap gap-2.5 empty:hidden">
         {#if resume}
           {@const episode = resume.file.episode}
-          <a href={watchPath(torrent.id, resume.file.id)} class="btn btn-hero">
+          <a href={watchPath(torrent.id, resume.file.id)} data-focus-start class="btn btn-hero">
             <Icon name="play" class="size-4" />
             {started ? t().progress.resume : t().common.play}
             {#if torrent.kind === "series" && episode}
@@ -248,7 +248,10 @@ SPDX-License-Identifier: MIT
       <div
         class="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1fr)_21.25rem] lg:items-start"
       >
-        <div class="lg:col-start-2 {showingPieces ? 'lg:row-start-2' : 'lg:row-start-1'}">
+        <div
+          data-arrows-column
+          class="lg:col-start-2 {showingPieces ? 'lg:row-start-2' : 'lg:row-start-1'}"
+        >
           <DownloadPanel
             {torrent}
             {statistics}

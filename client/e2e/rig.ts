@@ -25,9 +25,9 @@ import { APPLICATION_URL, TORRENT_NAME } from "./constants";
 
 const HOST = "127.0.0.1";
 const APPLICATION_PORT = Number(new URL(APPLICATION_URL).port);
-const TRACKER_PORT = 47911;
-const SEEDER_PORT = 47912;
-const PEER_PORT = 47913;
+const TRACKER_PORT = 17911;
+const SEEDER_PORT = 17912;
+const PEER_PORT = 17913;
 const PIECE_LENGTH = 16_384;
 const READY_MS = 30_000;
 /** Longer than the application's own limit on shutting down. */

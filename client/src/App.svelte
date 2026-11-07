@@ -14,6 +14,7 @@ SPDX-License-Identifier: MIT
   import RetryAlert from "./components/RetryAlert.svelte";
   import { addFromTransfer, addition, clearAddition } from "./lib/addition.svelte";
   import { createHttp } from "./lib/api/http";
+  import { startArrowNavigation } from "./lib/arrows";
   import { type Backend, httpBackend } from "./lib/backend";
   import { provideBackend } from "./lib/context";
   import { intro } from "./lib/demo-intro.svelte";
@@ -70,6 +71,7 @@ SPDX-License-Identifier: MIT
   provideBackend(backend);
 
   $effect(() => startNavigation());
+  $effect(() => startArrowNavigation());
   $effect(() => followSystem());
 
   $effect(() => {
@@ -234,6 +236,7 @@ SPDX-License-Identifier: MIT
   <div class="absolute inset-x-0 top-0 z-10 flex items-center justify-between p-4 md:px-10">
     <a
       href={listPath.value}
+      data-returns
       data-hero
       aria-label={t().common.back}
       class="btn size-11 btn-glass px-0"
@@ -285,7 +288,7 @@ SPDX-License-Identifier: MIT
       {#if browsing && page?.name !== "library" && page?.name !== "add"}
         <form
           role="search"
-          class="hidden field w-65 items-center gap-2 text-text-muted lg:flex"
+          class="hidden field w-65 items-center gap-2 text-text-muted outline-focus focus-within:outline-3 focus-within:outline-offset-2 lg:flex"
           onsubmit={(event) => {
             event.preventDefault();
             const search = headerSearch.trim();
