@@ -160,6 +160,7 @@ export const en = {
     long: (season: number, episode: number) => `Season ${season}, Episode ${episode}`,
   },
   player: {
+    loadFailed: "The player could not be loaded.",
     fileNotFound: "This file is not in the torrent.",
     finished: "Finished",
     inLibrary: "In the library",
@@ -302,6 +303,7 @@ export const en = {
     keepIt: "Keep it",
   },
   edit: {
+    savedExceptPoster: "Your other changes are saved; only the poster is not.",
     title: "Edit",
     edit: "Edit",
     name: "Title",

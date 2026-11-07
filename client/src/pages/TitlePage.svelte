@@ -16,15 +16,16 @@ SPDX-License-Identifier: MIT
     type TorrentStatistics,
   } from "../lib/backend";
   import { useBackend } from "../lib/context";
-  import { fileName } from "../lib/describe";
+  import { fileName, torrentTitle } from "../lib/describe";
   import { engine, pollFailure } from "../lib/engine.svelte";
   import { playables } from "../lib/episodes";
   import { imageGrant, refreshGrant } from "../lib/grant.svelte";
-  import { failureMessage } from "../lib/i18n/index.svelte";
+  import { failureMessage, t } from "../lib/i18n/index.svelte";
   import { navigate } from "../lib/navigation.svelte";
+  import { namePage } from "../lib/page-title.svelte";
   import { posterUrl } from "../lib/playback";
   import { poll } from "../lib/poll";
-  import { profiles } from "../lib/profile.svelte";
+  import { loadProfiles, profiles } from "../lib/profile.svelte";
   import { libraryPath } from "../lib/routes";
   import TitleView from "./TitleView.svelte";
 
@@ -84,8 +85,11 @@ SPDX-License-Identifier: MIT
    * known, and the profile's progress, which playback elsewhere changes. */
   async function refresh(id: string, profileId: string | undefined, mine: number): Promise<void> {
     if (missing) return;
+    /** Whether the torrent answered, so what is not found after it is something else. */
+    let found = false;
     try {
       const read = await backend.getTorrent(id, etag);
+      found = true;
       if (mine !== generation) return;
       if (!read.unchanged) {
         torrent = read.data;
@@ -103,8 +107,11 @@ SPDX-License-Identifier: MIT
       error = undefined;
     } catch (failure) {
       if (mine !== generation) return;
-      if (failure instanceof ApiError && failure.type === "not-found" && !torrent) {
-        missing = true;
+      if (failure instanceof ApiError && failure.type === "not-found") {
+        // Never there, or gone since: a temporary torrent expires by itself. Past the
+        // torrent, it is the profile that was deleted elsewhere; choose again.
+        if (found) await loadProfiles(backend);
+        else missing = true;
       } else if (!(failure instanceof ApiError && failure.type === "lifecycle-conflict")) {
         // A lifecycle conflict means the metadata is not known yet.
         error = pollFailure(failure);
@@ -112,9 +119,13 @@ SPDX-License-Identifier: MIT
     }
   }
 
+  /** Its ID alone, since reading the profiles again gives the same one anew, which
+   * must not start polling over. */
+  const profileId = $derived(profiles.current?.id);
+
   $effect(() => {
     const id = torrentId;
-    const profileId = profiles.current?.id;
+    const watching = profileId;
     const mine = ++generation;
     // The application remakes this page for another title.
     untrack(() => {
@@ -123,7 +134,7 @@ SPDX-License-Identifier: MIT
     });
     // Started untracked: the page's state that polling reads and writes
     // must not restart it.
-    return untrack(() => poll(() => refresh(id, profileId, mine), POLL_MS));
+    return untrack(() => poll(() => refresh(id, watching, mine), POLL_MS));
   });
 
   $effect(() => {
@@ -135,6 +146,8 @@ SPDX-License-Identifier: MIT
   $effect(() => {
     void refreshGrant(backend);
   });
+
+  namePage(() => (missing ? t().title.notFound : torrent && torrentTitle(torrent)));
 </script>
 
 <TitleView

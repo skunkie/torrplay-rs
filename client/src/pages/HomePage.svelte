@@ -79,8 +79,12 @@ SPDX-License-Identifier: MIT
     await refresh(profileId, generation);
   }
 
+  /** Its ID alone, since reading the profiles again gives the same one anew, which
+   * must not start polling over. */
+  const watching = $derived(profiles.current?.id);
+
   $effect(() => {
-    const profileId = profiles.current?.id;
+    const profileId = watching;
     const mine = ++generation;
     entries = undefined;
     upNextTag = undefined;

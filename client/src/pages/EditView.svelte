@@ -23,9 +23,15 @@ SPDX-License-Identifier: MIT
   import ValuesField from "../components/ValuesField.svelte";
   import { t } from "../lib/i18n/index.svelte";
   import { IMAGE_MAX_BYTES, IMAGE_TYPES, IMDB_ID, YEAR_MAX, YEAR_MIN } from "../lib/limits";
+  import { guardNavigation } from "../lib/navigation.svelte";
 
   interface Props {
+    /** What the form starts from. */
     configuration: TorrentConfiguration;
+    /** What the server holds now, which the form differs from if unsaved. */
+    stored: TorrentConfiguration;
+    /** Whether the last save stored all but the poster. */
+    partlySaved: boolean;
     /** The torrent's name, which an empty title falls back to. */
     name: string;
     torrentTitle: string;
@@ -44,6 +50,8 @@ SPDX-License-Identifier: MIT
 
   let {
     configuration,
+    stored,
+    partlySaved,
     name,
     torrentTitle,
     poster,
@@ -102,6 +110,24 @@ SPDX-License-Identifier: MIT
     { value: "other", label: t().kinds.other },
   ] as const);
 
+  /** Whether the form holds anything saving would change. */
+  const dirty = $derived(
+    !busy &&
+      (title !== (stored.title ?? "") ||
+        kind !== stored.kind ||
+        year !== (stored.year === null ? "" : String(stored.year)) ||
+        imdbId !== (stored.imdb_id ?? "") ||
+        description !== (stored.description ?? "") ||
+        categories.join("\n") !== stored.categories.join("\n") ||
+        genres.join("\n") !== stored.genres.join("\n") ||
+        posterChange.kind !== "keep"),
+  );
+
+  $effect(() => {
+    if (!dirty) return;
+    return guardNavigation(() => confirm(t().common.leave));
+  });
+
   function submit(event: SubmitEvent): void {
     event.preventDefault();
     const typedYear = year.trim();
@@ -149,6 +175,10 @@ SPDX-License-Identifier: MIT
     <RetryAlert message={t().edit.changedElsewhere} onretry={onreload} action={t().common.reload} />
   {:else if error}
     <p role="alert" class="alert">{error}</p>
+  {/if}
+
+  {#if partlySaved}
+    <p role="status" class="text-sm text-text-muted">{t().edit.savedExceptPoster}</p>
   {/if}
 
   <div class="flex flex-col gap-8 md:flex-row">

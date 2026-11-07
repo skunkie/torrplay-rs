@@ -112,10 +112,15 @@ export function watchPath(torrentId: string, fileId: string): string {
  * query, if it is one of the client's own, and home otherwise. */
 export function returnPath(search: string): string {
   const next = new URLSearchParams(search).get("next");
-  return next?.startsWith("/") &&
-    !next.startsWith("//") &&
-    !next.startsWith("/\\") &&
-    isDemoPath(next) === demo
-    ? next
-    : homePath;
+  if (!next?.startsWith("/")) return homePath;
+  // As the browser reads it, which may find another origin in what looks like a path.
+  const { origin } = window.location;
+  try {
+    const url = new URL(next, origin);
+    return url.origin === origin && isDemoPath(url.pathname) === demo
+      ? url.pathname + url.search + url.hash
+      : homePath;
+  } catch {
+    return homePath;
+  }
 }

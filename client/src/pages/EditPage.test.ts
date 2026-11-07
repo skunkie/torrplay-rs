@@ -8,6 +8,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import App from "../App.svelte";
 import { ApiError } from "../lib/api/http";
 import type { Backend, TorrentConfiguration } from "../lib/backend";
+import { en } from "../lib/i18n/en";
 import { location, navigate } from "../lib/navigation.svelte";
 import { resetProfiles } from "../lib/profile.svelte";
 import { editPath, titlePath } from "../lib/routes";
@@ -280,4 +281,106 @@ it("says when the torrent cannot be read, and tries again", async () => {
   await fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
 
   expect(await screen.findByRole("heading", { level: 1, name: "Edit" })).toBeInTheDocument();
+});
+
+it("shows a refusal of one item of a list beside the list", async () => {
+  const fake = backend(configuration(), {
+    updateConfiguration: vi.fn(async () => {
+      throw new ApiError(400, {
+        type: "tag:skunkie.github.io,2026:torrplay/problems/validation-failed",
+        title: "Invalid",
+        status: 400,
+        errors: [{ pointer: "/categories/1", detail: "Holds a control character." }],
+      } as never);
+    }),
+  });
+  await open(fake);
+  await fireEvent.input(screen.getByLabelText(/^Title/), { target: { value: "New name" } });
+
+  await save();
+
+  expect(await screen.findByText("Holds a control character.")).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("shows a refusal of what no field shows", async () => {
+  const fake = backend(configuration(), {
+    updateConfiguration: vi.fn(async () => {
+      throw new ApiError(400, {
+        type: "tag:skunkie.github.io,2026:torrplay/problems/validation-failed",
+        title: "Invalid",
+        status: 400,
+        errors: [{ pointer: "/retention", detail: "Cannot change here." }],
+      } as never);
+    }),
+  });
+  await open(fake);
+  await fireEvent.input(screen.getByLabelText(/^Title/), { target: { value: "New name" } });
+
+  await save();
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("Cannot change here.");
+});
+
+it("saves only the poster again after it failed once the rest was saved", async () => {
+  const setPoster = vi
+    .fn()
+    .mockRejectedValueOnce(new ApiError(500, undefined))
+    .mockResolvedValue(undefined);
+  const updateConfiguration = vi.fn(async () => {});
+  const getConfiguration = vi
+    .fn()
+    .mockResolvedValueOnce({ data: configuration(), etag: '"1"' })
+    .mockResolvedValue({ data: configuration({ title: "New name" }), etag: '"2"' });
+  await open(backend(configuration(), { setPoster, updateConfiguration, getConfiguration }));
+  await fireEvent.input(screen.getByLabelText(/^Title/), { target: { value: "New name" } });
+  const image = new File(["x"], "poster.png", { type: "image/png" });
+  await fireEvent.change(screen.getByLabelText("Poster"), { target: { files: [image] } });
+
+  await save();
+  await screen.findByRole("alert");
+  await waitFor(() => expect(getConfiguration).toHaveBeenCalledTimes(2));
+  await save();
+  await saved();
+
+  expect(updateConfiguration).toHaveBeenCalledOnce();
+  expect(setPoster).toHaveBeenCalledTimes(2);
+});
+
+it("asks before leaving with unsaved changes, and only then", async () => {
+  const refuse = vi.spyOn(window, "confirm").mockReturnValue(false);
+  await open(backend());
+  const original = (screen.getByLabelText(/^Title/) as HTMLInputElement).value;
+
+  await fireEvent.input(screen.getByLabelText(/^Title/), { target: { value: "New name" } });
+  await fireEvent.click(screen.getByRole("link", { name: "Cancel" }));
+  expect(refuse).toHaveBeenCalledOnce();
+  expect(location.path).toBe(editPath(shown.id));
+
+  await fireEvent.input(screen.getByLabelText(/^Title/), { target: { value: original } });
+  await fireEvent.click(screen.getByRole("link", { name: "Cancel" }));
+  expect(refuse).toHaveBeenCalledOnce();
+  expect(location.path).toBe(titlePath(shown.id));
+  refuse.mockRestore();
+});
+
+it("says what a failed poster left saved, and asks only about the poster", async () => {
+  const refuse = vi.spyOn(window, "confirm").mockReturnValue(false);
+  const setPoster = vi.fn().mockRejectedValue(new ApiError(500, undefined));
+  const getConfiguration = vi
+    .fn()
+    .mockResolvedValueOnce({ data: configuration(), etag: '"1"' })
+    .mockResolvedValue({ data: configuration({ title: "New name" }), etag: '"2"' });
+  await open(backend(configuration(), { setPoster, getConfiguration }));
+  await fireEvent.input(screen.getByLabelText(/^Title/), { target: { value: "New name" } });
+  const image = new File(["x"], "poster.png", { type: "image/png" });
+  await fireEvent.change(screen.getByLabelText("Poster"), { target: { files: [image] } });
+
+  await save();
+
+  expect(await screen.findByText(en.edit.savedExceptPoster)).toBeInTheDocument();
+  await waitFor(() => expect(getConfiguration).toHaveBeenCalledTimes(2));
+  await fireEvent.click(screen.getByRole("link", { name: "Cancel" }));
+  expect(refuse).toHaveBeenCalledOnce();
+  refuse.mockRestore();
 });

@@ -8,6 +8,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Conditional } from "../lib/api/http";
 import type { PageRequest, Torrent, TorrentPage, TorrentQuery } from "../lib/backend";
 import { backendContext } from "../lib/context";
+import { engine } from "../lib/engine.svelte";
 import { location, navigate } from "../lib/navigation.svelte";
 import { fakeBackend, torrent } from "../testing";
 import LibraryPage from "./LibraryPage.svelte";
@@ -191,4 +192,40 @@ it("reports a failure and tries again", async () => {
   fail = false;
   await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(await screen.findByText("Title 3")).toBeInTheDocument();
+});
+
+it("reads again by itself after a first read the banner reports", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  engine.status = "unreachable";
+  let down = true;
+  const { fake } = backend(() => {
+    if (down) throw new TypeError("offline");
+    return { unchanged: false, data: page([torrent(5)]), etag: '"5"' };
+  });
+  render(LibraryPage, { context: backendContext(fake) });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+  down = false;
+  engine.status = "ready";
+  await vi.advanceTimersByTimeAsync(5000);
+
+  expect(await screen.findByText("Title 5")).toBeInTheDocument();
+});
+
+it("says nothing new while it reads again by itself", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  engine.status = "unreachable";
+  const { fake } = backend(() => {
+    throw new TypeError("offline");
+  });
+  render(LibraryPage, { context: backendContext(fake) });
+  await vi.advanceTimersByTimeAsync(0);
+
+  fake.listTorrents = vi.fn(() => new Promise<never>(() => {}));
+  await vi.advanceTimersByTimeAsync(5000);
+
+  expect(fake.listTorrents).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  engine.status = "ready";
 });

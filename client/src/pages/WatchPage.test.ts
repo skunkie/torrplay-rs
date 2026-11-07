@@ -3,15 +3,16 @@
 // SPDX-License-Identifier: MIT
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { tick } from "svelte";
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 
 import App from "../App.svelte";
-import type { Backend, Progress, Torrent, TorrentFile } from "../lib/backend";
+import type { Backend, Profile, Progress, Torrent, TorrentFile } from "../lib/backend";
 import { location, navigate } from "../lib/navigation.svelte";
 import type * as Audio from "../lib/player/audio";
 import type { AudioTrack } from "../lib/player/audio";
 import type * as Media from "../lib/player/media";
-import { resetProfiles } from "../lib/profile.svelte";
+import { loadProfiles, resetProfiles } from "../lib/profile.svelte";
 import { watchPath } from "../lib/routes";
 import { fakeBackend, file, preload, profile, progress, torrent } from "../testing";
 
@@ -145,6 +146,65 @@ it("plays the file with a playback token and resumes where the profile stopped",
   expect(screen.getByText("Season 1, Episode 1")).toBeInTheDocument();
   await fireEvent(media, new Event("loadedmetadata"));
   expect(media.currentTime).toBe(900);
+});
+
+it("waits for the profiles, so a reload starts one preload, where it resumes", async () => {
+  let answer: (people: Profile[]) => void = () => {};
+  const fake = backend(show, [e1, e2], [progress(e1, 0.25)]);
+  fake.listProfiles = vi.fn(() => new Promise<Profile[]>((resolve) => (answer = resolve)));
+  navigate(watchPath(show.id, e1.id));
+  render(App, { backend: fake });
+  await vi.waitFor(() => expect(fake.listProfiles).toHaveBeenCalled());
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(fake.createPreload).not.toHaveBeenCalled();
+
+  answer([profile(1, "Ana")]);
+
+  await video();
+  expect(fake.createPreload).toHaveBeenCalledOnce();
+  // A preload from the head names no offset.
+  expect(vi.mocked(fake.createPreload).mock.calls[0]?.[2]).toBeDefined();
+});
+
+it("reads nothing again under the video when the profiles arrive only later", async () => {
+  const fake = backend(show, [e1, e2], []);
+  const people = fake.listProfiles;
+  fake.listProfiles = vi.fn(async () => {
+    throw new TypeError("offline");
+  });
+  navigate(watchPath(show.id, e1.id));
+  render(App, { backend: fake });
+  const media = await video();
+
+  fake.listProfiles = people;
+  await loadProfiles(fake);
+  await tick();
+
+  expect(await video()).toBe(media);
+  expect(fake.getTorrent).toHaveBeenCalledOnce();
+  expect(fake.createPreload).toHaveBeenCalledOnce();
+});
+
+it("shows the video once a read succeeds after one that failed", async () => {
+  const fake = backend(show, [e1, e2], []);
+  const answer = fake.getTorrent;
+  const people = fake.listProfiles;
+  fake.getTorrent = vi.fn(async () => {
+    throw new TypeError("offline");
+  });
+  fake.listProfiles = vi.fn(async () => {
+    throw new TypeError("offline");
+  });
+  navigate(watchPath(show.id, e1.id));
+  render(App, { backend: fake });
+  await screen.findByRole("alert");
+
+  fake.getTorrent = answer;
+  fake.listProfiles = people;
+  await loadProfiles(fake);
+
+  await video();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
 it("saves the position when playback pauses and keeps the viewed mark", async () => {

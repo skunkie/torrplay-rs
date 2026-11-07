@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
   import { ApiError } from "../lib/api/http";
-  import { errorsOf, type Settings } from "../lib/backend";
+  import { memberErrors, type Settings } from "../lib/backend";
   import { useBackend } from "../lib/context";
   import { failureMessage, t } from "../lib/i18n/index.svelte";
   import { guardNavigation } from "../lib/navigation.svelte";
@@ -77,14 +77,8 @@ SPDX-License-Identifier: MIT
 
   $effect(() => {
     if (changes === 0) return;
-    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
-    window.addEventListener("beforeunload", warn);
     // Moving between the sections of this form keeps what was typed.
-    const stop = guardNavigation((path) => staysInForm(path) || confirm(t().common.leave));
-    return () => {
-      window.removeEventListener("beforeunload", warn);
-      stop();
-    };
+    return guardNavigation((path) => staysInForm(path) || confirm(t().common.leave));
   });
 
   async function save(): Promise<void> {
@@ -106,11 +100,11 @@ SPDX-License-Identifier: MIT
         stale = true;
         await load({ base: draftOf(settings), draft: $state.snapshot(draft) });
       } else {
-        const errors = failure instanceof ApiError ? errorsOf(failure) : [];
-        fieldErrors = Object.fromEntries(
-          errors.map((error) => [(error.pointer ?? "").replace(/^\//, ""), error.detail]),
-        );
-        if (errors.length === 0) saveError = failureMessage(failure);
+        const { members, other } =
+          failure instanceof ApiError ? memberErrors(failure) : { members: {}, other: undefined };
+        fieldErrors = members;
+        if (other) saveError = other;
+        else if (Object.keys(members).length === 0) saveError = failureMessage(failure);
       }
     } finally {
       busy = false;

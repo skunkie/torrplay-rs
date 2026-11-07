@@ -3,11 +3,13 @@
 // SPDX-License-Identifier: MIT
 
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { tick } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App.svelte";
 import { ApiError } from "../lib/api/http";
 import type { Backend, Torrent, TorrentFile } from "../lib/backend";
+import { en } from "../lib/i18n/en";
 import { location, navigate } from "../lib/navigation.svelte";
 import { resetProfiles } from "../lib/profile.svelte";
 import { titlePath, watchPath } from "../lib/routes";
@@ -127,6 +129,49 @@ it("shows the files once the metadata arrives", async () => {
   shown = { ...shown, observed_state: "downloading" };
   await vi.advanceTimersByTimeAsync(5000);
   expect(await screen.findByText("a.mkv")).toBeInTheDocument();
+});
+
+it("says the title is gone when it goes while its page is open", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const shown = torrent(6, { retention: "temporary" });
+  const fake = backend(() => shown, [file(shown, "a.mkv")]);
+  navigate(titlePath(shown.id));
+  render(App, { backend: fake });
+  await screen.findByText("a.mkv");
+
+  fake.getTorrent = vi.fn(async () => {
+    throw new ApiError(404, {
+      type: "tag:skunkie.github.io,2026:torrplay/problems/not-found",
+      title: "Not found",
+      status: 404,
+    });
+  });
+  await vi.advanceTimersByTimeAsync(5000);
+
+  expect(await screen.findByText(en.title.notFound)).toBeInTheDocument();
+  expect(screen.queryByText("a.mkv")).not.toBeInTheDocument();
+  await waitFor(() => expect(document.title).toBe(`${en.title.notFound} — TorrPlay`));
+});
+
+it("chooses a profile again when the one watching is gone, and keeps the title", async () => {
+  const shown = torrent(7);
+  const fake = backend(() => shown, [file(shown, "a.mkv")]);
+  fake.listProgress = vi.fn(async () => {
+    throw new ApiError(404, {
+      type: "tag:skunkie.github.io,2026:torrplay/problems/not-found",
+      title: "Not found",
+      status: 404,
+    });
+  });
+  navigate(titlePath(shown.id));
+  render(App, { backend: fake });
+  await vi.waitFor(() => expect(vi.mocked(fake.listProfiles).mock.calls.length).toBe(2));
+  await tick();
+
+  expect(screen.queryByText(en.title.notFound)).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { level: 1, name: "Title 7" })).toBeInTheDocument();
+  // The same profile again is no reason to read at once, in a loop.
+  expect(fake.listProgress).toHaveBeenCalledOnce();
 });
 
 it("says when the title does not exist", async () => {

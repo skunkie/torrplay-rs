@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { tick } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App.svelte";
@@ -234,6 +235,64 @@ describe("a magnet link", () => {
     expect(await screen.findByText("e1.mkv")).toBeInTheDocument();
     expect(screen.queryByText("Waiting for peers to send the file list")).not.toBeInTheDocument();
     expect(fake.previewTorrent).not.toHaveBeenCalled();
+  });
+
+  it("goes on waiting for the files after a read fails", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let known = false;
+    const fake = peers(() => known);
+    const answer = fake.getTorrent;
+    open(fake);
+    await pasteMagnet();
+    await screen.findByText("Waiting for peers to send the file list");
+
+    fake.getTorrent = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("offline"))
+      .mockImplementation(answer);
+    await vi.advanceTimersByTimeAsync(2000);
+    known = true;
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(await screen.findByText("e1.mkv")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps a failure to add it while the files are still on their way", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const fake = peers(() => false);
+    fake.keepTorrent = vi.fn(async () => {
+      throw new ApiError(500, undefined);
+    });
+    open(fake);
+    await pasteMagnet();
+    await screen.findByText("Waiting for peers to send the file list");
+    await fireEvent.click(await screen.findByRole("button", { name: "Add to library" }));
+    await screen.findByRole("alert");
+
+    await vi.advanceTimersByTimeAsync(4000);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("failed with status 500");
+  });
+
+  it("keeps the torrent, and stays put, when it is left while joining the library", async () => {
+    let finish: () => void = () => {};
+    const fake = peers(() => false);
+    fake.keepTorrent = vi.fn(() => new Promise<void>((resolve) => (finish = resolve)));
+    open(fake);
+    await pasteMagnet();
+    await screen.findByText("Waiting for peers to send the file list");
+    await fireEvent.click(await screen.findByRole("button", { name: "Add to library" }));
+    await vi.waitFor(() => expect(fake.keepTorrent).toHaveBeenCalled());
+
+    clearAddition();
+    await tick();
+    finish();
+    await tick();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fake.deleteTorrent).not.toHaveBeenCalled();
+    expect(location.path).toBe("/add");
   });
 
   it("adds that same torrent to the library, in the chosen storage mode", async () => {

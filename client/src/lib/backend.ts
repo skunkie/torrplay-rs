@@ -215,6 +215,23 @@ export function errorsOf(failure: ApiError): { pointer?: string; detail: string 
   );
 }
 
+/** What a refused change says of each top-level member, the first detail of each:
+ * a pointer may name an item of a list, as `/categories/1` does. A failure
+ * naming no member has `undefined` in `other`. */
+export function memberErrors(failure: ApiError): {
+  members: Record<string, string>;
+  other: string | undefined;
+} {
+  const members: Record<string, string> = {};
+  let other: string | undefined;
+  for (const { pointer, detail } of errorsOf(failure)) {
+    const member = pointer?.split("/")[1];
+    if (member) members[member] ??= detail;
+    else other ??= detail;
+  }
+  return { members, other };
+}
+
 /** The ID of the torrent a creation found it already has, or `undefined`
  * for any other failure. */
 export function duplicateOf(failure: unknown): string | undefined {

@@ -161,6 +161,7 @@ export const ru: Messages = {
     long: (season: number, episode: number) => `${season}\u00A0сезон, ${episode}\u00A0серия`,
   },
   player: {
+    loadFailed: "Не удалось загрузить плеер.",
     fileNotFound: "В торренте нет такого файла.",
     finished: "Просмотр завершён",
     inLibrary: "В библиотеке",
@@ -306,6 +307,7 @@ export const ru: Messages = {
     keepIt: "Оставить",
   },
   edit: {
+    savedExceptPoster: "Остальные изменения сохранены, не сохранён только постер.",
     title: "Изменение",
     edit: "Изменить",
     name: "Название",

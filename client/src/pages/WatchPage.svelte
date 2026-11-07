@@ -12,6 +12,7 @@ SPDX-License-Identifier: MIT
   import { nextEpisode, playables } from "../lib/episodes";
   import { failureMessage, t } from "../lib/i18n/index.svelte";
   import { navigate } from "../lib/navigation.svelte";
+  import { namePage } from "../lib/page-title.svelte";
   import { playbackGrants, posterUrl, withGrant } from "../lib/playback";
   import { trackLabel } from "../lib/player/audio";
   import { AudioTracks } from "../lib/player/audio-tracks.svelte";
@@ -58,6 +59,7 @@ SPDX-License-Identifier: MIT
   const profileId = $derived(profiles.current?.id);
 
   async function load(): Promise<void> {
+    error = undefined;
     try {
       const [read, listed, held, current] = await Promise.all([
         backend.getTorrent(torrentId),
@@ -115,7 +117,10 @@ SPDX-License-Identifier: MIT
   }
 
   $effect(() => {
-    void load();
+    // Waits for the profiles, or it would start from the file's head and over. Once
+    // read, nothing is read again under the video, even if they arrive only now.
+    const known = profiles.people !== undefined || profiles.failed;
+    if (known && !untrack(() => torrent)) void load();
   });
 
   const startAt = $derived(progress === null ? 0 : startPosition(progress));
@@ -164,6 +169,8 @@ SPDX-License-Identifier: MIT
       subtitles = undefined;
     };
   });
+
+  namePage(() => (torrent ? torrentTitle(torrent) : undefined));
 
   const items = $derived(files ? playables(files, []) : []);
   const next = $derived.by(() => {

@@ -294,6 +294,25 @@ test.describe("settings", () => {
     await expect(page).toHaveURL("/settings/network");
   });
 
+  test("asks before the back button leaves unsaved changes", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: /^(Menu|Profile)/ }).click();
+    await page.getByRole("link", { name: "Settings" }).click();
+    const memory = page.getByLabel("Memory for pieces");
+    const held = await memory.inputValue();
+    await memory.fill(String(Number(held) + 1));
+
+    let accept = false;
+    page.on("dialog", (dialog) => void (accept ? dialog.accept() : dialog.dismiss()));
+    await page.goBack({ waitUntil: "commit" }).catch(() => undefined);
+    await expect(page).toHaveURL("/settings");
+    await expect(memory).toHaveValue(String(Number(held) + 1));
+
+    accept = true;
+    await page.goBack({ waitUntil: "commit" }).catch(() => undefined);
+    await expect(page).toHaveURL("/");
+  });
+
   test("holds back a value out of bounds", async ({ page }) => {
     await page.goto("/settings/playback");
     const memory = page.getByLabel("Memory for pieces");
@@ -501,6 +520,65 @@ test.describe("on the real server", () => {
     await page.waitForTimeout(1100);
     expect(await setPoster()).not.toBe(first);
     await deleteFromTitlePage(page);
+  });
+
+  test("goes back to its place in a list that takes time to read", async ({ page }) => {
+    await page.goto("/add");
+    await page.locator('input[type="file"]').setInputFiles(environment("TORRPLAY_E2E_TORRENT"));
+    await page.getByRole("button", { name: "Add to library" }).click();
+    await expect(page).toHaveURL(/\/titles\//);
+    await page.route("**/api/v1/torrents?*", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      await route.fallback();
+    });
+    await page.setViewportSize({ width: 320, height: 240 });
+    await page.goto("/library");
+    const card = page.locator("a[href*='/titles/']").first();
+    await card.waitFor();
+    await page.evaluate(() => window.scrollTo(0, 150));
+    const place = await page.evaluate(() => window.scrollY);
+    expect(place).toBeGreaterThan(50);
+
+    // Not a pointer's click, which would scroll the card into view first.
+    await card.evaluate((link: HTMLElement) => link.click());
+    await expect(page).toHaveURL(/\/titles\//);
+    await expect
+      .poll(() => page.evaluate(() => window.scrollY), "a new page starts at its top")
+      .toBe(0);
+    await page.goBack();
+    await card.waitFor();
+
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(place);
+    await page.unroute("**/api/v1/torrents?*");
+  });
+
+  test("signing out revokes the device's token", async ({ page, request }) => {
+    const PASSWORD = "an invented test passphrase";
+    expect((await request.put("/api/v1/password", { data: { password: PASSWORD } })).ok()).toBe(
+      true,
+    );
+    try {
+      await page.goto("/");
+      await page.getByLabel("Password").fill(PASSWORD);
+      await page.getByRole("button", { name: "Sign in" }).click();
+      await expect(page).toHaveURL("/");
+      const secret = await page.evaluate(() => localStorage.getItem("torrplay.access-token"));
+      const headers = { Authorization: `Bearer ${secret}` };
+      expect((await request.get("/api/v1/settings", { headers })).ok()).toBe(true);
+
+      await page.getByRole("button", { name: /^(Menu|Profile)/ }).click();
+      await page.getByRole("button", { name: "Sign out" }).click();
+
+      await expect(page).toHaveURL(/\/sign-in/);
+      expect((await request.get("/api/v1/settings", { headers })).status()).toBe(401);
+    } finally {
+      const signedIn = await request.post("/api/v1/access-tokens", {
+        data: { password: PASSWORD, name: "Cleanup", scope: "api" },
+      });
+      const { secret } = (await signedIn.json()) as { secret: string };
+      const headers = { Authorization: `Bearer ${secret}` };
+      expect((await request.delete("/api/v1/password", { headers })).ok()).toBe(true);
+    }
   });
 });
 

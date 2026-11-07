@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { match, returnPath } from "./routes";
 
@@ -42,12 +42,20 @@ describe("match", () => {
 });
 
 describe("returnPath", () => {
+  it("works in a browser without URL.canParse, as TV browsers may be", () => {
+    vi.stubGlobal("URL", Object.assign(class extends URL {}, { canParse: undefined }));
+    expect(returnPath("?next=%2Flibrary")).toBe("/library");
+    vi.unstubAllGlobals();
+  });
+
   it.each([
     ["?next=%2Flibrary%3Fq%3Dshow", "/library?q=show"],
     ["", "/"],
     ["?next=https%3A%2F%2Fexample.test%2F", "/"],
     ["?next=%2F%2Fexample.test", "/"],
     ["?next=%2F%5Cexample.test", "/"],
+    ["?next=%2F%09%2Fexample.test", "/"],
+    ["?next=%2F%2F", "/"],
   ])("goes from %j to %s", (search, expected) => {
     expect(returnPath(search)).toBe(expected);
   });
