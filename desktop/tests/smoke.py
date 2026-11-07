@@ -16,6 +16,7 @@ from a window of its own.
 import ctypes
 import ctypes.util
 import glob
+import hashlib
 import json
 import os
 import re
@@ -171,6 +172,34 @@ Gtk.main()
 """
 
 
+def bencode(value):
+    if isinstance(value, int):
+        return b"i%de" % value
+    if isinstance(value, str):
+        value = value.encode()
+    if isinstance(value, bytes):
+        return b"%d:%s" % (len(value), value)
+    return (
+        b"d"
+        + b"".join(bencode(key) + bencode(value[key]) for key in sorted(value))
+        + b"e"
+    )
+
+
+def write_torrent(directory, name):
+    """Writes a torrent file of a file called `name`, and returns its path."""
+    info = {
+        "name": name,
+        "length": 16384,
+        "piece length": 16384,
+        "pieces": hashlib.sha1(name.encode()).digest(),
+    }
+    path = os.path.join(directory, f"{name}.torrent")
+    with open(path, "wb") as file:
+        file.write(bencode({"announce": "http://127.0.0.1:1/announce", "info": info}))
+    return path
+
+
 def drag(start, end):
     """Presses the mouse at `start`, moves in steps, and lets go at `end`."""
     xdo_library = ctypes.CDLL("libxdo.so.3")
@@ -257,9 +286,9 @@ class Environment:
             "--no-dht",
         ]
 
-    def start(self):
+    def start(self, extra_arguments=()):
         return subprocess.Popen(
-            [BINARY, *self.arguments],
+            [BINARY, *self.arguments, *extra_arguments],
             env=self.variables,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -305,7 +334,7 @@ class Environment:
 class Driver:
     """A WebDriver session on the application in its window."""
 
-    def __init__(self, environment):
+    def __init__(self, environment, extra_arguments=()):
         self.process = subprocess.Popen(
             ["WebKitWebDriver", f"--port={DRIVER_PORT}"],
             env={
@@ -327,7 +356,7 @@ class Driver:
                         "browserName": "wry",
                         "webkitgtk:browserOptions": {
                             "binary": os.path.abspath(BINARY),
-                            "args": environment.arguments,
+                            "args": [*environment.arguments, *extra_arguments],
                         },
                     }
                 }
@@ -358,6 +387,17 @@ class Driver:
             "POST",
             f"{self.session}/execute/sync",
             {"script": code, "args": list(arguments)},
+        )
+
+    def wait_for_add_page(self, text):
+        wait_until(
+            lambda: self.script(
+                "return location.pathname === '/add'"
+                " && document.body.innerText.includes(arguments[0])",
+                text,
+            ),
+            30,
+            f"the Add page to show {text}",
         )
 
     def go(self, path):
@@ -464,12 +504,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(links[1], "https://example.invalid/page")
         self.assertEqual(len(links), 2, "file: must not be opened")
 
-    def test_lets_a_dropped_file_reach_the_page(self):
-        # Tauri's own drop handler would keep this from the page. WebKitGTK then gives
-        # the page no files from this source, so the drop itself is what this checks.
-        path = os.path.join(self.environment.root, "dropped.torrent")
-        with open(path, "wb") as file:
-            file.write(b"invented")
+    def drop(self, path):
         source = subprocess.Popen(
             [sys.executable, "-c", DRAG_SOURCE, f"file://{path}"],
             env=self.environment.variables,
@@ -478,24 +513,67 @@ class WindowTests(unittest.TestCase):
         )
         try:
             self.assertEqual(source.stdout.readline().strip(), "ready")
-            self.driver.go("/library")
             time.sleep(1)
-            self.driver.script(
-                "window.dropped = false;"
-                "window.addEventListener('dragover', (event) => event.preventDefault());"
-                "window.addEventListener('drop', (event) => {"
-                " event.preventDefault(); window.dropped = true; });"
-            )
             drag((1100, 675), (640, 400))
-            wait_until(
-                lambda: self.driver.script("return window.dropped"),
-                20,
-                "the drop to reach the page",
-            )
+            time.sleep(1)
         finally:
             source.terminate()
             source.wait(10)
             source.stdout.close()
+
+    def test_opens_a_dropped_torrent_file(self):
+        path = write_torrent(self.environment.root, "Invented Dropped")
+        self.driver.go("/library")
+        time.sleep(1)
+        self.drop(path)
+        self.driver.wait_for_add_page("Invented Dropped")
+
+    def test_ignores_any_other_dropped_file(self):
+        path = os.path.join(self.environment.root, "invented.mkv")
+        with open(path, "wb") as file:
+            file.write(b"invented")
+        self.driver.go("/library")
+        time.sleep(1)
+        self.drop(path)
+        # As long as a torrent file is given to open, and the page must still be here.
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            self.assertEqual(self.driver.script("return location.pathname"), "/library")
+            time.sleep(0.5)
+
+    def test_says_why_another_dropped_file_cannot_be_added(self):
+        path = os.path.join(self.environment.root, "invented.mkv")
+        with open(path, "wb") as file:
+            file.write(b"invented")
+        self.driver.go("/add")
+        time.sleep(1)
+        self.drop(path)
+        self.driver.wait_for_add_page("This torrent file could not be read.")
+
+    def test_a_second_launch_opens_what_it_names(self):
+        self.driver.go("/library")
+        time.sleep(1)
+        path = write_torrent(self.environment.root, "Invented Second")
+        subprocess.run(
+            [BINARY, *self.environment.arguments, path],
+            env=self.environment.variables,
+            timeout=20,
+            check=True,
+        )
+        self.driver.wait_for_add_page("Invented Second")
+        self.driver.go("/library")
+        time.sleep(1)
+        subprocess.run(
+            [
+                BINARY,
+                *self.environment.arguments,
+                "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Invented+Magnet",
+            ],
+            env=self.environment.variables,
+            timeout=20,
+            check=True,
+        )
+        self.driver.wait_for_add_page("Invented Magnet")
 
     def test_a_second_launch_leaves_the_first_running(self):
         second = subprocess.run(
@@ -545,8 +623,8 @@ class LifecycleTests(unittest.TestCase):
         wait_until(lambda: not listening(), 20, "the port to be free")
         self.environment.remove()
 
-    def start(self):
-        process = self.environment.start()
+    def start(self, extra_arguments=()):
+        process = self.environment.start(extra_arguments)
         self.running.append(process)
         return process
 
@@ -658,6 +736,54 @@ class LifecycleTests(unittest.TestCase):
             self.start()
             process.wait(STOP_SECONDS)
         wait_until(listening, READY_SECONDS, "a new run")
+
+    def test_a_second_launch_says_when_a_file_cannot_be_read(self):
+        self.start_and_open()
+        time.sleep(1)
+        before = len(self.windows.closable())
+        second = subprocess.run(
+            [BINARY, *self.environment.arguments, "/invented/missing.torrent"],
+            env=self.environment.variables,
+            timeout=20,
+            check=False,
+        )
+        self.assertEqual(second.returncode, 0)
+        wait_until(lambda: len(self.windows.closable()) > before, 20, "the notice")
+
+    def test_a_launch_while_stopping_opens_its_file_in_the_new_run(self):
+        process = self.start_and_open()
+        path = write_torrent(self.environment.root, "Invented Later")
+        with socket.create_connection(("127.0.0.1", PORT)) as stuck:
+            stuck.send(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n")
+            time.sleep(0.3)
+            self.windows.close_all()
+            time.sleep(0.5)
+            second = self.start([path])
+            second.wait(20)
+            process.wait(STOP_SECONDS)
+
+        def new_run_names_the_file():
+            listed = subprocess.run(
+                ["pgrep", "-a", "-f", re.escape(self.environment.data)],
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout
+            return path in listed
+
+        # A launch that came after the first had stopped is a new run itself, which has
+        # no file to open; this one must have come while it was stopping.
+        if second.returncode == 0 and not listening():
+            wait_until(new_run_names_the_file, READY_SECONDS, "a new run with the file")
+        wait_until(listening, READY_SECONDS, "a new run")
+
+    def test_opens_what_its_command_line_names(self):
+        path = write_torrent(self.environment.root, "Invented Launched")
+        driver = Driver(self.environment, [path])
+        try:
+            driver.wait_for_add_page("Invented Launched")
+        finally:
+            driver.stop()
 
     def test_a_failed_download_is_reported(self):
         os.makedirs(os.path.join(self.environment.home, "Downloads"), mode=0o500)

@@ -779,6 +779,26 @@ test.describe("on the real server", () => {
     });
   });
 
+  test("opens what the desktop application hands over", async ({ page }) => {
+    await page.goto("/demo/library");
+    await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
+    await page.evaluate(() => {
+      (window.torrplayInbox ??= []).push({
+        kind: "magnet",
+        uri: "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Invented+Handed",
+      });
+      window.dispatchEvent(new Event("torrplay-inbox"));
+    });
+    await expect(page).toHaveURL("/demo/add");
+    await expect(page.getByRole("heading", { name: "Invented Handed" })).toBeVisible();
+
+    // What the application drags shows as any drag does.
+    await page.evaluate(() => {
+      window.dispatchEvent(new CustomEvent("torrplay-dragging", { detail: true }));
+    });
+    await expect(page.getByText("The add page opens with this torrent.")).toBeVisible();
+  });
+
   test("keeps the search box in one place on Home and Library", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/demo");
