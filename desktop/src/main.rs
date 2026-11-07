@@ -5,9 +5,12 @@
 //! TorrPlay's desktop application: the server in this process, and a window on its
 //! own loopback address, which serves the same client as a browser gets. It takes
 //! the server's command line. What a browser does around a page, the window does
-//! here: saving downloads and handing other addresses to the system.
+//! here: saving downloads, handing other addresses to the system, and taking torrent
+//! files and magnet URIs from a drop, its command line, or the system.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod opening;
 
 use std::io::IsTerminal;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -15,11 +18,14 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, anyhow};
-use tauri::webview::DownloadEvent;
-use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use opening::Request;
+use tauri::webview::{DownloadEvent, PageLoadEvent};
+use tauri::{
+    AppHandle, DragDropEvent, Manager, RunEvent, Url, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder, WindowEvent,
+};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::oneshot;
@@ -146,16 +152,57 @@ fn handle_download(app: &AppHandle, event: DownloadEvent<'_>) -> bool {
     }
 }
 
+/// Reads `request` and hands it to the page, off the window's thread. A file that cannot
+/// be read says so, since whoever asked for it is waiting to see it.
+fn open_request(app: &AppHandle, request: Request) {
+    let app = app.clone();
+    std::thread::spawn(move || match opening::delivery_script(&request) {
+        Ok(script) => app.state::<Shell>().deliver(&app, script),
+        Err(error) => {
+            tracing::warn!(error = %format!("{error:#}"), "a torrent file cannot be opened");
+            app.dialog()
+                .message(format!("{error:#}"))
+                .title(notice_text(
+                    Notice::FileNotOpened,
+                    sys_locale::get_locale().as_deref(),
+                ))
+                .kind(MessageDialogKind::Error)
+                .show(|_| {});
+        }
+    });
+}
+
+/// Follows a file dragged over the window. The application's handler is what gives real
+/// paths on every system; the page gets none from a drag on some of them.
+fn handle_drag(app: &AppHandle, window: &WebviewWindow, drag: &DragDropEvent) {
+    let dragging = |active| {
+        if let Err(error) = window.eval(opening::dragging_script(active)) {
+            tracing::warn!(%error, "the page cannot be told of a drag");
+        }
+    };
+    match drag {
+        DragDropEvent::Enter { paths, .. } => {
+            dragging(paths.iter().any(|path| opening::is_torrent_file(path)));
+        }
+        DragDropEvent::Leave => dragging(false),
+        DragDropEvent::Drop { paths, .. } => {
+            dragging(false);
+            if let Some(request) = opening::dropped_request(paths) {
+                open_request(app, request);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn open_window(app: &AppHandle, listening: SocketAddr) -> anyhow::Result<()> {
     let own = window_url(listening)?;
     let opener = app.clone();
     let saver = app.clone();
-    WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::External(own.clone()))
+    let window = WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::External(own.clone()))
         .title("TorrPlay")
         .inner_size(1280.0, 800.0)
         .min_inner_size(360.0, 480.0)
-        // The client takes dropped torrents itself, which this handler would keep from it.
-        .disable_drag_drop_handler()
         .on_navigation(move |url| match navigation(url, &own) {
             Navigation::Stay => true,
             Navigation::Outside => {
@@ -170,8 +217,20 @@ fn open_window(app: &AppHandle, listening: SocketAddr) -> anyhow::Result<()> {
             }
         })
         .on_download(move |_, event| handle_download(&saver, event))
+        .on_page_load(|window, payload| {
+            let app = window.app_handle();
+            let loaded = matches!(payload.event(), PageLoadEvent::Finished);
+            app.state::<Shell>().page_loaded(app, loaded);
+        })
         .build()
         .context("opening the window")?;
+    let dragged = window.clone();
+    let handle = app.clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::DragDrop(drag) = event {
+            handle_drag(&handle, &dragged, drag);
+        }
+    });
     Ok(())
 }
 
@@ -252,6 +311,7 @@ enum Notice {
     CouldNotStart,
     StoppedWorking,
     DownloadFailed,
+    FileNotOpened,
 }
 
 /// `notice` in `locale`, like `ru-RU`. A failure's reason under it stays in the logs'
@@ -265,6 +325,8 @@ fn notice_text(notice: Notice, locale: Option<&str>) -> &'static str {
         (Notice::StoppedWorking, true) => "TorrPlay перестал работать",
         (Notice::DownloadFailed, false) => "The file could not be saved",
         (Notice::DownloadFailed, true) => "Не удалось сохранить файл",
+        (Notice::FileNotOpened, false) => "The file could not be opened",
+        (Notice::FileNotOpened, true) => "Не удалось открыть файл",
     }
 }
 
@@ -302,24 +364,71 @@ fn report_failure(app: &AppHandle, error: &anyhow::Error, notice: Option<Notice>
     }
 }
 
+fn run_in_page(app: &AppHandle, script: &str) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW)
+        && let Err(error) = window.eval(script)
+    {
+        tracing::warn!(%error, "the page cannot be handed what was opened");
+    }
+}
+
 /// What the window, the server's thread, and a second launch share.
 struct Shell {
     /// Stops the server, until the application asks to exit.
     stop: Mutex<Option<oneshot::Sender<()>>>,
     stage: Mutex<Stage>,
-    /// Whether someone launched the application again while it was stopping.
-    relaunch: AtomicBool,
+    /// What someone asked to open by launching the application again while it was
+    /// stopping, once there was such a launch: a new run opens it.
+    relaunch: Mutex<Option<Vec<Request>>>,
+    /// This run's options, which a new run keeps.
+    options: Vec<String>,
     /// Why the window could not open.
     window_failure: Mutex<Option<anyhow::Error>>,
+    /// What the page has yet to be handed, which waits for it to load.
+    delivery: Mutex<Delivery>,
+}
+
+/// Whether the page can run scripts yet, and the one waiting until it can: the page
+/// opens only the newest of what it is handed, so only that waits.
+#[derive(Default)]
+struct Delivery {
+    loaded: bool,
+    waiting: Option<String>,
 }
 
 impl Shell {
-    fn new(stop: oneshot::Sender<()>) -> Self {
+    fn new(stop: oneshot::Sender<()>, options: Vec<String>) -> Self {
         Self {
             stop: Mutex::new(Some(stop)),
             stage: Mutex::new(Stage::Starting),
-            relaunch: AtomicBool::new(false),
+            relaunch: Mutex::new(None),
+            options,
             window_failure: Mutex::new(None),
+            delivery: Mutex::new(Delivery::default()),
+        }
+    }
+
+    /// Runs `script` in the page, or once it has loaded.
+    fn deliver(&self, app: &AppHandle, script: String) {
+        let Ok(mut delivery) = self.delivery.lock() else {
+            return;
+        };
+        if delivery.loaded {
+            drop(delivery);
+            run_in_page(app, &script);
+        } else {
+            delivery.waiting = Some(script);
+        }
+    }
+
+    /// Notes whether the page has finished loading, running what waited if it has.
+    fn page_loaded(&self, app: &AppHandle, loaded: bool) {
+        let Ok(mut delivery) = self.delivery.lock() else {
+            return;
+        };
+        delivery.loaded = loaded;
+        if loaded && let Some(script) = delivery.waiting.take() {
+            run_in_page(app, &script);
         }
     }
 
@@ -352,29 +461,49 @@ impl Shell {
         }
     }
 
-    /// What a second launch does: while this process is stopping, a new one starts when
-    /// it has, whatever window it still shows. Otherwise the window comes forward, or
-    /// is on its way.
-    fn second_launch(&self, window: Option<WebviewWindow>) {
+    /// What a second launch does, returning what to open now: while this process is
+    /// stopping, a new run starts when it has, whatever window it still shows, and opens
+    /// `requests`. Otherwise the window comes forward, or is on its way.
+    fn second_launch(&self, window: Option<WebviewWindow>, requests: Vec<Request>) -> Vec<Request> {
         if self.stage() == Stage::Stopping {
-            self.relaunch.store(true, Ordering::Relaxed);
-        } else if let Some(window) = window
+            if let Ok(mut relaunch) = self.relaunch.lock() {
+                relaunch.get_or_insert_default().extend(requests);
+            }
+            return Vec::new();
+        }
+        if let Some(window) = window
             && let Err(error) = window.unminimize().and_then(|()| window.set_focus())
         {
             tracing::warn!(%error, "the window cannot be brought forward");
         }
+        requests
+    }
+
+    /// The command line of a new run, if a launch asked for one.
+    fn relaunch_arguments(&self) -> Option<Vec<std::ffi::OsString>> {
+        let requests = self.relaunch.lock().ok()?.take()?;
+        let program = std::env::args_os().next().unwrap_or_default();
+        Some(opening::relaunch_arguments(
+            program,
+            &self.options,
+            &requests,
+        ))
     }
 }
 
 fn main() -> ExitCode {
     let listen_variable = std::env::var_os(torrplay::LISTEN_VARIABLE)
         .map(|value| value.to_string_lossy().into_owned());
-    let config = match torrplay::parse_args(std::env::args().skip(1), listen_variable) {
+    let directory = std::env::current_dir().unwrap_or_default();
+    let (options, requests) = opening::split_arguments(std::env::args().skip(1), &directory);
+    let config = match torrplay::parse_args(options.clone(), listen_variable) {
         Ok(Command::Run(config)) => config,
         Ok(Command::Help) => {
             println!(
                 "torrplay-desktop takes the options of `torrplay [OPTIONS]` below. The other \
-                 commands are only in the `torrplay` executable.\n"
+                 commands are only in the `torrplay` executable. A torrent file or magnet \
+                 URI among the arguments opens on the add page, in the running \
+                 application if there is one.\n"
             );
             print!("{}", torrplay::USAGE);
             return ExitCode::SUCCESS;
@@ -402,7 +531,7 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             }
         };
-    match run(config, format) {
+    match run(config, format, options, requests) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("torrplay-desktop: {error:#}");
@@ -411,19 +540,37 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(config: Config, format: LogFormat) -> anyhow::Result<()> {
+fn run(
+    config: Config,
+    format: LogFormat,
+    options: Vec<String>,
+    requests: Vec<Request>,
+) -> anyhow::Result<()> {
     let (stop, stopped) = oneshot::channel();
     let app = tauri::Builder::default()
         // First, so a second launch ends before the rest of it starts anything.
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            app.state::<Shell>()
-                .second_launch(app.get_webview_window(MAIN_WINDOW));
-        }))
+        .plugin(tauri_plugin_single_instance::init(
+            |app, arguments, directory| {
+                let (_, requests) = opening::split_arguments(
+                    arguments.into_iter().skip(1),
+                    std::path::Path::new(&directory),
+                );
+                let now = app
+                    .state::<Shell>()
+                    .second_launch(app.get_webview_window(MAIN_WINDOW), requests);
+                for request in now {
+                    open_request(app, request);
+                }
+            },
+        ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(Shell::new(stop))
+        .manage(Shell::new(stop, options))
         .setup(move |app| {
             let handle = app.handle().clone();
+            for request in requests {
+                open_request(&handle, request);
+            }
             // The window opens from here once the server listens.
             std::thread::spawn(move || {
                 let result = catching_panic(|| serve(&config, format, &handle, stopped));
@@ -437,26 +584,40 @@ fn run(config: Config, format: LogFormat) -> anyhow::Result<()> {
                 } else {
                     0
                 };
-                if shell.relaunch.load(Ordering::Relaxed) {
-                    handle.request_restart();
-                } else {
-                    handle.exit(code);
-                }
+                // A new run, if a launch asked for one, starts once this has exited.
+                handle.exit(code);
             });
             Ok(())
         })
         .build(tauri::generate_context!())
         .context("starting the application")?;
-    app.run(|app, event| {
-        if let RunEvent::ExitRequested {
+    app.run(|app, event| match event {
+        RunEvent::ExitRequested {
             code: None, api, ..
-        } = event
-        {
+        } => {
             // The last window closed: the server shuts down in order first, and
             // ends the application with a code when it has.
             api.prevent_exit();
             app.state::<Shell>().request_stop();
         }
+        // The new run starts here, once the single instance's lock is let go, which Tauri
+        // does only on cleaning up after this event.
+        RunEvent::Exit => {
+            if let Some(arguments) = app.state::<Shell>().relaunch_arguments() {
+                app.cleanup_before_exit();
+                let mut env = tauri::Env::default();
+                env.args_os = arguments;
+                tauri::process::restart(&env);
+            }
+        }
+        // How macOS asks an application to open something, rather than a command line.
+        #[cfg(target_os = "macos")]
+        RunEvent::Opened { urls } => {
+            for request in urls.iter().filter_map(opening::request_of_url) {
+                open_request(app, request);
+            }
+        }
+        _ => {}
     });
     Ok(())
 }
@@ -526,6 +687,7 @@ mod tests {
             Notice::CouldNotStart,
             Notice::StoppedWorking,
             Notice::DownloadFailed,
+            Notice::FileNotOpened,
         ] {
             let english = notice_text(notice, Some("en-US"));
             assert_eq!(notice_text(notice, None), english);
@@ -557,7 +719,7 @@ mod tests {
     #[test]
     fn asking_to_stop_twice_stops_once() {
         let (stop, mut stopped) = oneshot::channel();
-        let shell = Shell::new(stop);
+        let shell = Shell::new(stop, Vec::new());
         shell.request_stop();
         shell.request_stop();
         assert_eq!(shell.stage(), Stage::Stopping);
@@ -567,7 +729,7 @@ mod tests {
     #[test]
     fn a_stage_never_goes_back() {
         let (stop, _stopped) = oneshot::channel();
-        let shell = Shell::new(stop);
+        let shell = Shell::new(stop, Vec::new());
         shell.advance(Stage::Stopping);
         shell.advance(Stage::Running);
         assert_eq!(shell.stage(), Stage::Stopping);
@@ -576,15 +738,25 @@ mod tests {
     #[test]
     fn a_second_launch_starts_a_new_run_only_while_stopping() {
         let (stop, _stopped) = oneshot::channel();
-        let shell = Shell::new(stop);
-        shell.second_launch(None);
-        assert!(
-            !shell.relaunch.load(Ordering::Relaxed),
-            "the window is coming"
+        let shell = Shell::new(stop, vec!["--no-dht".to_owned()]);
+        let request = || vec![Request::Magnet("magnet:?invented".to_owned())];
+        assert_eq!(
+            shell.second_launch(None, request()),
+            request(),
+            "opened now"
         );
+        assert!(shell.relaunch_arguments().is_none(), "the window is coming");
         shell.advance(Stage::Stopping);
-        shell.second_launch(None);
-        assert!(shell.relaunch.load(Ordering::Relaxed));
+        assert!(
+            shell.second_launch(None, request()).is_empty(),
+            "kept for the new run"
+        );
+        let arguments = shell.relaunch_arguments().unwrap_or_default();
+        assert_eq!(
+            &arguments[1..],
+            ["--no-dht", "magnet:?invented"].map(std::ffi::OsString::from)
+        );
+        assert!(shell.relaunch_arguments().is_none(), "taken once");
     }
 
     #[test]

@@ -70,6 +70,10 @@ seek index. The plan keeps them.
   address but its own goes to the system, except schemes the client never uses,
   which it refuses. It listens as `torrplay` does, on every interface, so DLNA and
   other devices keep working; a password is what protects it on a shared network.
+  A dropped torrent file, or a torrent file or magnet URI on its command line or from
+  the system, goes to the page by a script the application runs in it: the page reads
+  no paths and has no native calls to make, which an origin served over loopback
+  should not have.
 
 ### API access
 

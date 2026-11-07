@@ -20,6 +20,11 @@ export function add(source: AdditionSource): void {
   navigate(addPath);
 }
 
+/** Whether the add page is the page shown. */
+export function onAddPage(): boolean {
+  return match(pagePath(location.path))?.name === "add";
+}
+
 export function clearAddition(): void {
   addition.source = undefined;
 }
@@ -39,8 +44,7 @@ function mayBeTorrentFile(file: File): boolean {
  * left for a file that cannot be one; the add page takes any, and says why not. */
 export function addFromTransfer(transfer: DataTransfer): boolean {
   const files = Array.from(transfer.files);
-  const adding = match(pagePath(location.path))?.name === "add";
-  const file = adding ? files[0] : files.find(mayBeTorrentFile);
+  const file = onAddPage() ? files[0] : files.find(mayBeTorrentFile);
   if (file) {
     add({ kind: "file", file });
     return true;

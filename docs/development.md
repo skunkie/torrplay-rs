@@ -229,6 +229,9 @@ GStreamer's plugins. It stops only what it started. From `desktop/`:
 dbus-run-session -- python3 tests/smoke.py ../target/debug/torrplay-desktop
 ```
 
+A torrent file or magnet URI among the application's arguments opens on its add page,
+in the running application if there is one, as `cargo run -- invented.torrent` does.
+
 Run the last command from the repository root. Setting `CARGO_TARGET_DIR=../target`
 shares the main workspace's build directory.
 
