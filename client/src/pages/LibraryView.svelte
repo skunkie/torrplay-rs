@@ -155,10 +155,14 @@ SPDX-License-Identifier: MIT
   {/if}
 
   <ul class="poster-grid">
-    {#each torrents as torrent (torrent.id)}
+    {#each torrents as torrent, index (torrent.id)}
       {@const url = poster(torrent)}
       <li>
-        <a href={titlePath(torrent.id)} class="flex flex-col gap-2 rounded-button">
+        <a
+          href={titlePath(torrent.id)}
+          data-focus-start={index === 0 || undefined}
+          class="flex flex-col gap-2 rounded-button"
+        >
           <Poster {url} title={torrentTitle(torrent)} badge={stateLabel(torrent)} />
           <span class="text-xs text-text-muted">{torrentDetails(torrent)}</span>
         </a>

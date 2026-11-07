@@ -26,7 +26,9 @@ SPDX-License-Identifier: MIT
 
 <div class="flex flex-col gap-2 text-sm font-semibold">
   <span>{label}</span>
-  <div class="flex min-h-13 flex-wrap items-center gap-1.5 rounded-button bg-tile p-2">
+  <div
+    class="flex min-h-13 flex-wrap items-center gap-1.5 rounded-button bg-tile p-2 outline-focus focus-within:outline-3 focus-within:outline-offset-2"
+  >
     {#each values as value (value)}
       <span
         class="flex h-9 items-center gap-1 rounded-inner bg-raised pr-1 pl-3 text-meta font-medium"

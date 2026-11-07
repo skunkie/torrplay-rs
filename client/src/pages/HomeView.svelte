@@ -97,7 +97,7 @@ SPDX-License-Identifier: MIT
         <p class="text-meta text-hero-muted md:text-base">{note}</p>
       {/if}
       <div class="mt-2 flex flex-wrap items-center gap-3 md:gap-4">
-        <a href={watchPath(lead.torrent.id, lead.file.id)} class="btn btn-hero">
+        <a href={watchPath(lead.torrent.id, lead.file.id)} data-focus-start class="btn btn-hero">
           <Icon name="play" class="size-4" />
           {lead.reason === "next_episode" ? t().common.play : t().progress.resume}
         </a>

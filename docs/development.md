@@ -171,7 +171,7 @@ pnpm test:browser
 
 Playwright starts the application, `torrplay-bench tracker`, and `aria2c` seeding
 `client/e2e/fixtures/test-pattern.webm`, with a temporary data directory. It
-uses the ports 47910 to 47913 and stops at once if something holds one. The
+uses the ports 17910 to 17913 and stops at once if something holds one. The
 application and tracker's own ports listen on loopback, while the peer port and
 the seeder's listen on every interface for as long as the test runs.
 

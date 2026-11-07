@@ -15,7 +15,8 @@ SPDX-License-Identifier: MIT
   import { heroTitleClasses } from "../lib/describe";
   import { formatBytes } from "../lib/format";
   import { t } from "../lib/i18n/index.svelte";
-  import { sampleOf, seekWhenReady } from "../lib/player/media";
+  import { lastInputWasKey } from "../lib/navigation.svelte";
+  import { isPaused, sampleOf, seekBy, seekWhenReady } from "../lib/player/media";
   import type { Sample } from "../lib/player/progress";
 
   interface Props {
@@ -65,6 +66,8 @@ SPDX-License-Identifier: MIT
     onmedia: (media: HTMLMediaElement | undefined) => void;
     /** The countdown at the end of an episode finished. */
     onplaynext: (href: string) => void;
+    /** The viewer asked to leave, with a remote's back key or Escape. */
+    onback: (href: string) => void;
   }
 
   let {
@@ -93,6 +96,7 @@ SPDX-License-Identifier: MIT
     onsubtitles,
     onmedia,
     onplaynext,
+    onback,
   }: Props = $props();
 
   /** How many tiles show a preload's progress. */
@@ -109,12 +113,110 @@ SPDX-License-Identifier: MIT
   const NEXT_SECONDS = 10;
   /** How far the seek buttons and arrow keys move. */
   const SEEK_SECONDS = 10;
+  /** How long the bars stay without a key pressed while a remote moves among them. */
+  const BARS_HELD_MS = 5000;
+  /** A remote's back key where the browser gives it no name: LG's and Samsung's. */
+  const BACK_KEY_CODES = [461, 10009];
 
   let video = $state<HTMLVideoElement>();
   let ended = $state(false);
   let secondsLeft = $state(NEXT_SECONDS);
   /** Whether the viewer chose to stay at the end of this episode. */
   let staying = $state(false);
+  let controls = $state<HTMLElement>();
+  let playButton = $state<HTMLElement>();
+  /** Whether keys are moving focus among the bars, which then have the arrows. With
+   * the bars closed, left and right seek, and up and down open them. */
+  let amongBars = $state(false);
+  /** Whether the player, not the page's arrow navigation, answers the arrows. */
+  const arrowsTaken = $derived(url !== undefined && !error && !ended && !amongBars);
+
+  function ownsKeys(event: KeyboardEvent): boolean {
+    return (event.target as Element).closest("media-menu, media-error-dialog") !== null;
+  }
+
+  function isBack(event: KeyboardEvent): boolean {
+    return (
+      event.key === "Escape" ||
+      event.key === "GoBack" ||
+      event.key === "BrowserBack" ||
+      BACK_KEY_CODES.includes(event.keyCode)
+    );
+  }
+
+  $effect(() => {
+    const element = controls;
+    if (!element) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const hold = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const active = document.activeElement;
+        // Paused, or choosing a track, the viewer is still here.
+        if ((video && isPaused(video)) || active?.closest("media-menu")) hold();
+        else if (active instanceof HTMLElement) active.blur();
+      }, BARS_HELD_MS);
+    };
+    const pressed = (event: KeyboardEvent) => {
+      if (amongBars) hold();
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      // A menu or dialog, however it was opened, keeps its own keys.
+      if (ownsKeys(event)) return;
+      // The seek bar by the same step as the keys with the bars closed, rather than by
+      // its own, which rounds the position first.
+      const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+      if (step && video && (event.target as Element).closest("media-time-slider")) {
+        event.preventDefault();
+        event.stopPropagation();
+        seekBy(video, step * SEEK_SECONDS);
+        return;
+      }
+      const opening = event.key === "ArrowUp" || event.key === "ArrowDown";
+      if (opening && arrowsTaken) {
+        event.preventDefault();
+        event.stopPropagation();
+        playButton?.focus();
+      }
+    };
+    const pointed = () => (amongBars = false);
+    const entered = () => {
+      if (!lastInputWasKey()) return;
+      amongBars = true;
+      hold();
+    };
+    const left = (event: FocusEvent) => {
+      if (element.contains(event.relatedTarget as Node | null)) return;
+      clearTimeout(timer);
+      // Later: this also runs while the bars are being removed, when state cannot change.
+      queueMicrotask(() => (amongBars = false));
+    };
+    document.addEventListener("keydown", pressed, { capture: true });
+    document.addEventListener("pointerdown", pointed, { capture: true });
+    element.addEventListener("focusin", entered);
+    element.addEventListener("focusout", left);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("keydown", pressed, { capture: true });
+      document.removeEventListener("pointerdown", pointed, { capture: true });
+      element.removeEventListener("focusin", entered);
+      element.removeEventListener("focusout", left);
+    };
+  });
+
+  $effect(() => {
+    const leave = (event: KeyboardEvent) => {
+      // A menu or dialog closes first, by its own handling of the key. In fullscreen,
+      // Escape returns to the window, which a browser may not keep from the page.
+      if (!isBack(event) || ownsKeys(event)) return;
+      if (event.key === "Escape" && document.fullscreenElement) return;
+      event.preventDefault();
+      // A held key would otherwise go back once for every repeat.
+      if (!event.repeat) onback(backHref);
+    };
+    document.addEventListener("keydown", leave);
+    return () => document.removeEventListener("keydown", leave);
+  });
 
   $effect(() => {
     onmedia(video);
@@ -160,7 +262,7 @@ SPDX-License-Identifier: MIT
 
 {#snippet topBar()}
   <div class="flex items-center gap-4 player-gutter pt-4 md:pt-6">
-    <a href={backHref} aria-label={t().common.back} class="btn size-11 btn-glass px-0">
+    <a href={backHref} data-returns aria-label={t().common.back} class="btn size-11 btn-glass px-0">
       <Icon name="back" />
     </a>
     <div class="flex min-w-0 flex-col gap-0.5">
@@ -228,7 +330,11 @@ SPDX-License-Identifier: MIT
   </svg>
 {/snippet}
 
-<div data-hero class="fixed inset-0 z-50 flex flex-col bg-player text-hero-text">
+<div
+  data-hero
+  data-arrows-taken={arrowsTaken || undefined}
+  class="fixed inset-0 z-50 flex flex-col bg-player text-hero-text"
+>
   {#if error}
     {@render topBar()}
     <p role="alert" class="m-auto p-4">{error}</p>
@@ -251,6 +357,8 @@ SPDX-License-Identifier: MIT
             }}
             onended={(event) => {
               ended = true;
+              // The bars go, whatever had focus in them.
+              amongBars = false;
               onflush(sampleOf(event.currentTarget), false);
             }}
           ></video>
@@ -262,13 +370,22 @@ SPDX-License-Identifier: MIT
           <!-- On the whole page, since opening a video puts focus outside the player. -->
           <media-hotkey target="document" keys="Space" action="togglePaused"></media-hotkey>
           <media-hotkey target="document" keys="k" action="togglePaused"></media-hotkey>
-          <media-hotkey target="document" keys="ArrowLeft" action="seekStep" value={-SEEK_SECONDS}
+          <!-- A remote's confirming key; on a control, the control takes it. -->
+          <media-hotkey target="document" keys="Enter" action="togglePaused" disabled={!arrowsTaken}
           ></media-hotkey>
-          <media-hotkey target="document" keys="ArrowRight" action="seekStep" value={SEEK_SECONDS}
+          <media-hotkey
+            target="document"
+            keys="ArrowLeft"
+            action="seekStep"
+            value={-SEEK_SECONDS}
+            disabled={!arrowsTaken}
           ></media-hotkey>
-          <media-hotkey target="document" keys="ArrowUp" action="volumeStep" value={0.05}
-          ></media-hotkey>
-          <media-hotkey target="document" keys="ArrowDown" action="volumeStep" value={-0.05}
+          <media-hotkey
+            target="document"
+            keys="ArrowRight"
+            action="seekStep"
+            value={SEEK_SECONDS}
+            disabled={!arrowsTaken}
           ></media-hotkey>
           <media-hotkey target="document" keys="m" action="toggleMuted"></media-hotkey>
           <media-hotkey target="document" keys="f" action="toggleFullscreen"></media-hotkey>
@@ -280,7 +397,11 @@ SPDX-License-Identifier: MIT
           ></media-buffering-indicator>
 
           {#if !ended}
-            <media-controls class="player-controls">
+            <media-controls
+              bind:this={controls}
+              data-held={amongBars || undefined}
+              class="player-controls"
+            >
               <div class="bg-linear-to-b from-scrim/85 to-transparent pb-10">
                 {@render topBar()}
               </div>
@@ -291,6 +412,7 @@ SPDX-License-Identifier: MIT
                   {@render seekIcon(false)}
                 </media-seek-button>
                 <media-play-button
+                  bind:this={playButton}
                   class="group flex size-16 cursor-pointer items-center justify-center rounded-panel bg-accent text-on-accent hover:opacity-85 md:size-18"
                 >
                   <svg
@@ -448,7 +570,7 @@ SPDX-License-Identifier: MIT
                   <h2 id="after-episode" class="text-display-small font-bold">
                     {t().player.finished}
                   </h2>
-                  <a href={backHref} class="btn btn-hero">{t().common.back}</a>
+                  <a href={backHref} data-returns class="btn btn-hero">{t().common.back}</a>
                 {/if}
               </section>
             </div>
@@ -493,6 +615,7 @@ SPDX-License-Identifier: MIT
     >
       <a
         href={backHref}
+        data-returns
         aria-label={t().common.back}
         class="absolute top-4 left-4 btn size-11 btn-glass px-0 md:top-6 md:left-10"
       >
@@ -538,8 +661,13 @@ SPDX-License-Identifier: MIT
           {t().common.loading}
         {/if}
       </p>
-      <!-- svelte-ignore a11y_autofocus -->
-      <button type="button" autofocus class="mt-1 btn btn-hero self-start" onclick={onskippreload}>
+      <!-- Not `autofocus`, which gives way to the page's own focus on opening. -->
+      <button
+        type="button"
+        {@attach (button) => button.focus()}
+        class="mt-1 btn btn-hero self-start"
+        onclick={onskippreload}
+      >
         <Icon name="play" class="size-4" />
         {t().player.playNow}
       </button>

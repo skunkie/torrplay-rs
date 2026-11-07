@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-import { test as base, expect, type Page } from "@playwright/test";
+import { test as base, expect, type Locator, type Page } from "@playwright/test";
 
 const TITLE = /test.pattern/i;
 
@@ -947,5 +947,688 @@ test.describe("the demo", () => {
 
     await expect(page).toHaveURL("/");
     await expect(page.getByText("Demo", { exact: true })).toBeHidden();
+  });
+});
+
+test.describe("with only a remote's arrows and confirming key", () => {
+  const THE_TITLE = "/demo/titles/trr_aaaaaaaaaaaaaaaaaaaaaaaaa1";
+
+  test.use({ viewport: { width: 1920, height: 1080 } });
+
+  /** A short description of what has focus. */
+  function focused(page: Page): Promise<string> {
+    return page.evaluate(() => {
+      const element = document.activeElement;
+      return (
+        element?.getAttribute("aria-label") ??
+        element?.textContent?.trim().slice(0, 30) ??
+        element?.localName ??
+        ""
+      );
+    });
+  }
+
+  for (const width of [1920, 900, 600]) {
+    for (const path of [
+      "/demo",
+      "/demo/library",
+      "/demo/add",
+      THE_TITLE,
+      `${THE_TITLE}/edit`,
+      "/demo/settings/playback",
+      "/demo/settings/network",
+      "/demo/settings/stremio",
+      "/demo/settings/profiles",
+      "/demo/settings/security",
+      "/demo/settings/backup",
+      "/demo/settings/system",
+    ]) {
+      test(`reaches everything on ${path} at ${width} pixels`, async ({ page }) => {
+        test.setTimeout(240_000);
+        await page.setViewportSize({ width, height: 800 });
+        await page.goto(path);
+        await expect(
+          page.locator("main").locator("a:visible, button:visible").first(),
+        ).toBeVisible();
+
+        // Tags what Tab reaches, then walks from one to the next by arrows alone.
+        const total = await page.evaluate(() => {
+          const all = [
+            ...document.querySelectorAll<HTMLElement>(
+              "a[href],button,input,select,textarea,summary,[tabindex]",
+            ),
+          ].filter((element) => {
+            const box = element.getBoundingClientRect();
+            return (
+              element.tabIndex >= 0 &&
+              !(element as HTMLButtonElement).disabled &&
+              box.width > 0 &&
+              box.height > 0 &&
+              getComputedStyle(element).visibility !== "hidden"
+            );
+          });
+          all.forEach((element, index) => element.setAttribute("data-walk", String(index)));
+          return all.length;
+        });
+        expect(total).toBeGreaterThan(0);
+
+        await page.keyboard.press("ArrowDown");
+        const reached = new Set<string>();
+        const queue: string[] = [];
+        const note = async () => {
+          const id = await page.evaluate(
+            () => document.activeElement?.getAttribute("data-walk") ?? null,
+          );
+          if (id !== null && !reached.has(id)) {
+            reached.add(id);
+            queue.push(id);
+          }
+        };
+        await note();
+        while (queue.length > 0) {
+          const from = queue.shift();
+          for (const key of ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]) {
+            // Moving between season tabs replaces the episodes under them.
+            const sideways = key === "ArrowLeft" || key === "ArrowRight";
+            if (sideways && (await page.locator(`[data-walk="${from}"][role=tab]`).count()) > 0) {
+              continue;
+            }
+            await page.locator(`[data-walk="${from}"]`).evaluate((element: HTMLElement) => {
+              element.focus();
+              // A field's caret at its end, which arrows leave from.
+              if (element instanceof HTMLInputElement && element.type !== "file") {
+                try {
+                  element.setSelectionRange(element.value.length, element.value.length);
+                } catch {
+                  // This type of field has no caret.
+                }
+              }
+            });
+            await page.keyboard.press(key);
+            await note();
+          }
+        }
+        const unreached = await page.evaluate(
+          (held) =>
+            [...document.querySelectorAll<HTMLElement>("[data-walk]")]
+              .filter((element) => !held.includes(element.getAttribute("data-walk") ?? ""))
+              .map(
+                (element) => element.getAttribute("aria-label") ?? element.outerHTML.slice(0, 80),
+              ),
+          [...reached],
+        );
+        expect(unreached).toEqual([]);
+      });
+    }
+  }
+
+  test("moves where a viewer expects, not only somewhere", async ({ page }) => {
+    const cases: {
+      path: string;
+      from: (page: Page) => Locator;
+      key: string;
+      to: ((page: Page) => Locator) | "stays";
+    }[] = [
+      {
+        // Past the panel's height, across the season's tab, to what is above.
+        path: THE_TITLE,
+        from: (held) => held.getByRole("link", { name: /^2\b/ }),
+        key: "ArrowUp",
+        to: (held) => held.getByRole("tab", { name: "Season 1" }),
+      },
+      {
+        path: "/demo/library",
+        from: (held) => held.locator('main a[href*="/titles/"]').last(),
+        key: "ArrowRight",
+        to: "stays",
+      },
+      {
+        path: "/demo/settings/security",
+        from: (held) => held.getByRole("button", { name: "Change password" }),
+        key: "ArrowDown",
+        to: (held) => held.getByRole("button", { name: "New token" }),
+      },
+      {
+        path: "/demo/settings/security",
+        from: (held) => held.getByRole("button", { name: /^Revoke/ }).first(),
+        key: "ArrowLeft",
+        to: (held) => held.getByRole("link", { name: "Security" }),
+      },
+      {
+        path: "/demo/settings/security",
+        from: (held) => held.getByRole("button", { name: /^Revoke/ }).first(),
+        key: "ArrowRight",
+        to: "stays",
+      },
+      {
+        path: "/demo/settings/security",
+        from: (held) => held.getByRole("button", { name: "Change password" }),
+        key: "ArrowLeft",
+        to: (held) => held.getByRole("link", { name: "Security" }),
+      },
+      {
+        path: "/demo/settings/security",
+        // The closest of the content's first row, not the list of sections far to the left.
+        from: (held) => held.getByRole("button", { name: /^Profile/ }),
+        key: "ArrowDown",
+        to: (held) => held.getByRole("button", { name: "Remove password" }),
+      },
+      {
+        path: "/demo/settings/stremio",
+        from: (held) => held.getByRole("button", { name: "Create link" }),
+        key: "ArrowDown",
+        to: "stays",
+      },
+      {
+        path: `${THE_TITLE}/edit`,
+        from: (held) => held.getByRole("button", { name: "Choose a poster" }),
+        key: "ArrowLeft",
+        to: "stays",
+      },
+      {
+        path: `${THE_TITLE}/edit`,
+        from: (held) => held.getByRole("button", { name: "Choose a poster" }),
+        key: "ArrowUp",
+        to: (held) => held.getByRole("link", { name: "Back" }),
+      },
+    ];
+    for (const { path, from, key, to } of cases) {
+      await page.goto(path);
+      const start = from(page);
+      await start.focus();
+      await page.keyboard.press(key);
+      await expect(to === "stays" ? start : to(page), `${path} ${key}`).toBeFocused();
+    }
+  });
+
+  test("starts each page on its main action", async ({ page }) => {
+    await page.goto("/demo/library");
+    await expect(page.locator('main a[href*="/titles/"]').first()).toBeVisible();
+    await page.keyboard.press("ArrowDown");
+    await expect(page.locator('main a[href*="/titles/"]').first()).toBeFocused();
+
+    await page.goto(THE_TITLE);
+    await expect(page.getByRole("link", { name: /^(Resume|Play)/ })).toBeVisible();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("link", { name: /^(Resume|Play)/ })).toBeFocused();
+    await expect(page).toHaveURL(THE_TITLE);
+  });
+
+  test("comes back to the card it opened, by the back button and by the page's arrow", async ({
+    page,
+  }) => {
+    await page.goto("/demo/library");
+    const card = page.locator('main a[href*="/titles/"]').nth(2);
+    await card.focus();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\/demo\/titles\//);
+    await page.goBack();
+    await expect(card).toBeFocused();
+
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\/demo\/titles\//);
+    await page.getByRole("link", { name: "Back" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL("/demo/library");
+    await expect(card).toBeFocused();
+  });
+
+  test("opens the app menu, moves within it, and returns to its button", async ({ page }) => {
+    await page.goto("/demo/library");
+    const button = page.getByRole("button", { name: /^Profile/ });
+    await button.focus();
+    await page.keyboard.press("Enter");
+    const menu = page.locator("#app-menu");
+    await expect(menu.locator("select").first()).toBeFocused();
+    const language = await menu.getByLabel("Language").inputValue();
+    await page.keyboard.press("ArrowDown");
+    await expect(menu.getByLabel("Language")).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(menu.getByLabel("Language")).toHaveValue(language);
+    for (let press = 0; press < 8; press++) await page.keyboard.press("ArrowDown");
+    expect(await menu.evaluate((held) => held.contains(document.activeElement))).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(button).toBeFocused();
+  });
+
+  test("passes through the Library's dropdowns without changing them", async ({ page }) => {
+    await page.goto("/demo/library");
+    const select = page.locator("main select").first();
+    await select.focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(select).toHaveValue("");
+    await expect(select).not.toBeFocused();
+    await expect(page).toHaveURL("/demo/library");
+  });
+
+  test("opens a dropdown with the confirming key and chooses in it", async ({ page }) => {
+    await page.goto("/demo/library");
+    const select = page.locator("main select").first();
+    await select.focus();
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await expect(select).toHaveValue("Family");
+    await expect(select).toBeFocused();
+  });
+
+  test("moves between a confirmation's buttons and stays in it", async ({ page }) => {
+    await page.goto(THE_TITLE);
+    await page.getByRole("button", { name: "Delete", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("button", { name: "Keep it" })).toBeFocused();
+    await page.keyboard.press("ArrowRight");
+    await expect(dialog.getByRole("button", { name: "Delete" })).toBeFocused();
+    await page.keyboard.press("ArrowUp");
+    await expect(dialog.getByRole("button", { name: "Delete" })).toBeFocused();
+    await page.keyboard.press("ArrowLeft");
+    await expect(dialog.getByRole("button", { name: "Keep it" })).toBeFocused();
+  });
+
+  test("plays, pauses, seeks, reaches every control, and leaves", async ({ page }) => {
+    test.setTimeout(120_000);
+    await page.goto(THE_TITLE);
+    await expect(page.getByRole("link", { name: /^(Resume|Play)/ })).toBeVisible();
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\/demo\/watch\//);
+    await expect(page.getByRole("button", { name: "Play now" })).toBeFocused();
+    await page.keyboard.press("Enter");
+
+    const video = page.locator("video");
+    await expect(video).toBeVisible();
+    const media = (read: (media: HTMLMediaElement) => number | boolean) => video.evaluate(read);
+    const rewind = () =>
+      video.evaluate((held: HTMLMediaElement) => {
+        held.currentTime = 0;
+      });
+    const bars = page.locator("media-controls");
+    await expect.poll(() => media((held) => !held.paused)).toBe(true);
+    await rewind();
+
+    // The bars closed: left and right seek, the confirming key pauses.
+    await page.keyboard.press("ArrowRight");
+    await expect.poll(() => media((held) => held.currentTime >= 9)).toBe(true);
+    await page.keyboard.press("ArrowLeft");
+    await expect.poll(() => media((held) => held.currentTime < 9)).toBe(true);
+    await page.keyboard.press("Enter");
+    await expect.poll(() => media((held) => held.paused)).toBe(true);
+    await page.keyboard.press("Enter");
+    await expect.poll(() => media((held) => !held.paused)).toBe(true);
+
+    // Up or down opens the bars instead of changing the volume.
+    const volume = await media((held) => held.volume);
+    await rewind();
+    await page.keyboard.press("ArrowUp");
+    await expect(page.locator("media-play-button")).toBeFocused();
+    await expect(bars).toHaveAttribute("data-held", "true");
+    expect(await media((held) => held.volume)).toBe(volume);
+
+    // Left and right now move among the controls, and don't seek.
+    await rewind();
+    await page.keyboard.press("ArrowRight");
+    await expect(page.locator("media-seek-button").last()).toBeFocused();
+    expect(await media((held) => held.currentTime < 5)).toBe(true);
+    // Stays in the row rather than falling to the controls below.
+    await page.keyboard.press("ArrowRight");
+    await expect(page.locator("media-seek-button").last()).toBeFocused();
+    await page.keyboard.press("ArrowLeft");
+    await page.keyboard.press("ArrowUp");
+    await expect(page.getByRole("link", { name: "Back" })).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    const seekBar = page.getByRole("slider", { name: "Seek" });
+    await expect(seekBar).toBeFocused();
+    await page.keyboard.press("ArrowUp");
+    await expect(page.locator("media-play-button")).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(seekBar).toBeFocused();
+
+    // The seek bar takes left and right, by the same step as the rest, wherever it is.
+    await video.evaluate((held: HTMLMediaElement) => {
+      held.pause();
+      held.currentTime = 13;
+    });
+    await expect.poll(() => media((held) => Math.round(held.currentTime))).toBe(13);
+    await page.keyboard.press("ArrowRight");
+    await expect.poll(() => media((held) => Math.round(held.currentTime))).toBe(23);
+    await page.keyboard.press("ArrowLeft");
+    await page.keyboard.press("ArrowLeft");
+    await expect.poll(() => media((held) => Math.round(held.currentTime))).toBe(3);
+    await video.evaluate((held: HTMLMediaElement) => void held.play());
+    await rewind();
+
+    await page.keyboard.press("ArrowDown");
+    await expect(page.locator("media-mute-button")).toBeFocused();
+    for (const name of ["Audio", "Subtitles"]) {
+      await page.keyboard.press("ArrowRight");
+      await expect(page.getByRole("button", { name })).toBeFocused();
+    }
+    await page.keyboard.press("ArrowRight");
+    await expect(page.locator("media-fullscreen-button")).toBeFocused();
+
+    // A menu keeps the arrows, and its button takes focus back.
+    await rewind();
+    await page.keyboard.press("ArrowLeft");
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#subtitles-menu media-menu-radio-item").first()).toBeVisible();
+    await page.keyboard.press("ArrowDown");
+    expect(await focused(page)).not.toBe("Subtitles");
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("button", { name: "Subtitles" })).toBeFocused();
+    await expect(page).toHaveURL(/\/demo\/watch\//);
+
+    // With no key for a while, the bars go and focus with them.
+    await rewind();
+    await expect(bars).not.toHaveAttribute("data-held", /.*/, { timeout: 8_000 });
+    await expect.poll(() => bars.evaluate((held) => getComputedStyle(held).opacity)).toBe("0");
+    await rewind();
+    await page.keyboard.press("ArrowRight");
+    await expect.poll(() => media((held) => held.currentTime >= 9)).toBe(true);
+
+    // A remote's back key, as an LG television reports it.
+    await page.evaluate(() => {
+      document.body.dispatchEvent(
+        new KeyboardEvent("keydown", { keyCode: 461, bubbles: true, cancelable: true }),
+      );
+    });
+    await expect(page).toHaveURL(THE_TITLE);
+  });
+
+  /** Opens the demo's title in the player, by pointing. */
+  async function openPlayer(page: Page): Promise<void> {
+    await page.goto(THE_TITLE);
+    await page.getByRole("link", { name: /^(Resume|Play)/ }).click();
+    await page.getByRole("button", { name: "Play now" }).click();
+    await expect(page.locator("video")).toBeVisible();
+  }
+
+  test("keeps focus on Play now after the player was left by its Back link", async ({ page }) => {
+    await openPlayer(page);
+    await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("ArrowUp");
+    await expect(page.getByRole("link", { name: "Back" })).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(THE_TITLE);
+
+    const resume = page.getByRole("link", { name: /^(Resume|Play)/ });
+    await resume.focus();
+    await page.keyboard.press("Enter");
+    const playNow = page.getByRole("button", { name: "Play now" });
+    await expect(playNow).toBeVisible();
+    // Long enough for focus to be restored, were it going to be.
+    await page.waitForTimeout(200);
+    await expect(playNow).toBeFocused();
+  });
+
+  test("moves focus on at the end of a video that ends with focus in the bars", async ({
+    page,
+  }) => {
+    await openPlayer(page);
+    await page.keyboard.press("ArrowUp");
+    await expect(page.locator("media-controls")).toHaveAttribute("data-held", "true");
+    await page.locator("video").evaluate((video: HTMLMediaElement) => {
+      video.currentTime = video.duration - 0.2;
+      void video.play();
+    });
+    await expect(page.getByRole("link", { name: "Play now" })).toBeVisible();
+    await page.keyboard.press("ArrowRight");
+    await expect(page.getByRole("button", { name: "Stay" })).toBeFocused();
+  });
+
+  test("goes back through the history from the player, not around in a loop", async ({ page }) => {
+    await page.goto("/demo/library");
+    await page.locator('main a[href*="/titles/"]').first().click();
+    await expect(page).toHaveURL(/\/demo\/titles\//);
+    await page.getByRole("link", { name: /^(Resume|Play)/ }).click();
+    await page.getByRole("button", { name: "Play now" }).click();
+    await expect(page.locator("video")).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(page).toHaveURL(/\/demo\/titles\//);
+    await page.goBack();
+    await expect(page).toHaveURL("/demo/library");
+  });
+
+  test("goes back through the history from the player's Back link too", async ({ page }) => {
+    await page.goto("/demo/library");
+    await page.locator('main a[href*="/titles/"]').first().click();
+    await expect(page).toHaveURL(/\/demo\/titles\//);
+    await page.getByRole("link", { name: /^(Resume|Play)/ }).click();
+    await page.getByRole("button", { name: "Play now" }).click();
+    await expect(page.locator("video")).toBeVisible();
+    await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\/demo\/titles\//);
+    await page.goBack();
+    await expect(page).toHaveURL("/demo/library");
+  });
+
+  test("goes to the title from a player started elsewhere", async ({ page }) => {
+    await page.goto("/demo");
+    await page.getByRole("link", { name: "Resume" }).first().click();
+    await page.getByRole("button", { name: "Play now" }).click();
+    await expect(page.locator("video")).toBeVisible();
+    await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\/demo\/titles\//);
+  });
+
+  test("goes back through the history from a title's arrow too", async ({ page }) => {
+    await page.goto("/demo");
+    await page.getByRole("link", { name: "Library", exact: true }).first().click();
+    await page.locator('main a[href*="/titles/"]').first().click();
+    await expect(page).toHaveURL(/\/demo\/titles\//);
+    await page.getByRole("link", { name: "Back" }).click();
+    await expect(page).toHaveURL("/demo/library");
+    await page.goBack();
+    await expect(page).toHaveURL("/demo");
+  });
+
+  test("keeps where a list's filters left it when going back to it", async ({ page }) => {
+    await page.goto("/demo/library");
+    await page.getByRole("button", { name: "Movies" }).click();
+    await expect(page).toHaveURL(/\?/);
+    const filtered = page.url();
+    await page.locator('main a[href*="/titles/"]').first().click();
+    await expect(page).toHaveURL(/\/demo\/titles\//);
+    await page.getByRole("link", { name: "Back" }).click();
+    await expect(page).toHaveURL(filtered);
+  });
+
+  test("goes back once for a held key", async ({ page }) => {
+    await page.goto("/demo/library");
+    await page.locator('main a[href*="/titles/"]').first().click();
+    await page.getByRole("link", { name: /^(Resume|Play)/ }).click();
+    await page.getByRole("button", { name: "Play now" }).click();
+    await expect(page.locator("video")).toBeVisible();
+    await page.evaluate(() => {
+      for (const repeat of [false, true, true]) {
+        document.body.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Escape", repeat, bubbles: true }),
+        );
+      }
+    });
+    await expect(page).toHaveURL(/\/demo\/titles\//);
+    await page.waitForTimeout(200);
+    await expect(page).toHaveURL(/\/demo\/titles\//);
+  });
+
+  test("returns to the same one of two links with one address", async ({ page }) => {
+    await page.goto("/demo");
+    const links = page.locator('main a[href$="trr_aaaaaaaaaaaaaaaaaaaaaaaaa1"]');
+    await expect(links).toHaveCount(2);
+    await links.last().focus();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\/demo\/titles\//);
+    await page.goBack();
+    await expect(links.last()).toBeFocused();
+  });
+
+  test("does not run out of a text field on a held arrow", async ({ page }) => {
+    await page.goto("/demo/settings/stremio");
+    const field = page.locator('main input[type="password"]');
+    await field.focus();
+    await page.keyboard.type("abc");
+    for (let press = 0; press < 6; press++) await page.keyboard.down("ArrowLeft");
+    await page.keyboard.up("ArrowLeft");
+    await expect(field).toBeFocused();
+    await page.keyboard.press("ArrowLeft");
+    await expect(page.getByRole("link", { name: "Stremio" })).toBeFocused();
+  });
+
+  test("goes down into a download panel stacked under a narrow title's actions", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 800, height: 800 });
+    await page.goto(THE_TITLE);
+    await page.getByRole("link", { name: "Edit" }).focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(page.getByRole("button", { name: /show all pieces/ })).toBeFocused();
+  });
+
+  test("leaves a video opened directly for its title", async ({ page }) => {
+    await openPlayer(page);
+    const url = page.url();
+    await page.goto(url);
+    await page.getByRole("button", { name: "Play now" }).click();
+    await expect(page.locator("video")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page).toHaveURL(/\/demo\/titles\//);
+  });
+
+  test("leaves a track menu opened by pointing its arrow keys", async ({ page }) => {
+    await openPlayer(page);
+    await page.mouse.move(600, 300);
+    await page.getByRole("button", { name: "Subtitles" }).click();
+    const items = page.locator("#subtitles-menu media-menu-radio-item");
+    await expect(items.first()).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(items.nth(1)).toBeFocused();
+  });
+
+  test("does not leave the player on Escape in fullscreen", async ({ page }) => {
+    await openPlayer(page);
+    await page.keyboard.press("f");
+    await expect.poll(() => page.evaluate(() => document.fullscreenElement !== null)).toBe(true);
+    // A real browser ends fullscreen itself, which a simulated key does not do; what is
+    // tested is that the page does not take the key as well.
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(200);
+    await expect(page).toHaveURL(/\/demo\/watch\//);
+  });
+
+  test("does not take a pointing viewer's focus, or a header link's", async ({ page }) => {
+    await page.goto("/demo/library");
+    await page.getByRole("link", { name: "Home", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL("/demo");
+    await page.getByRole("link", { name: "Library", exact: true }).first().focus();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL("/demo/library");
+    await page.waitForTimeout(200);
+    await expect(page.getByRole("link", { name: "TorrPlay" })).not.toBeFocused();
+
+    // A card followed by pointing, and the list reached again by a link.
+    await page.setViewportSize({ width: 1280, height: 400 });
+    const card = page.locator('main a[href*="/titles/"]').last();
+    await card.click();
+    await expect(page).toHaveURL(/\/demo\/titles\//);
+    await page.getByRole("link", { name: "Back" }).click();
+    await expect(page).toHaveURL("/demo/library");
+    await page.waitForTimeout(200);
+    await expect(card).not.toBeFocused();
+    await page.getByRole("link", { name: "Home", exact: true }).click();
+    await page.getByRole("link", { name: "Library", exact: true }).first().click();
+    await expect(page).toHaveURL("/demo/library");
+    await page.waitForTimeout(200);
+    await expect(card).not.toBeFocused();
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  });
+
+  test("stays where the viewer scrolled on the first arrow", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 600 });
+    await page.goto(THE_TITLE);
+    await expect(page.getByRole("link", { name: /^(Resume|Play)/ })).toBeVisible();
+    await page.mouse.wheel(0, 500);
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(300);
+    const scrolled = await page.evaluate(() => window.scrollY);
+    await page.keyboard.press("ArrowDown");
+    await page.waitForTimeout(100);
+    expect(await page.evaluate(() => window.scrollY)).toBeGreaterThanOrEqual(scrolled - 50);
+    await expect(page.getByRole("link", { name: /^(Resume|Play)/ })).not.toBeFocused();
+  });
+
+  test("leaves the player with Escape", async ({ page }) => {
+    await page.goto(THE_TITLE);
+    await page.getByRole("link", { name: /^(Resume|Play)/ }).click();
+    await page.getByRole("button", { name: "Play now" }).click();
+    await expect(page.locator("video")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page).toHaveURL(THE_TITLE);
+  });
+
+  test("chooses a profile on a device's first start", async ({ page, request }) => {
+    const first = "An invented viewer";
+    const names = [first, "Another invented viewer"];
+    const created: string[] = [];
+    for (const name of names) {
+      const response = await request.post("/api/v1/profiles", { data: { name } });
+      expect(response.ok()).toBe(true);
+      created.push(response.headers().location ?? "");
+    }
+    try {
+      await page.goto("/");
+      const heading = page.getByRole("heading", { level: 1 });
+      await expect(heading).toBeVisible();
+      await expect(page.getByRole("button", { name: first })).toBeVisible();
+      await page.keyboard.press("ArrowDown");
+      const buttons = page.locator("main li button");
+      await expect(buttons.first()).toBeFocused();
+      const count = await buttons.count();
+      expect(count).toBeGreaterThanOrEqual(2);
+      for (let index = 1; index < count; index++) {
+        await page.keyboard.press("ArrowRight");
+        await expect(buttons.nth(index)).toBeFocused();
+      }
+      await page.keyboard.press("ArrowLeft");
+      await expect(buttons.nth(count - 2)).toBeFocused();
+      await page.keyboard.press("Enter");
+      await expect(page.locator("main li button")).toHaveCount(0);
+    } finally {
+      for (const location of created) {
+        expect((await request.delete(location)).ok()).toBe(true);
+      }
+    }
+  });
+
+  test("signs in", async ({ page, request }) => {
+    const PASSWORD = "an invented test passphrase";
+    expect((await request.put("/api/v1/password", { data: { password: PASSWORD } })).ok()).toBe(
+      true,
+    );
+    try {
+      await page.goto("/");
+      const field = page.getByLabel("Password");
+      await expect(field).toBeFocused();
+      await field.fill(PASSWORD);
+      await page.keyboard.press("ArrowDown");
+      await expect(page.getByRole("button", { name: "Sign in" })).toBeFocused();
+      await page.keyboard.press("ArrowUp");
+      await expect(field).toBeFocused();
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Enter");
+      await expect(page).toHaveURL("/");
+      await expect(field).toHaveCount(0);
+    } finally {
+      const signedIn = await request.post("/api/v1/access-tokens", {
+        data: { password: PASSWORD, name: "Cleanup", scope: "api" },
+      });
+      const { secret } = (await signedIn.json()) as { secret: string };
+      const headers = { Authorization: `Bearer ${secret}` };
+      expect((await request.delete("/api/v1/password", { headers })).ok()).toBe(true);
+    }
   });
 });
