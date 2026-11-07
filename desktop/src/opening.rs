@@ -310,12 +310,18 @@ mod tests {
     #[test]
     fn a_file_name_cannot_become_code() -> anyhow::Result<()> {
         let directory = tempfile::tempdir()?;
-        let path = directory.path().join("in\"vented');alert('.torrent");
+        // Windows forbids a double quote in a file name; a single quote is allowed everywhere.
+        let name = if cfg!(windows) {
+            "in'vented');alert('.torrent"
+        } else {
+            "in\"vented');alert('.torrent"
+        };
+        let path = directory.path().join(name);
         std::fs::write(&path, b"invented")?;
         let script = delivery_script(&Request::File(path))?;
         assert!(
-            script.contains(r#"in\"vented');alert('.torrent"#),
-            "{script}"
+            script.contains(&serde_json::to_string(name)?),
+            "the name is a JSON string: {script}"
         );
         Ok(())
     }
