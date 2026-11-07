@@ -61,7 +61,14 @@ seek index. The plan keeps them.
 - Debug builds read `client/dist` from disk, so a client rebuild shows on
   reload without rebuilding the server. Without the feature the server
   builds without Node.
-- Tauri later loads the same bundle and reaches the API over loopback.
+- The desktop application runs the server in its own process and opens a window
+  on the server's loopback address, on its usual port, so the window is the same
+  origin as a browser's: the same bundle, requests, and media URLs, with no
+  cross-origin rules to add. The port stays the same between runs because a page's
+  stored sign-in and language belong to its origin. Around that page, the window
+  does what a browser would: a download goes to the downloads directory, and any
+  address but its own goes to the system, except schemes the client never uses,
+  which it refuses.
 
 ### API access
 
@@ -78,7 +85,7 @@ seek index. The plan keeps them.
   while the page is hidden. A server-sent events resource can be added to
   the contract later if polling proves too heavy.
 - Sign-in creates an access token of the `api` scope from the password and
-  keeps it in local storage, or the platform's keystore under Tauri. Media
+  keeps it in local storage, in the desktop application too. Media
   URLs carry playback tokens, since a media element cannot send headers.
   Without a password, there is no sign-in.
 

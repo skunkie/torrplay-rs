@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "torrplay-desktop"
+version = "0.1.0"
+description = "TorrPlay's desktop application: the server in a window of its own."
+edition = "2024"
+license = "MIT"
+publish = false
+repository = "https://github.com/skunkie/torrplay-rs"
+rust-version = "1.99"
+
+# Its own workspace: see the exclusion in the root manifest.
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+expect_used = "warn"
+unwrap_used = "warn"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow = "1"
+sys-locale = "0.3"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+torrplay = { path = "../crates/torrplay" }
+torrplay-engine = { path = "../crates/torrplay-engine" }
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"

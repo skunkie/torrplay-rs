@@ -1,0 +1,7 @@
+// SPDX-FileCopyrightText: 2026 TorrPlay
+//
+// SPDX-License-Identifier: MIT
+
+fn main() {
+    tauri_build::build();
+}

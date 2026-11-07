@@ -13,14 +13,9 @@ use std::io::IsTerminal;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use anyhow::Context;
 use torrplay::{
-    BackupAction, Command, Config, LogLevel, McpConfig, PasswordChange, PasswordChanged,
-    ShutdownTimings, USAGE,
+    BackupAction, Command, Config, LogLevel, McpConfig, PasswordChange, PasswordChanged, USAGE,
 };
-use torrplay_core::credentials::AllowedHosts;
-use torrplay_engine::LibrqbitEngine;
-use torrplay_store::Store;
 
 /// How long exiting waits for blocking tasks still running after shutdown.
 const RUNTIME_SHUTDOWN: Duration = Duration::from_secs(1);
@@ -119,46 +114,8 @@ async fn run(
     log_files: Option<torrplay::LogFiles>,
 ) -> anyhow::Result<()> {
     // Before the listener binds, so the API never answers without them.
-    let terminated = termination();
-    let data_dir = config.data_dir()?;
-    let opening = data_dir.clone();
-    let (store, contents) = tokio::task::spawn_blocking(move || Store::open(&opening))
-        .await
-        .context("opening the store")?
-        .with_context(|| format!("opening the store in {}", data_dir.display()))?;
-    tracing::info!(
-        path = %store.path().display(),
-        torrents = contents.torrents.len(),
-        "the store is open"
-    );
-    let download_dir = config.download_dir(&data_dir);
-    tracing::info!(path = %download_dir.display(), "the download directory");
-    // Memory storage writes nothing to the session folder, so it lives only
-    // as long as the process; torrents persist in the store.
-    let folder = tempfile::tempdir().context("creating the session folder")?;
-    let listener = torrplay::bind_api(config.listen).with_context(|| {
-        format!(
-            "binding the API listener on {}",
-            config.listen.unwrap_or(torrplay::LISTEN_DEFAULT)
-        )
-    })?;
-    tracing::info!(address = %listener.local_addr()?, "the API is listening");
-    torrplay::serve(
-        listener,
-        LibrqbitEngine::new(config.engine_config(folder.path(), &download_dir)),
-        store,
-        contents,
-        torrplay::ServeOptions {
-            allowed_hosts: AllowedHosts::new(config.allowed_hosts.clone()),
-            overrides: config.overrides(),
-            log: Some(log),
-            run,
-            log_files,
-        },
-        ShutdownTimings::default(),
-        terminated,
-    )
-    .await
+    let terminated = torrplay::termination();
+    torrplay::run_server(config, log, run, log_files, |_| {}, terminated).await
 }
 
 /// Runs `torrplay password`, reading a new password from standard input.
@@ -318,7 +275,7 @@ fn mcp(config: McpConfig) -> ExitCode {
                 torrplay_mcp::serve_stdio(server).await?;
             }
             Some(address) => {
-                let shutdown = termination();
+                let shutdown = torrplay::termination();
                 let listener = torrplay_mcp::HttpListener::bind(address).await?;
                 tracing::info!(
                     application = %url,
@@ -337,55 +294,6 @@ fn mcp(config: McpConfig) -> ExitCode {
         Err(error) => {
             tracing::error!(error = %format!("{error:#}"), "torrplay mcp failed");
             ExitCode::FAILURE
-        }
-    }
-}
-
-/// Waits for SIGTERM or SIGINT, or Ctrl+C on Windows. The handlers are
-/// installed when this is called, not when the future is first polled, so
-/// a signal that arrives once the API listens shuts down gracefully instead
-/// of ending the process.
-fn termination() -> impl std::future::Future<Output = ()> {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{SignalKind, signal};
-        let terminate = signal(SignalKind::terminate());
-        let interrupt = signal(SignalKind::interrupt());
-        async move {
-            match (terminate, interrupt) {
-                (Ok(mut terminate), Ok(mut interrupt)) => {
-                    tokio::select! {
-                        _ = terminate.recv() => {}
-                        _ = interrupt.recv() => {}
-                    }
-                }
-                (terminate, interrupt) => {
-                    if let Err(error) = terminate.as_ref().and(interrupt.as_ref()) {
-                        tracing::warn!(%error, "a termination signal cannot be handled");
-                    }
-                    match (terminate, interrupt) {
-                        (Ok(mut signal), Err(_)) | (Err(_), Ok(mut signal)) => {
-                            signal.recv().await;
-                        }
-                        _ => std::future::pending().await,
-                    }
-                }
-            }
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let interrupt = tokio::signal::windows::ctrl_c();
-        async move {
-            match interrupt {
-                Ok(mut interrupt) => {
-                    interrupt.recv().await;
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "Ctrl+C cannot be handled");
-                    std::future::pending().await
-                }
-            }
         }
     }
 }

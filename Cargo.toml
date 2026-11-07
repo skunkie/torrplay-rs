@@ -20,6 +20,10 @@ members = [
     "crates/torrplay-store",
 ]
 
+# The desktop shell needs WebKitGTK to build on Linux, so it keeps its own workspace and
+# lockfile, and building or testing this one does not need it.
+exclude = ["desktop"]
+
 [workspace.package]
 edition = "2024"
 license = "MIT"
