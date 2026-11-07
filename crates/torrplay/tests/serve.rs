@@ -290,9 +290,9 @@ async fn assert_answers(stream: &mut TcpStream) -> anyhow::Result<()> {
 async fn a_handler_that_never_finishes_does_not_hold_shutdown() -> anyhow::Result<()> {
     let running = Running::start(Vec::new(), HELD_TIMINGS, |_| {}).await?;
     let mut stream = slow_request(&running).await?;
-    let begun = Instant::now();
-    assert!(running.stop_and_read_clean_shutdown().await?);
-    assert!(begun.elapsed() < HELD_TIMINGS.timeout);
+    let (took, clean) = running.stop_timed_and_read_clean_shutdown().await?;
+    assert!(clean);
+    assert!(took < HELD_TIMINGS.timeout, "the shutdown took {took:?}");
     assert_closed(&mut stream).await
 }
 

@@ -288,11 +288,19 @@ impl Running {
     /// Stops the application and returns whether its store recorded a clean
     /// shutdown.
     pub async fn stop_and_read_clean_shutdown(self) -> anyhow::Result<bool> {
+        Ok(self.stop_timed_and_read_clean_shutdown().await?.1)
+    }
+
+    /// Like `stop_and_read_clean_shutdown`, with how long the shutdown took,
+    /// apart from reading the store afterward.
+    pub async fn stop_timed_and_read_clean_shutdown(self) -> anyhow::Result<(Duration, bool)> {
         let data = Arc::clone(&self.data);
+        let begun = std::time::Instant::now();
         self.stop().await?;
+        let took = begun.elapsed();
         let (store, contents) = torrplay_store::Store::open(data.path())?;
         store.close().await?;
-        Ok(contents.clean_shutdown)
+        Ok((took, contents.clean_shutdown))
     }
 
     /// Triggers shutdown, if it has not begun, and returns the
