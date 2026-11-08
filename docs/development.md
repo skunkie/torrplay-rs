@@ -19,7 +19,7 @@ Run from the repository root:
 ```sh
 reuse lint
 actionlint -color
-shellcheck scripts/*.sh
+shellcheck scripts/*.sh packaging/linux/preinst
 scripts/check-vacuum-rules.sh vacuum
 scripts/check-linux-service.sh
 git diff --check
@@ -343,8 +343,8 @@ scripts/play.sh 'magnet:?xt=urn:btih:...'
 
 ## Running the service on Linux
 
-`packaging/linux` holds what the service edition's `.deb` will install, so that
-`torrplay` runs as a system service that starts at boot. The unit needs
+`packaging/linux` holds what the service edition's `.deb`, `torrplay-service`,
+installs, so that `torrplay` runs as a system service that starts at boot. The unit needs
 systemd 254 or later, as in Debian 13 and Ubuntu 24.04; older versions ignore
 its restart backoff and restart it every 5 seconds:
 
@@ -416,6 +416,31 @@ and sandbox, including the DLNA media server and a download directory under
 a clean stop, a usage error that does not restart, the backoff while its port
 is taken, and removal. It changes the system, so CI runs it on a disposable
 runner, in the Linux service job, with the build from the browser smoke test.
+
+cargo-deb 3.8.0 builds the package, as [ADR 13](adr/0013-packaging.md)
+decides, from `[package.metadata.deb]` in `crates/torrplay/Cargo.toml`. It holds
+`torrplay`, the client as `torrplay-client` with its desktop entry and icon, the
+files above, and a firewalld service and a ufw profile for the default ports,
+which the administrator enables. cargo-deb writes the maintainer scripts: they
+create the account, enable and start the unit on install, restart it on upgrade,
+and stop it on removal. `/etc/torrplay/torrplay.env` is a conffile, which a
+removal keeps and a purge deletes; neither deletes `/var/lib/torrplay` or the
+account. A hand installation's unit in `/etc/systemd/system` would override the
+package's, so the package refuses to install until `scripts/linux-service.sh
+remove` removes it. Build the web client, the service, and the client first, since the
+package takes the client from the desktop workspace, then package and test it:
+
+```bash
+(cd client && pnpm build)
+cargo build --release --locked -p torrplay
+(cd desktop && cargo build --release --locked --no-default-features --features client)
+cargo deb --no-build --locked -p torrplay --output target/debian/torrplay-service.deb
+scripts/test-linux-service.sh --package target/debian/torrplay-service.deb
+```
+
+The test then also checks what the package installs, that the settings file is
+a conffile, and what removing and purging keep. CI builds and tests the package
+on Ubuntu 24.04, the oldest supported system, in the Linux service package job.
 
 The password and backup commands need the service stopped, and they run as its
 account on its data directory. A backup goes where that account can write,

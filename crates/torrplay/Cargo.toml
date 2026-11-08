@@ -5,7 +5,7 @@
 [package]
 name = "torrplay"
 version = "0.1.0"
-description = "The TorrPlay application: the HTTP server over the librqbit engine."
+description = "Torrent streaming server with a web client, DLNA, and a command line"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
@@ -21,6 +21,50 @@ default = ["client"]
 # release build embeds it and fails without it, and a debug build reads it
 # at runtime.
 client = ["dep:rust-embed"]
+
+# The service edition's Linux package, which ADR 13 decides: `torrplay` as a system
+# service with its client, built first from the desktop workspace, and the files in
+# packaging/linux. `cargo deb --no-build -p torrplay` packages a release build.
+[package.metadata.deb]
+name = "torrplay-service"
+# Debian wants an address here, which the project gets when it moves to its own name
+# and repository, before an apt repository publishes this; lintian flags it until then.
+maintainer = "TorrPlay"
+copyright = "2026 TorrPlay"
+license-file = ["../../LICENSES/MIT.txt", "0"]
+extended-description = """\
+TorrPlay streams torrents to browsers, players, and televisions. This is its \
+service edition: the TorrPlay service, which starts at boot as the torrplay \
+account and serves the API, the web client, and a DLNA media server, and \
+TorrPlay Client, a window on the service's page. The service's settings are in \
+/etc/torrplay/torrplay.env and its library in /var/lib/torrplay, which removing \
+the package keeps."""
+section = "net"
+priority = "optional"
+depends = "$auto, systemd (>= 254)"
+# One edition per computer: the application's package uses the same port.
+conflicts = "torrplay"
+# cargo-deb writes its systemd and sysusers steps into maintainer scripts only when
+# this names a directory. Its preinst refuses to install over a hand installation;
+# the other scripts are generated whole.
+maintainer-scripts = "../../packaging/linux"
+assets = [
+    ["target/release/torrplay", "usr/bin/", "755"],
+    ["../../desktop/target/release/torrplay-desktop", "usr/bin/torrplay-client", "755"],
+    ["../../packaging/linux/torrplay.sysusers", "usr/lib/sysusers.d/torrplay.conf", "644"],
+    ["../../packaging/linux/torrplay.env", "etc/torrplay/torrplay.env", "644"],
+    ["../../packaging/linux/torrplay.firewalld.xml", "usr/lib/firewalld/services/torrplay.xml", "644"],
+    ["../../packaging/linux/torrplay.ufw", "etc/ufw/applications.d/torrplay", "644"],
+    ["../../packaging/linux/org.torrplay.client.desktop", "usr/share/applications/", "644"],
+    ["../../desktop/icons/icon.png", "usr/share/icons/hicolor/512x512/apps/org.torrplay.client.png", "644"],
+]
+
+[package.metadata.deb.systemd-units]
+unit-scripts = "../../packaging/linux"
+unit-name = "torrplay"
+enable = true
+start = true
+restart-after-upgrade = true
 
 [dependencies]
 anyhow.workspace = true

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 TorrPlay
+
+SPDX-License-Identifier: MIT
+-->
+<!-- Installed as /usr/lib/firewalld/services/torrplay.xml, which the
+     administrator enables with firewall-cmd's add-service option, as the
+     manual page shows; an XML comment cannot hold the option itself. -->
+<service>
+  <short>TorrPlay</short>
+  <description>The TorrPlay service's API and web client, its BitTorrent peer port, which takes TCP alone, and SSDP, which its DLNA media server answers on, at their default ports. The DHT has a UDP port of its own, which its replies need no rule for.</description>
+  <port protocol="tcp" port="8642"/>
+  <port protocol="tcp" port="4240"/>
+  <port protocol="udp" port="1900"/>
+</service>

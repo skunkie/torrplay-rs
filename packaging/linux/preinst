@@ -1,0 +1,31 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# The torrplay-service package's preinst, which cargo-deb adds as it is. The
+# unit scripts/linux-service.sh installs in /etc/systemd/system overrides the
+# package's in /usr/lib, so systemd would go on running that build, in
+# /usr/local/bin; it refuses until that installation is removed. Any other unit
+# there, such as `systemctl edit --full` writes, or the link to /dev/null a
+# removal leaves, is the administrator's or the package's own, and stays.
+
+set -e
+
+unit=/etc/systemd/system/torrplay.service
+
+case "$1" in
+    install | upgrade)
+        if [ -f "$unit" ] && grep -q '^ExecStart=/usr/local/bin/torrplay ' "$unit"; then
+            echo "torrplay-service: $unit, a hand installation of" \
+                "/usr/local/bin/torrplay, overrides the package's unit;" \
+                "remove it first, as with scripts/linux-service.sh remove" >&2
+            exit 1
+        fi
+        ;;
+esac
+
+# Where cargo-deb would put its own steps, which it requires in every script.
+#DEBHELPER#
+
+exit 0

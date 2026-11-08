@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+[Desktop Entry]
+Type=Application
+Name=TorrPlay Client
+Name[ru]=Клиент TorrPlay
+Comment=Open the TorrPlay service on this computer
+Comment[ru]=Открыть службу TorrPlay на этом компьютере
+Exec=torrplay-client %U
+Icon=org.torrplay.client
+Terminal=false
+Categories=AudioVideo;Video;
+MimeType=application/x-bittorrent;x-scheme-handler/magnet;
