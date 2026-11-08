@@ -39,6 +39,8 @@ $port = 18642
 $running = $null
 $data = $null
 
+. (Join-Path $PSScriptRoot 'windows-service-edition.ps1')
+
 function Fail([string] $Message) {
     throw "FAIL: $Message"
 }
@@ -68,19 +70,6 @@ function Invoke-Setup {
     (Start-Process -FilePath $Setup -ArgumentList '/S' -Wait -PassThru).ExitCode
 }
 
-# Windows Installer's packed form of a GUID, under which it registers the
-# products installed for the computer by upgrade code: the first three groups
-# reversed, then the two characters of each later byte swapped.
-function ConvertTo-PackedGuid([string] $Guid) {
-    $hex = ([guid] $Guid).ToString('N').ToUpperInvariant()
-    $reverse = { param($Text) -join $Text[($Text.Length - 1)..0] }
-    $packed = (& $reverse $hex.Substring(0, 8)) + (& $reverse $hex.Substring(8, 4)) + (& $reverse $hex.Substring(12, 4))
-    for ($index = 16; $index -lt 32; $index += 2) {
-        $packed += & $reverse $hex.Substring($index, 2)
-    }
-    $packed
-}
-
 function Assert-NotInstalled([string] $Why) {
     if (Test-Path -Path $uninstallKey) { Fail "the application is registered $Why" }
     foreach ($path in $installed) {
@@ -92,10 +81,9 @@ try {
     Assert-NotInstalled 'before the test'
 
     Write-Host '== refusal while the service edition is installed'
-    # Its upgrade code comes from the client's configuration, so the hook's
-    # packed copy of it cannot drift from what the MSI registers.
-    $client = Get-Content -Raw -Path (Join-Path $PSScriptRoot '../desktop/tauri.client.conf.json') | ConvertFrom-Json
-    $serviceKey = 'HKLM:\SOFTWARE\Classes\Installer\UpgradeCodes\' + (ConvertTo-PackedGuid $client.bundle.windows.wix.upgradeCode)
+    # From the client's configuration, so the hook's packed copy of its upgrade
+    # code cannot drift from what the MSI registers.
+    $serviceKey = Get-ServiceEditionKey
     if (Test-Path -Path $serviceKey) { Fail 'the service edition is installed on this computer' }
     # The installer's WebView2 step, which runs before the hook, also aborts
     # with exit code 2 when it cannot install the runtime, so the refusal

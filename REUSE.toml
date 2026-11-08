@@ -93,8 +93,16 @@ path = [
     "desktop/tauri.conf.json",
     "desktop/tauri.client.conf.json",
     "desktop/tauri.bundle.conf.json",
+    "desktop/tauri.service.conf.json",
     "desktop/icons/**",
     "desktop/gen/**",
 ]
+SPDX-FileCopyrightText = "2026 TorrPlay"
+SPDX-License-Identifier = "MIT"
+
+# The MIT license as the Windows installers show it, each paragraph on one
+# line for the dialogs to wrap, which a header would appear in.
+[[annotations]]
+path = "packaging/windows/license.txt"
 SPDX-FileCopyrightText = "2026 TorrPlay"
 SPDX-License-Identifier = "MIT"
