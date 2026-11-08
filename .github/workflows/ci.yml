@@ -158,6 +158,9 @@ jobs:
       # A release at least two weeks old; cargo verifies the crate against the
       # registry's checksum, and --locked builds its own lockfile.
       CARGO_DEB_VERSION: 3.8.0
+      # A release at least two weeks old, which the third-party notices are
+      # written with; cargo verifies it as above.
+      CARGO_ABOUT_VERSION: 0.9.2
       # A release at least two weeks old, with the SHA-256 GitHub publishes for
       # the archive.
       PANDOC_VERSION: 3.12.1
@@ -201,6 +204,10 @@ jobs:
         run: scripts/install-pandoc.sh "${PANDOC_VERSION}" "${PANDOC_SHA256}" "${RUNNER_TEMP}" >> "$GITHUB_PATH"
       - name: Render the manual pages
         run: scripts/build-man-pages.sh target/man
+      - name: Install cargo-about
+        run: cargo install cargo-about --version "${CARGO_ABOUT_VERSION}" --locked --features cli
+      - name: Write the third-party notices
+        run: python3 scripts/build-notices.py target/notices/THIRD-PARTY-NOTICES.txt
       - name: Build the packages
         run: |
           cargo deb --no-build --locked -p torrplay --output target/debian/torrplay-service.deb
@@ -222,6 +229,7 @@ jobs:
       # registry's checksum, and pandoc's archive against the SHA-256 GitHub
       # publishes. The CLI matches the tauri crate's minor version.
       TAURI_CLI_VERSION: 2.12.4
+      CARGO_ABOUT_VERSION: 0.9.2
       PANDOC_VERSION: 3.12.1
       PANDOC_SHA256: d0c90410e90204c9ca83b8539fac5c7aed01fd537207e4585849f8abc5df20b8
     steps:
@@ -257,6 +265,8 @@ jobs:
         run: pnpm build
       - name: Install the Tauri CLI
         run: cargo install tauri-cli --version "${TAURI_CLI_VERSION}" --locked
+      - name: Install cargo-about
+        run: cargo install cargo-about --version "${CARGO_ABOUT_VERSION}" --locked --features cli
       - name: Install pandoc
         run: scripts/install-pandoc.sh "${PANDOC_VERSION}" "${PANDOC_SHA256}" "${RUNNER_TEMP}" >> "$GITHUB_PATH"
       # The script checks each AppImage tool it downloads against a pinned
@@ -295,9 +305,10 @@ jobs:
           - windows-11-arm
     env:
       COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
-      # A release at least two weeks old; cargo verifies the crate against the
+      # Releases at least two weeks old; cargo verifies the crates against the
       # registry's checksum. The CLI matches the tauri crate's minor version.
       TAURI_CLI_VERSION: 2.12.4
+      CARGO_ABOUT_VERSION: 0.9.2
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -322,6 +333,8 @@ jobs:
         run: pnpm build
       - name: Install the Tauri CLI
         run: cargo install tauri-cli --version "${env:TAURI_CLI_VERSION}" --locked
+      - name: Install cargo-about
+        run: cargo install cargo-about --version "${env:CARGO_ABOUT_VERSION}" --locked --features cli
       - name: Build the installer
         shell: pwsh
         run: scripts/build-application-nsis.ps1 target/nsis/torrplay-setup.exe

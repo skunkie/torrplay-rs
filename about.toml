@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# cargo-about's configuration, from which scripts/build-notices.sh lists the
+# crates the packages ship and their licenses, for both Cargo workspaces. The
+# accepted licenses are deny.toml's, which decides them; keep the two lists
+# the same.
+
+accepted = [
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "Unicode-3.0",
+    "Zlib",
+    # deny.toml allows it for option-ext alone, which cargo-deny enforces;
+    # cargo-about cannot limit a license to a crate.
+    "MPL-2.0",
+]
+# What the packages ship runs on these.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+# Only what is built into the executables.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true

@@ -9,7 +9,8 @@
 # desktop/tauri.bundle.conf.json merged over it, into the .deb `torrplay`,
 # with its manual page, and an AppImage. Run it from the repository root on
 # x86_64 or aarch64 once the web client is built (`pnpm build` in client),
-# with the Tauri CLI, pandoc, patchelf, and GStreamer's plugins installed;
+# with the Tauri CLI, pandoc, patchelf, cargo-about, and GStreamer's plugins
+# installed;
 # DEB and APPIMAGE are the packages to write:
 #
 #   scripts/build-application-linux.sh target/debian/torrplay.deb target/appimage/torrplay.AppImage
@@ -29,6 +30,9 @@ arch=$(uname -m)
 }
 
 scripts/build-man-pages.sh target/man >/dev/null
+# TorrPlay's license and the third-party notices, which the packages install
+# beside it.
+python3 scripts/build-notices.py target/notices/THIRD-PARTY-NOTICES.txt >/dev/null
 
 # The bundler takes an extra executable named for the target, from beside the
 # configuration, and installs it without that suffix.
@@ -105,7 +109,10 @@ mkdir "$work/gstreamer"
 for plugin in "$host_plugins"/*.so; do
   [[ -v excluded[$(basename "$plugin")] ]] || ln -s "$plugin" "$work/gstreamer/"
 done
-(cd desktop && XDG_CACHE_HOME="$work/cache" LDAI_RUNTIME_FILE="$work/runtime" \
+# linuxdeploy and its plugin unpack themselves into TMPDIR, where they leave
+# the unpacked copies, so into the work directory, which is removed.
+mkdir "$work/tmp"
+(cd desktop && XDG_CACHE_HOME="$work/cache" LDAI_RUNTIME_FILE="$work/runtime" TMPDIR="$work/tmp" \
   GSTREAMER_PLUGINS_DIR="$work/gstreamer" \
   cargo tauri build --bundles deb,appimage --config tauri.bundle.conf.json -- --locked)
 built=("$bundles"/deb/*.deb)

@@ -23,8 +23,8 @@ default = ["client"]
 client = ["dep:rust-embed"]
 
 # The service edition's Linux package, which ADR 13 decides: `torrplay` as a system
-# service, the files in packaging/linux, and the manual pages, which
-# scripts/build-man-pages.sh renders to target/man first. `cargo deb --no-build -p
+# service, the files in packaging/linux, the manual pages in target/man, and the
+# third-party notices in target/notices. `cargo deb --no-build -p
 # torrplay` packages a release build. The client is a package of its own,
 # torrplay-client, from the desktop crate's manifest, which depends on this one, so
 # a server reached only over the network installs no desktop libraries.
@@ -61,6 +61,7 @@ assets = [
     ["../../packaging/linux/torrplay.ufw", "etc/ufw/applications.d/torrplay", "644"],
     ["../../target/man/torrplay.1.gz", "usr/share/man/man1/", "644"],
     ["../../target/man/torrplay.env.5.gz", "usr/share/man/man5/", "644"],
+    ["../../target/notices/THIRD-PARTY-NOTICES.txt", "usr/share/doc/torrplay-service/", "644"],
 ]
 
 [package.metadata.deb.systemd-units]

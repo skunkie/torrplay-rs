@@ -25,11 +25,17 @@
         ],
         "desktopTemplate": "../packaging/linux/torrplay-desktop.desktop",
         "files": {
-          "/usr/share/man/man1/torrplay.1.gz": "../target/man/torrplay.1.gz"
+          "/usr/share/man/man1/torrplay.1.gz": "../target/man/torrplay.1.gz",
+          "/usr/share/doc/torrplay/copyright": "../LICENSES/MIT.txt",
+          "/usr/share/doc/torrplay/THIRD-PARTY-NOTICES.txt": "../target/notices/THIRD-PARTY-NOTICES.txt"
         }
       },
       "appimage": {
-        "bundleMediaFramework": true
+        "bundleMediaFramework": true,
+        "files": {
+          "/usr/share/doc/torrplay/copyright": "../LICENSES/MIT.txt",
+          "/usr/share/doc/torrplay/THIRD-PARTY-NOTICES.txt": "../target/notices/THIRD-PARTY-NOTICES.txt"
+        }
       }
     },
     "windows": {

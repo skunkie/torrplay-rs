@@ -1,0 +1,50 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# What scripts/build-notices.py cannot find out by itself when it writes the
+# third-party notices every package installs. It reads the Rust crates' licenses
+# with cargo-about, from about.toml, and the web client's from its packages.
+
+[npm]
+# The licenses the web client's packages may have, as deny.toml's are for
+# crates; extend it only for licenses that allow distributing TorrPlay under
+# MIT with their notices.
+accepted = ["Apache-2.0", "BSD-3-Clause", "MIT", "MPL-2.0", "OFL-1.1"]
+# Development dependencies whose code the build puts in the web client: Svelte's
+# runtime, Vite's module preloading, and Tailwind's base styles. The rest only
+# build, check, or test it.
+bundled-development = ["svelte", "vite", "tailwindcss"]
+
+# Packages published without a license file, and a package from the same
+# repository whose license file covers them.
+[npm.license-from]
+"@lit-labs/ssr-dom-shim" = "@lit/reactive-element"
+"react-compiler-runtime" = "react"
+
+# FFmpeg's AC-3, E-AC-3, and DTS decoders, which @mediabunny/ac3 and
+# @mediabunny/dts carry as WebAssembly, under FFmpeg's LGPL rather than their
+# packages' MPL-2.0. Their build takes FFmpeg from Git without naming a
+# release, so the notice names where the build and FFmpeg's source are.
+[ffmpeg]
+packages = ["@mediabunny/ac3", "@mediabunny/dts"]
+notice = """\
+The web client's AC-3, E-AC-3, and DTS audio decoders, in the packages
+@mediabunny/ac3 and @mediabunny/dts, are FFmpeg's, compiled to WebAssembly,
+and are distributed under the GNU Lesser General Public License, version 2.1
+or later, whose text follows at the end. FFmpeg is a trademark of Fabrice
+Bellard. The packages' README files give the FFmpeg configuration they were
+built with, which enables no GPL code, and their repository holds the
+WebAssembly and the code around it:
+
+  https://github.com/Vanilagy/mediabunny/tree/v{version}/packages
+
+FFmpeg's source is at https://ffmpeg.org/download.html and
+https://github.com/FFmpeg/FFmpeg. TorrPlay's source, from which the web client
+can be built again with a changed FFmpeg, is at
+https://github.com/skunkie/torrplay-rs."""
+
+# The LGPL's text, from FFmpeg's release 7.1, checked against its SHA-256.
+[ffmpeg.lgpl]
+url = "https://raw.githubusercontent.com/FFmpeg/FFmpeg/n7.1/COPYING.LGPLv2.1"
+sha256 = "b634ab5640e258563c536e658cad87080553df6f34f62269a21d554844e58bfe"

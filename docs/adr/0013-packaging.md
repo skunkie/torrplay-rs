@@ -225,6 +225,32 @@ manifest chooses between two.
 - `torrplay-desktop` has no page of its own: it is started from the
   desktop, and its options are `torrplay`'s, which `torrplay(1)` describes.
 
+### Licenses
+
+- Every package installs TorrPlay's MIT license and its third-party notices,
+  `THIRD-PARTY-NOTICES.txt`, which `scripts/build-notices.py` writes when
+  the packages are built: the licenses, and where to find the source, of
+  the Rust crates built into the executables, which cargo-about lists with
+  the licenses `deny.toml` accepts, and of the web client's packages, which
+  `torrplay` embeds, among them the development dependencies whose code its
+  build includes. A license neither list accepts, or a package without a
+  license file, fails the build.
+- The web client's AC-3, E-AC-3, and DTS audio decoders, in
+  `@mediabunny/ac3` and `@mediabunny/dts`, are FFmpeg's, compiled to
+  WebAssembly, under the LGPL 2.1 or later, though the packages say
+  MPL-2.0. They play audio no browser decodes, so TorrPlay keeps them and
+  meets the LGPL: the notices say so, with the LGPL's text and where
+  FFmpeg's source and the decoders' build are, and TorrPlay's source lets
+  anyone build the web client again with a changed FFmpeg. Mediabunny's
+  build takes FFmpeg from Git without naming a commit, so the notices
+  cannot name the exact FFmpeg source; asking upstream to record it is
+  the way to close that.
+- The `.deb`s install the license as `/usr/share/doc/<package>/copyright`,
+  as Debian asks, with the notices beside it, and the AppImage holds both
+  at the same paths. The NSIS installer puts `LICENSE.txt` and
+  `THIRD-PARTY-NOTICES.txt` beside the application. Installing those files
+  beside the MSI and `.app` executables is pending.
+
 ### Signing
 
 - Releases may ship without an Apple or Microsoft signature; the project

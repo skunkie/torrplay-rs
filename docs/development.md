@@ -106,6 +106,32 @@ target/logo-venv/bin/pip install pillow==11.3.0
 target/logo-venv/bin/python scripts/render-logo.py
 ```
 
+## Third-party notices
+
+The Linux packages and the Windows NSIS installer install TorrPlay's license,
+`LICENSES/MIT.txt`, and `THIRD-PARTY-NOTICES.txt`, which
+`scripts/build-notices.py` writes while the package is built. It lists the
+licenses, and where to find the source, of the Rust crates built into
+`torrplay` and the desktop application and client, with cargo-about 0.9.2 and
+`about.toml`, which accepts the licenses `deny.toml` does, and of the web
+client's packages, from `client/node_modules`, with `packaging/notices.toml`.
+That file names the licenses the web client's packages may have, the
+development dependencies whose code the build includes, packages whose
+license file is their repository's, the notice for the FFmpeg in the AC-3 and
+DTS decoders, and the LGPL text that notice refers to, which the script
+downloads from FFmpeg's release and checks against its SHA-256. A license
+neither accepts, or a package without a license file, fails the script, and
+so the build. From the repository root, once `pnpm install` has run in
+`client`:
+
+```bash
+cargo install cargo-about --version 0.9.2 --locked --features cli
+python3 scripts/build-notices.py target/notices/THIRD-PARTY-NOTICES.txt
+```
+
+The packaging jobs for these formats run it, and their tests check that the
+license and the notices are installed. The same lockfiles write the same file.
+
 ## Generated wire types
 
 `crates/torrplay-api/src/generated/` holds the API's wire types, which
@@ -534,6 +560,7 @@ and the client first, then package and test them:
 cargo build --release --locked -p torrplay
 (cd desktop && cargo build --release --locked --no-default-features --features client --target-dir target/client)
 scripts/build-man-pages.sh target/man
+python3 scripts/build-notices.py target/notices/THIRD-PARTY-NOTICES.txt
 cargo deb --no-build --locked -p torrplay --output target/debian/torrplay-service.deb
 cargo deb --no-build --locked --manifest-path desktop/Cargo.toml --output target/debian/torrplay-client.deb
 scripts/test-linux-service.sh --package target/debian/torrplay-service.deb target/debian/torrplay-client.deb

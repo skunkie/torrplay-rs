@@ -33,7 +33,9 @@ $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'TorrPlay.lnk'
 # A silent install also puts one on the desktop, since it skips the page
 # that offers it.
 $desktopShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) 'TorrPlay.lnk'
-$installed = @($application, $torrplay, $uninstaller, $shortcut, $desktopShortcut)
+$license = Join-Path $installDirectory 'LICENSE.txt'
+$notices = Join-Path $installDirectory 'THIRD-PARTY-NOTICES.txt'
+$installed = @($application, $torrplay, $uninstaller, $shortcut, $desktopShortcut, $license, $notices)
 $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\TorrPlay'
 $port = 18642
 $running = $null
@@ -111,6 +113,12 @@ try {
     if ($code -ne 0) { Fail "the installer exited with $code" }
     foreach ($path in $installed) {
         if (-not (Test-Path -Path $path)) { Fail "the installer installed no $path" }
+    }
+    if ((Get-FileHash -Path $license).Hash -ne (Get-FileHash -Path (Join-Path $PSScriptRoot '../LICENSES/MIT.txt')).Hash) {
+        Fail "the installer's LICENSE.txt is not TorrPlay's license"
+    }
+    if (-not (Select-String -Path $notices -Pattern '^GNU Lesser General Public License, version 2\.1$' -Quiet)) {
+        Fail 'the third-party notices lack FFmpeg''s license'
     }
     $registered = Get-ItemProperty -Path $uninstallKey
     if ($registered.DisplayName -cne 'TorrPlay') { Fail "the application is registered as $($registered.DisplayName)" }

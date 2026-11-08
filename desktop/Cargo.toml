@@ -86,4 +86,5 @@ assets = [
     ["../packaging/linux/org.torrplay.client.desktop", "usr/share/applications/", "644"],
     ["icons/icon.png", "usr/share/icons/hicolor/512x512/apps/org.torrplay.client.png", "644"],
     ["../target/man/torrplay-client.1.gz", "usr/share/man/man1/", "644"],
+    ["../target/notices/THIRD-PARTY-NOTICES.txt", "usr/share/doc/torrplay-client/", "644"],
 ]

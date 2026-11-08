@@ -9,10 +9,12 @@ Builds the application's Windows installer, as ADR 13 decides.
 .DESCRIPTION
 The Tauri bundler makes an NSIS installer for the current user that installs
 torrplay-desktop.exe with torrplay.exe beside it, from desktop\tauri.conf.json
-with desktop\tauri.bundle.conf.json merged over it. Run it from the repository
-root once the web client is built (pnpm build in client), with the Tauri CLI
-installed; Out is the installer to write. The bundler downloads NSIS itself and
-checks it against the hash it carries.
+with desktop\tauri.bundle.conf.json merged over it, and TorrPlay's license
+and the third-party notices beside it, from desktop\tauri.nsis.conf.json. Run
+it from the repository root once the web client is built (pnpm build in
+client), with the Tauri CLI and cargo-about installed; Out is the installer to
+write. The bundler downloads NSIS itself and checks it against the hash it
+carries.
 
   scripts\build-application-nsis.ps1 target\nsis\torrplay-setup.exe
 #>
@@ -37,6 +39,9 @@ if (-not (Test-Path -Path 'client/dist/index.html')) {
 # The bundler takes an extra executable named for the target, from beside the
 # configuration, and installs it without that suffix.
 Invoke-Checked cargo @('build', '--release', '--locked', '-p', 'torrplay')
+# TorrPlay's license and the third-party notices, which the installer puts
+# beside the application, as desktop\tauri.nsis.conf.json names them.
+Invoke-Checked python @('scripts/build-notices.py', 'target/notices/THIRD-PARTY-NOTICES.txt')
 $target = (rustc -vV | Select-String -Pattern '^host: (.+)$').Matches[0].Groups[1].Value
 New-Item -ItemType Directory -Force -Path 'desktop/binaries' | Out-Null
 Copy-Item -Path 'target/release/torrplay.exe' -Destination "desktop/binaries/torrplay-$target.exe"
@@ -45,7 +50,8 @@ $bundles = 'desktop/target/release/bundle/nsis'
 Remove-Item -Recurse -Force -Path $bundles -ErrorAction SilentlyContinue
 Push-Location desktop
 try {
-    Invoke-Checked cargo @('tauri', 'build', '--bundles', 'nsis', '--config', 'tauri.bundle.conf.json', '--', '--locked')
+    Invoke-Checked cargo @('tauri', 'build', '--bundles', 'nsis', '--config', 'tauri.bundle.conf.json',
+        '--config', 'tauri.nsis.conf.json', '--', '--locked')
 } finally {
     Pop-Location
 }
