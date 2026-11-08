@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# The application's desktop entry, a template the Tauri bundler fills in. Its
+# own template passes no arguments, so files and magnet links would not reach
+# the application, and names no magnet scheme.
+[Desktop Entry]
+Type=Application
+Name={{name}}
+Comment=Stream torrents to browsers, players, and televisions
+Comment[ru]=Потоковое воспроизведение торрентов в браузерах, плеерах и телевизорах
+Exec={{exec}} %U
+StartupWMClass={{exec}}
+Icon={{icon}}
+Terminal=false
+Categories={{categories}}
+MimeType=application/x-bittorrent;x-scheme-handler/magnet;

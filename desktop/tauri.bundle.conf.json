@@ -1,0 +1,31 @@
+{
+  "bundle": {
+    "active": true,
+    "targets": [
+      "deb"
+    ],
+    "externalBin": [
+      "binaries/torrplay"
+    ],
+    "category": "Video",
+    "shortDescription": "Stream torrents to browsers, players, and televisions",
+    "longDescription": "TorrPlay streams torrents to browsers, players, and televisions while\ntheir pieces arrive. This is its application: the window, the server,\nand a DLNA media server in one program, which runs while it is open,\nwith the torrplay command beside it for MCP clients and backups.",
+    "linux": {
+      "deb": {
+        "section": "video",
+        "conflicts": [
+          "torrplay-service"
+        ],
+        "recommends": [
+          "gstreamer1.0-plugins-good",
+          "gstreamer1.0-plugins-bad",
+          "gstreamer1.0-libav"
+        ],
+        "desktopTemplate": "../packaging/linux/torrplay-desktop.desktop",
+        "files": {
+          "/usr/share/man/man1/torrplay.1.gz": "../target/man/torrplay.1.gz"
+        }
+      }
+    }
+  }
+}

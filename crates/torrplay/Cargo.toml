@@ -25,7 +25,9 @@ client = ["dep:rust-embed"]
 # The service edition's Linux package, which ADR 13 decides: `torrplay` as a system
 # service with its client, built first from the desktop workspace, the files in
 # packaging/linux, and the manual pages, which scripts/build-man-pages.sh renders to
-# target/man first. `cargo deb --no-build -p torrplay` packages a release build.
+# target/man first. `cargo deb --no-build -p torrplay` packages a release build. The
+# client is built into desktop/target/client, since the application's build writes
+# the same file in desktop/target, which would otherwise be packaged in its place.
 [package.metadata.deb]
 name = "torrplay-service"
 # Debian wants an address here, which the project gets when it moves to its own name
@@ -43,6 +45,9 @@ the package keeps."""
 section = "net"
 priority = "optional"
 depends = "$auto, systemd (>= 254)"
+# The client plays video in its page through WebKitGTK, which loads GStreamer's
+# plugins at run time, where $auto cannot see them.
+recommends = "gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-libav"
 # One edition per computer: the application's package uses the same port.
 conflicts = "torrplay"
 # cargo-deb writes its systemd and sysusers steps into maintainer scripts only when
@@ -51,7 +56,7 @@ conflicts = "torrplay"
 maintainer-scripts = "../../packaging/linux"
 assets = [
     ["target/release/torrplay", "usr/bin/", "755"],
-    ["../../desktop/target/release/torrplay-desktop", "usr/bin/torrplay-client", "755"],
+    ["../../desktop/target/client/release/torrplay-desktop", "usr/bin/torrplay-client", "755"],
     ["../../packaging/linux/torrplay.sysusers", "usr/lib/sysusers.d/torrplay.conf", "644"],
     ["../../packaging/linux/torrplay.env", "etc/torrplay/torrplay.env", "644"],
     ["../../packaging/linux/torrplay.firewalld.xml", "usr/lib/firewalld/services/torrplay.xml", "644"],

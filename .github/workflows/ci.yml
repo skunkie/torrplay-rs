@@ -191,28 +191,82 @@ jobs:
         run: pnpm build
       - name: Build the service
         run: cargo build --release --locked -p torrplay
+      # Into a directory of its own, where the package takes it from.
       - name: Build the client
         working-directory: desktop
-        run: cargo build --release --locked --no-default-features --features client
+        run: cargo build --release --locked --no-default-features --features client --target-dir target/client
       - name: Install cargo-deb
         run: cargo install cargo-deb --version "${CARGO_DEB_VERSION}" --locked
       - name: Install pandoc
-        run: |
-          archive="pandoc-${PANDOC_VERSION}-linux-amd64.tar.gz"
-          curl -fsSL --retry 3 --retry-all-errors -o "${RUNNER_TEMP}/${archive}" \
-            "https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/${archive}"
-          echo "${PANDOC_SHA256}  ${RUNNER_TEMP}/${archive}" | sha256sum --check --strict
-          tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}"
-          echo "${RUNNER_TEMP}/pandoc-${PANDOC_VERSION}/bin" >> "$GITHUB_PATH"
+        run: scripts/install-pandoc.sh "${PANDOC_VERSION}" "${PANDOC_SHA256}" "${RUNNER_TEMP}" >> "$GITHUB_PATH"
       - name: Render the manual pages
-        run: |
-          test "$(pandoc --version | head -n 1)" = "pandoc ${PANDOC_VERSION}"
-          scripts/build-man-pages.sh target/man
+        run: scripts/build-man-pages.sh target/man
       - name: Build the package
         run: cargo deb --no-build --locked -p torrplay --output target/debian/torrplay-service.deb
       # The runner is disposable, so the test installs the package on it.
       - name: Install and test the package
         run: scripts/test-linux-service.sh --package target/debian/torrplay-service.deb
+
+  application-package:
+    name: Application package (Linux)
+    needs: stage
+    if: needs.stage.outputs.rust == 'true'
+    # The oldest supported system, as ADR 13 decides.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+      # Releases at least two weeks old: cargo verifies the crate against the
+      # registry's checksum, and pandoc's archive against the SHA-256 GitHub
+      # publishes. The CLI matches the tauri crate's minor version.
+      TAURI_CLI_VERSION: 2.12.4
+      PANDOC_VERSION: 3.12.1
+      PANDOC_SHA256: d0c90410e90204c9ca83b8539fac5c7aed01fd537207e4585849f8abc5df20b8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: client/.node-version
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          build-warnings: warn
+          cache-workspaces: |
+            .
+            desktop
+      # Ubuntu 24.04 names WebKit's WebDriver webkit2gtk-driver, as Debian does;
+      # later releases call it webkitgtk-webdriver.
+      - name: Install WebKitGTK and what the smoke test drives it with
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev librsvg2-dev \
+            desktop-file-utils webkit2gtk-driver xvfb dbus-daemon python3-gi \
+            gir1.2-gtk-3.0 gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
+            gstreamer1.0-libav
+      - name: Enable pnpm
+        working-directory: client
+        run: corepack enable pnpm
+      - name: Install the web client's dependencies
+        working-directory: client
+        run: pnpm install --frozen-lockfile
+      - name: Build the web client
+        working-directory: client
+        run: pnpm build
+      - name: Install the Tauri CLI
+        run: cargo install tauri-cli --version "${TAURI_CLI_VERSION}" --locked
+      - name: Install pandoc
+        run: scripts/install-pandoc.sh "${PANDOC_VERSION}" "${PANDOC_SHA256}" "${RUNNER_TEMP}" >> "$GITHUB_PATH"
+      - name: Build the package
+        run: scripts/build-application-deb.sh target/debian/torrplay.deb
+      # The runner is disposable, so the test installs the package on it.
+      - name: Install and check the package
+        run: scripts/test-application-deb.sh --keep target/debian/torrplay.deb
+      - name: Run the smoke test on the installed application
+        working-directory: desktop
+        run: dbus-run-session -- python3 tests/smoke.py /usr/bin/torrplay-desktop
+      - name: Remove the package
+        run: scripts/test-application-deb.sh target/debian/torrplay.deb
 
   service-live:
     name: Linux service
