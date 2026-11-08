@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT
 
 # 12. Editions
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-08
 
 ## Context
