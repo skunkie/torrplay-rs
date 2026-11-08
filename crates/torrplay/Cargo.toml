@@ -23,8 +23,9 @@ default = ["client"]
 client = ["dep:rust-embed"]
 
 # The service edition's Linux package, which ADR 13 decides: `torrplay` as a system
-# service with its client, built first from the desktop workspace, and the files in
-# packaging/linux. `cargo deb --no-build -p torrplay` packages a release build.
+# service with its client, built first from the desktop workspace, the files in
+# packaging/linux, and the manual pages, which scripts/build-man-pages.sh renders to
+# target/man first. `cargo deb --no-build -p torrplay` packages a release build.
 [package.metadata.deb]
 name = "torrplay-service"
 # Debian wants an address here, which the project gets when it moves to its own name
@@ -57,6 +58,9 @@ assets = [
     ["../../packaging/linux/torrplay.ufw", "etc/ufw/applications.d/torrplay", "644"],
     ["../../packaging/linux/org.torrplay.client.desktop", "usr/share/applications/", "644"],
     ["../../desktop/icons/icon.png", "usr/share/icons/hicolor/512x512/apps/org.torrplay.client.png", "644"],
+    ["../../target/man/torrplay.1.gz", "usr/share/man/man1/", "644"],
+    ["../../target/man/torrplay-client.1.gz", "usr/share/man/man1/", "644"],
+    ["../../target/man/torrplay.env.5.gz", "usr/share/man/man5/", "644"],
 ]
 
 [package.metadata.deb.systemd-units]

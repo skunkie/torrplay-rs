@@ -158,6 +158,10 @@ jobs:
       # A release at least two weeks old; cargo verifies the crate against the
       # registry's checksum, and --locked builds its own lockfile.
       CARGO_DEB_VERSION: 3.8.0
+      # A release at least two weeks old, with the SHA-256 GitHub publishes for
+      # the archive.
+      PANDOC_VERSION: 3.12.1
+      PANDOC_SHA256: d0c90410e90204c9ca83b8539fac5c7aed01fd537207e4585849f8abc5df20b8
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -192,6 +196,18 @@ jobs:
         run: cargo build --release --locked --no-default-features --features client
       - name: Install cargo-deb
         run: cargo install cargo-deb --version "${CARGO_DEB_VERSION}" --locked
+      - name: Install pandoc
+        run: |
+          archive="pandoc-${PANDOC_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL --retry 3 --retry-all-errors -o "${RUNNER_TEMP}/${archive}" \
+            "https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/${archive}"
+          echo "${PANDOC_SHA256}  ${RUNNER_TEMP}/${archive}" | sha256sum --check --strict
+          tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/pandoc-${PANDOC_VERSION}/bin" >> "$GITHUB_PATH"
+      - name: Render the manual pages
+        run: |
+          test "$(pandoc --version | head -n 1)" = "pandoc ${PANDOC_VERSION}"
+          scripts/build-man-pages.sh target/man
       - name: Build the package
         run: cargo deb --no-build --locked -p torrplay --output target/debian/torrplay-service.deb
       # The runner is disposable, so the test installs the package on it.

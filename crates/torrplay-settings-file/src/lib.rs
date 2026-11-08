@@ -154,6 +154,39 @@ mod tests {
     }
 
     #[test]
+    fn the_manual_page_describes_every_setting_of_the_templates() {
+        let page = include_str!("../../../docs/man/torrplay.env.5.md");
+        for (system, template) in [
+            (
+                "Linux",
+                include_str!("../../../packaging/linux/torrplay.env"),
+            ),
+            (
+                "Windows",
+                include_str!("../../../packaging/windows/torrplay.env"),
+            ),
+        ] {
+            let settings = SettingsFile::parse(&template.replace("#TORRPLAY_", "TORRPLAY_"));
+            let names: Vec<&str> = template
+                .lines()
+                .filter_map(|line| {
+                    line.strip_prefix('#')?
+                        .split_once('=')
+                        .map(|(name, _)| name)
+                })
+                .filter(|name| settings.get(name).is_some())
+                .collect();
+            assert!(!names.is_empty(), "{system}: no settings to check");
+            for name in names {
+                assert!(
+                    page.contains(&format!("**{name}**")),
+                    "torrplay.env(5) does not describe {system}'s {name}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn a_missing_file_is_none_and_an_unreadable_one_an_error() -> io::Result<()> {
         let directory = tempfile::tempdir()?;
         assert_eq!(SettingsFile::read(&directory.path().join(FILE_NAME))?, None);
