@@ -90,6 +90,7 @@ SPDX-License-Identifier = "MIT"
 path = [
     "desktop/tauri.conf.json",
     "desktop/tauri.client.conf.json",
+    "desktop/tauri.bundle.conf.json",
     "desktop/icons/*",
     "desktop/gen/**",
 ]

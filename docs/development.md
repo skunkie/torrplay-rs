@@ -270,6 +270,33 @@ cargo test --locked --no-default-features --features client
 dbus-run-session -- python3 tests/client_smoke.py ../target/debug/torrplay-desktop
 ```
 
+The application's Linux package, `torrplay`, comes from the Tauri bundler, as
+[ADR 13](adr/0013-packaging.md) decides. `desktop/tauri.bundle.conf.json`, which
+only packaging merges in, adds `torrplay` beside the application, since Tauri's
+build would otherwise require that file for every build, its manual page, the
+conflict with `torrplay-service`, GStreamer's plugins, which WebKitGTK plays video
+with, as recommendations, and `packaging/linux/torrplay-desktop.desktop`, whose
+`%U` passes files and magnet links on. The bundler names the package after the
+product, `torr-play`, with no setting for it, so `scripts/build-application-deb.sh`
+renames it. It needs the Tauri CLI 2.12.4 and pandoc, which
+`scripts/install-pandoc.sh` installs as CI does. From the repository root, once
+the web client is built:
+
+```bash
+cargo install tauri-cli --version 2.12.4 --locked
+scripts/build-application-deb.sh target/debian/torrplay.deb
+scripts/test-application-deb.sh --keep target/debian/torrplay.deb
+(cd desktop && dbus-run-session -- python3 tests/smoke.py /usr/bin/torrplay-desktop)
+scripts/test-application-deb.sh target/debian/torrplay.deb
+```
+
+`scripts/test-application-deb.sh` installs the package and checks its name, its
+conflict, its files and versions, and its desktop entry; with `--keep` it leaves
+the package installed, and without it, removes it. It changes the system, so CI
+runs it, and the smoke test on the installed application in between, on a
+disposable Ubuntu 24.04 runner, in the application package job. The AppImage
+follows separately.
+
 ## Running TorrPlay
 
 ```bash
@@ -425,7 +452,9 @@ which the administrator enables. cargo-deb writes the maintainer scripts: they
 create the account, enable and start the unit on install, restart it on upgrade,
 and stop it on removal. `/etc/torrplay/torrplay.env` is a conffile, which a
 removal keeps and a purge deletes; neither deletes `/var/lib/torrplay` or the
-account. A hand installation's unit in `/etc/systemd/system` would override the
+account. The client is built into `desktop/target/client`, where the package
+takes it from, since the application's build writes the same file in
+`desktop/target`. A hand installation's unit in `/etc/systemd/system` would override the
 package's, so the package refuses to install until `scripts/linux-service.sh
 remove` removes it. Build the web client, the service, and the client first, since the
 package takes the client from the desktop workspace, then package and test it:
@@ -433,7 +462,7 @@ package takes the client from the desktop workspace, then package and test it:
 ```bash
 (cd client && pnpm build)
 cargo build --release --locked -p torrplay
-(cd desktop && cargo build --release --locked --no-default-features --features client)
+(cd desktop && cargo build --release --locked --no-default-features --features client --target-dir target/client)
 scripts/build-man-pages.sh target/man
 cargo deb --no-build --locked -p torrplay --output target/debian/torrplay-service.deb
 scripts/test-linux-service.sh --package target/debian/torrplay-service.deb
