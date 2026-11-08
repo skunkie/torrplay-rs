@@ -69,6 +69,18 @@ Option 4: two editions.
   across makes a backup in the application and restores it in the service
   edition, as [backup and restore](../lifecycle.md#backup-and-restore)
   describes.
+- **Updates.** Each edition updates the way its platform installs it:
+  - The application updates itself through Tauri's updater on Windows, on
+    macOS, and as an AppImage on Linux: it checks for a release, asks before
+    installing it, and restarts into it. The updater installs only an update
+    signed with the project's updater key, which stays out of the repository.
+  - As a `.deb`, the application and the service edition update through an apt
+    repository, as other system packages do.
+  - On Windows, the service edition's client offers the new installer, which
+    stops, replaces, and starts the service. The client cannot replace a
+    system service itself without administrator rights.
+  - Nothing updates without being asked, and a build without an updater key
+    has no updater.
 
 ## Consequences
 
@@ -85,6 +97,10 @@ Option 4: two editions.
     installs the unit and the Windows installer registers the service.
   [Release automation](../../AGENTS.md#ci-and-releases) follows once the
   supported platforms and this packaging are documented.
+- Updates need release automation first. It publishes the updater's signed
+  artifacts and the manifest the updater reads, and maintains the apt
+  repository. Code signing on Windows and notarization on macOS come with it,
+  since the systems warn about an update that has neither.
 - A service reachable from the network without a password serves every
   local client, as `torrplay` does. Its installer and first window say so,
   as the server's warning does today.
