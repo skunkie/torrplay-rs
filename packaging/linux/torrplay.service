@@ -1,0 +1,71 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# TorrPlay's service edition: torrplay as a system service that starts at boot,
+# as its own system user. Its settings are in /etc/torrplay/torrplay.env; options
+# without a variable, such as --download-dir, go in a drop-in that replaces
+# ExecStart, made with `systemctl edit torrplay`.
+
+[Unit]
+Description=TorrPlay torrent streaming service
+Documentation=https://github.com/skunkie/torrplay-rs
+Wants=network-online.target
+After=network-online.target
+# No start limit: restarts back off instead, so `systemctl restart`, which the
+# client advises, always starts it at once. The backoff needs systemd 254.
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+# A static account from sysusers.d, not DynamicUser=: the client trusts a
+# listener only when its owner is the torrplay account in /etc/passwd.
+User=torrplay
+Group=torrplay
+EnvironmentFile=-/etc/torrplay/torrplay.env
+StateDirectory=torrplay
+StateDirectoryMode=0750
+ExecStart=/usr/bin/torrplay --data-dir ${STATE_DIRECTORY}
+# SIGTERM begins the shutdown sequence, which ends within 30 seconds; this
+# leaves room for the process to exit before systemd kills it.
+TimeoutStopSec=45
+# After a failure, such as the port being taken, it restarts after 5 seconds,
+# then about twice as long each time, up to every 5 minutes.
+Restart=on-failure
+RestartSec=5
+RestartSteps=6
+RestartMaxDelaySec=300
+# Exit status 2 is a usage error, such as an invalid TORRPLAY_LISTEN, which a
+# restart cannot fix.
+RestartPreventExitStatus=2
+
+# torrplay needs its state directory, the network, and nothing else.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+# AF_NETLINK lists network interfaces for the DLNA media server.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

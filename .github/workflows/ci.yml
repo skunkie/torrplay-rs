@@ -102,6 +102,39 @@ jobs:
           "${RUNNER_TEMP}/actionlint" -color
           shellcheck scripts/*.sh
 
+  service:
+    name: Linux service files
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify the unit and the sysusers.d entry
+        shell: bash
+        run: scripts/check-linux-service.sh
+
+  service-live:
+    name: Linux service
+    needs: browser
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: torrplay-linux
+          path: ${{ runner.temp }}/build
+      # The runner is disposable, so the test installs the service on it.
+      - name: Install and test the service
+        shell: bash
+        run: |
+          systemctl --version | head -n 1
+          chmod +x "${RUNNER_TEMP}/build/torrplay"
+          scripts/test-linux-service.sh "${RUNNER_TEMP}/build/torrplay"
+
   contract:
     name: API contract lint
     runs-on: ubuntu-26.04
@@ -377,6 +410,14 @@ jobs:
           google-chrome --version
           aria2c --version | head -n 1
           pnpm test:browser
+      # The service test runs this build as the system service.
+      - name: Keep the application for the Linux service test
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: torrplay-linux
+          path: target/release/torrplay
+          retention-days: 1
+          if-no-files-found: error
       - name: Keep the traces and logs of a failed run
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
