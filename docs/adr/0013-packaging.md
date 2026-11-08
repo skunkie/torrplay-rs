@@ -241,7 +241,9 @@ manifest chooses between two.
 - Packaging needs pandoc and cargo-deb in CI, pinned and checked as other
   downloaded tools are; Ubuntu 24.04 runners for x86_64 and Arm, the
   `windows-latest` and `windows-11-arm` runners, and a macOS runner with
-  both Rust targets for the universal build.
+  both Rust targets for the universal build and Xcode 26 or later, whose
+  `actool` compiles the application's light and dark icon; with an older
+  Xcode the bundler leaves that icon out and logs only an error.
 - The client's identifier, `org.torrplay.client`, moves its data and log
   from `org.torrplay.desktop`, so the development guide's log paths and the
   client smoke test's `IDENTIFIER` change with the configuration overlay.

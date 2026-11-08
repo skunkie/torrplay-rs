@@ -483,6 +483,36 @@ jobs:
       - name: Run the client's smoke test
         run: dbus-run-session -- python3 tests/client_smoke.py target/release/torrplay-desktop
 
+  macos-icon:
+    name: macOS application icon
+    needs: stage
+    if: needs.stage.outputs.rust == 'true'
+    # Xcode 26's actool compiles the Icon Composer icon; earlier ones cannot.
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      # A release at least two weeks old; cargo verifies the crate against the
+      # registry's checksum. The CLI matches the tauri crate's minor version.
+      TAURI_CLI_VERSION: 2.12.4
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          build-warnings: warn
+          cache-workspaces: desktop
+      - name: Install the Tauri CLI
+        run: cargo install tauri-cli --version "${TAURI_CLI_VERSION}" --locked
+      # A debug build bundles the same icons without the web client, which it
+      # reads at run time, and without torrplay beside it, which only the
+      # packaging overlay adds.
+      - name: Bundle the application
+        working-directory: desktop
+        run: cargo tauri build --debug --bundles app --config '{"bundle":{"active":true}}' -- --locked
+      - name: Check its icons
+        run: scripts/check-macos-icon.sh desktop/target/debug/bundle/macos/TorrPlay.app
+
   desktop-platforms:
     name: Desktop application (${{ matrix.os }})
     needs: stage

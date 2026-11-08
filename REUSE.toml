@@ -85,13 +85,15 @@ SPDX-License-Identifier = "MIT"
 
 # Tauri reads the desktop app's configuration as JSON, which has no comments, and
 # generates the schemas under gen, which Git ignores. Its icon is
-# client/public/favicon.svg rendered as an image, which has no place for a header.
+# client/public/favicon.svg rendered as an image, which has no place for a header,
+# and scripts/render-logo.py draws its macOS icons, among them Icon Composer's
+# JSON and SVG layers, which carry none either.
 [[annotations]]
 path = [
     "desktop/tauri.conf.json",
     "desktop/tauri.client.conf.json",
     "desktop/tauri.bundle.conf.json",
-    "desktop/icons/*",
+    "desktop/icons/**",
     "desktop/gen/**",
 ]
 SPDX-FileCopyrightText = "2026 TorrPlay"

@@ -84,9 +84,18 @@ light palette: `brand/logo-dark.svg`, `brand/logo-light.svg`, the adaptive
 `brand/logo.svg` that follows the viewer's color scheme, and the DLNA media
 server's PNG and JPEG icons in `crates/torrplay-server/assets/dlna/`, and
 the adaptive logo again as the web client's `client/public/favicon.svg`.
-Never edit those files by hand. After changing the script, run it from the
-repository root with Pillow 11.3.0 and commit what it writes; it writes the
-same bytes on every run.
+For macOS it draws `desktop/icons/icon.icns`, the light tile inside the
+margin and shadow of Apple's icon grid, which the Dock shows at the size of
+other applications' icons, and `desktop/icons/icon.icon`, an Icon Composer
+icon whose pieces follow the system's light or dark appearance on macOS 26
+and later. The Tauri bundler compiles that one into the `.app`'s `Assets.car`
+with Xcode 26's `actool`, keeping the `.icns` for earlier macOS, and skips
+it, with an error in its log, where Xcode is older; a build run outside a
+bundle shows the `.icns`. CI's macOS application icon job bundles the
+application and runs `scripts/check-macos-icon.sh` on it. Never edit those
+files by hand. After changing the script, run it from the repository root
+with Pillow 11.3.0 and commit what it writes; it writes the same bytes on
+every run.
 
 A virtual environment under the ignored `target/` keeps Pillow out of the
 system Python:
