@@ -297,6 +297,29 @@ runs it, and the smoke test on the installed application in between, on a
 disposable Ubuntu 24.04 runner, in the application package job. The AppImage
 follows separately.
 
+On Windows, the same overlay makes the application's NSIS installer, which
+installs for the current user, without administrator rights, in
+`%LOCALAPPDATA%\TorrPlay`, with `torrplay.exe` beside `torrplay-desktop.exe`.
+Its hooks, `packaging/windows/application.nsh`, refuse while the service
+edition is installed for the computer, which they find by the upgrade code in
+`desktop/tauri.client.conf.json` that its MSI registers; the hooks hold that
+code in Windows Installer's packed form, so a change to one is a change to
+both. The bundler downloads NSIS itself. From the repository root in
+PowerShell 7, once the web client is built:
+
+```powershell
+cargo install tauri-cli --version 2.12.4 --locked
+scripts\build-application-nsis.ps1 target\nsis\torrplay-setup.exe
+scripts\test-application-nsis.ps1 target\nsis\torrplay-setup.exe
+```
+
+`scripts\test-application-nsis.ps1` stands in for the service edition in the
+machine's registry and checks that the installer refuses, then installs the
+application, checks its files, versions, and shortcuts, starts it and waits for
+its API, and uninstalls it. It changes the system and needs an elevated
+PowerShell, so CI runs it on disposable `windows-latest` and `windows-11-arm`
+runners, in the application installer jobs.
+
 ## Running TorrPlay
 
 ```bash

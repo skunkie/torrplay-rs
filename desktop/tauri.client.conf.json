@@ -1,5 +1,12 @@
 {
   "productName": "TorrPlay Client",
   "mainBinaryName": "torrplay-client",
-  "identifier": "org.torrplay.client"
+  "identifier": "org.torrplay.client",
+  "bundle": {
+    "windows": {
+      "wix": {
+        "upgradeCode": "CFA3B924-2FCD-47C9-8433-34110CC08F9B"
+      }
+    }
+  }
 }
