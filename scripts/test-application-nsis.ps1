@@ -102,7 +102,10 @@ try {
     # counts only where the runtime is already installed.
     $webView = 'Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
     $runtime = @("HKLM:\SOFTWARE\WOW6432Node\$webView", "HKLM:\SOFTWARE\$webView", "HKCU:\SOFTWARE\$webView") |
-        Where-Object { (Get-ItemProperty -Path $_ -Name pv -ErrorAction SilentlyContinue).pv }
+        Where-Object {
+            # Strict mode makes a missing key or value an error, not $null.
+            try { [bool](Get-ItemPropertyValue -Path $_ -Name pv) } catch { $false }
+        }
     if (-not $runtime) { Fail 'the WebView2 runtime is not installed, so a refusal would not show the hook ran' }
     try {
         # A packed product code, as Windows Installer records under it.
