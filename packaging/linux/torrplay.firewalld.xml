@@ -9,9 +9,8 @@ SPDX-License-Identifier: MIT
      manual page shows; an XML comment cannot hold the option itself. -->
 <service>
   <short>TorrPlay</short>
-  <description>The TorrPlay service's API and web client, its BitTorrent peer port, for TCP and for UDP, which the DHT uses too, and SSDP, which its DLNA media server answers on, at their default ports.</description>
+  <description>The TorrPlay service's API and web client, its BitTorrent peer port, which takes TCP alone, and SSDP, which its DLNA media server answers on, at their default ports. The DHT has a UDP port of its own, which its replies need no rule for.</description>
   <port protocol="tcp" port="8642"/>
   <port protocol="tcp" port="4240"/>
-  <port protocol="udp" port="4240"/>
   <port protocol="udp" port="1900"/>
 </service>

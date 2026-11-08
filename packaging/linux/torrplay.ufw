@@ -4,9 +4,10 @@
 
 # Installed as /etc/ufw/applications.d/torrplay and enabled by the
 # administrator with `ufw allow torrplay`: the API and web client, the
-# BitTorrent peer port for TCP and UDP, and SSDP, at their default ports.
+# BitTorrent peer port, which takes TCP alone, and SSDP, at their default
+# ports. The DHT has a UDP port of its own, which its replies need no rule for.
 
 [torrplay]
 title=TorrPlay
 description=The TorrPlay service's API, BitTorrent peer port, and SSDP
-ports=8642/tcp|4240|1900/udp
+ports=8642/tcp|4240/tcp|1900/udp
