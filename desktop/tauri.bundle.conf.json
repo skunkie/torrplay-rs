@@ -3,7 +3,8 @@
     "active": true,
     "targets": [
       "deb",
-      "nsis"
+      "nsis",
+      "appimage"
     ],
     "externalBin": [
       "binaries/torrplay"
@@ -26,6 +27,9 @@
         "files": {
           "/usr/share/man/man1/torrplay.1.gz": "../target/man/torrplay.1.gz"
         }
+      },
+      "appimage": {
+        "bundleMediaFramework": true
       }
     },
     "windows": {

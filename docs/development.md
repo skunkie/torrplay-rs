@@ -279,32 +279,62 @@ cargo test --locked --no-default-features --features client
 dbus-run-session -- python3 tests/client_smoke.py ../target/debug/torrplay-desktop
 ```
 
-The application's Linux package, `torrplay`, comes from the Tauri bundler, as
-[ADR 13](adr/0013-packaging.md) decides. `desktop/tauri.bundle.conf.json`, which
-only packaging merges in, adds `torrplay` beside the application, since Tauri's
-build would otherwise require that file for every build, its manual page, the
-conflict with `torrplay-service`, GStreamer's plugins, which WebKitGTK plays video
-with, as recommendations, and `packaging/linux/torrplay-desktop.desktop`, whose
-`%U` passes files and magnet links on. The bundler names the package after the
-product, `torr-play`, with no setting for it, so `scripts/build-application-deb.sh`
-renames it. It needs the Tauri CLI 2.12.4 and pandoc, which
-`scripts/install-pandoc.sh` installs as CI does. From the repository root, once
-the web client is built:
+The application's Linux packages, the `.deb` `torrplay` and an AppImage, come
+from one run of the Tauri bundler, as [ADR 13](adr/0013-packaging.md) decides.
+`desktop/tauri.bundle.conf.json`, which only packaging merges in, adds `torrplay`
+beside the application, since Tauri's build would otherwise require that file for
+every build, `packaging/linux/torrplay-desktop.desktop`, whose `%U` passes files
+and magnet links on, and, for the `.deb`, its manual page, the conflict with
+`torrplay-service`, and GStreamer's plugins, which WebKitGTK plays video with, as
+recommendations. The AppImage brings the GStreamer plugins installed where it is
+built instead, so the build needs those three sets, but for the ones
+`packaging/linux/appimage-gstreamer-excluded` names: plugins no format TorrPlay
+serves plays through, which with the libraries only they use would add a third
+to what GStreamer brings. With the rest and WebKitGTK the AppImage is about
+195 MB, where the `.deb` is about 23 MB. That file lists no decoder, demuxer,
+or parser, so a plugin wrongly on it costs only size, never playback. The bundler names the `.deb`
+after the product, `torr-play`, with no setting for it, so
+`scripts/build-application-linux.sh` renames it.
+
+The bundler downloads the AppImage's tools, AppRun, linuxdeploy, and its AppImage
+plugin, without checking them, the plugin from a release that changes, and the
+plugin's `appimagetool` downloads the AppImage runtime the same way. So the
+script gives the bundler a fresh cache with copies of pinned releases, and the
+runtime through `LDAI_RUNTIME_FILE`, each checked against the SHA-256 GitHub
+publishes, except the plugin's tagged release, which has none: its SHA-256 was
+recorded when it was pinned. Pinning a newer one means recording its digest the
+same way, from a download checked against the release's asset size. After the
+build, the script checks that the AppImage starts with the pinned runtime.
+
+The build needs the Tauri CLI 2.12.4, pandoc, which `scripts/install-pandoc.sh`
+installs as CI does, and patchelf; the AppImage's test also needs PyGObject
+with GStreamer's introspection data. From the repository root, once the web
+client is built:
 
 ```bash
 cargo install tauri-cli --version 2.12.4 --locked
-scripts/build-application-deb.sh target/debian/torrplay.deb
+scripts/build-application-linux.sh target/debian/torrplay.deb target/appimage/torrplay.AppImage
 scripts/test-application-deb.sh --keep target/debian/torrplay.deb
 (cd desktop && dbus-run-session -- python3 tests/smoke.py /usr/bin/torrplay-desktop)
 scripts/test-application-deb.sh target/debian/torrplay.deb
+scripts/test-application-appimage.sh target/appimage/torrplay.AppImage target/appimage/unpacked
+(cd desktop && dbus-run-session -- python3 tests/smoke.py ../target/appimage/unpacked/run)
 ```
 
 `scripts/test-application-deb.sh` installs the package and checks its name, its
 conflict, its files and versions, and its desktop entry; with `--keep` it leaves
 the package installed, and without it, removes it. It changes the system, so CI
 runs it, and the smoke test on the installed application in between, on a
-disposable Ubuntu 24.04 runner, in the application package job. The AppImage
-follows separately.
+disposable Ubuntu 24.04 runner, in the application packages job.
+`scripts/test-application-appimage.sh` checks that the AppImage's runtime starts
+this version, unpacks it, and checks its files, versions, and desktop entry,
+that it leaves out the excluded plugins, and that its own GStreamer, with its
+own libraries, loads the demuxers and decoders each container TorrPlay serves
+needs, but WMV's, which is in GStreamer's ugly set, which neither package brings
+nor recommends. It writes `run` beside the unpacked AppImage, which starts it as
+the AppImage's runtime would, setting `APPDIR`, and the smoke test runs that,
+since runners have no FUSE. Nothing plays media yet, so a plugin that loads but
+cannot play its format would pass.
 
 On Windows, the same overlay makes the application's NSIS installer, which
 installs for the current user, without administrator rights, in

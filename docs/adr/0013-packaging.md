@@ -89,7 +89,11 @@ manifest chooses between two.
 - On Linux, a `.deb` named `torrplay`, which apt updates, and an AppImage,
   which the updater does. One build makes both, so on Linux the application
   asks the updater only when it runs as an AppImage, which sets `APPIMAGE`;
-  a `.deb` install never offers an update it cannot apply.
+  a `.deb` install never offers an update it cannot apply. The `.deb`
+  recommends GStreamer's plugins, which WebKitGTK plays media with, and the
+  AppImage brings them, since a host's plugins need not match the GStreamer
+  libraries bundled with it, leaving out large ones that play nothing
+  TorrPlay serves, such as machine learning, editing, and WebRTC.
 - On macOS, a `.dmg` holding `TorrPlay.app`, and the `.app.tar.gz` the
   updater reads.
 - It ships `torrplay` beside `torrplay-desktop`: the window runs its own
@@ -239,8 +243,11 @@ manifest chooses between two.
 ## Consequences
 
 - Packaging needs pandoc and cargo-deb in CI, pinned and checked as other
-  downloaded tools are; Ubuntu 24.04 runners for x86_64 and Arm, the
-  `windows-latest` and `windows-11-arm` runners, and a macOS runner with
+  downloaded tools are, and the AppImage's tools, which the build pins and
+  checks before the bundler would download them unchecked, one of them, the
+  linuxdeploy AppImage plugin, by a SHA-256 recorded when it was pinned,
+  since its releases publish none; Ubuntu 24.04 runners for x86_64 and Arm,
+  the `windows-latest` and `windows-11-arm` runners, and a macOS runner with
   both Rust targets for the universal build and Xcode 26 or later, whose
   `actool` compiles the application's light and dark icon; with an older
   Xcode the bundler leaves that icon out and logs only an error.
