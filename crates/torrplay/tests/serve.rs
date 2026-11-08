@@ -7,11 +7,14 @@
 //! public swarm.
 
 mod common;
+// Only the Unix signal test starts the executable, so elsewhere these go unused.
+#[cfg(unix)]
 mod ports;
 
 use std::time::{Duration, Instant};
 
 use common::{MIB, Running, alive_tasks, bounded, eventually, magnet, upload, upload_form};
+#[cfg(unix)]
 use ports::free_ports;
 use reqwest::{Client, StatusCode, Version};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
