@@ -60,19 +60,13 @@ function mediaSourceClass(): MediaSourceClass | undefined {
   return scope.MediaSource ?? scope.ManagedMediaSource;
 }
 
-/** Whether a file of `mediaType` plays through the remux: a Matroska file the
- * browser says it cannot play, where it has a media source. */
+/** Whether a file of `mediaType` needs the remux: a Matroska file the browser
+ * says it cannot play. */
 export function needsRemux(
   mediaType: string | undefined,
   canPlay: (type: string) => string,
-  hasMediaSource: boolean,
 ): boolean {
-  return (
-    hasMediaSource &&
-    mediaType !== undefined &&
-    MATROSKA_TYPES.includes(mediaType) &&
-    canPlay(mediaType) === ""
-  );
+  return mediaType !== undefined && MATROSKA_TYPES.includes(mediaType) && canPlay(mediaType) === "";
 }
 
 /** Plays the file at `url`, of `mediaType`, on `feed`: as it is where the
@@ -84,7 +78,7 @@ export function playSource(
   startAt: number,
   Source = mediaSourceClass(),
 ): PlaybackSource {
-  if (!Source || !needsRemux(mediaType, (type) => feed.canPlay(type), true)) {
+  if (!Source || !needsRemux(mediaType, (type) => feed.canPlay(type))) {
     feed.play(url);
     return { nativeAudio: Promise.resolve(true), probe: probeAudio, detach: () => {} };
   }
@@ -99,6 +93,30 @@ export interface Copy {
   start: number;
   /** The latest packet time copied. */
   reached: number;
+}
+
+/** A copy just asked to start at `position`, before its key packet is found. */
+export function copyFrom(position: number): Copy {
+  return { requested: position, start: position, reached: position };
+}
+
+/** `feed` as the remux sees it before playback starts at `startAt`: until the
+ * element first seeks, its position is 0 whatever the page asks for, so until
+ * then playback counts as at `startAt`. Releasing it stops watching for the seek. */
+export function anchored(feed: MediaFeed, startAt: number): MediaFeed {
+  let seeked = startAt <= 0;
+  const stop = feed.onSeeking(() => {
+    seeked = true;
+    stop();
+  });
+  return {
+    ...feed,
+    position: () => (seeked ? feed.position() : startAt),
+    release() {
+      stop();
+      feed.release();
+    },
+  };
 }
 
 /** Where a seek to `position` starts a copy, or `undefined` when what is
@@ -182,9 +200,6 @@ class Remux implements PlaybackSource {
   #run: Run | undefined;
   /** Where a seek before the tracks were known asked to start. */
   #pending: number | undefined;
-  /** Where playback starts, until the element first seeks: before then its
-   * position is 0 whatever the page asks for. */
-  #startAt: number | undefined;
   /** Settles with the file's input once open, or `undefined` without one. */
   #inputReady: Promise<Input | undefined>;
   #inputKnown: (input: Input | undefined) => void = () => {};
@@ -193,9 +208,9 @@ class Remux implements PlaybackSource {
   #fellBack = false;
 
   constructor(feed: MediaFeed, url: string, startAt: number, Source: MediaSourceClass) {
-    this.#feed = feed;
+    // First, so it knows of a seek before the remux does.
+    this.#feed = anchored(feed, startAt);
     this.#url = url;
-    this.#startAt = startAt > 0 ? startAt : undefined;
     this.#inputReady = new Promise((resolve) => (this.#inputKnown = resolve));
     // The audio tracks read through the remux's input, sharing its cache and reads.
     this.probe = async (given, signal) => {
@@ -206,8 +221,8 @@ class Remux implements PlaybackSource {
     // A managed media source plays only where remote playback is off.
     if (Source !== (globalThis as { MediaSource?: MediaSourceClass }).MediaSource) feed.keepLocal();
     this.#objectUrl = URL.createObjectURL(this.#source);
-    this.#stopSeeking = feed.onSeeking(() => this.#seeked());
-    feed.play(this.#objectUrl);
+    this.#stopSeeking = this.#feed.onSeeking(() => this.#follow());
+    this.#feed.play(this.#objectUrl);
     this.nativeAudio = this.#open(Source).then(
       (tracks) => {
         this.#tracks = tracks;
@@ -268,6 +283,9 @@ class Remux implements PlaybackSource {
     if (!Source.isTypeSupported(type)) throw new Error("The media source cannot play the video.");
     if (this.#closed) throw new Error("The file was left.");
     this.#buffer = this.#source.addSourceBuffer(type);
+    // A managed media source removes buffered media itself when memory runs
+    // short, which can leave a gap ahead of playback with no seek to refill it.
+    this.#buffer.addEventListener("bufferedchange", () => this.#follow());
     const duration =
       (await input.getDurationFromMetadata([video])) ?? (await input.computeDuration([video]));
     if (Number.isFinite(duration) && duration > 0 && this.#source.readyState === "open") {
@@ -276,9 +294,11 @@ class Remux implements PlaybackSource {
     return { video, videoCodec: video.codec, audio };
   }
 
-  #seeked(): void {
-    this.#startAt = undefined;
-    const position = this.#position();
+  /** Starts a copy where playback needs one, after a seek or a change to what
+   * is buffered. */
+  #follow(): void {
+    if (this.#closed || this.#fellBack) return;
+    const position = this.#feed.position();
     if (!this.#tracks) {
       this.#pending = position;
       return;
@@ -289,20 +309,13 @@ class Remux implements PlaybackSource {
     if (from !== undefined) this.#start(from);
   }
 
-  /** Where playback is, or is about to start. */
-  #position(): number {
-    return this.#startAt ?? this.#feed.position();
-  }
-
   /** Copies the file from `position`, once the copy before it has stopped. */
   #start(position: number): void {
     const previous = this.#run;
     previous?.stop.abort();
     const stop = new AbortController();
     const run: Run = {
-      requested: position,
-      start: position,
-      reached: position,
+      ...copyFrom(position),
       finished: false,
       stop,
       done: Promise.resolve(),
@@ -419,7 +432,7 @@ class Remux implements PlaybackSource {
   /** Appends `segment` once playback leaves room for it. */
   async #append(segment: Uint8Array, signal: AbortSignal): Promise<void> {
     for (;;) {
-      while (bufferedAhead(this.#feed.buffered(), this.#position()) > AHEAD_SECONDS) {
+      while (bufferedAhead(this.#feed.buffered(), this.#feed.position()) > AHEAD_SECONDS) {
         await this.#feed.waitForTimeChange(signal);
       }
       await this.#remove(BEHIND_SECONDS);
@@ -439,7 +452,7 @@ class Remux implements PlaybackSource {
   }
 
   async #remove(behind: number): Promise<void> {
-    for (const span of spansToRemove(this.#feed.buffered(), this.#position(), behind)) {
+    for (const span of spansToRemove(this.#feed.buffered(), this.#feed.position(), behind)) {
       await this.#update((buffer) => buffer.remove(span.start, span.end));
     }
   }

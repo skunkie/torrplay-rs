@@ -7,8 +7,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { MediaFeed } from "./media";
 import {
   AHEAD_SECONDS,
+  anchored,
   BEHIND_SECONDS,
   bufferedAhead,
+  copyFrom,
   copyStartFor,
   needsRemux,
   playSource,
@@ -28,11 +30,13 @@ it.each([
   { case: "MP4 in Safari", type: "video/mp4", canPlay: safari, expected: false },
   { case: "an unknown type", type: undefined, canPlay: safari, expected: false },
 ])("remuxes $case: $expected", ({ type, canPlay, expected }) => {
-  expect(needsRemux(type, canPlay, true)).toBe(expected);
+  expect(needsRemux(type, canPlay)).toBe(expected);
 });
 
 it("plays Matroska as it is without a media source to remux it into", () => {
-  expect(needsRemux("video/x-matroska", safari, false)).toBe(false);
+  const given = feed(safari);
+  playSource(given, "/content", "video/x-matroska", 0, undefined);
+  expect(given.play).toHaveBeenCalledWith("/content");
 });
 
 it.each([
@@ -138,8 +142,28 @@ it("needs no copy in a span that reaches the end of the file", () => {
 });
 
 it("counts an earlier seek as not on its way while the copy looks for its key packet", () => {
-  // Until the key packet is found, the copy starts where it was asked to.
-  const copy = { requested: 1800, start: 1800, reached: 1800 };
+  const copy = copyFrom(1800);
   expect(copyStartFor([], 60, copy, DURATION * 10)).toBe(60);
   expect(copyStartFor([], 1805, copy, DURATION * 10)).toBeUndefined();
+});
+
+it("counts playback as where it starts until the element first seeks", () => {
+  let seeking: (() => void) | undefined;
+  const given = { ...feed(safari), position: () => 0 };
+  given.onSeeking = (listener) => {
+    seeking = listener;
+    return () => (seeking = undefined);
+  };
+  const seen = anchored(given, 1800);
+  expect(seen.position()).toBe(1800);
+  // Removal there keeps what was copied for the resume, which at 0 lay far ahead.
+  expect(spansToRemove([{ start: 1798, end: 1810 }], seen.position(), BEHIND_SECONDS)).toEqual([]);
+  seeking?.();
+  expect(seen.position()).toBe(0);
+  expect(seeking).toBeUndefined();
+});
+
+it("takes playback where the element is for a file that starts at the beginning", () => {
+  const seen = anchored({ ...feed(safari), position: () => 12 }, 0);
+  expect(seen.position()).toBe(12);
 });
