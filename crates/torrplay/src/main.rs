@@ -25,7 +25,18 @@ fn main() -> ExitCode {
     // manager rather than on standard error.
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if arguments.first().map(String::as_str) == Some("service") {
-        return service::main(arguments);
+        // Help and the version print as for any command, run by anyone.
+        match torrplay::parse_args(arguments.iter().cloned(), None) {
+            Ok(Command::Help) => {
+                print!("{USAGE}");
+                return ExitCode::SUCCESS;
+            }
+            Ok(Command::Version) => {
+                println!("torrplay {}", env!("CARGO_PKG_VERSION"));
+                return ExitCode::SUCCESS;
+            }
+            _ => return service::main(arguments),
+        }
     }
     let listen_variable = std::env::var_os(torrplay::LISTEN_VARIABLE)
         .map(|value| value.to_string_lossy().into_owned());

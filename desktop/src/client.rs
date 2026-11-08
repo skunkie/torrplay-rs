@@ -9,7 +9,7 @@
 use std::fs::File;
 use std::io::Write;
 use std::net::{SocketAddr, TcpStream};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -27,6 +27,9 @@ use crate::window::{self, Notice, Pages};
 /// where to find it. The service's default is every interface on port 8642.
 const LISTEN_VARIABLE: &str = "TORRPLAY_LISTEN";
 const LISTEN_DEFAULT: &str = "[::]:8642";
+/// The variable that names another settings file than the service's, so tests can
+/// give the client one of their own on a computer with the service installed.
+const SETTINGS_FILE_VARIABLE: &str = "TORRPLAY_SETTINGS_FILE";
 /// The most the client writes to its log in a run, which starts it afresh.
 const LOG_MAX_BYTES: u64 = 1 << 20;
 /// How long the service may take to accept a connection before it counts as not
@@ -39,8 +42,10 @@ Usage: torrplay-desktop [TORRENT_FILE | MAGNET_URI]...
 Opens the page of the TorrPlay service on this computer, at the port of the
 listen address its settings file gives in TORRPLAY_LISTEN [default: [::]:8642]:
 /etc/torrplay/torrplay.env, or %ProgramData%\\TorrPlay\\torrplay.env on Windows.
-TORRPLAY_LISTEN in the client's own environment takes its place. A torrent file
-or magnet URI opens on the add page, in the running client if there is one.
+Where the file gives none, TORRPLAY_LISTEN in the client's own environment does,
+as it does for the service on Windows. TORRPLAY_SETTINGS_FILE names another
+settings file. A torrent file or magnet URI opens on the add page, in the
+running client if there is one.
 
 Options:
   -h, --help     Print help
@@ -65,17 +70,16 @@ fn parse(arguments: impl IntoIterator<Item = String>, directory: &Path) -> Resul
     }
 }
 
-/// The service's listen address, with where it came from for messages: `own`, the
-/// client's own `TORRPLAY_LISTEN`, or else the one in the settings file at `settings`,
-/// or else the default. A settings file that is there but cannot be read is an error,
-/// since its address would otherwise give way to the default unseen.
+/// The service's listen address, with where it came from for messages: the one in the
+/// settings file at `settings`, or else `own`, the client's own `TORRPLAY_LISTEN`, or
+/// else the default. That is the service's order on Windows, where both inherit the
+/// system's environment, so a system-wide variable cannot part them. A settings file
+/// that is there but cannot be read is an error, since its address would otherwise
+/// give way to another unseen.
 fn service_listen(
     own: Option<String>,
     settings: Option<&Path>,
 ) -> anyhow::Result<(String, String)> {
-    if let Some(own) = own {
-        return Ok((own, "the client's own environment".to_owned()));
-    }
     if let Some(path) = settings {
         let file = SettingsFile::read(path).with_context(|| {
             format!(
@@ -86,6 +90,9 @@ fn service_listen(
         if let Some(listen) = file.as_ref().and_then(|file| file.get(LISTEN_VARIABLE)) {
             return Ok((listen.to_owned(), path.display().to_string()));
         }
+    }
+    if let Some(own) = own {
+        return Ok((own, "the client's own environment".to_owned()));
     }
     Ok((LISTEN_DEFAULT.to_owned(), "the default".to_owned()))
 }
@@ -176,13 +183,14 @@ fn fail(app: &AppHandle, notice: Notice, message: &str) {
 /// Opens the service's page, or says why it cannot.
 fn open(app: &AppHandle) {
     let own = std::env::var(LISTEN_VARIABLE).ok();
-    let found = service_listen(own, torrplay_settings_file::location().as_deref()).and_then(
-        |(listen, source)| {
-            let (url, address) =
-                service_url(&listen).with_context(|| format!("{LISTEN_VARIABLE} from {source}"))?;
-            Ok((url, address, source))
-        },
-    );
+    let settings = std::env::var_os(SETTINGS_FILE_VARIABLE)
+        .map(PathBuf::from)
+        .or_else(torrplay_settings_file::location);
+    let found = service_listen(own, settings.as_deref()).and_then(|(listen, source)| {
+        let (url, address) =
+            service_url(&listen).with_context(|| format!("{LISTEN_VARIABLE} from {source}"))?;
+        Ok((url, address, source))
+    });
     let (url, address, source) = match found {
         Ok(found) => found,
         Err(error) => return fail(app, Notice::ClientCouldNotStart, &format!("{error:#}")),
@@ -370,19 +378,23 @@ mod tests {
     }
 
     #[test]
-    fn the_listen_address_comes_from_the_client_then_the_settings_then_the_default()
+    fn the_listen_address_comes_from_the_settings_then_the_client_then_the_default()
     -> anyhow::Result<()> {
         let directory = tempfile::tempdir()?;
         let settings = directory.path().join("torrplay.env");
         std::fs::write(&settings, "TORRPLAY_LISTEN=[::]:9000\n")?;
         let own = || Some("127.0.0.1:9100".to_owned());
-        assert_eq!(service_listen(own(), Some(&settings))?.0, "127.0.0.1:9100");
-        let (listen, source) = service_listen(None, Some(&settings))?;
-        assert_eq!(listen, "[::]:9000");
+        let (listen, source) = service_listen(own(), Some(&settings))?;
+        assert_eq!(
+            listen, "[::]:9000",
+            "the settings file before the environment"
+        );
         assert_eq!(source, settings.display().to_string(), "named in messages");
         std::fs::write(&settings, "# Nothing set\n")?;
+        assert_eq!(service_listen(own(), Some(&settings))?.0, "127.0.0.1:9100");
         assert_eq!(service_listen(None, Some(&settings))?.0, LISTEN_DEFAULT);
         let missing = directory.path().join("missing.env");
+        assert_eq!(service_listen(own(), Some(&missing))?.0, "127.0.0.1:9100");
         assert_eq!(service_listen(None, Some(&missing))?.0, LISTEN_DEFAULT);
         assert_eq!(service_listen(None, None)?.0, LISTEN_DEFAULT);
         Ok(())

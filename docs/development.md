@@ -41,7 +41,7 @@ GitHub Actions runs on pull requests, pushes to `main`, manual dispatch, and
 reusable workflow calls. Licensing and workflow validation run immediately,
 as does `scripts/check-linux-service.sh`; `scripts/test-linux-service.sh`
 runs once the browser smoke test has built the application, and
-`scripts/test-windows-service.ps1` after the Windows build and tests.
+`scripts/test-windows-service.ps1` in the Windows service job.
 The repository-stage job enables Rust jobs once a root `Cargo.toml` exists.
 It rejects a manifest without `Cargo.lock` and `rust-toolchain.toml`, and
 rejects committed Rust sources or nested manifests without a root manifest.
@@ -243,7 +243,11 @@ With its `client` feature in place of the default `engine`, the same crate build
 service edition's client of [ADR 12](adr/0012-editions.md): the window with no server,
 opening the page of the TorrPlay service on this computer, at the listen address in
 the service's settings file, `/etc/torrplay/torrplay.env`, by default port 8642;
-`TORRPLAY_LISTEN` in its own environment takes its place. It takes only torrent files
+where the file gives none, `TORRPLAY_LISTEN` in its own environment does, as the
+Windows service's does, so a system-wide variable cannot send the two to different
+ports. `TORRPLAY_SETTINGS_FILE` names another settings file, as the smoke test's
+does, so a service installed on the computer does not take its place. It takes
+only torrent files
 and magnet URIs, says how to start the service when nothing answers, and opens the
 page only when the service's own account, or on Linux the user running it, listens
 there. Each run starts its log afresh:
@@ -454,17 +458,23 @@ the service is restarted, so installing again keeps its settings and runs
 the new build. The service manager restarts the service after a crash,
 after 5 seconds, then 30, then 5 minutes, but not after a failure the
 service reports, which a restart would repeat, and the system waits up to
-45 seconds for it at shutdown. `scripts\windows-service.ps1 remove` stops and
-deletes the service and the build, keeping `%ProgramData%\TorrPlay` with the
-settings and the data.
+45 seconds for it at shutdown, a preshutdown timeout the script sets with the
+service manager's `ChangeServiceConfig2`, through
+`scripts/windows-service-config.ps1`, which the test also reads it back with.
+`scripts\windows-service.ps1
+remove` stops and deletes the service and the build, keeping
+`%ProgramData%\TorrPlay` with the settings and the data. The settings file is
+in that data directory, so removal keeps it on Windows, while on Linux it is
+in `/etc/torrplay`, which removal deletes with the service.
 
-`scripts/test-windows-service.ps1 target\debug\torrplay.exe` installs a build
+`scripts/test-windows-service.ps1 target\release\torrplay.exe` installs a build
 with that script and tests the service as the service manager runs it: its
 virtual account, the listener's process, the data directory's permissions,
 a second install keeping the settings and restarting, a restart after a
 crash, a clean stop, a usage error and a taken port that stop it without a
-restart, and removal. It changes the system, so CI runs it on the disposable
-Windows runner of the Rust build and tests.
+restart, and removal. It changes the system, so CI runs it on a disposable
+Windows runner, in the Windows service job, with an optimized build without
+the embedded web client, which the test does not open.
 
 ## Benchmarks
 

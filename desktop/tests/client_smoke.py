@@ -87,9 +87,12 @@ class ClientEnvironment(smoke.Environment):
         self.binary = os.path.join(self.root, "bin", "torrplay-desktop")
         os.symlink(smoke.BINARY, self.binary)
         self.marker = self.binary
+        # A settings file of its own, absent unless a test writes it, so a
+        # service installed on this computer is not the one the client finds.
+        self.settings = os.path.join(self.root, "torrplay.env")
+        self.variables["TORRPLAY_SETTINGS_FILE"] = self.settings
         self.variables["TORRPLAY_LISTEN"] = f"127.0.0.1:{smoke.PORT}"
         self.arguments = []
-
 
 
 class ClientDriver(smoke.Driver):
@@ -187,6 +190,20 @@ class ClientLifecycleTests(unittest.TestCase):
             wait_until(lambda: service.pages, smoke.READY_SECONDS, "the page")
             self.assertEqual(self.close_until_ended(process), 0)
             self.assertEqual(service.other_requests, [])
+        finally:
+            service.stop()
+
+    def test_finds_the_service_at_the_settings_files_address_first(self):
+        # The client's own variable names a port nothing listens on; the
+        # settings file, which comes first, names the service's.
+        self.environment.variables["TORRPLAY_LISTEN"] = f"127.0.0.1:{smoke.PORT + 1}"
+        with open(self.environment.settings, "w", encoding="utf-8") as file:
+            file.write(f"# Invented settings\nTORRPLAY_LISTEN=127.0.0.1:{smoke.PORT}\n")
+        service = Service()
+        try:
+            process = self.environment.start()
+            wait_until(lambda: service.pages, smoke.READY_SECONDS, "the page")
+            self.assertEqual(self.close_until_ended(process), 0)
         finally:
             service.stop()
 

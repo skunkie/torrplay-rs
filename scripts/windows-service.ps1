@@ -23,7 +23,8 @@ then 5 minutes, but not after a failure it reports, such as an invalid setting
 or a taken port. The system waits up to 45 seconds for it at shutdown.
 
 `remove` stops and deletes the service and the build, and keeps
-%ProgramData%\TorrPlay, with the settings and the data.
+%ProgramData%\TorrPlay, with the settings and the data: the settings file is in
+that directory, unlike /etc/torrplay on Linux, which removal there deletes.
 #>
 
 param(
@@ -43,7 +44,8 @@ $executable = Join-Path $programDirectory 'torrplay.exe'
 $dataDirectory = Join-Path $env:ProgramData 'TorrPlay'
 $settings = Join-Path $dataDirectory 'torrplay.env'
 $template = Join-Path $PSScriptRoot '..\packaging\windows\torrplay.env'
-$serviceKey = "HKLM:\SYSTEM\CurrentControlSet\Services\$name"
+
+. (Join-Path $PSScriptRoot 'windows-service-config.ps1')
 
 # Runs a native command, which does not stop the script on failure by itself.
 function Invoke-Native {
@@ -83,7 +85,7 @@ switch ($Action) {
             'actions=', 'restart/5000/restart/30000/restart/300000')
         Invoke-Native sc.exe @('failureflag', $name, '0')
         # Longer than the shutdown sequence's 30-second limit.
-        Set-ItemProperty -Path $serviceKey -Name PreshutdownTimeout -Value 45000 -Type DWord
+        [TorrPlayServiceConfig]::SetPreshutdownTimeout($name, 45000)
 
         # The virtual account exists once the service does.
         New-Item -ItemType Directory -Force -Path $dataDirectory | Out-Null

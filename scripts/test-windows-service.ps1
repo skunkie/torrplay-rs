@@ -12,7 +12,7 @@ its virtual account, with its settings file, restarts, shutdown, and removal.
 It changes the system it runs on, so CI runs it on a disposable runner. It needs
 an elevated PowerShell 7 and nothing listening on ports 8642 and 8643:
 
-  scripts\test-windows-service.ps1 target\debug\torrplay.exe
+  scripts\test-windows-service.ps1 target\release\torrplay.exe
 #>
 
 param(
@@ -29,6 +29,8 @@ $dataDirectory = Join-Path $env:ProgramData 'TorrPlay'
 $settings = Join-Path $dataDirectory 'torrplay.env'
 $programDirectory = Join-Path $env:ProgramFiles 'TorrPlay'
 $holder = $null
+
+. (Join-Path $PSScriptRoot 'windows-service-config.ps1')
 
 function Fail([string] $Message) {
     throw "FAIL: $Message"
@@ -100,6 +102,8 @@ try {
     $service = Get-TorrPlay
     if ($service.StartName -ne "NT SERVICE\$name") { Fail "the service runs as $($service.StartName)" }
     if ($service.StartMode -ne 'Auto') { Fail "the service starts $($service.StartMode), not at boot" }
+    $preshutdown = [TorrPlayServiceConfig]::GetPreshutdownTimeout($name)
+    if ($preshutdown -ne 45000) { Fail "the system waits $preshutdown ms for the service at shutdown, not 45000" }
     $process = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$($service.ProcessId)"
     $owner = Invoke-CimMethod -InputObject $process -MethodName GetOwner
     if ("$($owner.Domain)\$($owner.User)" -ne "NT SERVICE\$name") {
@@ -115,10 +119,10 @@ try {
             $_.AccessControlType -eq 'Allow' -and
             ($_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::Write)
         } | ForEach-Object { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value })
-    $service_sid = (New-Object System.Security.Principal.NTAccount("NT SERVICE\$name")).Translate(
+    $serviceSid = (New-Object System.Security.Principal.NTAccount("NT SERVICE\$name")).Translate(
         [System.Security.Principal.SecurityIdentifier]).Value
     foreach ($writer in $writers) {
-        if ($writer -notin @('S-1-5-18', 'S-1-5-32-544', $service_sid)) {
+        if ($writer -notin @('S-1-5-18', 'S-1-5-32-544', $serviceSid)) {
             Fail "$writer may change the data directory"
         }
     }

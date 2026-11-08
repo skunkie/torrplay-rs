@@ -114,6 +114,35 @@ jobs:
         shell: bash
         run: scripts/check-linux-service.sh
 
+  windows-service:
+    name: Windows service
+    needs: stage
+    if: needs.stage.outputs.rust == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          build-warnings: warn
+      # Optimized and without the tests' features, as what ships is; without the
+      # embedded web client, which needs the client's build and which the
+      # service test does not open.
+      - name: Build the application
+        run: cargo build --release --locked -p torrplay --no-default-features
+      # The service's code builds only on Windows, which the quality job does
+      # not lint. Only what the build above compiles, with its profile and
+      # features, rather than the tests and their dependencies too.
+      - name: Lint the Windows service
+        run: cargo clippy --release --locked -p torrplay -p torrplay-settings-file --no-default-features -- -D warnings
+      # The runner is disposable and elevated, so the test installs the service
+      # on it.
+      - name: Install and test the service
+        shell: pwsh
+        run: scripts/test-windows-service.ps1 target/release/torrplay.exe
+
   service-live:
     name: Linux service
     needs: browser
@@ -455,14 +484,3 @@ jobs:
         run: cargo test --locked --workspace
       - name: Test all features
         run: cargo test --locked --workspace --all-features
-      # The Windows service's code builds only on Windows, which the quality
-      # job does not lint.
-      - name: Lint the Windows service
-        if: runner.os == 'Windows'
-        run: cargo clippy --locked -p torrplay -p torrplay-settings-file --all-targets -- -D warnings
-      # The runner is disposable and elevated, so the test installs the
-      # service on it, with the build the tests above made.
-      - name: Install and test the Windows service
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: scripts/test-windows-service.ps1 target/debug/torrplay.exe

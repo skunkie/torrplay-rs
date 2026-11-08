@@ -16,15 +16,13 @@
 //! the executable's are, which the service manager does not count as a crash,
 //! so its restarts after crashes leave them stopped.
 
-use std::process::ExitCode;
-
 #[cfg(not(windows))]
-pub fn main(_arguments: Vec<String>) -> ExitCode {
+pub fn main(_arguments: Vec<String>) -> std::process::ExitCode {
     eprintln!(
         "torrplay: `torrplay service` runs only under the Windows service manager; \
          elsewhere, a service manager such as systemd runs `torrplay` itself"
     );
-    ExitCode::from(2)
+    std::process::ExitCode::from(2)
 }
 
 #[cfg(windows)]
@@ -86,6 +84,14 @@ mod windows {
                     "torrplay: `torrplay service` runs only when the Windows service \
                      manager starts it: {error}"
                 );
+                // Run by hand, so what the service would have stopped on goes here.
+                let prepared = match PREPARED.lock() {
+                    Ok(mut slot) => slot.take(),
+                    Err(poisoned) => poisoned.into_inner().take(),
+                };
+                if let Some(Err(message)) = prepared {
+                    eprintln!("torrplay: {message}");
+                }
                 ExitCode::from(2)
             }
         }
@@ -167,6 +173,19 @@ mod windows {
     /// Runs the service and returns its exit code: 0, 1 when the application
     /// failed, or 2 for a usage error.
     fn run(prepared: Result<(Config, LogFormat), String>) -> u8 {
+        // Before anything can fail, so every failure is logged where the service
+        // logs: standard error, which a service has nowhere, would lose it.
+        let startup = match &prepared {
+            Ok((config, format)) => torrplay::start_logging(config, *format),
+            Err(_) => {
+                let config = Config {
+                    data_dir: torrplay_settings_file::windows_directory(),
+                    ..Config::default()
+                };
+                torrplay::start_logging(&config, LogFormat::Json)
+            }
+        };
+        let log = startup.log.clone();
         let (stopping, mut stops) = tokio::sync::mpsc::unbounded_channel();
         let handler = move |control| match control {
             ServiceControl::Stop | ServiceControl::Preshutdown => {
@@ -176,29 +195,27 @@ mod windows {
             ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
             _ => ServiceControlHandlerResult::NotImplemented,
         };
-        let Ok(status) = service_control_handler::register(SERVICE, handler) else {
-            return 1;
+        let status = match service_control_handler::register(SERVICE, handler) {
+            Ok(status) => status,
+            Err(error) => {
+                // With no handle to report a state, the process ends unreported,
+                // which the service manager counts as a crash and restarts.
+                tracing::error!(%error, "the service could not register with the service manager");
+                log.flush();
+                return 1;
+            }
         };
         let none = ServiceControlAccept::empty();
         report(status, ServiceState::StartPending, none, 0, START_WAIT);
-        let (config, format) = match prepared {
-            Ok(prepared) => prepared,
+        let config = match prepared {
+            Ok((config, _)) => config,
             Err(message) => {
-                // Where the service logs, so the reason is not lost with standard
-                // error, which a service has nowhere.
-                let config = Config {
-                    data_dir: torrplay_settings_file::windows_directory(),
-                    ..Config::default()
-                };
-                let startup = torrplay::start_logging(&config, LogFormat::Json);
                 tracing::error!(%message, "the service's command line or settings are not valid");
-                startup.log.flush();
+                log.flush();
                 report(status, ServiceState::Stopped, none, 2, Duration::ZERO);
                 return 2;
             }
         };
-        let startup = torrplay::start_logging(&config, format);
-        let log = startup.log.clone();
         let runtime = match tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()

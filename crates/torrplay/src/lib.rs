@@ -539,6 +539,12 @@ pub enum ArgsError {
     /// `--listen` for `torrplay mcp` without `--transport http`.
     #[error("torrplay mcp takes --listen only with --transport http")]
     McpListen,
+    /// A command after `service`, which takes a run's options only.
+    #[error(
+        "torrplay service takes the options of a run; password and backup run on their \
+         own with the service stopped, and mcp beside it"
+    )]
+    ServiceUsage,
     /// An option without its value.
     #[error("{0} needs a value")]
     MissingValue(String),
@@ -580,6 +586,12 @@ pub fn parse_args(
     let service = args.peek().map(String::as_str) == Some("service");
     if service {
         args.next();
+        if matches!(
+            args.peek().map(String::as_str),
+            Some("password" | "backup" | "mcp" | "service")
+        ) {
+            return Err(ArgsError::ServiceUsage);
+        }
     }
     let password = if args.peek().map(String::as_str) == Some("password") {
         args.next();
@@ -592,9 +604,6 @@ pub fn parse_args(
     } else {
         None
     };
-    if service && password.is_some() {
-        return Err(ArgsError::Unknown("password".to_owned()));
-    }
     while let Some(arg) = args.next() {
         let (option, inline) = match arg.split_once('=') {
             Some((option, value)) if option.starts_with("--") => {
@@ -1652,10 +1661,15 @@ mod tests {
         };
         assert_eq!(config.data_dir.as_deref(), Some(Path::new("/srv/torrplay")));
         assert_eq!(parse(&["service"]), Ok(Command::Service(Config::default())));
-        assert!(
-            parse(&["service", "password", "set"]).is_err(),
-            "not a command of its own"
-        );
+        assert_eq!(parse(&["service", "--help"]), Ok(Command::Help));
+        assert_eq!(parse(&["service", "--version"]), Ok(Command::Version));
+        for command in ["password", "backup", "mcp", "service"] {
+            assert_eq!(
+                parse(&["service", command]),
+                Err(ArgsError::ServiceUsage),
+                "{command} is a command of its own"
+            );
+        }
         assert!(parse(&["service", "--output", "x"]).is_err());
     }
 
