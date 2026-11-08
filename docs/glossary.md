@@ -232,6 +232,13 @@ of each.
 
 ## Lifecycle and storage
 
+**Edition**
+: One way TorrPlay is installed on a computer. The **application** runs the
+  engine, the server, and its window in one process while someone has it
+  open. The **service edition**, on Windows and Linux, runs the server as a
+  system service from boot, with a **client**: the window without the engine
+  ([ADR 12](adr/0012-editions.md)).
+
 **Storage mode**
 : Where a torrent keeps piece data: `memory` (the piece cache, subject to
   eviction) or `disk` (persisted torrents only).
