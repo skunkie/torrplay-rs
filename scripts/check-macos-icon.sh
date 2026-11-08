@@ -41,18 +41,37 @@ cmp -s "$resources/${file%.icns}.icns" "$root/desktop/icons/icon.icns" ||
 name=$(plutil -extract CFBundleIconName raw "$plist") ||
   fail "the bundle names no icon in an asset catalog"
 [[ -f "$resources/Assets.car" ]] || fail "the bundle has no Assets.car"
-# The renditions of the icon the bundle names, with their appearances.
-appearances=$(assetutil --info "$resources/Assets.car" | python3 -c '
+info=$(assetutil --info "$resources/Assets.car")
+# Everything the catalog holds, for a failure to show.
+dump() {
+  python3 -c '
 import json, sys
-name = sys.argv[1]
 for entry in json.load(sys.stdin):
-    if entry.get("Name") == name and entry.get("AssetType") == "Icon Image":
-        print(entry.get("Appearance", "NSAppearanceNameSystem"))
-' "$name")
-[[ -n $appearances ]] || fail "Assets.car holds no icon images named $name"
-grep -qx 'NSAppearanceNameDarkAqua' <<<"$appearances" ||
-  fail "the icon has no dark appearance, only: $(sort -u <<<"$appearances" | tr '\n' ' ')"
-awk '$0 != "NSAppearanceNameDarkAqua" { light = 1 } END { exit !light }' <<<"$appearances" ||
-  fail "the icon has a dark appearance alone"
+    print(json.dumps(entry, sort_keys=True))
+' <<<"$info" >&2
+}
+# actool compiles an Icon Composer icon into a layered image stack for
+# each appearance, which macOS composes at run time, and flattened bitmaps
+# for the system appearance alone as a fallback. Each appearance's layer
+# group names the SVG it draws, so light and dark must each draw their own.
+problem=$(python3 -c '
+import json, sys
+stacks, layers = set(), {}
+for entry in json.load(sys.stdin):
+    appearance = entry.get("Appearance")
+    if entry.get("AssetType") == "IconImageStack":
+        stacks.add(appearance)
+    elif entry.get("AssetType") == "IconGroup":
+        layers[appearance] = [layer.get("Name") for layer in entry.get("Layers", [])]
+for appearance, image in (("NSAppearanceNameAqua", "light"), ("NSAppearanceNameDarkAqua", "dark")):
+    if appearance not in stacks:
+        print(f"the icon has no image stack for {appearance}")
+    elif f"Icon_Assets/{image}" not in layers.get(appearance, []):
+        print(f"the icon does not draw {image}.svg for {appearance}")
+' <<<"$info")
+[[ -z $problem ]] || {
+  dump
+  fail "$problem"
+}
 
 echo "the bundle's icons are in place: $file, and $name in Assets.car"
