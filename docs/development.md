@@ -434,9 +434,20 @@ package takes the client from the desktop workspace, then package and test it:
 (cd client && pnpm build)
 cargo build --release --locked -p torrplay
 (cd desktop && cargo build --release --locked --no-default-features --features client)
+scripts/build-man-pages.sh target/man
 cargo deb --no-build --locked -p torrplay --output target/debian/torrplay-service.deb
 scripts/test-linux-service.sh --package target/debian/torrplay-service.deb
 ```
+
+The package also installs the manual pages, `torrplay(1)`, `torrplay-client(1)`,
+and `torrplay.env(5)`, which are Markdown in `docs/man`. `scripts/build-man-pages.sh`
+renders them with pandoc, which CI pins at 3.12.1, compressed and without a
+date, so the same sources give the same bytes; `PANDOC` names another pandoc.
+Tests beside each page's source check that it names everything that source
+does: `torrplay(1)` every command, option, and variable of `torrplay --help`,
+`torrplay-client(1)` those of the client's usage, and `torrplay.env(5)` every
+setting of the Linux and Windows templates. Preview a page with
+`man -l <(zcat target/man/torrplay.1.gz)`.
 
 The test then also checks what the package installs, that the settings file is
 a conffile, and what removing and purging keep. CI builds and tests the package

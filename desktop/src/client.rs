@@ -416,6 +416,25 @@ mod tests {
     }
 
     #[test]
+    fn the_manual_page_names_every_option_and_variable_of_the_usage() {
+        // The page escapes a leading hyphen, so pandoc does not make a dash of it.
+        let page = include_str!("../../docs/man/torrplay-client.1.md").replace("\\-", "-");
+        let names: std::collections::BTreeSet<&str> = USAGE
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+            .filter(|word| {
+                (word.starts_with('-') && word.len() > 1) || word.starts_with("TORRPLAY_")
+            })
+            .collect();
+        assert!(names.len() >= 5, "too few names to check: {names:?}");
+        for name in names {
+            assert!(
+                page.contains(&format!("**{name}**")),
+                "torrplay-client(1) does not name {name}"
+            );
+        }
+    }
+
+    #[test]
     fn the_log_stops_at_its_limit() -> anyhow::Result<()> {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("client.log");

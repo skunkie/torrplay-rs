@@ -1653,6 +1653,42 @@ mod tests {
         }
     }
 
+    /// The words of `text` that start with `prefix`, such as options or variables.
+    fn words_starting(text: &str, prefix: &str) -> std::collections::BTreeSet<String> {
+        text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+            .filter(|word| word.len() > prefix.len() && word.starts_with(prefix))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn the_manual_page_names_every_command_option_and_variable_of_the_usage() {
+        // The page escapes a leading hyphen, so pandoc does not make a dash of it.
+        let page = include_str!("../../../docs/man/torrplay.1.md").replace("\\-", "-");
+        let commands = USAGE.lines().filter_map(|line| {
+            let rest = line.trim_start_matches("Usage:").trim_start();
+            let words: Vec<&str> = rest
+                .strip_prefix("torrplay ")?
+                .split(' ')
+                .take_while(|word| word.chars().all(|c| c.is_ascii_lowercase()))
+                .collect();
+            (!words.is_empty()).then(|| format!("torrplay {}", words.join(" ")))
+        });
+        let options = words_starting(USAGE, "-")
+            .into_iter()
+            .filter(|word| word.starts_with("--") || word.len() == 2);
+        let variables = words_starting(USAGE, "TORRPLAY_");
+        let mut named = 0;
+        for name in commands.chain(options).chain(variables) {
+            assert!(
+                page.contains(&format!("**{name}**")),
+                "torrplay(1) does not name {name}"
+            );
+            named += 1;
+        }
+        assert!(named > 20, "the usage gave too few names to check: {named}");
+    }
+
     #[test]
     fn service_takes_the_options_of_a_run() {
         let Ok(Command::Service(config)) = parse(&["service", "--data-dir", "/srv/torrplay"])

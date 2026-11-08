@@ -117,7 +117,9 @@ check_package_files() {
     /usr/lib/systemd/system/torrplay.service /usr/lib/sysusers.d/torrplay.conf \
     /usr/lib/firewalld/services/torrplay.xml /etc/ufw/applications.d/torrplay \
     /usr/share/applications/org.torrplay.client.desktop \
-    /usr/share/icons/hicolor/512x512/apps/org.torrplay.client.png; do
+    /usr/share/icons/hicolor/512x512/apps/org.torrplay.client.png \
+    /usr/share/man/man1/torrplay.1.gz /usr/share/man/man1/torrplay-client.1.gz \
+    /usr/share/man/man5/torrplay.env.5.gz; do
     [[ -e $path ]] || fail "the package installed no $path"
   done
   dpkg-query --showformat='${Conffiles}\n' --show torrplay-service |
