@@ -377,6 +377,11 @@ of each.
   video, for a codec the browser cannot play or a track it cannot switch
   to.
 
+**Remux**
+: Copying a media file's encoded packets, without decoding them, into
+  another container. The client remuxes a Matroska file the browser cannot
+  play into fragmented MP4 that a media source plays.
+
 **Avatar**
 : An image a client uploads to show a profile, under a poster's rules.
 

@@ -5,10 +5,10 @@
 import type { Sample } from "./progress";
 import type { Cue } from "./subtitle-text";
 
-// Where the client reaches the media element the player wraps: the player page
-// and the subtitle path go through this module, and decoded audio through
-// `audio-sync.ts`, which needs the whole standard element for Web Audio. A change
-// of player library changes only these two.
+// Where the client reaches the media element the player wraps: the player page,
+// the subtitle path, and the remux go through this module, and decoded audio
+// through `audio-sync.ts`, which needs the whole standard element for Web Audio.
+// A change of player library changes only these two.
 
 /** Where `media` stands, with its duration once its metadata is known. */
 export function sampleOf(media: HTMLMediaElement): Sample {
@@ -40,6 +40,83 @@ export function seekWhenReady(media: HTMLMediaElement, seconds: number): void {
   };
   if (media.readyState >= HTMLMediaElement.HAVE_METADATA) seek();
   else media.addEventListener("loadedmetadata", seek, { once: true });
+}
+
+/** A span of media time, in seconds. */
+export interface TimeSpan {
+  start: number;
+  end: number;
+}
+
+/** A media element as the remux sees it: what it plays, where playback is,
+ * and what it has buffered. */
+export interface MediaFeed {
+  /** What the element's browser says of playing `type`, a media type. */
+  canPlay(type: string): string;
+  /** Plays what `url` names: the file itself, or a media source's object URL. */
+  play(url: string): void;
+  /** Lets go of what the element plays. */
+  release(): void;
+  position(): number;
+  /** The buffered spans, earliest first. */
+  buffered(): TimeSpan[];
+  /** Calls `listener` when a seek starts. */
+  onSeeking(listener: () => void): () => void;
+  /** Settles when playback's time next changes. */
+  waitForTimeChange(signal?: AbortSignal): Promise<void>;
+  /** Keeps the element from offering remote playback, as a managed media
+   * source requires. */
+  keepLocal(): void;
+}
+
+/** `media` as a feed. */
+export function feedOf(media: HTMLMediaElement): MediaFeed {
+  return {
+    canPlay: (type) => media.canPlayType(type),
+    play(url) {
+      media.src = url;
+    },
+    release() {
+      media.removeAttribute("src");
+      media.load();
+    },
+    position: () => media.currentTime,
+    buffered() {
+      const ranges = media.buffered;
+      return Array.from({ length: ranges.length }, (_, index) => ({
+        start: ranges.start(index),
+        end: ranges.end(index),
+      }));
+    },
+    onSeeking(listener) {
+      media.addEventListener("seeking", listener);
+      return () => media.removeEventListener("seeking", listener);
+    },
+    waitForTimeChange: (signal) => timeChange(media, signal),
+    keepLocal() {
+      media.disableRemotePlayback = true;
+    },
+  };
+}
+
+function timeChange(media: HTMLMediaElement, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const done = () => {
+      media.removeEventListener("timeupdate", wake);
+      signal?.removeEventListener("abort", abort);
+    };
+    const wake = () => {
+      done();
+      resolve();
+    };
+    const abort = () => {
+      done();
+      reject(signal?.reason);
+    };
+    media.addEventListener("timeupdate", wake);
+    signal?.addEventListener("abort", abort, { once: true });
+  });
 }
 
 /** A subtitle track added to a media element. */
@@ -123,25 +200,7 @@ export function subtitleHost(media: HTMLMediaElement): SubtitleHost {
     onChange: (listener) => listen(media.textTracks, ["change"], listener),
     onSeek: (listener) => listen(media, ["seeking", "seeked"], listener),
     currentTime: () => media.currentTime,
-    waitForTimeChange(signal) {
-      signal?.throwIfAborted();
-      return new Promise((resolve, reject) => {
-        const done = () => {
-          media.removeEventListener("timeupdate", wake);
-          signal?.removeEventListener("abort", abort);
-        };
-        const wake = () => {
-          done();
-          resolve();
-        };
-        const abort = () => {
-          done();
-          reject(signal?.reason);
-        };
-        media.addEventListener("timeupdate", wake);
-        signal?.addEventListener("abort", abort, { once: true });
-      });
-    },
+    waitForTimeChange: (signal) => timeChange(media, signal),
     dispose() {
       for (const element of elements) element.remove();
       elements.clear();

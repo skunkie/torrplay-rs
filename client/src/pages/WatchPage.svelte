@@ -16,9 +16,10 @@ SPDX-License-Identifier: MIT
   import { playbackGrants, posterUrl, withGrant } from "../lib/playback";
   import { trackLabel } from "../lib/player/audio";
   import { AudioTracks } from "../lib/player/audio-tracks.svelte";
-  import { subtitleHost } from "../lib/player/media";
+  import { feedOf, subtitleHost } from "../lib/player/media";
   import { PlaybackPreload, resumeOffset } from "../lib/player/preload.svelte";
   import { ProgressSaver, type Sample, startPosition } from "../lib/player/progress";
+  import { playSource } from "../lib/player/remux";
   import { subtitleFiles } from "../lib/player/subtitle-files";
   import { subtitleLabel, Subtitles } from "../lib/player/subtitles.svelte";
   import { profiles } from "../lib/profile.svelte";
@@ -143,13 +144,27 @@ SPDX-License-Identifier: MIT
     file && grant !== null && preload?.settled ? withGrant(file.links.content, grant) : undefined,
   );
 
+  /** Apart from `file`, which every refresh of the files replaces. */
+  const mediaType = $derived(file?.media_type);
+
   $effect(() => {
     if (!media || !url) return;
-    const tracks = new AudioTracks(media, url);
+    // From where playback starts, read once: a new position does not load the file again.
+    const source = playSource(
+      feedOf(media),
+      url,
+      mediaType,
+      untrack(() => startAt),
+    );
+    const tracks = new AudioTracks(media, url, {
+      nativeAudio: source.nativeAudio,
+      probe: source.probe,
+    });
     audio = tracks;
     return () => {
       tracks.destroy();
       audio = undefined;
+      source.detach();
     };
   });
 

@@ -93,6 +93,13 @@ class Windows:
             ctypes.POINTER(XEvent),
         ]
         x11.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        # A window can go between listing it and asking about it, and Xlib's own
+        # handler then ends the process; such a window is simply not listed.
+        handler = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)
+        x11.XSetErrorHandler.argtypes = [handler]
+        x11.XSetErrorHandler.restype = ctypes.c_void_p
+        self._ignore_errors = handler(lambda _display, _event: 0)
+        x11.XSetErrorHandler(self._ignore_errors)
         self.x11 = x11
         self.display = x11.XOpenDisplay(DISPLAY.encode())
         self.protocols = x11.XInternAtom(self.display, b"WM_PROTOCOLS", 0)

@@ -257,6 +257,17 @@ the tokens.
   progress as it plays and when it closes, and at the end of an episode
   offers the next one. Codecs the browser lacks go through the Mediabunny
   path; subtitles come from the file's tracks.
+- **Matroska where the browser cannot play it.** Safari, and so the macOS
+  desktop application, cannot play Matroska, though it plays most codecs
+  Matroska files hold. There the client reads the file with Mediabunny through
+  bounded range requests and copies its packets, without decoding them, into
+  fragmented MP4 that a media source plays, a minute ahead of playback at most.
+  A seek past what is buffered starts the copy again from the key packet before
+  it. The default audio track goes along when the media source plays its
+  codec; otherwise the video plays alone and the audio is decoded as above. A
+  file the remux cannot copy goes to the element as it is, which then reports
+  its own error. Copying on the server instead would give it a demuxer and a
+  muxer for each viewer, and the Go version opened an external player.
 - **External players.** Under Tauri on Android, a file can open in another
   player; a viewing then estimates the position, and the client saves it as
   progress when the player returns.

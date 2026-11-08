@@ -36,19 +36,21 @@ let sync: {
 };
 let options: AudioSyncOptions | undefined;
 
-function tracksOf(files: ProbedAudio | Error): AudioTracks {
-  return new AudioTracks(
-    media,
-    "/content",
-    async () => {
+function tracksOf(
+  files: ProbedAudio | Error,
+  nativeAudio: Promise<boolean> = Promise.resolve(true),
+): AudioTracks {
+  return new AudioTracks(media, "/content", {
+    nativeAudio,
+    probe: async () => {
       if (files instanceof Error) throw files;
       return files;
     },
-    (_media, _decoded, given) => {
+    createSync: (_media, _decoded, given) => {
       options = given;
       return sync;
     },
-  );
+  });
 }
 
 beforeEach(() => {
@@ -72,6 +74,13 @@ it("decodes a default track the browser cannot play", async () => {
   await tracks.ready;
   expect(tracks.selected).toBe(1);
   expect(sync.decode).toHaveBeenCalledWith(1);
+});
+
+it("decodes a default track the browser plays but the element was given without", async () => {
+  const tracks = tracksOf(probed([aac]), Promise.resolve(false));
+  await tracks.ready;
+  expect(tracks.selected).toBe(0);
+  expect(sync.decode).toHaveBeenCalledWith(0);
 });
 
 it("decodes another track and returns to the browser's for the default", async () => {
@@ -118,9 +127,11 @@ it("stops reading a file probed after it was closed", async () => {
 
 it("stops reading the file's tracks when the file is left first", () => {
   let signal: AbortSignal | undefined;
-  const tracks = new AudioTracks(media, "/content", (_url, given) => {
-    signal = given;
-    return new Promise(() => {});
+  const tracks = new AudioTracks(media, "/content", {
+    probe: (_url, given) => {
+      signal = given;
+      return new Promise(() => {});
+    },
   });
   expect(signal?.aborted).toBe(false);
 

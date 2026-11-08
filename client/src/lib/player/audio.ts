@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
+import type { Input } from "mediabunny";
+
 import { t } from "../i18n/index.svelte";
 import type { DecodedAudio } from "./audio-sync";
 import { languageName } from "./languages";
@@ -33,40 +35,53 @@ export interface ProbedAudio {
  * requests, through its seek index where the container has one, until `signal`
  * says the file was left. */
 export async function probeAudio(url: string, signal?: AbortSignal): Promise<ProbedAudio> {
-  const { ALL_FORMATS, AudioSampleSink, Input, UrlSource } = await import("mediabunny");
+  const { ALL_FORMATS, Input, UrlSource } = await import("mediabunny");
   signal?.throwIfAborted();
   const input = new Input({ formats: ALL_FORMATS, source: new UrlSource(url) });
   // Disposing of an input cancels its reads, and a source takes no signal.
   const cancel = () => input.dispose();
   signal?.addEventListener("abort", cancel, { once: true });
   try {
-    const raw = await input.getAudioTracks();
-    const tracks = await Promise.all(
-      raw.map(async (track) => ({
-        name: (await track.getName()) || undefined,
-        language: languageOf(await track.getLanguageCode()),
-        codec: (await track.getCodec()) ?? "unknown",
-        codecString: (await track.getCodecParameterString()) ?? undefined,
-        channels: await track.getNumberOfChannels(),
-        isDefault: (await track.getDisposition()).default,
-      })),
-    );
-    return {
-      tracks,
-      async *decoded(index, from) {
-        const track = raw[index];
-        if (!track) throw new RangeError(`There is no audio track ${index}.`);
-        await registerDecoder(await track.getCodec());
-        yield* new AudioSampleSink(track).samples(from, Infinity);
-      },
-      dispose: () => input.dispose(),
-    };
+    return await probeInput(input, signal, () => input.dispose());
   } catch (failure) {
     input.dispose();
     throw failure;
   } finally {
     signal?.removeEventListener("abort", cancel);
   }
+}
+
+/** Reads the audio tracks of `input`, which another reader may share, until
+ * `signal` says the file was left; `dispose` is what disposing of the result
+ * does, nothing by default, since the input's owner disposes of it. */
+export async function probeInput(
+  input: Input,
+  signal?: AbortSignal,
+  dispose: () => void = () => {},
+): Promise<ProbedAudio> {
+  const { AudioSampleSink } = await import("mediabunny");
+  const raw = await input.getAudioTracks();
+  const tracks = await Promise.all(
+    raw.map(async (track) => ({
+      name: (await track.getName()) || undefined,
+      language: languageOf(await track.getLanguageCode()),
+      codec: (await track.getCodec()) ?? "unknown",
+      codecString: (await track.getCodecParameterString()) ?? undefined,
+      channels: await track.getNumberOfChannels(),
+      isDefault: (await track.getDisposition()).default,
+    })),
+  );
+  signal?.throwIfAborted();
+  return {
+    tracks,
+    async *decoded(index, from) {
+      const track = raw[index];
+      if (!track) throw new RangeError(`There is no audio track ${index}.`);
+      await registerDecoder(await track.getCodec());
+      yield* new AudioSampleSink(track).samples(from, Infinity);
+    },
+    dispose,
+  };
 }
 
 /** The track a player starts with: the one the container declares the

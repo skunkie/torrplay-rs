@@ -21,7 +21,8 @@ SPDX-License-Identifier: MIT
   import type { Sample } from "../lib/player/progress";
 
   interface Props {
-    /** The file's content URL, or `undefined` until it is known. */
+    /** The file's content URL, or `undefined` until it is known. The page
+     * gives it to the video element, as it is or remuxed. */
     url: string | undefined;
     title: string;
     /** The episode or file under the title, if any. */
@@ -343,10 +344,8 @@ SPDX-License-Identifier: MIT
     <media-i18n class="block size-full">
       <video-player class="block size-full">
         <media-container class="relative block size-full overflow-hidden">
-          <!-- svelte-ignore a11y_media_has_caption -->
           <video
             bind:this={video}
-            src={url}
             autoplay
             playsinline
             class="size-full object-contain"
