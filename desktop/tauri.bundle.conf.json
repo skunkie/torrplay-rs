@@ -2,7 +2,8 @@
   "bundle": {
     "active": true,
     "targets": [
-      "deb"
+      "deb",
+      "nsis"
     ],
     "externalBin": [
       "binaries/torrplay"
@@ -25,6 +26,12 @@
         "files": {
           "/usr/share/man/man1/torrplay.1.gz": "../target/man/torrplay.1.gz"
         }
+      }
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "../packaging/windows/application.nsh"
       }
     }
   }
