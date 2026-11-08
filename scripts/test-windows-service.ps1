@@ -146,6 +146,12 @@ function Get-FirewallProfiles {
         ForEach-Object { $_.Profile.ToString() -split ', ' } | Sort-Object -Unique)
 }
 
+# A text's printable words, without the byte order marks, carriage returns,
+# and other invisible characters that files and RTF carry around them.
+function Get-Words([string] $Text) {
+    @(($Text -replace '[^\x21-\x7E]', ' ') -split ' ' | Where-Object { $_ })
+}
+
 # The words of the license agreement the MSI shows, which the bundler writes as
 # RTF after a header of its own, with \par for each line break.
 function Get-LicenseWords([string] $Msi) {
@@ -160,7 +166,7 @@ function Get-LicenseWords([string] $Msi) {
         $view.Close()
         if (-not $record) { return @() }
         $text = $record.StringData(1) -replace '(?s)^.*?\\lang9 ', '' -replace '\\par\b', ' ' -replace '[{}]', ''
-        @($text -split '\s+' | Where-Object { $_ })
+        Get-Words $text
     } finally {
         # Released now, not when the collector runs, since msiexec opens the
         # same file next.
@@ -173,12 +179,17 @@ function Get-LicenseWords([string] $Msi) {
 try {
     if ($packaged) {
         Write-Host '== the license agreement'
-        $expected = @((Get-Content -Raw -Path (Join-Path $PSScriptRoot '../LICENSES/MIT.txt')) -split '\s+' |
-                Where-Object { $_ })
+        $expected = Get-Words (Get-Content -Raw -Path (Join-Path $PSScriptRoot '../LICENSES/MIT.txt'))
         $shown = Get-LicenseWords $Package
         if ($shown.Count -eq 0) { Fail 'the MSI shows no license agreement' }
-        if (($shown -join ' ') -cne ($expected -join ' ')) {
-            Fail "the MSI's license agreement is not LICENSES/MIT.txt: $($shown -join ' ')"
+        # Strict mode makes an index past an array's end an error.
+        for ($index = 0; $index -lt [Math]::Min($shown.Count, $expected.Count); $index++) {
+            if ($shown[$index] -cne $expected[$index]) {
+                Fail "the MSI's license agreement differs from LICENSES/MIT.txt at word $($index + 1): '$($shown[$index])', not '$($expected[$index])'"
+            }
+        }
+        if ($shown.Count -ne $expected.Count) {
+            Fail "the MSI's license agreement has $($shown.Count) words, and LICENSES/MIT.txt $($expected.Count)"
         }
 
         Write-Host '== refusal while the application is installed'
