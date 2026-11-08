@@ -247,12 +247,19 @@ where the file gives none, `TORRPLAY_LISTEN` in its own environment does, as the
 Windows service's does, so a system-wide variable cannot send the two to different
 ports. `TORRPLAY_SETTINGS_FILE` names another settings file, as the smoke test's
 does, so a service installed on the computer does not take its place. It takes
-only torrent files
-and magnet URIs, says how to start the service when nothing answers, and opens the
-page only when the service's own account, or on Linux the user running it, listens
-there. Each run starts its log afresh:
-`~/.local/share/org.torrplay.desktop/logs/client.log` on Linux, and
-`%LOCALAPPDATA%\org.torrplay.desktop\logs\client.log` on Windows. Check it as the
+only torrent files and magnet URIs, says how to start the service when nothing
+answers, and opens the page only when the service's own account, or on Linux the user
+running it, listens there.
+
+The client is TorrPlay Client, with the identifier `org.torrplay.client`, as ADR 13
+decides, so its data, log, and single-instance lock are its own. Those come from
+`desktop/tauri.client.conf.json`, which `build.rs` merges over `tauri.conf.json` when
+the `client` feature is on, with any `TAURI_CONFIG` the Tauri CLI passes merged over
+it in turn. A plain Cargo build writes the application's name into the client's
+Windows file properties, which only a build through the Tauri CLI corrects. Each run
+starts its log afresh:
+`~/.local/share/org.torrplay.client/logs/client.log` on Linux, and
+`%LOCALAPPDATA%\org.torrplay.client\logs\client.log` on Windows. Check it as the
 application, with the `client` feature in place of the `engine`, and run its smoke
 test, where a small HTTP server stands in for the service:
 

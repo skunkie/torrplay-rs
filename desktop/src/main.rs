@@ -26,6 +26,9 @@ compile_error!(
 mod application;
 #[cfg(feature = "client")]
 mod client;
+// For its tests only: `build.rs` uses it.
+#[cfg(test)]
+mod merge_patch;
 mod opening;
 #[cfg(feature = "client")]
 mod owner;
