@@ -2,8 +2,16 @@
 //
 // SPDX-License-Identifier: MIT
 
-import type { EncodedPacket, Input, InputAudioTrack, InputVideoTrack } from "mediabunny";
+import type {
+  AudioCodec,
+  EncodedPacket,
+  Input,
+  InputAudioTrack,
+  InputVideoTrack,
+  VideoCodec,
+} from "mediabunny";
 
+import { probeAudio, type ProbedAudio, probeInput } from "./audio";
 import type { MediaFeed, TimeSpan } from "./media";
 
 // Safari, and so the macOS desktop application, cannot play Matroska, though it
@@ -25,12 +33,19 @@ export const REACH_SECONDS = 15;
 const FRAGMENT_SECONDS = 1;
 /** How much played media stays buffered once the media source is full. */
 const FULL_BEHIND_SECONDS = 2;
+/** How far apart a buffered span and the copy may be and still meet: fragments
+ * end at key packets, which leave small gaps between spans. */
+const GAP_SECONDS = 0.5;
+/** How near its end a span may stop and still hold the rest of the file. */
+const END_SECONDS = 0.5;
 
 /** Where the media element plays a file from. */
 export interface PlaybackSource {
   /** Settles with whether the element plays the file's default audio track
    * itself; a remux without it plays the video alone. */
   readonly nativeAudio: Promise<boolean>;
+  /** Reads the file's audio tracks, through the remux's own reads when there is one. */
+  readonly probe: (url: string, signal: AbortSignal) => Promise<ProbedAudio>;
   /** Stops playing the file. */
   detach(): void;
 }
@@ -50,7 +65,7 @@ function mediaSourceClass(): MediaSourceClass | undefined {
 export function needsRemux(
   mediaType: string | undefined,
   canPlay: (type: string) => string,
-  hasMediaSource = mediaSourceClass() !== undefined,
+  hasMediaSource: boolean,
 ): boolean {
   return (
     hasMediaSource &&
@@ -67,13 +82,53 @@ export function playSource(
   url: string,
   mediaType: string | undefined,
   startAt: number,
+  Source = mediaSourceClass(),
 ): PlaybackSource {
-  const Source = mediaSourceClass();
-  if (!Source || !needsRemux(mediaType, (type) => feed.canPlay(type))) {
+  if (!Source || !needsRemux(mediaType, (type) => feed.canPlay(type), true)) {
     feed.play(url);
-    return { nativeAudio: Promise.resolve(true), detach: () => {} };
+    return { nativeAudio: Promise.resolve(true), probe: probeAudio, detach: () => {} };
   }
   return new Remux(feed, url, startAt, Source);
+}
+
+/** A copy under way, as a seek sees it. */
+export interface Copy {
+  /** The position asked for. */
+  requested: number;
+  /** The key packet's time the copy began at, once found; until then, `requested`. */
+  start: number;
+  /** The latest packet time copied. */
+  reached: number;
+}
+
+/** Where a seek to `position` starts a copy, or `undefined` when what is
+ * buffered, `spans`, and the copy under way, `copy`, cover it. A buffered span
+ * holding `position` covers it while the copy carries on from it or it reaches
+ * the file's end at `duration`; otherwise a copy starts at the span's end, where
+ * playback would otherwise stop. */
+export function copyStartFor(
+  spans: readonly TimeSpan[],
+  position: number,
+  copy: Copy | undefined,
+  duration: number,
+): number | undefined {
+  const reach = copy && Math.max(copy.reached, copy.requested);
+  const holding = spans.find((span) => span.start <= position && position < span.end);
+  if (holding) {
+    if (holding.end >= duration - END_SECONDS) return undefined;
+    const continued =
+      copy !== undefined &&
+      reach !== undefined &&
+      copy.start <= holding.end + GAP_SECONDS &&
+      reach >= holding.start - GAP_SECONDS;
+    return continued ? undefined : holding.end;
+  }
+  const coming =
+    copy !== undefined &&
+    reach !== undefined &&
+    position >= copy.start &&
+    position <= reach + REACH_SECONDS;
+  return coming ? undefined : position;
 }
 
 /** How many seconds of `spans` lie ahead of `position`, in the span holding it. */
@@ -100,13 +155,7 @@ export function spansToRemove(
 }
 
 /** One copy of the file from a position, until a seek replaces it. */
-interface Run {
-  /** The position asked for. */
-  requested: number;
-  /** The key packet's time the copy began at. */
-  start: number;
-  /** The latest packet time copied. */
-  reached: number;
+interface Run extends Copy {
   finished: boolean;
   stop: AbortController;
   done: Promise<void>;
@@ -114,12 +163,14 @@ interface Run {
 
 interface Tracks {
   video: InputVideoTrack;
-  /** The default audio track, if the media source plays it. */
-  audio: InputAudioTrack | undefined;
+  videoCodec: VideoCodec;
+  /** The default audio track, if the media source plays it, with its codec. */
+  audio: { track: InputAudioTrack; codec: AudioCodec } | undefined;
 }
 
 class Remux implements PlaybackSource {
   readonly nativeAudio: Promise<boolean>;
+  readonly probe: (url: string, signal: AbortSignal) => Promise<ProbedAudio>;
 
   #feed: MediaFeed;
   #url: string;
@@ -131,6 +182,12 @@ class Remux implements PlaybackSource {
   #run: Run | undefined;
   /** Where a seek before the tracks were known asked to start. */
   #pending: number | undefined;
+  /** Where playback starts, until the element first seeks: before then its
+   * position is 0 whatever the page asks for. */
+  #startAt: number | undefined;
+  /** Settles with the file's input once open, or `undefined` without one. */
+  #inputReady: Promise<Input | undefined>;
+  #inputKnown: (input: Input | undefined) => void = () => {};
   #stopSeeking: () => void;
   #closed = false;
   #fellBack = false;
@@ -138,6 +195,13 @@ class Remux implements PlaybackSource {
   constructor(feed: MediaFeed, url: string, startAt: number, Source: MediaSourceClass) {
     this.#feed = feed;
     this.#url = url;
+    this.#startAt = startAt > 0 ? startAt : undefined;
+    this.#inputReady = new Promise((resolve) => (this.#inputKnown = resolve));
+    // The audio tracks read through the remux's input, sharing its cache and reads.
+    this.probe = async (given, signal) => {
+      const input = await this.#inputReady;
+      return input ? probeInput(input, signal) : probeAudio(given, signal);
+    };
     this.#source = new Source();
     // A managed media source plays only where remote playback is off.
     if (Source !== (globalThis as { MediaSource?: MediaSourceClass }).MediaSource) feed.keepLocal();
@@ -151,6 +215,7 @@ class Remux implements PlaybackSource {
         return tracks.audio !== undefined;
       },
       () => {
+        this.#inputKnown(undefined);
         this.#fallBack();
         return true;
       },
@@ -173,6 +238,7 @@ class Remux implements PlaybackSource {
     if (this.#closed) throw new Error("The file was left.");
     const input = new Input({ formats: ALL_FORMATS, source: new UrlSource(this.#url) });
     this.#input = input;
+    this.#inputKnown(input);
     const video = await input.getPrimaryVideoTrack();
     const videoString = await video?.getCodecParameterString();
     const supported: readonly string[] = new Mp4OutputFormat().getSupportedCodecs();
@@ -190,13 +256,13 @@ class Remux implements PlaybackSource {
         )
       ];
     let type = `video/mp4; codecs="${videoString}"`;
-    let audio: InputAudioTrack | undefined;
+    let audio: Tracks["audio"];
     const audioString = await candidate?.getCodecParameterString();
     if (candidate?.codec && audioString && supported.includes(candidate.codec)) {
       const both = `video/mp4; codecs="${videoString},${audioString}"`;
       if (Source.isTypeSupported(both)) {
         type = both;
-        audio = candidate;
+        audio = { track: candidate, codec: candidate.codec };
       }
     }
     if (!Source.isTypeSupported(type)) throw new Error("The media source cannot play the video.");
@@ -207,31 +273,25 @@ class Remux implements PlaybackSource {
     if (Number.isFinite(duration) && duration > 0 && this.#source.readyState === "open") {
       this.#source.duration = duration;
     }
-    return { video, audio };
+    return { video, videoCodec: video.codec, audio };
   }
 
   #seeked(): void {
-    const position = this.#feed.position();
+    this.#startAt = undefined;
+    const position = this.#position();
     if (!this.#tracks) {
       this.#pending = position;
       return;
     }
-    if (!this.#covers(position)) this.#start(position);
+    const run = this.#run;
+    const active = run && !run.finished && !run.stop.signal.aborted ? run : undefined;
+    const from = copyStartFor(this.#feed.buffered(), position, active, this.#source.duration);
+    if (from !== undefined) this.#start(from);
   }
 
-  /** Whether media at `position` is buffered, or on its way in the copy under way. */
-  #covers(position: number): boolean {
-    if (this.#feed.buffered().some((span) => span.start <= position && position <= span.end)) {
-      return true;
-    }
-    const run = this.#run;
-    return (
-      run !== undefined &&
-      !run.finished &&
-      !run.stop.signal.aborted &&
-      position >= run.start &&
-      position <= Math.max(run.reached, run.requested) + REACH_SECONDS
-    );
+  /** Where playback is, or is about to start. */
+  #position(): number {
+    return this.#startAt ?? this.#feed.position();
   }
 
   /** Copies the file from `position`, once the copy before it has stopped. */
@@ -241,7 +301,7 @@ class Remux implements PlaybackSource {
     const stop = new AbortController();
     const run: Run = {
       requested: position,
-      start: -Infinity,
+      start: position,
       reached: position,
       finished: false,
       stop,
@@ -261,7 +321,8 @@ class Remux implements PlaybackSource {
   async #copy(run: Run): Promise<void> {
     const tracks = this.#tracks;
     if (!tracks) return;
-    const { video, audio } = tracks;
+    const { video, videoCodec } = tracks;
+    const audio = tracks.audio?.track;
     const signal = run.stop.signal;
     const {
       EncodedAudioPacketSource,
@@ -294,6 +355,7 @@ class Remux implements PlaybackSource {
         onFtyp: (data) => header.push(data.slice()),
         onMoov: (data) => segments.push(joined(...header, data)),
         onMoof: (data) => (fragment = data.slice()),
+        // `joined` copies the media data, which the writer may reuse.
         onMdat: (data) => {
           segments.push(joined(fragment ?? new Uint8Array(), data));
           fragment = undefined;
@@ -301,10 +363,9 @@ class Remux implements PlaybackSource {
       }),
       target: new NullTarget(),
     });
-    if (!video.codec) return;
-    const videoSource = new EncodedVideoPacketSource(video.codec);
+    const videoSource = new EncodedVideoPacketSource(videoCodec);
     output.addVideoTrack(videoSource);
-    const audioSource = audio?.codec ? new EncodedAudioPacketSource(audio.codec) : undefined;
+    const audioSource = tracks.audio && new EncodedAudioPacketSource(tracks.audio.codec);
     if (audioSource) output.addAudioTrack(audioSource);
 
     const videoPackets = videoSink.packets(key);
@@ -358,7 +419,7 @@ class Remux implements PlaybackSource {
   /** Appends `segment` once playback leaves room for it. */
   async #append(segment: Uint8Array, signal: AbortSignal): Promise<void> {
     for (;;) {
-      while (bufferedAhead(this.#feed.buffered(), this.#feed.position()) > AHEAD_SECONDS) {
+      while (bufferedAhead(this.#feed.buffered(), this.#position()) > AHEAD_SECONDS) {
         await this.#feed.waitForTimeChange(signal);
       }
       await this.#remove(BEHIND_SECONDS);
@@ -378,7 +439,7 @@ class Remux implements PlaybackSource {
   }
 
   async #remove(behind: number): Promise<void> {
-    for (const span of spansToRemove(this.#feed.buffered(), this.#feed.position(), behind)) {
+    for (const span of spansToRemove(this.#feed.buffered(), this.#position(), behind)) {
       await this.#update((buffer) => buffer.remove(span.start, span.end));
     }
   }

@@ -156,7 +156,10 @@ SPDX-License-Identifier: MIT
       mediaType,
       untrack(() => startAt),
     );
-    const tracks = new AudioTracks(media, url, { nativeAudio: source.nativeAudio });
+    const tracks = new AudioTracks(media, url, {
+      nativeAudio: source.nativeAudio,
+      probe: source.probe,
+    });
     audio = tracks;
     return () => {
       tracks.destroy();

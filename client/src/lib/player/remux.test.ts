@@ -2,13 +2,14 @@
 //
 // SPDX-License-Identifier: MIT
 
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 
 import type { MediaFeed } from "./media";
 import {
   AHEAD_SECONDS,
   BEHIND_SECONDS,
   bufferedAhead,
+  copyStartFor,
   needsRemux,
   playSource,
   REACH_SECONDS,
@@ -74,12 +75,71 @@ function feed(answers: (type: string) => string): MediaFeed {
   };
 }
 
+/** A media source that never opens, as one the element has not loaded. */
+class ClosedSource extends EventTarget {
+  readonly readyState = "closed";
+  static isTypeSupported = () => true;
+}
+const Source = ClosedSource as unknown as typeof MediaSource;
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 it("gives a file the browser plays to the element as it is, audio and all", async () => {
   const given = feed(chrome);
-  const source = playSource(given, "/content", "video/x-matroska", 0);
+  const source = playSource(given, "/content", "video/x-matroska", 0, Source);
   expect(given.play).toHaveBeenCalledWith("/content");
   expect(await source.nativeAudio).toBe(true);
   source.detach();
   // The next file replaces it; leaving the page takes the element away.
   expect(given.release).not.toHaveBeenCalled();
+});
+
+it("gives the element a media source for Matroska the browser cannot play, and lets go of it", () => {
+  const revoked = vi.fn();
+  vi.stubGlobal("URL", { createObjectURL: () => "blob:remux", revokeObjectURL: revoked });
+  const given = feed(safari);
+  const source = playSource(given, "/content", "video/x-matroska", 0, Source);
+  expect(given.play).toHaveBeenCalledWith("blob:remux");
+  source.detach();
+  expect(given.release).toHaveBeenCalled();
+  expect(revoked).toHaveBeenCalledWith("blob:remux");
+});
+
+const DURATION = 300;
+
+it("waits for a copy that will reach a seek", () => {
+  const copy = { requested: 100, start: 98, reached: 120 };
+  expect(copyStartFor([{ start: 98, end: 120 }], 130, copy, DURATION)).toBeUndefined();
+  expect(copyStartFor([{ start: 98, end: 120 }], 110, copy, DURATION)).toBeUndefined();
+});
+
+it("starts a copy at a seek past where the copy under way reaches", () => {
+  const copy = { requested: 100, start: 98, reached: 120 };
+  expect(copyStartFor([{ start: 98, end: 120 }], 200, copy, DURATION)).toBe(200);
+  expect(copyStartFor([{ start: 98, end: 120 }], 50, copy, DURATION)).toBe(50);
+  expect(copyStartFor([], 10, undefined, DURATION)).toBe(10);
+});
+
+it("carries on after a buffered span no copy continues, where playback would stop", () => {
+  // Left behind by a copy that a seek to 210 replaced.
+  const spans = [
+    { start: 180, end: 190 },
+    { start: 208, end: 230 },
+  ];
+  const copy = { requested: 210, start: 208, reached: 230 };
+  expect(copyStartFor(spans, 185, copy, DURATION)).toBe(190);
+  expect(copyStartFor(spans, 185, undefined, DURATION)).toBe(190);
+});
+
+it("needs no copy in a span that reaches the end of the file", () => {
+  expect(copyStartFor([{ start: 280, end: 300 }], 290, undefined, DURATION)).toBeUndefined();
+});
+
+it("counts an earlier seek as not on its way while the copy looks for its key packet", () => {
+  // Until the key packet is found, the copy starts where it was asked to.
+  const copy = { requested: 1800, start: 1800, reached: 1800 };
+  expect(copyStartFor([], 60, copy, DURATION * 10)).toBe(60);
+  expect(copyStartFor([], 1805, copy, DURATION * 10)).toBeUndefined();
 });
