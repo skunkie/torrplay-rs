@@ -145,14 +145,16 @@ fn answers(address: SocketAddr) -> bool {
     TcpStream::connect_timeout(&address, ANSWER_TIMEOUT).is_ok()
 }
 
-/// How to start the service, in the system's language.
+/// How to start the service, in the system's language. On Linux it is `restart`,
+/// which starts a stopped unit and one waiting out its restart backoff at once,
+/// while `start` waits for the backoff.
 fn how_to_start(locale: Option<&str>) -> &'static str {
     let russian = locale.is_some_and(|locale| locale.starts_with("ru"));
     if cfg!(target_os = "linux") {
         if russian {
-            "Запустите её командой: sudo systemctl start torrplay"
+            "Запустите её командой: sudo systemctl restart torrplay"
         } else {
-            "Start it with: sudo systemctl start torrplay"
+            "Start it with: sudo systemctl restart torrplay"
         }
     } else if cfg!(windows) {
         if russian {
@@ -444,6 +446,14 @@ mod tests {
             listen_in("# TORRPLAY_LISTEN=[::]:9000\nTORRPLAY_LISTENER=x"),
             None
         );
+    }
+
+    #[test]
+    fn the_installed_settings_template_gives_the_default_once_uncommented() {
+        let template = include_str!("../../packaging/linux/torrplay.env");
+        assert_eq!(listen_in(template), None, "every setting commented out");
+        let uncommented = template.replace("#TORRPLAY_LISTEN=", "TORRPLAY_LISTEN=");
+        assert_eq!(listen_in(&uncommented).as_deref(), Some(LISTEN_DEFAULT));
     }
 
     #[test]

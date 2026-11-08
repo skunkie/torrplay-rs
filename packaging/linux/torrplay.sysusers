@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# The account TorrPlay's service runs as, installed as
+# /usr/lib/sysusers.d/torrplay.conf.
+u torrplay - "TorrPlay service" /var/lib/torrplay

@@ -21,6 +21,7 @@ reuse lint
 actionlint -color
 shellcheck scripts/*.sh
 scripts/check-vacuum-rules.sh vacuum
+scripts/check-linux-service.sh
 git diff --check
 git diff --cached --check
 ```
@@ -37,7 +38,9 @@ in `LICENSES/`. Add explicit REUSE annotations when introducing generated or
 binary files that cannot carry headers.
 
 GitHub Actions runs on pull requests, pushes to `main`, manual dispatch, and
-reusable workflow calls. Licensing and workflow validation run immediately.
+reusable workflow calls. Licensing and workflow validation run immediately,
+as does `scripts/check-linux-service.sh`; `scripts/test-linux-service.sh`
+runs once the browser smoke test has built the application.
 The repository-stage job enables Rust jobs once a root `Cargo.toml` exists.
 It rejects a manifest without `Cargo.lock` and `rust-toolchain.toml`, and
 rejects committed Rust sources or nested manifests without a root manifest.
@@ -324,6 +327,97 @@ minutes. With TorrPlay running in another terminal:
 
 ```bash
 scripts/play.sh 'magnet:?xt=urn:btih:...'
+```
+
+## Running the service on Linux
+
+`packaging/linux` holds what the service edition's `.deb` will install, so that
+`torrplay` runs as a system service that starts at boot. The unit needs
+systemd 254 or later, as in Debian 13 and Ubuntu 24.04; older versions ignore
+its restart backoff and restart it every 5 seconds:
+
+- `torrplay.service`, the systemd unit, as `/usr/lib/systemd/system/torrplay.service`.
+  It runs `/usr/bin/torrplay` as the `torrplay` account with its data in
+  `/var/lib/torrplay`, and confines it to that directory and the network.
+  SIGTERM begins the shutdown sequence, which the unit gives 45 seconds.
+- `torrplay.sysusers`, as `/usr/lib/sysusers.d/torrplay.conf`, which creates the
+  `torrplay` account. The client trusts a listener owned by it, so the unit uses
+  this static account rather than `DynamicUser=`.
+- `torrplay.env`, the settings file, as `/etc/torrplay/torrplay.env`, with
+  `TORRPLAY_LISTEN` and `TORRPLAY_LOG_FORMAT` commented out at their defaults.
+  The unit reads it as its environment, and the client reads the listen
+  address there. Options without a variable, such as `--download-dir` or
+  `--peer-port`, go in a drop-in from `systemctl edit torrplay` that clears
+  `ExecStart=` and sets it again.
+
+The unit restarts torrplay after a failure, such as its port being taken,
+5 seconds later at first and then about twice as long each time, up to every
+5 minutes, with no start limit. While it waits, `systemctl start` waits too,
+so `systemctl restart torrplay`, which the client advises, is the way to start
+it at once, stopped or waiting. It does not restart after a usage error, exit status 2, such as an
+invalid `TORRPLAY_LISTEN`; `systemctl status torrplay` and the journal say
+why it stopped.
+
+A download directory outside `/var/lib/torrplay` must be writable by the
+`torrplay` account, and the unit must let the service reach it:
+`ReadWritePaths=` for a directory elsewhere, and, since the unit hides home
+directories, `ProtectHome=tmpfs` with `BindPaths=` for one under `/home`:
+
+```ini
+[Service]
+ExecStart=
+# /usr/local/bin/torrplay after scripts/linux-service.sh install.
+ExecStart=/usr/bin/torrplay --data-dir ${STATE_DIRECTORY} --download-dir /home/media/torrents
+ProtectHome=tmpfs
+BindPaths=/home/media/torrents
+```
+
+`scripts/check-linux-service.sh` verifies the unit with `systemd-analyze`,
+fails when its exposure score rises above 2.0 (it is 1.4), and creates the
+account from the sysusers entry in an empty scratch root, checking that its
+home is the state directory.
+
+`scripts/linux-service.sh` installs a build by hand and removes it. It puts
+the unit and the sysusers entry under `/etc`, which is the administrator's,
+rather than in `/usr/lib`, which the package will own, and the build in
+`/usr/local/bin`, so a drop-in's `ExecStart=` names
+`/usr/local/bin/torrplay`. It installs the settings file only when there is
+none, so installing again keeps its settings, and restarts the service, so
+installing again runs the new build:
+
+```bash
+cargo build --release -p torrplay
+sudo scripts/linux-service.sh install target/release/torrplay
+journalctl -u torrplay -f
+```
+
+`sudo scripts/linux-service.sh remove` removes the service, the build, the
+settings file, and drop-ins from `systemctl edit`, keeping the account and the
+data in `/var/lib/torrplay`. `sudo rm -r /var/lib/torrplay` then deletes the
+library and its downloads for good, `sudo rm -r /var/backups/torrplay` its
+backups, and `sudo userdel torrplay` the account.
+
+`scripts/test-linux-service.sh target/release/torrplay` installs a release
+build with that script and tests the service as systemd runs it: its account
+and sandbox, including the DLNA media server and a download directory under
+`/home` given as above, a second install keeping the settings and restarting,
+a clean stop, a usage error that does not restart, the backoff while its port
+is taken, and removal. It changes the system, so CI runs it on a disposable
+runner, in the Linux service job, with the build from the browser smoke test.
+
+The password and backup commands need the service stopped, and they run as its
+account on its data directory. A backup goes where that account can write,
+outside the data directory, under a new name each time, since `backup create`
+never replaces a file:
+
+```bash
+sudo systemctl stop torrplay
+printf '%s\n' 'a long passphrase' |
+  sudo -u torrplay torrplay password set --data-dir /var/lib/torrplay
+sudo install -d -o torrplay -g torrplay -m 0750 /var/backups/torrplay
+sudo -u torrplay torrplay backup create --data-dir /var/lib/torrplay \
+  --output "/var/backups/torrplay/torrplay-backup-$(date -u +%Y%m%dT%H%M%SZ).zip"
+sudo systemctl start torrplay
 ```
 
 ## Benchmarks
