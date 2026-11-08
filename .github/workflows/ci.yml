@@ -235,11 +235,13 @@ jobs:
           cache-workspaces: |
             .
             desktop
+      # Ubuntu 24.04 names WebKit's WebDriver webkit2gtk-driver, as Debian does;
+      # later releases call it webkitgtk-webdriver.
       - name: Install WebKitGTK and what the smoke test drives it with
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev librsvg2-dev \
-            desktop-file-utils webkitgtk-webdriver xvfb dbus-daemon python3-gi \
+            desktop-file-utils webkit2gtk-driver xvfb dbus-daemon python3-gi \
             gir1.2-gtk-3.0 gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
             gstreamer1.0-libav
       - name: Enable pnpm
