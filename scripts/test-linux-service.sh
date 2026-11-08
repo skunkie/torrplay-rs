@@ -3,21 +3,33 @@
 #
 # SPDX-License-Identifier: MIT
 
-# Installs a torrplay build as the service edition's system service with
-# scripts/linux-service.sh and tests it as systemd runs it: under its own
-# account and sandbox, with its settings file, restarts, shutdown, and removal.
-# It changes the system it runs on, so CI runs it on a disposable runner; it
-# needs systemd 254 or later, passwordless sudo, curl, ss, nsenter, python3, and
-# nothing listening on ports 8642 and 8643. The argument is the build, a
-# release one, which embeds the web client.
+# Installs the service edition's system service and tests it as systemd runs
+# it: under its own account and sandbox, with its settings file, restarts,
+# shutdown, and removal. Given a torrplay build, a release one, which embeds
+# the web client, it installs that with scripts/linux-service.sh; given
+# `--package` and the torrplay-service .deb, it installs the package with apt
+# and also checks what the package installs and what removing and purging it
+# keep. It changes the system it runs on, so CI runs it on a disposable
+# runner; it needs systemd 254 or later, passwordless sudo, curl, ss, nsenter,
+# python3, and nothing listening on ports 8642 and 8643.
+#
+#   scripts/test-linux-service.sh target/release/torrplay
+#   scripts/test-linux-service.sh --package torrplay-service_0.1.0-1_amd64.deb
 
 set -euo pipefail
 
-if [[ $# -ne 1 ]]; then
-  echo "usage: $0 BINARY" >&2
+package=
+if [[ $# -eq 2 && $1 == --package ]]; then
+  package=$(realpath "$2")
+  # Where the package puts the executable, which a drop-in names.
+  executable=/usr/bin/torrplay
+elif [[ $# -eq 1 ]]; then
+  build=$1
+  executable=/usr/local/bin/torrplay
+else
+  echo "usage: $0 BINARY | --package DEB" >&2
   exit 2
 fi
-build=$1
 scripts=$(dirname "$0")
 settings=/etc/torrplay/torrplay.env
 drop_in=/etc/systemd/system/torrplay.service.d
@@ -88,14 +100,90 @@ port_is_held() {
   [[ -n "$(listeners t 8642)" ]]
 }
 
+# Installs the service, or installs it again over itself.
+install_service() {
+  if [[ -n $package ]]; then
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install --yes --reinstall "$package"
+  else
+    sudo "$scripts/linux-service.sh" install "$build"
+  fi
+}
+
+# What the package installs beside the service, and how dpkg holds the
+# settings file.
+check_package_files() {
+  local path
+  for path in /usr/bin/torrplay /usr/bin/torrplay-client \
+    /usr/lib/systemd/system/torrplay.service /usr/lib/sysusers.d/torrplay.conf \
+    /usr/lib/firewalld/services/torrplay.xml /etc/ufw/applications.d/torrplay \
+    /usr/share/applications/org.torrplay.client.desktop \
+    /usr/share/icons/hicolor/512x512/apps/org.torrplay.client.png; do
+    [[ -e $path ]] || fail "the package installed no $path"
+  done
+  dpkg-query --showformat='${Conffiles}\n' --show torrplay-service |
+    grep -q "^ $settings " || fail "the settings file is not a conffile"
+  # The package's version without its revision, which both programs report;
+  # the client prints it before it opens a window, so it needs no display.
+  local version
+  version=$(dpkg-query --showformat='${Version}' --show torrplay-service)
+  version=${version%-*}
+  [[ "$(/usr/bin/torrplay --version)" == "torrplay $version" ]] ||
+    fail "/usr/bin/torrplay is not this version's"
+  [[ "$(/usr/bin/torrplay-client --version)" == "torrplay-client $version" ]] ||
+    fail "/usr/bin/torrplay-client is not this version's client"
+  if command -v desktop-file-validate >/dev/null; then
+    desktop-file-validate /usr/share/applications/org.torrplay.client.desktop
+  fi
+}
+
+# Removes the package, which keeps the settings, then purges it, which
+# deletes them; neither deletes the library or its account.
+remove_package() {
+  local path
+  sudo DEBIAN_FRONTEND=noninteractive apt-get remove --yes torrplay-service
+  for path in /usr/bin/torrplay /usr/bin/torrplay-client \
+    /usr/lib/systemd/system/torrplay.service; do
+    [[ ! -e $path ]] || fail "removing the package left $path"
+  done
+  grep -q '^TORRPLAY_LISTEN=\[::\]:8642$' "$settings" ||
+    fail "removing the package did not keep the settings"
+  sudo DEBIAN_FRONTEND=noninteractive apt-get purge --yes torrplay-service
+  [[ ! -e $settings ]] || fail "purging the package left the settings"
+}
+
 errors_since() {
   sudo journalctl -u torrplay --since "$1" --no-pager -o cat |
     grep '"level":"error"' || true
 }
 
+if [[ -n $package ]]; then
+  echo "== the package refuses to install over a hand installation"
+  # As scripts/linux-service.sh writes it.
+  sed 's|/usr/bin/torrplay|/usr/local/bin/torrplay|' "$scripts/../packaging/linux/torrplay.service" |
+    sudo tee /etc/systemd/system/torrplay.service >/dev/null
+  if sudo DEBIAN_FRONTEND=noninteractive apt-get install --yes "$package"; then
+    fail "the package installed over /etc/systemd/system/torrplay.service"
+  fi
+  sudo rm /etc/systemd/system/torrplay.service
+  if dpkg-query --show torrplay-service >/dev/null 2>&1 &&
+    [[ "$(dpkg-query --showformat='${Status}' --show torrplay-service)" == *" installed" ]]; then
+    fail "the refused package is installed"
+  fi
+fi
+
 echo "== install"
 started=$(date '+%Y-%m-%d %H:%M:%S')
-sudo "$scripts/linux-service.sh" install "$build"
+if [[ -n $package ]]; then
+  # An administrator's copy of the package's unit, as `systemctl edit --full`
+  # writes, which the package installs beside.
+  sudo cp "$scripts/../packaging/linux/torrplay.service" /etc/systemd/system/torrplay.service
+fi
+install_service
+if [[ -n $package ]]; then
+  sudo rm /etc/systemd/system/torrplay.service
+  sudo systemctl daemon-reload
+  sudo systemctl restart torrplay
+fi
 wait_for 60 ready 8642 || fail "the service did not become ready"
 service_uid=$(id -u torrplay)
 service_gid=$(id -g torrplay)
@@ -105,6 +193,9 @@ service_gid=$(id -g torrplay)
   fail "the state directory is not the torrplay account's, mode 750"
 sudo test -f /var/lib/torrplay/torrplay.db || fail "no database in the state directory"
 [[ "$(systemctl is-enabled torrplay)" == enabled ]] || fail "the service is not enabled"
+if [[ -n $package ]]; then
+  check_package_files
+fi
 
 echo "== the DLNA media server in the sandbox"
 etag=$(curl -fsS -D - -o /dev/null http://127.0.0.1:8642/api/v1/settings |
@@ -121,7 +212,7 @@ errors=$(errors_since "$started")
 echo "== installing again keeps the settings and runs the new build"
 before=$(property MainPID)
 set_listen '[::]:8643'
-sudo "$scripts/linux-service.sh" install "$build"
+install_service
 wait_for 60 ready 8643 || fail "the service did not listen at the kept address"
 [[ "$(property MainPID)" != "$before" ]] || fail "installing again did not restart the service"
 set_listen '[::]:8642'
@@ -131,10 +222,10 @@ wait_for 60 ready 8642 || fail "the service did not return to port 8642"
 echo "== a download directory under /home, as the docs' drop-in gives it"
 sudo install -d -o torrplay -g torrplay -m 0750 /home/media/torrents
 sudo mkdir -p "$drop_in"
-sudo tee "$drop_in/download-dir.conf" >/dev/null <<'EOF'
+sudo tee "$drop_in/download-dir.conf" >/dev/null <<EOF
 [Service]
 ExecStart=
-ExecStart=/usr/local/bin/torrplay --data-dir ${STATE_DIRECTORY} --download-dir /home/media/torrents
+ExecStart=$executable --data-dir \${STATE_DIRECTORY} --download-dir /home/media/torrents
 ProtectHome=tmpfs
 BindPaths=/home/media/torrents
 EOF
@@ -201,16 +292,20 @@ wait_for 30 ready 8642 || fail "the service did not start after the port was fre
 ((SECONDS - began < 30)) || fail "restart waited out the backoff"
 
 echo "== removal"
-sudo "$scripts/linux-service.sh" remove
+if [[ -n $package ]]; then
+  remove_package
+else
+  sudo "$scripts/linux-service.sh" remove
+  for path in /etc/systemd/system/torrplay.service /etc/sysusers.d/torrplay.conf \
+    /usr/local/bin/torrplay /etc/torrplay; do
+    if sudo test -e "$path"; then
+      fail "$path is still there"
+    fi
+  done
+fi
 if systemctl cat torrplay >/dev/null 2>&1; then
   fail "the unit is still there"
 fi
-for path in /etc/systemd/system/torrplay.service /etc/sysusers.d/torrplay.conf \
-  /usr/local/bin/torrplay /etc/torrplay; do
-  if sudo test -e "$path"; then
-    fail "$path is still there"
-  fi
-done
 [[ -z "$(listeners t 8642)" ]] || fail "something still listens on port 8642"
 id torrplay >/dev/null || fail "removal deleted the account"
 sudo test -f /var/lib/torrplay/torrplay.db || fail "removal deleted the data"

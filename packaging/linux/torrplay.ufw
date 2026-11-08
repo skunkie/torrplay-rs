@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# Installed as /etc/ufw/applications.d/torrplay and enabled by the
+# administrator with `ufw allow torrplay`: the API and web client, the
+# BitTorrent peer port for TCP and UDP, and SSDP, at their default ports.
+
+[torrplay]
+title=TorrPlay
+description=The TorrPlay service's API, BitTorrent peer port, and SSDP
+ports=8642/tcp|4240|1900/udp

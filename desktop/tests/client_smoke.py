@@ -84,7 +84,7 @@ class ClientEnvironment(smoke.Environment):
 
     def __init__(self):
         super().__init__()
-        self.binary = os.path.join(self.root, "bin", "torrplay-desktop")
+        self.binary = os.path.join(self.root, "bin", "torrplay-client")
         os.symlink(smoke.BINARY, self.binary)
         self.marker = self.binary
         # A settings file of its own, absent unless a test writes it, so a
@@ -247,8 +247,8 @@ class ClientLifecycleTests(unittest.TestCase):
                 check=False,
             )
 
-        self.assertTrue(run_it("--version").stdout.startswith("torrplay-desktop "))
-        self.assertTrue(run_it("--help").stdout.startswith("Usage: torrplay-desktop"))
+        self.assertTrue(run_it("--version").stdout.startswith("torrplay-client "))
+        self.assertTrue(run_it("--help").stdout.startswith("Usage: torrplay-client"))
         self.assertEqual(run_it("--data-dir", "/invented").returncode, 2)
 
 

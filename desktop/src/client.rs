@@ -36,8 +36,12 @@ const LOG_MAX_BYTES: u64 = 1 << 20;
 /// answering. One on this computer accepts at once, or refuses at once.
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// The client's name in its messages: its executable's in the packages, which ADR 13
+/// decides, whatever a development build's file is called.
+const NAME: &str = "torrplay-client";
+
 const USAGE: &str = "\
-Usage: torrplay-desktop [TORRENT_FILE | MAGNET_URI]...
+Usage: torrplay-client [TORRENT_FILE | MAGNET_URI]...
 
 Opens the page of the TorrPlay service on this computer, at the port of the
 listen address its settings file gives in TORRPLAY_LISTEN [default: [::]:8642]:
@@ -168,7 +172,7 @@ fn not_the_service(locale: Option<&str>) -> &'static str {
 /// shows standard error to someone who opened it from a menu.
 fn fail(app: &AppHandle, notice: Notice, message: &str) {
     tracing::error!(message, "the client cannot go on");
-    eprintln!("torrplay-desktop: {message}");
+    eprintln!("{NAME}: {message}");
     app.dialog()
         .message(message)
         .title(window::notice_text(
@@ -256,12 +260,12 @@ fn start_logging(app: &AppHandle) {
             builder.with_writer(capped.and(std::io::stderr)).try_init()
         }
         Err(error) => {
-            eprintln!("torrplay-desktop: the client's log cannot be written: {error}");
+            eprintln!("{NAME}: the client's log cannot be written: {error}");
             builder.with_writer(std::io::stderr).try_init()
         }
     };
     if let Err(error) = started {
-        eprintln!("torrplay-desktop: logging cannot start: {error}");
+        eprintln!("{NAME}: logging cannot start: {error}");
     }
 }
 
@@ -275,18 +279,18 @@ pub fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Ok(Command::Version) => {
-            println!("torrplay-desktop {}", env!("CARGO_PKG_VERSION"));
+            println!("{NAME} {}", env!("CARGO_PKG_VERSION"));
             return ExitCode::SUCCESS;
         }
         Err(error) => {
-            eprintln!("torrplay-desktop: {error}\n\n{USAGE}");
+            eprintln!("{NAME}: {error}\n\n{USAGE}");
             return ExitCode::from(2);
         }
     };
     match run(requests) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("torrplay-desktop: {error:#}");
+            eprintln!("{NAME}: {error:#}");
             ExitCode::FAILURE
         }
     }
