@@ -235,6 +235,26 @@ in the running application if there is one, as `cargo run -- invented.torrent` d
 Run the last command from the repository root. Setting `CARGO_TARGET_DIR=../target`
 shares the main workspace's build directory.
 
+With its `client` feature in place of the default `engine`, the same crate builds the
+service edition's client of [ADR 12](adr/0012-editions.md): the window with no server,
+opening the page of the TorrPlay service on this computer, at the listen address in
+the service's settings file, `/etc/torrplay/torrplay.env`, by default port 8642;
+`TORRPLAY_LISTEN` in its own environment takes its place. It takes only torrent files
+and magnet URIs, says how to start the service when nothing answers, and opens the
+page only when the service's own account, or on Linux the user running it, listens
+there. Each run starts its log afresh:
+`~/.local/share/org.torrplay.desktop/logs/client.log` on Linux, and
+`%LOCALAPPDATA%\org.torrplay.desktop\logs\client.log` on Windows. Check it as the
+application, with the `client` feature in place of the `engine`, and run its smoke
+test, where a small HTTP server stands in for the service:
+
+```sh
+cargo run --no-default-features --features client -- invented.torrent
+cargo clippy --locked --all-targets --no-default-features --features client -- -D warnings
+cargo test --locked --no-default-features --features client
+dbus-run-session -- python3 tests/client_smoke.py ../target/debug/torrplay-desktop
+```
+
 ## Running TorrPlay
 
 ```bash

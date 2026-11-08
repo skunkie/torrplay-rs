@@ -262,8 +262,11 @@ class Environment:
 
     def __init__(self):
         self.root = tempfile.mkdtemp(prefix="torrplay-desktop-smoke-")
+        self.binary = BINARY
         self.home = os.path.join(self.root, "home")
         self.data = os.path.join(self.root, "data")
+        # What only this environment's processes carry on their command lines.
+        self.marker = self.data
         self.opened = os.path.join(self.root, "opened.log")
         stubs = os.path.join(self.root, "bin")
         os.makedirs(self.home)
@@ -295,7 +298,7 @@ class Environment:
 
     def start(self, extra_arguments=()):
         return subprocess.Popen(
-            [BINARY, *self.arguments, *extra_arguments],
+            [self.binary, *self.arguments, *extra_arguments],
             env=self.variables,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -320,10 +323,10 @@ class Environment:
 
     def kill_processes(self):
         """Ends what this environment started, and no other copy of the application:
-        only its processes name its data directory on their command lines. Waits until
+        only its processes carry its marker on their command lines. Waits until
         they are gone, not just the port, since one that still runs would take the next
         launch for a second one. Outright, since these tests' data does not matter."""
-        pattern = re.escape(self.data)
+        pattern = re.escape(self.marker)
         subprocess.run(["pkill", "-KILL", "-f", pattern], check=False)
         wait_until(
             lambda: subprocess.run(
@@ -362,7 +365,7 @@ class Driver:
                     "alwaysMatch": {
                         "browserName": "wry",
                         "webkitgtk:browserOptions": {
-                            "binary": os.path.abspath(BINARY),
+                            "binary": os.path.abspath(environment.binary),
                             "args": [*environment.arguments, *extra_arguments],
                         },
                     }

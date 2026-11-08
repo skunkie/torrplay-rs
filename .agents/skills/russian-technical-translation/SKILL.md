@@ -161,6 +161,7 @@ English message.
 | Addon (Stremio) | Аддон | `Stremio` stays in Latin letters, as do `MCP`, `localhost`, and a local address |
 | Log / log record | Журнал / запись | Never `лог` |
 | Build (of the application) | Сборка | Never `билд` |
+| Service (the service edition's system service) | Служба | Feminine: `Служба TorrPlay не отвечает`, `запустите её`; never `сервис`. Windows' list of them is `«Службы»` |
 | Log level: error, warn, info, debug, trace | Уровень журнала: error, warn, info, debug, trace | The names stay in Latin letters, as the records show them |
 | Pinned / eviction (cache) | Закреплено / вытеснение | |
 

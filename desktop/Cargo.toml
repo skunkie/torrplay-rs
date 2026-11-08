@@ -5,7 +5,7 @@
 [package]
 name = "torrplay-desktop"
 version = "0.1.0"
-description = "TorrPlay's desktop application: the server in a window of its own."
+description = "TorrPlay's desktop shell: the application, or the service edition's client."
 edition = "2024"
 license = "MIT"
 publish = false
@@ -22,6 +22,15 @@ unsafe_code = "forbid"
 expect_used = "warn"
 unwrap_used = "warn"
 
+[features]
+default = ["engine"]
+# The application: the server and its engine in this process. The build takes one of
+# this and `client`.
+engine = ["dep:tokio", "dep:torrplay", "dep:torrplay-engine"]
+# What the client needs alone: on Windows, the service manager, to find the service's
+# process. Build the client with `--no-default-features --features client`.
+client = ["dep:windows-service"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -34,10 +43,14 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
-torrplay = { path = "../crates/torrplay" }
-torrplay-engine = { path = "../crates/torrplay-engine" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"], optional = true }
+torrplay = { path = "../crates/torrplay", optional = true }
+torrplay-engine = { path = "../crates/torrplay-engine", optional = true }
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-service = { version = "0.8", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

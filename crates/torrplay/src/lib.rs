@@ -177,6 +177,9 @@ fn bind(address: SocketAddr) -> io::Result<TcpListener> {
     // for the old connections' TIME_WAIT.
     #[cfg(unix)]
     socket.set_reuse_address(true)?;
+    // Windows needs no SO_EXCLUSIVEADDRUSE here: with no options set, another
+    // account cannot bind this port, every address or one, while this socket
+    // holds it, even with SO_REUSEADDR. The desktop client relies on that.
     socket.bind(&address.into())?;
     socket.listen(1024)?;
     socket.set_nonblocking(true)?;
