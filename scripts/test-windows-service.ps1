@@ -100,6 +100,7 @@ try {
     & $install install $Binary
     if (-not (Wait-Until { Test-Ready 8642 } 60)) { Fail 'the service did not become ready' }
     $service = Get-TorrPlay
+    if ($service.DisplayName -ne 'TorrPlay') { Fail "the service is named $($service.DisplayName)" }
     if ($service.StartName -ne "NT SERVICE\$name") { Fail "the service runs as $($service.StartName)" }
     if ($service.StartMode -ne 'Auto') { Fail "the service starts $($service.StartMode), not at boot" }
     $preshutdown = [TorrPlayServiceConfig]::GetPreshutdownTimeout($name)
@@ -109,7 +110,8 @@ try {
     if ("$($owner.Domain)\$($owner.User)" -ne "NT SERVICE\$name") {
         Fail "the service's process is $($owner.Domain)\$($owner.User)'s"
     }
-    $listeners = Get-Listeners 8642
+    # In @(), since PowerShell unwraps a list of one that a function returns.
+    $listeners = @(Get-Listeners 8642)
     if ($listeners.Count -ne 1 -or $listeners[0] -ne $service.ProcessId) {
         Fail "the API's listener is not the service's process: $listeners"
     }
@@ -182,7 +184,7 @@ try {
     if (Test-Path -Path $programDirectory) { Fail "$programDirectory is still there" }
     if (-not (Test-Path -Path $settings)) { Fail 'removal deleted the settings' }
     if (-not (Test-Path -Path (Join-Path $dataDirectory 'torrplay.db'))) { Fail 'removal deleted the data' }
-    if ((Get-Listeners 8642).Count -ne 0) { Fail 'something still listens on port 8642' }
+    if (@(Get-Listeners 8642).Count -ne 0) { Fail 'something still listens on port 8642' }
 
     Write-Host 'all service tests passed'
 } catch {

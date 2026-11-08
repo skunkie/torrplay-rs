@@ -77,9 +77,10 @@ switch ($Action) {
             Invoke-Native sc.exe @('config', $name, 'binPath=', $binaryPath, 'obj=', $account, 'start=', 'auto')
         } else {
             Invoke-Native sc.exe @('create', $name, 'binPath=', $binaryPath, 'obj=', $account,
-                'start=', 'auto', 'DisplayName=', 'TorrPlay')
+                'start=', 'auto')
         }
-        Invoke-Native sc.exe @('description', $name, 'Streams torrents through the TorrPlay REST API.')
+        Set-Service -Name $name -DisplayName 'TorrPlay' `
+            -Description 'Streams torrents through the TorrPlay REST API.'
         # Crashes only: a failure the service reports as its exit code is not one.
         Invoke-Native sc.exe @('failure', $name, 'reset=', '86400',
             'actions=', 'restart/5000/restart/30000/restart/300000')
