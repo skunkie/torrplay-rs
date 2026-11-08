@@ -117,7 +117,9 @@ Option 4: two editions.
 - Updates need release automation first. It publishes the updater's signed
   artifacts and the manifest the updater reads, and maintains the apt
   repository. Code signing on Windows and notarization on macOS come with it,
-  since the systems warn about an update that has neither.
+  since the systems warn about an update that has neither, once the project
+  has them; [ADR 13](0013-packaging.md#signing) lets releases ship without
+  them until then.
 - A service reachable from the network without a password serves every
   local client, as `torrplay` does. Its installer and first window say so,
   as the server's warning does today.
