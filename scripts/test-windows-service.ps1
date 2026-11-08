@@ -100,7 +100,7 @@ try {
     & $install install $Binary
     if (-not (Wait-Until { Test-Ready 8642 } 60)) { Fail 'the service did not become ready' }
     $service = Get-TorrPlay
-    if ($service.DisplayName -ne 'TorrPlay') { Fail "the service is named $($service.DisplayName)" }
+    if ($service.DisplayName -cne 'TorrPlay Service') { Fail "the service is named $($service.DisplayName)" }
     if ($service.StartName -ne "NT SERVICE\$name") { Fail "the service runs as $($service.StartName)" }
     if ($service.StartMode -ne 'Auto') { Fail "the service starts $($service.StartMode), not at boot" }
     $preshutdown = [TorrPlayServiceConfig]::GetPreshutdownTimeout($name)
@@ -165,7 +165,9 @@ try {
     Write-Host '== a usage error stops it without a restart'
     Set-Listen 'every interface'
     Assert-StartFails 2 'with an invalid TORRPLAY_LISTEN'
-    if ((Get-Logged 'are not valid') -eq 0) { Fail 'the usage error was not logged' }
+    if ((Get-Logged 'settings are not valid') -eq 0 -or (Get-Logged 'every interface') -eq 0) {
+        Fail 'the usage error and its reason were not logged'
+    }
     Set-Listen '[::]:8642'
 
     Write-Host '== a taken port stops it without a restart'

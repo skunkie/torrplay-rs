@@ -210,7 +210,8 @@ mod windows {
         let config = match prepared {
             Ok((config, _)) => config,
             Err(message) => {
-                tracing::error!(%message, "the service's command line or settings are not valid");
+                // Not `message`, which a record's own message would give way to.
+                tracing::error!(reason = %message, "the service's command line or settings are not valid");
                 log.flush();
                 report(status, ServiceState::Stopped, none, 2, Duration::ZERO);
                 return 2;
