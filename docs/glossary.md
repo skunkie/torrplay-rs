@@ -239,6 +239,13 @@ of each.
   system service from boot, with a **client**: the window without the engine
   ([ADR 12](adr/0012-editions.md)).
 
+**Settings file**
+: The service edition's `TORRPLAY_` variables, one `NAME=value` per line:
+  `/etc/torrplay/torrplay.env`, which systemd reads as the service's
+  environment, or `%ProgramData%\TorrPlay\torrplay.env`, which the Windows
+  service reads itself. The client reads the listen address there. Not the
+  **settings** of the API, which the store keeps.
+
 **Storage mode**
 : Where a torrent keeps piece data: `memory` (the piece cache, subject to
   eviction) or `disk` (persisted torrents only).

@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "torrplay-settings-file"
+version = "0.1.0"
+description = "The TorrPlay service's settings file, as the service and its client read it."
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

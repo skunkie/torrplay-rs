@@ -89,6 +89,7 @@ const DRAIN_POLL: Duration = Duration::from_millis(50);
 /// The usage text `--help` prints.
 pub const USAGE: &str = "\
 Usage: torrplay [OPTIONS]
+       torrplay service [OPTIONS]
        torrplay password set [--data-dir <DIR>]
        torrplay password remove [--data-dir <DIR>]
        torrplay backup create [--output <FILE>] [--data-dir <DIR>]
@@ -108,7 +109,10 @@ application's API to an MCP client: it reaches the application at --url or
 TORRPLAY_URL [default: http://127.0.0.1:8642], sends TORRPLAY_TOKEN, an api
 access token, as its credential, and speaks on standard input and output, or
 with --transport http at /mcp on --listen, a loopback address [default:
-127.0.0.1:8643].
+127.0.0.1:8643]. `service` runs the application as the Windows service that
+the service manager starts, with the TORRPLAY_ settings in
+%ProgramData%\\TorrPlay\\torrplay.env and its data in that directory unless
+--data-dir names another.
 
 Options:
   --listen <ADDRESS>         The API's address, or TORRPLAY_LISTEN; until a
@@ -285,6 +289,9 @@ impl Config {
 pub enum Command {
     /// Run the application.
     Run(Config),
+    /// Run the application as the Windows service the service manager
+    /// starts.
+    Service(Config),
     /// Change the password of the stopped application whose data directory
     /// the configuration names.
     Password(PasswordChange, Config),
@@ -532,6 +539,12 @@ pub enum ArgsError {
     /// `--listen` for `torrplay mcp` without `--transport http`.
     #[error("torrplay mcp takes --listen only with --transport http")]
     McpListen,
+    /// A command after `service`, which takes a run's options only.
+    #[error(
+        "torrplay service takes the options of a run; password and backup run on their \
+         own with the service stopped, and mcp beside it"
+    )]
+    ServiceUsage,
     /// An option without its value.
     #[error("{0} needs a value")]
     MissingValue(String),
@@ -569,6 +582,16 @@ pub fn parse_args(
     if args.peek().map(String::as_str) == Some("backup") {
         args.next();
         return parse_backup(args);
+    }
+    let service = args.peek().map(String::as_str) == Some("service");
+    if service {
+        args.next();
+        if matches!(
+            args.peek().map(String::as_str),
+            Some("password" | "backup" | "mcp" | "service")
+        ) {
+            return Err(ArgsError::ServiceUsage);
+        }
     }
     let password = if args.peek().map(String::as_str) == Some("password") {
         args.next();
@@ -671,6 +694,7 @@ pub fn parse_args(
     }
     Ok(match password {
         Some(change) => Command::Password(change, config),
+        None if service => Command::Service(config),
         None => Command::Run(config),
     })
 }
@@ -1627,6 +1651,26 @@ mod tests {
         ] {
             assert!(parse(args).is_err(), "{args:?}");
         }
+    }
+
+    #[test]
+    fn service_takes_the_options_of_a_run() {
+        let Ok(Command::Service(config)) = parse(&["service", "--data-dir", "/srv/torrplay"])
+        else {
+            panic!("service with a data directory");
+        };
+        assert_eq!(config.data_dir.as_deref(), Some(Path::new("/srv/torrplay")));
+        assert_eq!(parse(&["service"]), Ok(Command::Service(Config::default())));
+        assert_eq!(parse(&["service", "--help"]), Ok(Command::Help));
+        assert_eq!(parse(&["service", "--version"]), Ok(Command::Version));
+        for command in ["password", "backup", "mcp", "service"] {
+            assert_eq!(
+                parse(&["service", command]),
+                Err(ArgsError::ServiceUsage),
+                "{command} is a command of its own"
+            );
+        }
+        assert!(parse(&["service", "--output", "x"]).is_err());
     }
 
     #[test]
