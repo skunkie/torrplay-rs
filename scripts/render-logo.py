@@ -18,15 +18,24 @@ bitmaps cannot drift:
   since televisions cannot say which they prefer and their menus are
   mostly dark;
 - crates/torrplay-server/assets/dlna/icon-{48,120}.jpg, the same filled to
-  the corners, since JPEG has no transparency.
+  the corners, since JPEG has no transparency;
+- desktop/icons/icon.icns, the light tile inside the margin and shadow of
+  Apple's 1024-point icon grid, so the Dock shows it at the size of other
+  icons, where the full-bleed icon.png looks larger;
+- desktop/icons/icon.icon, an Icon Composer icon for macOS 26 and later,
+  which the Tauri bundler compiles with Xcode's actool into the bundle's
+  Assets.car: the pieces as one layer, light or dark with the system's
+  appearance, on the system's own tile, which macOS shapes, sizes, and
+  tints.
 
 Run it from the repository root with Pillow 11.3.0:
     python3 scripts/render-logo.py
 """
 
+import json
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 # The design grid, in units of a 120-unit tile.
 TILE = 120
@@ -44,12 +53,23 @@ LIGHT = {"tile": "#F1F5F9", "empty": "#CBD5E1", "downloaded": "#0284C7", "arrivi
 DOWNLOADED_CELLS = {(0, 0), (0, 1), (1, 1), (2, 1)}
 ARRIVING_CELL = (0, 2)
 
-# Bitmaps are drawn this many times larger, then reduced, for smooth edges.
+# Bitmaps are drawn this many times larger, then reduced, for smooth edges;
+# the macOS icon, already large, needs fewer.
 SUPERSAMPLE = 8
+MAC_SUPERSAMPLE = 2
 
 ICONS = Path("crates/torrplay-server/assets/dlna")
 BRAND = Path("brand")
 CLIENT = Path("client/public")
+DESKTOP = Path("desktop/icons")
+
+# Apple's macOS icon grid: a 1024-point canvas holding an 824-point tile,
+# with a shadow below it.
+MAC_CANVAS = 1024
+MAC_TILE = 824
+MAC_SHADOW_OFFSET = 12
+MAC_SHADOW_BLUR = 14
+MAC_SHADOW_ALPHA = 0.3
 
 HEADER = """<!--
 SPDX-FileCopyrightText: 2026 TorrPlay
@@ -76,13 +96,19 @@ def cells():
             yield x, y, role
 
 
-def svg(paint, style=""):
-    """The tile, with `paint(role)` giving each shape's attributes."""
-    pieces = "\n".join(
-        f'  <rect x="{x}" y="{y}" width="{CELL}" height="{CELL}" '
+def rects(paint, origin=0):
+    """The pieces as SVG rectangles, offset by `origin` tile units, with
+    `paint(role)` giving each one's attributes."""
+    return "\n".join(
+        f'  <rect x="{x - origin}" y="{y - origin}" width="{CELL}" height="{CELL}" '
         f'rx="{CELL_RADIUS}" {paint(role)}/>'
         for x, y, role in cells()
     )
+
+
+def svg(paint, style=""):
+    """The tile, with `paint(role)` giving each shape's attributes."""
+    pieces = rects(paint)
     return f"""{HEADER}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {TILE} {TILE}" role="img" aria-label="torst">
 {style}  <rect width="{TILE}" height="{TILE}" rx="{TILE_RADIUS}" {paint("tile")}/>
 {pieces}
@@ -105,9 +131,9 @@ def adaptive():
     return svg(lambda role: f'class="{role}"', style)
 
 
-def bitmap(size, rounded, palette=DARK):
-    scale = size * SUPERSAMPLE / TILE
-    canvas = size * SUPERSAMPLE
+def bitmap(size, rounded, palette=DARK, supersample=SUPERSAMPLE):
+    scale = size * supersample / TILE
+    canvas = size * supersample
     mode, clear = ("RGBA", (0, 0, 0, 0)) if rounded else ("RGB", palette["tile"])
     image = Image.new(mode, (canvas, canvas), clear)
     draw = ImageDraw.Draw(image)
@@ -126,6 +152,57 @@ def bitmap(size, rounded, palette=DARK):
     return image.resize((size, size), Image.Resampling.LANCZOS)
 
 
+def mac_icon():
+    """The light tile on Apple's grid, with its shadow."""
+    tile = bitmap(MAC_TILE, rounded=True, palette=LIGHT, supersample=MAC_SUPERSAMPLE)
+    inset = (MAC_CANVAS - MAC_TILE) // 2
+    shadow = Image.new("RGBA", (MAC_CANVAS, MAC_CANVAS), (0, 0, 0, 0))
+    alpha = tile.getchannel("A").point(lambda value: round(value * MAC_SHADOW_ALPHA))
+    shadow.paste((0, 0, 0, 255), (inset, inset + MAC_SHADOW_OFFSET), alpha)
+    image = shadow.filter(ImageFilter.GaussianBlur(MAC_SHADOW_BLUR))
+    image.alpha_composite(tile, (inset, inset))
+    return image
+
+
+def glyph(palette):
+    """The pieces alone, at their size on the 1024-point canvas, for an Icon
+    Composer layer, which macOS centers on the tile it draws."""
+    side = 3 * CELL + 2 * GAP
+    points = side * MAC_CANVAS / TILE
+    pieces = rects(lambda role: f'fill="{palette[role]}"', origin=ORIGIN)
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{points:g}" height="{points:g}" '
+        f'viewBox="0 0 {side} {side}">\n{pieces}\n</svg>\n'
+    )
+
+
+def icon_composer():
+    """The icon.json, in the form Icon Composer writes: a system-colored tile
+    and one glass layer whose image follows the appearance, opaque, so the
+    pale empty pieces stay visible on the light tile."""
+    return {
+        "fill": "system-light",
+        "groups": [
+            {
+                "layers": [
+                    {
+                        "glass": True,
+                        "image-name-specializations": [
+                            {"value": "light.svg"},
+                            {"appearance": "dark", "value": "dark.svg"},
+                        ],
+                        "name": "pieces",
+                    }
+                ],
+                "shadow": {"kind": "layer-color", "opacity": 0.5},
+                "specular": True,
+                "translucency": {"enabled": False, "value": 0.2},
+            }
+        ],
+        "supported-platforms": {"squares": "shared"},
+    }
+
+
 def main():
     BRAND.mkdir(parents=True, exist_ok=True)
     (BRAND / "logo-dark.svg").write_text(fixed(DARK), encoding="utf-8")
@@ -139,6 +216,15 @@ def main():
         bitmap(size, rounded=False).save(
             ICONS / f"icon-{size}.jpg", quality=95, optimize=True
         )
+    DESKTOP.mkdir(parents=True, exist_ok=True)
+    mac_icon().save(DESKTOP / "icon.icns")
+    assets = DESKTOP / "icon.icon" / "Assets"
+    assets.mkdir(parents=True, exist_ok=True)
+    (assets / "light.svg").write_text(glyph(LIGHT), encoding="utf-8")
+    (assets / "dark.svg").write_text(glyph(DARK), encoding="utf-8")
+    (DESKTOP / "icon.icon" / "icon.json").write_text(
+        json.dumps(icon_composer(), indent=2) + "\n", encoding="utf-8"
+    )
 
 
 if __name__ == "__main__":
