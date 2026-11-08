@@ -9,7 +9,7 @@
 use std::fs::File;
 use std::io::Write;
 use std::net::{SocketAddr, TcpStream};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -17,6 +17,7 @@ use std::time::Duration;
 use anyhow::Context;
 use tauri::{AppHandle, Manager, Url};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use torrplay_settings_file::SettingsFile;
 
 use crate::opening::{self, Request};
 use crate::owner;
@@ -64,36 +65,6 @@ fn parse(arguments: impl IntoIterator<Item = String>, directory: &Path) -> Resul
     }
 }
 
-/// The service's settings file, which its service manager reads as its environment.
-fn settings_path() -> Option<PathBuf> {
-    if cfg!(windows) {
-        std::env::var_os("ProgramData")
-            .map(|data| PathBuf::from(data).join("TorrPlay").join("torrplay.env"))
-    } else {
-        Some(PathBuf::from("/etc/torrplay/torrplay.env"))
-    }
-}
-
-/// The listen address `settings`, the contents of a settings file, gives: its last
-/// `TORRPLAY_LISTEN=` line, quoted or not, as a service manager reads it.
-fn listen_in(settings: &str) -> Option<String> {
-    settings
-        .lines()
-        .filter_map(|line| {
-            let value = line
-                .trim()
-                .strip_prefix(LISTEN_VARIABLE)?
-                .strip_prefix('=')?;
-            let value = value.trim();
-            let unquoted = ['"', '\'']
-                .iter()
-                .find_map(|quote| value.strip_prefix(*quote)?.strip_suffix(*quote))
-                .unwrap_or(value);
-            Some(unquoted.to_owned())
-        })
-        .next_back()
-}
-
 /// The service's listen address, with where it came from for messages: `own`, the
 /// client's own `TORRPLAY_LISTEN`, or else the one in the settings file at `settings`,
 /// or else the default. A settings file that is there but cannot be read is an error,
@@ -106,21 +77,14 @@ fn service_listen(
         return Ok((own, "the client's own environment".to_owned()));
     }
     if let Some(path) = settings {
-        match std::fs::read_to_string(path) {
-            Ok(contents) => {
-                if let Some(listen) = listen_in(&contents) {
-                    return Ok((listen, path.display().to_string()));
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!(
-                        "the service's settings file, {}, cannot be read",
-                        path.display()
-                    )
-                });
-            }
+        let file = SettingsFile::read(path).with_context(|| {
+            format!(
+                "the service's settings file, {}, cannot be read",
+                path.display()
+            )
+        })?;
+        if let Some(listen) = file.as_ref().and_then(|file| file.get(LISTEN_VARIABLE)) {
+            return Ok((listen.to_owned(), path.display().to_string()));
         }
     }
     Ok((LISTEN_DEFAULT.to_owned(), "the default".to_owned()))
@@ -212,11 +176,13 @@ fn fail(app: &AppHandle, notice: Notice, message: &str) {
 /// Opens the service's page, or says why it cannot.
 fn open(app: &AppHandle) {
     let own = std::env::var(LISTEN_VARIABLE).ok();
-    let found = service_listen(own, settings_path().as_deref()).and_then(|(listen, source)| {
-        let (url, address) =
-            service_url(&listen).with_context(|| format!("{LISTEN_VARIABLE} from {source}"))?;
-        Ok((url, address, source))
-    });
+    let found = service_listen(own, torrplay_settings_file::location().as_deref()).and_then(
+        |(listen, source)| {
+            let (url, address) =
+                service_url(&listen).with_context(|| format!("{LISTEN_VARIABLE} from {source}"))?;
+            Ok((url, address, source))
+        },
+    );
     let (url, address, source) = match found {
         Ok(found) => found,
         Err(error) => return fail(app, Notice::ClientCouldNotStart, &format!("{error:#}")),
@@ -431,29 +397,6 @@ mod tests {
         let error = service_listen(None, Some(&unreadable)).map(|(listen, _)| listen);
         assert!(error.is_err(), "{error:?}");
         Ok(())
-    }
-
-    #[test]
-    fn the_settings_file_gives_the_listen_address_as_a_service_manager_reads_it() {
-        let settings = "# Invented settings\nTORRPLAY_LISTEN=[::]:9000\nTORRPLAY_LOG=debug\n";
-        assert_eq!(listen_in(settings).as_deref(), Some("[::]:9000"));
-        assert_eq!(
-            listen_in("TORRPLAY_LISTEN=\"0.0.0.0:1\"\nTORRPLAY_LISTEN='0.0.0.0:2'").as_deref(),
-            Some("0.0.0.0:2"),
-            "the last one, without its quotes"
-        );
-        assert_eq!(
-            listen_in("# TORRPLAY_LISTEN=[::]:9000\nTORRPLAY_LISTENER=x"),
-            None
-        );
-    }
-
-    #[test]
-    fn the_installed_settings_template_gives_the_default_once_uncommented() {
-        let template = include_str!("../../packaging/linux/torrplay.env");
-        assert_eq!(listen_in(template), None, "every setting commented out");
-        let uncommented = template.replace("#TORRPLAY_LISTEN=", "TORRPLAY_LISTEN=");
-        assert_eq!(listen_in(&uncommented).as_deref(), Some(LISTEN_DEFAULT));
     }
 
     #[test]

@@ -6,21 +6,33 @@
 //! the runtime, opens the store in the data directory, binds the API's
 //! listener, and serves until a termination signal. `torrplay password`
 //! changes a stopped application's password instead, `torrplay backup`
-//! backs it up or restores it, and `torrplay mcp` serves a running
-//! application's API to an MCP client.
+//! backs it up or restores it, `torrplay mcp` serves a running
+//! application's API to an MCP client, and `torrplay service` runs as a
+//! Windows service.
 
 use std::io::IsTerminal;
 use std::process::ExitCode;
+
+mod service;
 
 use torrplay::{
     BackupAction, Command, Config, LogLevel, McpConfig, PasswordChange, PasswordChanged, USAGE,
 };
 
 fn main() -> ExitCode {
+    // Before parsing, since the service reads its settings from its settings
+    // file rather than the environment, and reports a usage error to the service
+    // manager rather than on standard error.
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if arguments.first().map(String::as_str) == Some("service") {
+        return service::main(arguments);
+    }
     let listen_variable = std::env::var_os(torrplay::LISTEN_VARIABLE)
         .map(|value| value.to_string_lossy().into_owned());
-    let config = match torrplay::parse_args(std::env::args().skip(1), listen_variable) {
+    let config = match torrplay::parse_args(arguments, listen_variable) {
         Ok(Command::Run(config)) => config,
+        // Only a first argument of `service` asks for it, which went above.
+        Ok(Command::Service(_)) => return service::main(std::env::args().skip(1).collect()),
         Ok(Command::Password(change, config)) => return password(change, &config),
         Ok(Command::Backup(action, config)) => return backup(action, &config),
         Ok(Command::Mcp(config)) => return mcp(config),

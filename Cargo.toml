@@ -17,6 +17,7 @@ members = [
     "crates/torrplay-media",
     "crates/torrplay-stremio",
     "crates/torrplay-server",
+    "crates/torrplay-settings-file",
     "crates/torrplay-store",
 ]
 
@@ -128,10 +129,12 @@ torrplay-mcp = { path = "crates/torrplay-mcp" }
 torrplay-media = { path = "crates/torrplay-media" }
 torrplay-stremio = { path = "crates/torrplay-stremio" }
 torrplay-server = { path = "crates/torrplay-server" }
+torrplay-settings-file = { path = "crates/torrplay-settings-file" }
 torrplay-store = { path = "crates/torrplay-store" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
 url = { version = "2", features = ["serde"] }
+windows-service = "0.8"
 # Backup archives: stored and deflated entries only, through flate2, which
 # is already in the tree.
 zip = { version = "=9.0.3", default-features = false, features = ["deflate-flate2"] }

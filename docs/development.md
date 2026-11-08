@@ -40,7 +40,8 @@ binary files that cannot carry headers.
 GitHub Actions runs on pull requests, pushes to `main`, manual dispatch, and
 reusable workflow calls. Licensing and workflow validation run immediately,
 as does `scripts/check-linux-service.sh`; `scripts/test-linux-service.sh`
-runs once the browser smoke test has built the application.
+runs once the browser smoke test has built the application, and
+`scripts/test-windows-service.ps1` after the Windows build and tests.
 The repository-stage job enables Rust jobs once a root `Cargo.toml` exists.
 It rejects a manifest without `Cargo.lock` and `rust-toolchain.toml`, and
 rejects committed Rust sources or nested manifests without a root manifest.
@@ -420,6 +421,51 @@ sudo -u torrplay torrplay backup create --data-dir /var/lib/torrplay \
 sudo systemctl start torrplay
 ```
 
+## Running the service on Windows
+
+`torrplay service` runs the application as the service edition's Windows
+service, which the service manager starts; anywhere else, or started by
+hand, it says so and exits with status 2. The service manager gives a
+service no environment of its own, so it reads its `TORRPLAY_` variables
+from `%ProgramData%\TorrPlay\torrplay.env`, whose template is
+`packaging/windows/torrplay.env`, and keeps its data, and its logs in
+`logs`, in that directory unless `--data-dir` names another. It reports
+itself running once the API listens. Its stop control and the system's
+shutdown begin the shutdown sequence; the service manager refuses controls
+while a service stops, so a second stop cannot hurry it as a second signal
+does. A usage error, such as an invalid `TORRPLAY_LISTEN`, stops it with
+the service-specific exit code 2, which it logs, and a failure once started,
+such as a taken port, with 1.
+
+`scripts/windows-service.ps1`, in an elevated PowerShell 7, installs a build
+by hand and removes it, until the installer does:
+
+```powershell
+cargo build --release -p torrplay
+scripts\windows-service.ps1 install target\release\torrplay.exe
+```
+
+It copies the build to `%ProgramFiles%\TorrPlay` and registers the
+`torrplay` service, starting at boot as its virtual account,
+`NT SERVICE\torrplay`. Only that account, SYSTEM, and administrators may
+change `%ProgramData%\TorrPlay`; users may read the settings file, as the
+client does. The settings file is installed only when there is none, and
+the service is restarted, so installing again keeps its settings and runs
+the new build. The service manager restarts the service after a crash,
+after 5 seconds, then 30, then 5 minutes, but not after a failure the
+service reports, which a restart would repeat, and the system waits up to
+45 seconds for it at shutdown. `scripts\windows-service.ps1 remove` stops and
+deletes the service and the build, keeping `%ProgramData%\TorrPlay` with the
+settings and the data.
+
+`scripts/test-windows-service.ps1 target\debug\torrplay.exe` installs a build
+with that script and tests the service as the service manager runs it: its
+virtual account, the listener's process, the data directory's permissions,
+a second install keeping the settings and restarting, a restart after a
+crash, a clean stop, a usage error and a taken port that stop it without a
+restart, and removal. It changes the system, so CI runs it on the disposable
+Windows runner of the Rust build and tests.
+
 ## Benchmarks
 
 `crates/torrplay-bench` is the milestone 5 harness for the benchmark
@@ -605,6 +651,8 @@ The workspace has thirteen members:
   v1, v2-only, and hybrid metainfo that `docs/acceptance.md` defines.
 - `crates/torrplay-store` is the SQLite store ADR 8 decides: the torrents,
   settings, profiles, and credentials, written through one worker thread.
+- `crates/torrplay-settings-file` reads the service edition's settings file,
+  for the Windows service and the desktop client alike.
 
 librqbit is a git dependency on a commit of the `torrplay/patches` branch of
 the [skunkie/rqbit](https://github.com/skunkie/rqbit) fork, which ADR 2

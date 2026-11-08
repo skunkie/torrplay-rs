@@ -53,8 +53,10 @@ Option 4: two editions.
     Its data is in `%ProgramData%\TorrPlay`, writable by that account only.
   - Stopping the service begins the shutdown sequence that a termination
     signal begins today, and a second stop request hurries it. On Windows,
-    the service's stop control maps to that sequence. The service manager's
-    stop timeout is longer than the sequence's 30-second limit.
+    the service's stop control and the system's shutdown map to that
+    sequence; the service manager refuses controls while a service stops,
+    so there the sequence's own limit ends it. The service manager's stop
+    timeout is longer than the sequence's 30-second limit.
   - The service listens as `torrplay` does: on every interface, on port 8642.
     It logs to its data directory, as `torrplay` does, and to standard error,
     which the journal keeps on Linux.

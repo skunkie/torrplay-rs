@@ -46,6 +46,7 @@ tauri-plugin-single-instance = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"], optional = true }
 torrplay = { path = "../crates/torrplay", optional = true }
 torrplay-engine = { path = "../crates/torrplay-engine", optional = true }
+torrplay-settings-file = { path = "../crates/torrplay-settings-file" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
 

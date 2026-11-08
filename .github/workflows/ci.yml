@@ -455,3 +455,14 @@ jobs:
         run: cargo test --locked --workspace
       - name: Test all features
         run: cargo test --locked --workspace --all-features
+      # The Windows service's code builds only on Windows, which the quality
+      # job does not lint.
+      - name: Lint the Windows service
+        if: runner.os == 'Windows'
+        run: cargo clippy --locked -p torrplay -p torrplay-settings-file --all-targets -- -D warnings
+      # The runner is disposable and elevated, so the test installs the
+      # service on it, with the build the tests above made.
+      - name: Install and test the Windows service
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: scripts/test-windows-service.ps1 target/debug/torrplay.exe
