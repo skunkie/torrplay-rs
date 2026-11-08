@@ -40,7 +40,7 @@ if (-not (Test-Path -Path 'client/dist/index.html')) {
 $repository = (Get-Location).Path
 # The variables this sets, which a script shares with the session that runs
 # it, so they are put back as they were.
-$variables = @('CARGO_TARGET_DIR', 'TORRPLAY_SERVICE_EXE', 'TORRPLAY_SETTINGS_TEMPLATE')
+$variables = @('CARGO_TARGET_DIR', 'TAURI_TORRPLAY_SERVICE_EXE', 'TAURI_TORRPLAY_SETTINGS_TEMPLATE')
 $saved = @{}
 foreach ($variable in $variables) {
     $saved[$variable] = [Environment]::GetEnvironmentVariable($variable)
@@ -48,9 +48,10 @@ foreach ($variable in $variables) {
 try {
     Remove-Item -Path Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
     Invoke-Checked cargo @('build', '--release', '--locked', '-p', 'torrplay')
-    # The fragment's sources, which candle reads from the environment.
-    $env:TORRPLAY_SERVICE_EXE = Join-Path $repository 'target/release/torrplay.exe'
-    $env:TORRPLAY_SETTINGS_TEMPLATE = Join-Path $repository 'packaging/windows/torrplay.env'
+    # The fragment's sources, which candle reads from the environment; the
+    # bundler passes it only variables whose names start with TAURI.
+    $env:TAURI_TORRPLAY_SERVICE_EXE = Join-Path $repository 'target/release/torrplay.exe'
+    $env:TAURI_TORRPLAY_SETTINGS_TEMPLATE = Join-Path $repository 'packaging/windows/torrplay.env'
 
     # Beside the application's build, which writes torrplay-desktop too.
     $env:CARGO_TARGET_DIR = Join-Path $repository 'desktop/target/client'

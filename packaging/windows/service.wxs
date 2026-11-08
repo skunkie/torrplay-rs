@@ -21,8 +21,10 @@ account they name does not exist until the service does: a service's SID is
 S-1-5-80- and the SHA-1 of its name in capitals, so NT SERVICE\torrplay is
 S-1-5-80-2828507108-2845588903-360128926-4130653692-64400780 on every computer.
 
-scripts/build-service-msi.ps1 sets TORRPLAY_SERVICE_EXE and
-TORRPLAY_SETTINGS_TEMPLATE to the files it installs.
+scripts/build-service-msi.ps1 sets TAURI_TORRPLAY_SERVICE_EXE and
+TAURI_TORRPLAY_SETTINGS_TEMPLATE to the files it installs. The names start
+with TAURI because the bundler runs candle with the rest of its environment
+cleared.
 -->
 <?if $(sys.BUILDARCH)="x64" or $(sys.BUILDARCH)="arm64"?>
     <?define Win64 = "yes" ?>
@@ -44,7 +46,7 @@ TORRPLAY_SETTINGS_TEMPLATE to the files it installs.
 
         <DirectoryRef Id="INSTALLDIR">
             <Component Id="TorrPlayService" Guid="07FE7E62-DEB3-4B80-8C9F-7E046D18FF87" Win64="$(var.Win64)">
-                <File Id="TorrPlayExe" Name="torrplay.exe" Source="$(env.TORRPLAY_SERVICE_EXE)" KeyPath="yes" Checksum="yes">
+                <File Id="TorrPlayExe" Name="torrplay.exe" Source="$(env.TAURI_TORRPLAY_SERVICE_EXE)" KeyPath="yes" Checksum="yes">
                     <!-- A service gets no prompt to allow its listeners: the API,
                          the peer port, and SSDP, on private and domain networks.
                          The extension takes one profile for each rule. -->
@@ -85,7 +87,7 @@ TORRPLAY_SETTINGS_TEMPLATE to the files it installs.
                 </CreateFolder>
             </Component>
             <Component Id="TorrPlaySettings" Guid="4D8150CE-2536-42E3-BE75-20EDE9B5578B" Permanent="yes" NeverOverwrite="yes">
-                <File Id="TorrPlaySettings" Name="torrplay.env" Source="$(env.TORRPLAY_SETTINGS_TEMPLATE)" KeyPath="yes">
+                <File Id="TorrPlaySettings" Name="torrplay.env" Source="$(env.TAURI_TORRPLAY_SETTINGS_TEMPLATE)" KeyPath="yes">
                     <PermissionEx Sddl="D:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1301bf;;;S-1-5-80-2828507108-2845588903-360128926-4130653692-64400780)(A;;FR;;;BU)" />
                 </File>
             </Component>
