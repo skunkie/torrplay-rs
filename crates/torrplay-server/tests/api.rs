@@ -195,6 +195,25 @@ fn episodes() -> FixtureSpec {
     }
 }
 
+/// A fixture of a disc's `files`, all in `directory`.
+fn disc(id: &str, seed: u64, directory: &str, files: &[&str]) -> FixtureSpec {
+    FixtureSpec {
+        id: id.into(),
+        torrent_name: "Disc".into(),
+        seed,
+        piece_length: 16 * 1024,
+        layout: torrplay_fixtures::Layout::MultiFile {
+            files: files
+                .iter()
+                .map(|name| torrplay_fixtures::FileSpec {
+                    path: vec![directory.into(), (*name).into()],
+                    size_bytes: 20_000,
+                })
+                .collect(),
+        },
+    }
+}
+
 /// Creates a torrent from an unknown magnet URI with library `members`, and
 /// returns its ID.
 async fn create_with(server: &TestServer, n: u8, members: Value) -> String {
@@ -4649,6 +4668,15 @@ mod scenario {
         server.engine.add_fixture(&show);
         let series = server.upload(&show.metainfo().bytes, None).await.json();
         assert_eq!(series["kind"], "series");
+        let dvd = disc(
+            "dvd",
+            44,
+            "VIDEO_TS",
+            &["VIDEO_TS.IFO", "VTS_01_1.VOB", "VTS_01_2.VOB"],
+        );
+        server.engine.add_fixture(&dvd);
+        let dvd = server.upload(&dvd.metainfo().bytes, None).await.json();
+        assert_eq!(dvd["kind"], "movie", "VOB files are video");
         // Files, and the files a preview lists, report their episodes.
         let episodes = |files: &Value| -> Vec<(Value, Value)> {
             files
@@ -6006,7 +6034,8 @@ mod scenario {
         };
         assert_eq!(entries().await, Vec::<Value>::new());
 
-        // UPN-01: files of a movie torrent, above 1% only.
+        // UPN-01: video files, above 1% only, including MPEG-2 transport
+        // streams with the `.m2ts` extension.
         server
             .send(put_progress(
                 &progress(&movies_id, &movie_files["video.mkv"]),
@@ -6029,6 +6058,33 @@ mod scenario {
         assert_eq!(listed[0]["file"]["id"], movie_files["video.mp4"].as_str());
         assert_eq!(listed[0]["progress"]["position_seconds"], 30.0);
         assert_eq!(listed[0]["torrent"]["id"], movies_id.as_str());
+        let blu_ray = disc("blu-ray", 45, "STREAM", &["00000.m2ts", "00001.clpi"]);
+        server.engine.add_fixture(&blu_ray);
+        let blu_ray = server.upload(&blu_ray.metainfo().bytes, None).await.json();
+        let blu_ray_id = blu_ray["id"].as_str().unwrap().to_owned();
+        let blu_ray_files = file_ids(&server, blu_ray["links"]["self"].as_str().unwrap()).await;
+        server
+            .send(put_progress(
+                &progress(&blu_ray_id, &blu_ray_files["00000.m2ts"]),
+                30.0,
+                100.0,
+                false,
+            ))
+            .await;
+        let listed = entries().await;
+        assert_eq!(listed.len(), 2, "M2TS files are video");
+        assert_eq!(
+            listed[0]["file"]["id"],
+            blu_ray_files["00000.m2ts"].as_str()
+        );
+        let removed = server
+            .send(empty(
+                Method::DELETE,
+                blu_ray["links"]["self"].as_str().unwrap(),
+            ))
+            .await;
+        assert_eq!(removed.status, StatusCode::NO_CONTENT);
+        assert_eq!(entries().await.len(), 1, "removal leaves the movie");
 
         // UPN-02: viewing an episode moves its series to the next one.
         server
