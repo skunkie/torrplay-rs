@@ -117,14 +117,20 @@ function Assert-StartFails([int] $Code, [string] $Why) {
     }
 }
 
-# Runs msiexec quietly with a verbose log and returns its exit code, printing
-# the log's end when it fails.
-function Invoke-Msi([string[]] $Arguments) {
+# Runs msiexec quietly with a verbose log and returns its exit code. Unless
+# the code is the one expected, it prints what the log says of the action
+# that failed, which Windows Installer marks "Return value 3", and of the
+# errors it reports, since the log ends with its properties.
+function Invoke-Msi([string[]] $Arguments, [int] $Expected = 0) {
     $log = New-TemporaryFile
     $process = Start-Process -FilePath msiexec.exe -Wait -PassThru `
         -ArgumentList ($Arguments + @('/qn', '/norestart', '/l*v', "`"$($log.FullName)`""))
-    if ($process.ExitCode -notin @(0, 3010)) {
-        Get-Content -Path $log -Tail 60 | Write-Host
+    if ($process.ExitCode -notin @($Expected, 3010)) {
+        Write-Host "--- msiexec $Arguments exited with $($process.ExitCode); its log says:"
+        Select-String -Path $log -Pattern 'Return value 3' -Context 30, 0 | ForEach-Object {
+            $_.Context.PreContext + $_.Line
+        } | Write-Host
+        Select-String -Path $log -Pattern '^Error \d+\.' | ForEach-Object { $_.Line } | Write-Host
     }
     Remove-Item -Path $log
     $process.ExitCode
@@ -198,7 +204,7 @@ try {
         try {
             New-Item -Path $applicationKey -Force | Out-Null
             New-ItemProperty -Path $applicationKey -Name DisplayName -Value 'TorrPlay' | Out-Null
-            $code = Invoke-Msi @('/i', "`"$Package`"")
+            $code = Invoke-Msi @('/i', "`"$Package`"") -Expected 1603
             if ($code -ne 1603) { Fail "the MSI exited with $code beside the application, not 1603" }
             if (Get-Service -Name $name -ErrorAction SilentlyContinue) { Fail 'a refused install registered the service' }
             if (Test-Path -Path $programDirectory) { Fail "a refused install made $programDirectory" }
