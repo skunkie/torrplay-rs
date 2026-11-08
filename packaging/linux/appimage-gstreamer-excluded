@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# GStreamer plugins the AppImage leaves out, which
+# scripts/build-application-linux.sh reads. The AppImage otherwise brings
+# every plugin installed where it is built, through which WebKitGTK plays
+# media, and these, with the libraries only they use, are about a third of
+# what GStreamer adds, without one that plays a format TorrPlay serves. Every
+# decoder, demuxer, and parser stays, so a plugin wrongly listed here can only
+# make the AppImage smaller, never stop it playing; one wrongly missing only
+# makes it larger. One file name per line.
+
+# Machine learning, editing, and cameras.
+libgstonnx.so
+libgstges.so
+libgstnle.so
+libgstlibcamera.so
+libgstcamerabin.so
+libgstopenni2.so
+# A GTK 4 video sink; WebKitGTK 4.1 draws video with GTK 3 and OpenGL.
+libgstgtk4.so
+libgstvulkan.so
+# Image, MIDI, and chiptune formats, and audio effect hosts.
+libgstopenexr.so
+libgstfluidsynthmidi.so
+libgstsid.so
+libgstladspa.so
+libgstlibvisual.so
+# Real-time communication, telephony, and streaming to servers.
+libgstwebrtc.so
+libgstwebrtcdsp.so
+libgstsctp.so
+libgstsrtp.so
+libgstspandsp.so
+libgstshout2.so
+# Barcodes, text-mode sinks, and an audio output WebKitGTK never picks.
+libgstzxing.so
+libgstzbar.so
+libgstcacasink.so
+libgstaasink.so
+libgstopenal.so
+# FireWire and CD sources.
+libgst1394.so
+libgstdc1394.so
+libgstcdio.so
+libgstcdparanoia.so
+# Encoders, muxers, and tag writers, which only authoring uses.
+libgstmpeg2enc.so
+libgstmplex.so
+libgsttaglib.so

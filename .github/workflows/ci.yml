@@ -208,7 +208,7 @@ jobs:
         run: scripts/test-linux-service.sh --package target/debian/torrplay-service.deb
 
   application-package:
-    name: Application package (Linux)
+    name: Application packages (Linux)
     needs: stage
     if: needs.stage.outputs.rust == 'true'
     # The oldest supported system, as ADR 13 decides.
@@ -243,7 +243,7 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev librsvg2-dev \
             desktop-file-utils webkit2gtk-driver xvfb dbus-daemon python3-gi \
             gir1.2-gtk-3.0 gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
-            gstreamer1.0-libav
+            gstreamer1.0-libav patchelf gir1.2-gstreamer-1.0
       - name: Enable pnpm
         working-directory: client
         run: corepack enable pnpm
@@ -257,8 +257,10 @@ jobs:
         run: cargo install tauri-cli --version "${TAURI_CLI_VERSION}" --locked
       - name: Install pandoc
         run: scripts/install-pandoc.sh "${PANDOC_VERSION}" "${PANDOC_SHA256}" "${RUNNER_TEMP}" >> "$GITHUB_PATH"
-      - name: Build the package
-        run: scripts/build-application-deb.sh target/debian/torrplay.deb
+      # The script checks each AppImage tool it downloads against a pinned
+      # SHA-256.
+      - name: Build the packages
+        run: scripts/build-application-linux.sh target/debian/torrplay.deb target/appimage/torrplay.AppImage
       # The runner is disposable, so the test installs the package on it.
       - name: Install and check the package
         run: scripts/test-application-deb.sh --keep target/debian/torrplay.deb
@@ -267,6 +269,13 @@ jobs:
         run: dbus-run-session -- python3 tests/smoke.py /usr/bin/torrplay-desktop
       - name: Remove the package
         run: scripts/test-application-deb.sh target/debian/torrplay.deb
+      - name: Check the AppImage
+        run: scripts/test-application-appimage.sh target/appimage/torrplay.AppImage "${RUNNER_TEMP}/appimage"
+      # The unpacked AppImage, started as its runtime would, without the FUSE
+      # mount the runner lacks, and with the .deb removed.
+      - name: Run the smoke test on the AppImage
+        working-directory: desktop
+        run: dbus-run-session -- python3 tests/smoke.py "${RUNNER_TEMP}/appimage/run"
 
   application-installer:
     name: Application installer (${{ matrix.os }})
