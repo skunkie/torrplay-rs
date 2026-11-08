@@ -5,7 +5,7 @@
 [package]
 name = "torrplay-desktop"
 version = "0.1.0"
-description = "TorrPlay's desktop shell: the application, or the service edition's client."
+description = "TorrPlay Client, a window on the TorrPlay service, or the TorrPlay application"
 edition = "2024"
 license = "MIT"
 publish = false
@@ -56,3 +56,34 @@ windows-service = { version = "0.8", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
+
+# The service edition's client as a Linux package of its own, which ADR 13 decides:
+# the client build, which `cargo build --no-default-features --features client
+# --target-dir target/client` makes beside the application's, its desktop entry and
+# icon, and its manual page, which scripts/build-man-pages.sh renders to ../target/man
+# first. `cargo deb --no-build --manifest-path desktop/Cargo.toml` packages it. The
+# client opens the service on the same computer, so it depends on that service's
+# package, at this version: cargo-deb fills in no version, so the test checks it.
+[package.metadata.deb]
+name = "torrplay-client"
+# As torrplay-service's.
+maintainer = "TorrPlay"
+copyright = "2026 TorrPlay"
+license-file = ["../LICENSES/MIT.txt", "0"]
+extended-description = """\
+TorrPlay streams torrents to browsers, players, and televisions. This is its \
+service edition's client, TorrPlay Client, a window on the page of the TorrPlay \
+service that torrplay-service runs on this computer, which plays video in the \
+window."""
+section = "net"
+priority = "optional"
+depends = "$auto, torrplay-service (= 0.1.0-1)"
+# The client plays video in its page through WebKitGTK, which loads GStreamer's
+# plugins at run time, where $auto cannot see them.
+recommends = "gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-libav"
+assets = [
+    ["target/client/release/torrplay-desktop", "usr/bin/torrplay-client", "755"],
+    ["../packaging/linux/org.torrplay.client.desktop", "usr/share/applications/", "644"],
+    ["icons/icon.png", "usr/share/icons/hicolor/512x512/apps/org.torrplay.client.png", "644"],
+    ["../target/man/torrplay-client.1.gz", "usr/share/man/man1/", "644"],
+]

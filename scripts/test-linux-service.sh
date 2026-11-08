@@ -7,27 +7,30 @@
 # it: under its own account and sandbox, with its settings file, restarts,
 # shutdown, and removal. Given a torrplay build, a release one, which embeds
 # the web client, it installs that with scripts/linux-service.sh; given
-# `--package` and the torrplay-service .deb, it installs the package with apt
-# and also checks what the package installs and what removing and purging it
-# keep. It changes the system it runs on, so CI runs it on a disposable
+# `--package` and the torrplay-service and torrplay-client .debs, it installs
+# the service's package with apt, checks that it brings no client and no
+# desktop libraries, then installs the client's over it, and also checks what
+# the packages install and what removing and purging the service's keeps. It
+# changes the system it runs on, so CI runs it on a disposable
 # runner; it needs systemd 254 or later, passwordless sudo, curl, ss, nsenter,
 # python3, and nothing listening on ports 8642 and 8643.
 #
 #   scripts/test-linux-service.sh target/release/torrplay
-#   scripts/test-linux-service.sh --package torrplay-service_0.1.0-1_amd64.deb
+#   scripts/test-linux-service.sh --package torrplay-service.deb torrplay-client.deb
 
 set -euo pipefail
 
 package=
-if [[ $# -eq 2 && $1 == --package ]]; then
+if [[ $# -eq 3 && $1 == --package ]]; then
   package=$(realpath "$2")
+  client_package=$(realpath "$3")
   # Where the package puts the executable, which a drop-in names.
   executable=/usr/bin/torrplay
 elif [[ $# -eq 1 ]]; then
   build=$1
   executable=/usr/local/bin/torrplay
 else
-  echo "usage: $0 BINARY | --package DEB" >&2
+  echo "usage: $0 BINARY | --package SERVICE_DEB CLIENT_DEB" >&2
   exit 2
 fi
 scripts=$(dirname "$0")
@@ -109,28 +112,49 @@ install_service() {
   fi
 }
 
-# What the package installs beside the service, and how dpkg holds the
-# settings file.
+# What the service's package installs beside the service, and how dpkg holds
+# the settings file, and that it brings no desktop.
 check_package_files() {
   local path
-  for path in /usr/bin/torrplay /usr/bin/torrplay-client \
+  for path in /usr/bin/torrplay \
     /usr/lib/systemd/system/torrplay.service /usr/lib/sysusers.d/torrplay.conf \
     /usr/lib/firewalld/services/torrplay.xml /etc/ufw/applications.d/torrplay \
-    /usr/share/applications/org.torrplay.client.desktop \
-    /usr/share/icons/hicolor/512x512/apps/org.torrplay.client.png \
-    /usr/share/man/man1/torrplay.1.gz /usr/share/man/man1/torrplay-client.1.gz \
-    /usr/share/man/man5/torrplay.env.5.gz; do
+    /usr/share/man/man1/torrplay.1.gz /usr/share/man/man5/torrplay.env.5.gz; do
     [[ -e $path ]] || fail "the package installed no $path"
   done
   dpkg-query --showformat='${Conffiles}\n' --show torrplay-service |
     grep -q "^ $settings " || fail "the settings file is not a conffile"
-  # The package's version without its revision, which both programs report;
-  # the client prints it before it opens a window, so it needs no display.
-  local version
-  version=$(dpkg-query --showformat='${Version}' --show torrplay-service)
-  version=${version%-*}
+  # The package's version without its revision, which torrplay reports.
+  local version full_version
+  full_version=$(dpkg-query --showformat='${Version}' --show torrplay-service)
+  version=${full_version%-*}
   [[ "$(/usr/bin/torrplay --version)" == "torrplay $version" ]] ||
     fail "/usr/bin/torrplay is not this version's"
+
+  # A server installs the service alone, without a desktop.
+  [[ ! -e /usr/bin/torrplay-client ]] || fail "the service's package installed the client"
+  # GTK, and WebKitGTK, whose package names hold it too.
+  [[ "$(dpkg-deb --field "$package" Depends)" != *gtk* ]] ||
+    fail "the service's package depends on GTK"
+  [[ "$(dpkg-deb --field "$package" Suggests)" == *torrplay-client* ]] ||
+    fail "the service's package does not suggest the client"
+  [[ "$(dpkg-deb --field "$client_package" Depends)" == *"torrplay-service (= $full_version)"* ]] ||
+    fail "the client's package does not depend on this version of the service's"
+}
+
+# Installs the client's package over the service's and checks what it adds.
+install_client_package() {
+  local path version
+  version=$(dpkg-query --showformat='${Version}' --show torrplay-service)
+  version=${version%-*}
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install --yes "$client_package"
+  for path in /usr/bin/torrplay-client /usr/share/applications/org.torrplay.client.desktop \
+    /usr/share/icons/hicolor/512x512/apps/org.torrplay.client.png \
+    /usr/share/man/man1/torrplay-client.1.gz; do
+    [[ -e $path ]] || fail "the client's package installed no $path"
+  done
+  # The client prints its version before it opens a window, so it needs no
+  # display.
   [[ "$(/usr/bin/torrplay-client --version)" == "torrplay-client $version" ]] ||
     fail "/usr/bin/torrplay-client is not this version's client"
   if command -v desktop-file-validate >/dev/null; then
@@ -138,8 +162,9 @@ check_package_files() {
   fi
 }
 
-# Removes the package, which keeps the settings, then purges it, which
-# deletes them; neither deletes the library or its account.
+# Removes the service's package, and with it the client's, which depends on
+# it, which keeps the settings, then purges it, which deletes them; neither
+# deletes the library or its account.
 remove_package() {
   local path
   sudo DEBIAN_FRONTEND=noninteractive apt-get remove --yes torrplay-service
@@ -147,6 +172,10 @@ remove_package() {
     /usr/lib/systemd/system/torrplay.service; do
     [[ ! -e $path ]] || fail "removing the package left $path"
   done
+  if dpkg-query --show torrplay-client >/dev/null 2>&1 &&
+    [[ "$(dpkg-query --showformat='${Status}' --show torrplay-client)" == *" installed" ]]; then
+    fail "removing the service's package left the client's installed"
+  fi
   grep -q '^TORRPLAY_LISTEN=\[::\]:8642$' "$settings" ||
     fail "removing the package did not keep the settings"
   sudo DEBIAN_FRONTEND=noninteractive apt-get purge --yes torrplay-service
@@ -197,6 +226,7 @@ sudo test -f /var/lib/torrplay/torrplay.db || fail "no database in the state dir
 [[ "$(systemctl is-enabled torrplay)" == enabled ]] || fail "the service is not enabled"
 if [[ -n $package ]]; then
   check_package_files
+  install_client_package
 fi
 
 echo "== the DLNA media server in the sandbox"

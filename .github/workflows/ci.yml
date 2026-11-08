@@ -144,7 +144,7 @@ jobs:
         run: scripts/test-windows-service.ps1 target/release/torrplay.exe
 
   service-package:
-    name: Linux service package
+    name: Linux service packages
     needs: stage
     if: needs.stage.outputs.rust == 'true'
     # The oldest supported system, as ADR 13 decides: a binary needs the C
@@ -201,11 +201,13 @@ jobs:
         run: scripts/install-pandoc.sh "${PANDOC_VERSION}" "${PANDOC_SHA256}" "${RUNNER_TEMP}" >> "$GITHUB_PATH"
       - name: Render the manual pages
         run: scripts/build-man-pages.sh target/man
-      - name: Build the package
-        run: cargo deb --no-build --locked -p torrplay --output target/debian/torrplay-service.deb
-      # The runner is disposable, so the test installs the package on it.
-      - name: Install and test the package
-        run: scripts/test-linux-service.sh --package target/debian/torrplay-service.deb
+      - name: Build the packages
+        run: |
+          cargo deb --no-build --locked -p torrplay --output target/debian/torrplay-service.deb
+          cargo deb --no-build --locked --manifest-path desktop/Cargo.toml --output target/debian/torrplay-client.deb
+      # The runner is disposable, so the test installs the packages on it.
+      - name: Install and test the packages
+        run: scripts/test-linux-service.sh --package target/debian/torrplay-service.deb target/debian/torrplay-client.deb
 
   application-package:
     name: Application packages (Linux)
