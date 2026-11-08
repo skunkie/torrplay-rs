@@ -32,6 +32,7 @@ engine = ["dep:tokio", "dep:torrplay", "dep:torrplay-engine"]
 client = ["dep:windows-service"]
 
 [build-dependencies]
+serde_json = "1"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]

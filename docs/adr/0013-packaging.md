@@ -115,7 +115,9 @@ manifest chooses between two.
   named **TorrPlay Client**, with the identifier `org.torrplay.client`, so
   its data, single-instance lock, and installed name differ from the
   application's. A second configuration file, `desktop/tauri.client.conf.json`,
-  sets those over `desktop/tauri.conf.json`.
+  sets those over `desktop/tauri.conf.json`: the client's build script passes
+  it as `TAURI_CONFIG`, which Tauri merges over the whole configuration, as
+  `tauri build --config` does.
 - On Linux, **cargo-deb** builds `torrplay-service`, since the settings file
   must be a conffile. Its `[package.metadata.deb]` is in `crates/torrplay`,
   whose build makes `torrplay`; the client, from the separate desktop
@@ -255,8 +257,6 @@ manifest chooses between two.
   platform, replacing the hand install in the service tests.
 - These are unverified and are checked when the packaging is built, with
   this ADR amended if one fails:
-  - that `tauri build --config desktop/tauri.client.conf.json` replaces the
-    product name and identifier, which Tauri documents only for other keys;
   - that cargo-deb's maintainer scripts enable the unit and apply the
     sysusers entry as described;
   - that WiX 3 sets the preshutdown timeout, the data directory's

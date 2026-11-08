@@ -25,7 +25,7 @@ from smoke import Windows, wait_until, write_torrent
 # Keeps what it is handed as the client's page does, which reads it at once, so a
 # reload does not lose it.
 # The client's name to the system, which names its log directory.
-IDENTIFIER = "org.torrplay.desktop"
+IDENTIFIER = "org.torrplay.client"
 
 PAGE = b"""<!doctype html><title>Invented service</title><p>Invented service</p>
 <script>

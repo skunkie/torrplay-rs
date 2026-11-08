@@ -189,7 +189,9 @@ pub fn open_window(app: &AppHandle, own: Url) -> anyhow::Result<()> {
     let opener = app.clone();
     let saver = app.clone();
     let window = WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::External(own.clone()))
-        .title("TorrPlay")
+        // The product's name, so the client's window is named TorrPlay Client and the
+        // application's TorrPlay.
+        .title(&app.package_info().name)
         .inner_size(1280.0, 800.0)
         .min_inner_size(360.0, 480.0)
         .on_navigation(move |url| match navigation(url, &own) {

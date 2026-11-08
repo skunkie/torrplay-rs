@@ -1,0 +1,5 @@
+{
+  "productName": "TorrPlay Client",
+  "mainBinaryName": "torrplay-client",
+  "identifier": "org.torrplay.client"
+}
