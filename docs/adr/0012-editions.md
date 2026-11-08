@@ -45,8 +45,10 @@ Option 4: two editions.
   data stays in the user's data directory. It is the only edition on macOS.
 - **The service edition**, on Windows and Linux, is `torrplay` installed as a
   system service that starts at boot, with a client that has no engine.
-  - On Linux, a systemd system unit runs it as its own system user. Its data
-    is in `/var/lib/torrplay`, which the unit's `StateDirectory` creates.
+  - On Linux, a systemd system unit runs it as its own system user,
+    `torrplay`, which `sysusers.d` creates; not a dynamic user, since the
+    client looks the account up by name. Its data is in `/var/lib/torrplay`,
+    which the unit's `StateDirectory` creates.
   - On Windows, a Windows service runs it under a virtual service account.
     Its data is in `%ProgramData%\TorrPlay`, writable by that account only.
   - Stopping the service begins the shutdown sequence that a termination
@@ -56,12 +58,25 @@ Option 4: two editions.
   - The service listens as `torrplay` does: on every interface, on port 8642.
     It logs to its data directory, as `torrplay` does, and to standard error,
     which the journal keeps on Linux.
+  - Its settings are `TORRPLAY_` variables, one per line, in a settings file:
+    `/etc/torrplay/torrplay.env`, which the unit reads as its environment, and
+    `%ProgramData%\TorrPlay\torrplay.env` on Windows. The client reads the
+    listen address there too, so a service on another port is still found.
 - **The client** is the desktop shell built without the engine. It opens the
-  same window on `http://127.0.0.1:8642`, so the page's origin, sign-in,
-  and stored language are the same as the application's. It opens dropped
-  files and links as the application does. Closing it leaves the service
-  running. When the service does not answer, the window says so, with how to
-  start the service, instead of an engine error.
+  same window on the service's loopback address, `http://127.0.0.1:8642` at
+  the port the service's settings give, so the page's origin, sign-in, and
+  stored language are the same as the application's. It opens dropped files
+  and links as the application does, and logs each run to a file of its own.
+  Closing it leaves the service running. When the service does not answer, a
+  dialog says so, with how to start the service, as one does for any other
+  reason the client cannot go on.
+- **The client opens only the service's page.** The service's port needs no
+  privilege, so while the service is stopped another user could listen there,
+  and a page at that origin could read the sign-in the client's page stores.
+  Before it opens the window, the client checks who listens at the address: on
+  Linux, the socket's owner must be the service's account or the user running
+  the client; on Windows, the listening process must be the running service's.
+  The check runs once, when the client starts.
 - **One edition per computer.** Both use port 8642, so each installer refuses
   to install while the other edition is installed and names it.
 - **No import.** The service edition starts with an empty library; it does

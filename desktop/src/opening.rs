@@ -7,6 +7,7 @@
 //! to make, so this reads the file and hands the page a script to run, which puts it in
 //! the inbox `client/src/lib/desktop-inbox.ts` reads.
 
+#[cfg(feature = "engine")]
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::Read;
@@ -30,13 +31,17 @@ pub enum Request {
     OtherFile(PathBuf),
 }
 
-/// The server's options that take a value as the next argument, from its usage text,
-/// so that a value ending in `.torrent` stays with its option.
-fn options_with_values() -> impl Iterator<Item = &'static str> {
-    torrplay::USAGE.lines().filter_map(|line| {
-        let (option, rest) = line.trim_start().split_once(' ')?;
-        (option.starts_with("--") && rest.trim_start().starts_with('<')).then_some(option)
-    })
+/// The options in `usage`, a usage text, that take a value as the next argument, so
+/// that a value ending in `.torrent` stays with its option.
+#[cfg(feature = "engine")]
+pub fn options_with_values(usage: &str) -> Vec<&str> {
+    usage
+        .lines()
+        .filter_map(|line| {
+            let (option, rest) = line.trim_start().split_once(' ')?;
+            (option.starts_with("--") && rest.trim_start().starts_with('<')).then_some(option)
+        })
+        .collect()
 }
 
 fn is_magnet(text: &str) -> bool {
@@ -60,10 +65,12 @@ fn request_of(argument: &str, directory: &Path) -> Option<Request> {
         .then(|| Request::File(directory.join(path)))
 }
 
-/// Splits a command line into what the server's options parse and what to open.
+/// Splits a command line into options and what to open, where `with_values` are the
+/// options that take the next argument as their value.
 pub fn split_arguments(
     arguments: impl IntoIterator<Item = String>,
     directory: &Path,
+    with_values: &[&str],
 ) -> (Vec<String>, Vec<Request>) {
     let mut options = Vec::new();
     let mut requests = Vec::new();
@@ -72,7 +79,7 @@ pub fn split_arguments(
         let request = (!value_next)
             .then(|| request_of(&argument, directory))
             .flatten();
-        value_next = options_with_values().any(|option| option == argument);
+        value_next = with_values.contains(&argument.as_str());
         match request {
             Some(request) => requests.push(request),
             None => options.push(argument),
@@ -92,6 +99,7 @@ pub fn dropped_request(paths: &[PathBuf]) -> Option<Request> {
 }
 
 /// The command line that starts a new run with `options` and opens `requests`.
+#[cfg(feature = "engine")]
 pub fn relaunch_arguments(
     program: OsString,
     options: &[String],
@@ -171,6 +179,7 @@ mod tests {
     use super::*;
 
     const MAGNET: &str = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567";
+    const WITH_VALUES: &[&str] = &["--data-dir"];
 
     fn strings(values: &[&str]) -> Vec<String> {
         values.iter().map(ToString::to_string).collect()
@@ -188,6 +197,7 @@ mod tests {
                 "/absolute/invented.torrent",
             ]),
             Path::new("/here"),
+            WITH_VALUES,
         );
         assert_eq!(options, strings(&["--data-dir", "/data", "--no-dht"]));
         assert_eq!(
@@ -205,6 +215,7 @@ mod tests {
         let (options, requests) = split_arguments(
             strings(&["--invented.torrent", "invented.mkv"]),
             Path::new("/here"),
+            WITH_VALUES,
         );
         assert_eq!(options, strings(&["--invented.torrent", "invented.mkv"]));
         assert!(requests.is_empty());
@@ -248,6 +259,7 @@ mod tests {
                 "z.torrent",
             ]),
             Path::new("/here"),
+            WITH_VALUES,
         );
         assert_eq!(
             options,
@@ -257,10 +269,17 @@ mod tests {
             requests,
             vec![Request::File(PathBuf::from("/here/z.torrent"))]
         );
-        assert!(options_with_values().any(|option| option == "--listen"));
-        assert!(!options_with_values().any(|option| option == "--no-dht"));
     }
 
+    #[cfg(feature = "engine")]
+    #[test]
+    fn the_options_with_values_come_from_the_usage_text() {
+        let usage = "  --data-dir <DIR>  Where the data is\n  --no-dht  No DHT\n";
+        assert_eq!(options_with_values(usage), ["--data-dir"]);
+        assert!(options_with_values(torrplay::USAGE).contains(&"--listen"));
+    }
+
+    #[cfg(feature = "engine")]
     #[test]
     fn a_new_run_keeps_the_options_and_opens_what_waited() {
         let arguments = relaunch_arguments(
