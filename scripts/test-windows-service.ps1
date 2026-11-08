@@ -238,7 +238,7 @@ try {
         if (-not (Test-Path -Path (Get-ServiceEditionKey))) {
             Fail "the MSI did not register its upgrade code at $(Get-ServiceEditionKey)"
         }
-        $profiles = Get-FirewallProfiles
+        $profiles = @(Get-FirewallProfiles)
         if (($profiles -join ',') -ne 'Domain,Private') {
             Fail "the firewall lets the service listen on $($profiles -join ', ') networks, not domain and private ones"
         }
@@ -330,7 +330,8 @@ try {
         # By the upgrade's package, which is the one installed now.
         $code = Invoke-Msi @('/x', "`"$Upgrade`"")
         if ($code -notin @(0, 3010)) { Fail "removing the MSI exited with $code" }
-        if ((Get-FirewallProfiles).Count -ne 0) { Fail 'removal left the firewall rules' }
+        # In @(), since PowerShell returns no rules as $null.
+        if (@(Get-FirewallProfiles).Count -ne 0) { Fail 'removal left the firewall rules' }
         if (Test-Path -Path (Get-ServiceEditionKey)) { Fail 'removal left the upgrade code registered' }
     } else {
         & $install remove
