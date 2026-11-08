@@ -34,6 +34,21 @@ cleared.
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
      xmlns:fw="http://schemas.microsoft.com/wix/FirewallExtension">
     <Fragment>
+        <!-- The failure actions, as scripts/windows-service.ps1 sets them:
+             restarts after 5 seconds, then 30, then 5 minutes. Windows
+             Installer's own table cannot set them, since a restart action
+             needs the service opened with the right to start it, which it
+             does not ask for, so sc.exe does, as SYSTEM, once the service is
+             installed, and whenever it is installed again. -->
+        <CustomAction Id="SetTorrPlayFailureActions" Property="TorrPlayFailureActions"
+            Value="&quot;[System64Folder]sc.exe&quot; failure torrplay reset= 86400 actions= restart/5000/restart/30000/restart/300000" />
+        <CustomAction Id="TorrPlayFailureActions" BinaryKey="WixCA" DllEntry="WixQuietExec64"
+            Execute="deferred" Impersonate="no" Return="check" />
+        <InstallExecuteSequence>
+            <Custom Action="SetTorrPlayFailureActions" Before="TorrPlayFailureActions">$TorrPlayService &gt; 2</Custom>
+            <Custom Action="TorrPlayFailureActions" After="InstallServices">$TorrPlayService &gt; 2</Custom>
+        </InstallExecuteSequence>
+
         <!-- One edition per computer: the application, which installs for its
              user, is found by the uninstall entry its installer writes. -->
         <Property Id="TORRPLAYAPPLICATION">
@@ -60,15 +75,11 @@ cleared.
                     Start="auto" ErrorControl="normal" Account="NT SERVICE\torrplay" Arguments="service"
                     Vital="yes">
                     <!-- Longer than the shutdown sequence's 30-second limit; the
-                         failure actions are for crashes, not for a failure the
-                         service reports as its exit code. -->
+                         failure actions, which TorrPlayFailureActions sets,
+                         are for crashes, not for a failure the service
+                         reports as its exit code. -->
                     <ServiceConfig OnInstall="yes" OnReinstall="yes" PreShutdownDelay="45000"
                         FailureActionsWhen="failedToStop" />
-                    <ServiceConfigFailureActions OnInstall="yes" OnReinstall="yes" ResetPeriod="86400">
-                        <Failure Action="restartService" Delay="5000" />
-                        <Failure Action="restartService" Delay="30000" />
-                        <Failure Action="restartService" Delay="300000" />
-                    </ServiceConfigFailureActions>
                 </ServiceInstall>
                 <ServiceControl Id="TorrPlayServiceControl" Name="torrplay" Start="install" Stop="both"
                     Remove="uninstall" Wait="yes" />

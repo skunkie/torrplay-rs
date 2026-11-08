@@ -168,10 +168,13 @@ manifest chooses between two.
     directory writable by that account, SYSTEM, and administrators only. It
     installs `torrplay.exe` itself rather than through `bundle.externalBin`,
     since Windows Installer registers a service only from the component that
-    holds its executable. The timeout, the failure actions, and the
-    directory's permissions are MSI 5.0's tables, which Windows 11 has; the
-    permissions are SDDL with the service's SID, which follows from its
-    name, since the account does not exist before the service does;
+    holds its executable. The timeout and the directory's permissions are
+    MSI 5.0's tables, which Windows 11 has; the permissions are SDDL with
+    the service's SID, which follows from its name, since the account does
+    not exist before the service does. The failure actions are `sc.exe`'s,
+    run by WiX's quiet execution action, since Windows Installer's table
+    for them fails on a restart action: it opens the service without the
+    right to start it, which Windows asks for then;
   - it installs `packaging/windows/torrplay.env` only when there is none,
     and removal keeps `%ProgramData%\TorrPlay`, with the settings and data;
   - it adds inbound firewall rules for `torrplay.exe` on private and domain
