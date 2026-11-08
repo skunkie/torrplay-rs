@@ -161,9 +161,10 @@ function Get-LicenseWords([string] $Msi) {
         "SELECT ``Text`` FROM ``Control`` WHERE ``Dialog_`` = 'LicenseAgreementDlg' AND ``Type`` = 'ScrollableText'")
     $record = $null
     try {
-        $view.Execute()
+        # What a function does not capture it returns, and these return $null.
+        [void] $view.Execute()
         $record = $view.Fetch()
-        $view.Close()
+        [void] $view.Close()
         if (-not $record) { return @() }
         $text = $record.StringData(1) -replace '(?s)^.*?\\lang9 ', '' -replace '\\par\b', ' ' -replace '[{}]', ''
         Get-Words $text
