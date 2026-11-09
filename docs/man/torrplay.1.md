@@ -185,6 +185,9 @@ shutdown takes longer than 30 seconds.
 The **torrplay-service** package runs **torrplay** as the system service
 *torrplay.service*, which starts at boot as the **torrplay** account with its
 data in */var/lib/torrplay*, confined to that directory and the network.
+The **torrplay-client** package adds **torrplay-client**(1), a window on the
+service's page; a computer reached only over the network needs only
+**torrplay-service**.
 
 Start, stop, and follow it with:
 

@@ -436,7 +436,8 @@ scripts/play.sh 'magnet:?xt=urn:btih:...'
 ## Running the service on Linux
 
 `packaging/linux` holds what the service edition's `.deb`, `torrplay-service`,
-installs, so that `torrplay` runs as a system service that starts at boot. The unit needs
+installs, so that `torrplay` runs as a system service that starts at boot, and the
+client's desktop entry, which `torrplay-client` installs. The unit needs
 systemd 254 or later, as in Debian 13 and Ubuntu 24.04; older versions ignore
 its restart backoff and restart it every 5 seconds:
 
@@ -509,20 +510,24 @@ a clean stop, a usage error that does not restart, the backoff while its port
 is taken, and removal. It changes the system, so CI runs it on a disposable
 runner, in the Linux service job, with the build from the browser smoke test.
 
-cargo-deb 3.8.0 builds the package, as [ADR 13](adr/0013-packaging.md)
-decides, from `[package.metadata.deb]` in `crates/torrplay/Cargo.toml`. It holds
-`torrplay`, the client as `torrplay-client` with its desktop entry and icon, the
-files above, and a firewalld service and a ufw profile for the default ports,
-which the administrator enables. cargo-deb writes the maintainer scripts: they
+cargo-deb 3.8.0 builds the packages, as [ADR 13](adr/0013-packaging.md)
+decides: `torrplay-service` from `[package.metadata.deb]` in
+`crates/torrplay/Cargo.toml`, which holds `torrplay`, the files above, and a
+firewalld service and a ufw profile for the default ports, which the
+administrator enables, and `torrplay-client` from the one in `desktop/Cargo.toml`,
+which holds the client with its desktop entry and icon. The client's package
+depends on the service's at its own version, which cargo-deb cannot fill in, so
+that manifest names it and the test checks it; the service's only suggests the
+client's, so a server installs no desktop libraries. cargo-deb writes the maintainer scripts: they
 create the account, enable and start the unit on install, restart it on upgrade,
 and stop it on removal. `/etc/torrplay/torrplay.env` is a conffile, which a
 removal keeps and a purge deletes; neither deletes `/var/lib/torrplay` or the
-account. The client is built into `desktop/target/client`, where the package
+account. The client is built into `desktop/target/client`, where its package
 takes it from, since the application's build writes the same file in
-`desktop/target`. A hand installation's unit in `/etc/systemd/system` would override the
-package's, so the package refuses to install until `scripts/linux-service.sh
-remove` removes it. Build the web client, the service, and the client first, since the
-package takes the client from the desktop workspace, then package and test it:
+`desktop/target`. A hand installation's unit in `/etc/systemd/system` would
+override the package's, so the package refuses to install until
+`scripts/linux-service.sh remove` removes it. Build the web client, the service,
+and the client first, then package and test them:
 
 ```bash
 (cd client && pnpm build)
@@ -530,11 +535,13 @@ cargo build --release --locked -p torrplay
 (cd desktop && cargo build --release --locked --no-default-features --features client --target-dir target/client)
 scripts/build-man-pages.sh target/man
 cargo deb --no-build --locked -p torrplay --output target/debian/torrplay-service.deb
-scripts/test-linux-service.sh --package target/debian/torrplay-service.deb
+cargo deb --no-build --locked --manifest-path desktop/Cargo.toml --output target/debian/torrplay-client.deb
+scripts/test-linux-service.sh --package target/debian/torrplay-service.deb target/debian/torrplay-client.deb
 ```
 
-The package also installs the manual pages, `torrplay(1)`, `torrplay-client(1)`,
-and `torrplay.env(5)`, which are Markdown in `docs/man`. `scripts/build-man-pages.sh`
+The packages also install the manual pages, the service's `torrplay(1)` and
+`torrplay.env(5)` and the client's `torrplay-client(1)`, which are Markdown in
+`docs/man`. `scripts/build-man-pages.sh`
 renders them with pandoc, which CI pins at 3.12.1, compressed and without a
 date, so the same sources give the same bytes; `PANDOC` names another pandoc.
 Tests beside each page's source check that it names everything that source

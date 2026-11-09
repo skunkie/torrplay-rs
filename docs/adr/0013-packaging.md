@@ -114,9 +114,11 @@ manifest chooses between two.
 
 ### The service edition
 
-- One package per platform holds the `torrplay` executable, the client, and
-  the service's files, so they are installed and updated together, at one
-  version.
+- On Windows one package holds the `torrplay` executable, the client, and
+  the service's files, and on Linux two do, the client's depending on the
+  service's at its version, so they are installed and updated together, at
+  one version. On Linux a computer reached only over the network leaves the
+  client's package out, and with it the desktop libraries it needs.
 - The client is the desktop crate built with its `client` feature. It is
   named **TorrPlay Client**, with the identifier `org.torrplay.client`, so
   its data, single-instance lock, and installed name differ from the
@@ -125,12 +127,17 @@ manifest chooses between two.
   it as `TAURI_CONFIG`, which Tauri merges over the whole configuration, as
   `tauri build --config` does.
 - On Linux, **cargo-deb** builds `torrplay-service`, since the settings file
-  must be a conffile. Its `[package.metadata.deb]` is in `crates/torrplay`,
-  whose build makes `torrplay`; the client, from the separate desktop
-  workspace, is built first and listed as an asset by its path, and
-  `cargo deb --no-build` packages both:
-  - `/usr/bin/torrplay` and `/usr/bin/torrplay-client`, with the client's
-    desktop entry and icons;
+  must be a conffile, and `torrplay-client`. The service's
+  `[package.metadata.deb]` is in `crates/torrplay`, whose build makes
+  `torrplay`, and the client's in `desktop`, whose build with the `client`
+  feature makes the client, and `cargo deb --no-build` packages each.
+  `torrplay-client` holds `/usr/bin/torrplay-client`, its desktop entry, its
+  icon, and its manual page, recommends GStreamer's plugins, which
+  WebKitGTK plays its video with, and depends on `torrplay-service` at its
+  own version, which removing the service's package therefore removes;
+  `torrplay-service` only suggests it, which apt does not install by
+  default. `torrplay-service` holds:
+  - `/usr/bin/torrplay`;
   - `packaging/linux/torrplay.service` as
     `/usr/lib/systemd/system/torrplay.service`, enabled and started on
     install, restarted on upgrade, and stopped on removal;
@@ -188,7 +195,8 @@ manifest chooses between two.
 
 ### One edition per computer
 
-- On Linux, `torrplay` and `torrplay-service` conflict, so apt removes one
+- On Linux, `torrplay` and `torrplay-service` conflict, and so `torrplay`
+  and `torrplay-client`, which depends on the service, so apt removes one
   to install the other and names it.
 - On Windows, the application's installer, which installs for the current
   user, refuses while the service edition is installed for the computer,
@@ -206,8 +214,9 @@ manifest chooses between two.
 
 - `torrplay(1)`, `torrplay-client(1)`, and `torrplay.env(5)` are written in
   Markdown under `docs/man/` and converted to roff by a pinned pandoc when
-  packages are built. The service's `.deb` installs all three, and the
-  application's `.deb` installs `torrplay(1)`, since it ships `torrplay`.
+  packages are built. The service's `.deb` installs `torrplay(1)` and
+  `torrplay.env(5)`, the client's `torrplay-client(1)`, and the
+  application's `.deb` `torrplay(1)`, since it ships `torrplay`.
 - A test checks each page against what it describes, so none can fall
   behind: `torrplay(1)` names every option and command `torrplay --help`
   prints, `torrplay-client(1)` every option the client's usage gives, and
@@ -255,9 +264,10 @@ manifest chooses between two.
   packages also take it for the client.
 - Installed names follow the editions: `TorrPlay` for the application and
   `TorrPlay Client` for the client, `TorrPlay Service` for the Windows
-  service, whose name is `torrplay`, and on Linux the packages `torrplay`
-  and `torrplay-service`. They change with the product's name, before the
-  first release, and none of them is published under this one.
+  service, whose name is `torrplay`, and on Linux the packages `torrplay`,
+  `torrplay-service`, and `torrplay-client`. They change with the product's
+  name, before the first release, and none of them is published under this
+  one.
 
 ## Consequences
 
