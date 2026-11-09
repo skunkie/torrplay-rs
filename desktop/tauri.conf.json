@@ -12,6 +12,7 @@
     "active": false,
     "icon": ["icons/icon.png", "icons/icon.icns", "icons/icon.icon", "icons/icon.ico"],
     "publisher": "TorrPlay",
+    "licenseFile": "../packaging/windows/license.txt",
     "copyright": "Copyright © 2026 TorrPlay"
   }
 }

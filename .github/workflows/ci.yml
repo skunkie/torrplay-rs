@@ -329,6 +329,64 @@ jobs:
         shell: pwsh
         run: scripts/test-application-nsis.ps1 target/nsis/torrplay-setup.exe
 
+  service-installer:
+    name: Service installer (${{ matrix.os }})
+    needs: stage
+    if: needs.stage.outputs.rust == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      # As the application installer's.
+      matrix:
+        os:
+          - windows-latest
+          - windows-11-arm
+    env:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+      # A release at least two weeks old; cargo verifies the crate against the
+      # registry's checksum. The CLI matches the tauri crate's minor version.
+      TAURI_CLI_VERSION: 2.12.4
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: client/.node-version
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          build-warnings: warn
+          cache-workspaces: |
+            .
+            desktop
+      - name: Enable pnpm
+        working-directory: client
+        run: corepack enable pnpm
+      - name: Install the web client's dependencies
+        working-directory: client
+        run: pnpm install --frozen-lockfile
+      - name: Build the web client
+        working-directory: client
+        run: pnpm build
+      - name: Install the Tauri CLI
+        run: cargo install tauri-cli --version "${env:TAURI_CLI_VERSION}" --locked
+      - name: Build the installer
+        shell: pwsh
+        run: scripts/build-service-msi.ps1 target/msi/torrplay-service.msi
+      # The same build with the next patch version, for the test to upgrade to.
+      - name: Build a later installer to upgrade to
+        shell: pwsh
+        run: |
+          $version = [version](Get-Content -Raw desktop/tauri.conf.json | ConvertFrom-Json).version
+          $next = "$($version.Major).$($version.Minor).$($version.Build + 1)"
+          scripts/build-service-msi.ps1 target/msi/torrplay-service-next.msi -Version $next
+      # The runner is disposable and elevated, so the test installs the service
+      # edition on it.
+      - name: Install, upgrade, and remove the service edition
+        shell: pwsh
+        run: scripts/test-windows-service.ps1 -Package target/msi/torrplay-service.msi -Upgrade target/msi/torrplay-service-next.msi
+
   service-live:
     name: Linux service
     needs: browser

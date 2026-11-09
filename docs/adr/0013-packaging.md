@@ -86,6 +86,8 @@ manifest chooses between two.
 - Tauri's bundler builds every package, from `desktop/tauri.conf.json`.
 - On Windows, an NSIS installer for the current user, with no
   administrator rights, in `%LOCALAPPDATA%`, which the updater replaces.
+  Like the service edition's MSI, it shows TorrPlay's MIT license, which the
+  user accepts to go on; a quiet install, as the updater's, shows none.
 - On Linux, a `.deb` named `torrplay`, which apt updates, and an AppImage,
   which the updater does. One build makes both, so on Linux the application
   asks the updater only when it runs as an AppImage, which sets `APPIMAGE`;
@@ -147,21 +149,38 @@ manifest chooses between two.
     Windows installer keeps `%ProgramData%\TorrPlay`; the manual page says
     how to delete them for good.
 - On Windows, an **MSI**, which Tauri's bundler builds from the client's
-  configuration overlay: it installs the client as `torrplay-client.exe`,
-  which the overlay's `mainBinaryName` names, and `torrplay.exe` through
-  `bundle.externalBin`, with an upgrade code of its own, which the updater
-  then installs as ADR 12 describes. It is installed for the computer, with
-  administrator rights, in `%ProgramFiles%\TorrPlay`:
-  - a WiX fragment, `packaging/windows/service.wxs`, registers `torrplay`
-    as `scripts/windows-service.ps1` does today: `torrplay.exe service` as
-    `NT SERVICE\torrplay`, starting at boot, restarted after crashes only,
-    with a 45-second preshutdown timeout, and its data directory writable
-    by that account, SYSTEM, and administrators only;
+  configuration overlay and `desktop/tauri.service.conf.json`: it installs
+  the client as `torrplay-client.exe`, which the overlay's `mainBinaryName`
+  names, with an upgrade code of its own, which the updater then installs as
+  ADR 12 describes. It is installed for the computer, with administrator
+  rights, in `%ProgramFiles%\TorrPlay Client`, which Tauri's template names
+  after the product:
+  - the client is a feature of its own, installed unless the user leaves
+    it out on the installer's Custom Setup page, or installs with
+    `ADDLOCAL=Service`, for a computer only reached over the network; an
+    upgrade keeps that choice. Tauri's template has no features to choose
+    from, so the MSI uses a copy of it, `packaging/windows/main.wxs`,
+    changed for that alone;
+  - a WiX fragment, `packaging/windows/service.wxs`, installs `torrplay.exe`
+    and registers it as `scripts/windows-service.ps1` does: `torrplay.exe
+    service` as `NT SERVICE\torrplay`, starting at boot, restarted after
+    crashes only, with a 45-second preshutdown timeout, and its data
+    directory writable by that account, SYSTEM, and administrators only. It
+    installs `torrplay.exe` itself rather than through `bundle.externalBin`,
+    since Windows Installer registers a service only from the component that
+    holds its executable. The timeout and the directory's permissions are
+    MSI 5.0's tables, which Windows 11 has; the permissions are SDDL with
+    the service's SID, which follows from its name, since the account does
+    not exist before the service does. The failure actions are `sc.exe`'s,
+    run by WiX's quiet execution action, since Windows Installer's table
+    for them fails on a restart action: it opens the service without the
+    right to start it, which Windows asks for then;
   - it installs `packaging/windows/torrplay.env` only when there is none,
     and removal keeps `%ProgramData%\TorrPlay`, with the settings and data;
-  - it adds an inbound firewall rule for `torrplay.exe` on private and
-    domain networks, which covers the API, the peer port, and SSDP, since a
-    service gets no prompt to allow them, and removal deletes it;
+  - it adds inbound firewall rules for `torrplay.exe` on private and domain
+    networks, one for each, as WiX's firewall extension makes them, which
+    cover the API, the peer port, and SSDP, since a service gets no prompt
+    to allow them, and removal deletes them;
   - an upgrade stops, replaces, and starts the service, which is how ADR
     12's client offers updates.
 - `scripts/linux-service.sh` and `scripts/windows-service.ps1` stay for
@@ -266,16 +285,17 @@ manifest chooses between two.
   platform, replacing the hand install in the service tests.
 - These are unverified and are checked when the packaging is built, with
   this ADR amended if one fails:
-  - that cargo-deb's maintainer scripts enable the unit and apply the
-    sysusers entry as described;
   - that WiX 3 sets the preshutdown timeout, the data directory's
-    permissions, and the firewall rule, or else which custom action does;
-  - where `bundle.externalBin` installs `torrplay` beside the application in
-    each package, which Tauri does not document;
-  - that the engine's C dependencies, such as aws-lc-sys, build for Windows
-    on arm64, where nothing has built them yet;
-  - that Tauri's bundler makes NSIS and MSI installers for
-    `aarch64-pc-windows-msvc`, and that the WiX fragment and the firewall
-    extension work in the arm64 MSI;
+    permissions, and the firewall rules, or else which custom action does;
+  - that Tauri's bundler makes the MSI for `aarch64-pc-windows-msvc`, and
+    that the WiX fragment and the firewall extension work in it;
+  - where `bundle.externalBin` installs `torrplay` in the `.app`, which
+    Tauri does not document;
   - that macOS opens an update of an application it was not notarized for,
     which the updater downloads, without asking for **Open Anyway** again.
+
+  The packages built since have settled the rest: cargo-deb's maintainer
+  scripts enable the unit and apply the sysusers entry; `bundle.externalBin`
+  puts `torrplay` in `/usr/bin` in the `.deb` and the AppImage and beside the
+  application in the NSIS installer; and the engine's C dependencies build
+  for Windows on arm64, where Tauri's bundler makes the NSIS installer.

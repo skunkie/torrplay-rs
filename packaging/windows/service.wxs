@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 TorrPlay
+
+SPDX-License-Identifier: MIT
+
+The service edition's WiX fragment, which desktop/tauri.service.conf.json adds
+to the client's MSI, as ADR 13 decides. It installs torrplay.exe as the
+torrplay service, as scripts/windows-service.ps1 does by hand: run by its
+virtual account, NT SERVICE\torrplay, from boot, restarted after a crash but
+not after a failure it reports, and given 45 seconds at shutdown. Windows
+Installer stops it before an upgrade or removal replaces its files and
+starts it afterwards, rolling both back if the install fails.
+
+Its data directory, %ProgramData%\TorrPlay, which removal keeps, is writable
+by that account, SYSTEM, and administrators alone, with nothing inherited
+from %ProgramData%, which lets users create files. The settings file there is
+installed only when there is none, so an upgrade keeps it, and users may read
+it, as the client does. The ACLs are SDDL, MSI 5.0's, since the virtual
+account they name does not exist until the service does: a service's SID is
+S-1-5-80- and the SHA-1 of its name in capitals, so NT SERVICE\torrplay is
+S-1-5-80-2828507108-2845588903-360128926-4130653692-64400780 on every computer.
+
+scripts/build-service-msi.ps1 sets TAURI_TORRPLAY_SERVICE_EXE and
+TAURI_TORRPLAY_SETTINGS_TEMPLATE to the files it installs. The names start
+with TAURI because the bundler runs candle with the rest of its environment
+cleared.
+-->
+<?if $(sys.BUILDARCH)="x64" or $(sys.BUILDARCH)="arm64"?>
+    <?define Win64 = "yes" ?>
+<?else?>
+    <?error The service edition is built for x64 and arm64 only?>
+<?endif?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:fw="http://schemas.microsoft.com/wix/FirewallExtension">
+    <Fragment>
+        <!-- The failure actions, as scripts/windows-service.ps1 sets them:
+             restarts after 5 seconds, then 30, then 5 minutes. Windows
+             Installer's own table cannot set them, since a restart action
+             needs the service opened with the right to start it, which it
+             does not ask for, so sc.exe does, as SYSTEM, once the service is
+             installed, and whenever it is installed again. -->
+        <CustomAction Id="SetTorrPlayFailureActions" Property="TorrPlayFailureActions"
+            Value="&quot;[System64Folder]sc.exe&quot; failure torrplay reset= 86400 actions= restart/5000/restart/30000/restart/300000" />
+        <CustomAction Id="TorrPlayFailureActions" BinaryKey="WixCA" DllEntry="WixQuietExec64"
+            Execute="deferred" Impersonate="no" Return="check" />
+        <InstallExecuteSequence>
+            <Custom Action="SetTorrPlayFailureActions" Before="TorrPlayFailureActions">$TorrPlayService &gt; 2</Custom>
+            <Custom Action="TorrPlayFailureActions" After="InstallServices">$TorrPlayService &gt; 2</Custom>
+        </InstallExecuteSequence>
+
+        <!-- One edition per computer: the application, which installs for its
+             user, is found by the uninstall entry its installer writes. -->
+        <Property Id="TORRPLAYAPPLICATION">
+            <RegistrySearch Id="TorrPlayApplication" Root="HKCU" Type="raw"
+                Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\TorrPlay" Name="DisplayName" />
+        </Property>
+        <Condition Message="TorrPlay, the application, is installed for you, and a computer runs one edition. To install the service edition instead, uninstall TorrPlay in Settings, Apps, first.">
+            <![CDATA[Installed OR NOT TORRPLAYAPPLICATION]]>
+        </Condition>
+
+        <DirectoryRef Id="INSTALLDIR">
+            <Component Id="TorrPlayService" Guid="07FE7E62-DEB3-4B80-8C9F-7E046D18FF87" Win64="$(var.Win64)">
+                <File Id="TorrPlayExe" Name="torrplay.exe" Source="$(env.TAURI_TORRPLAY_SERVICE_EXE)" KeyPath="yes" Checksum="yes">
+                    <!-- A service gets no prompt to allow its listeners: the API,
+                         the peer port, and SSDP, on private and domain networks.
+                         The extension takes one profile for each rule. -->
+                    <fw:FirewallException Id="TorrPlayPrivate" Name="TorrPlay Service (private networks)"
+                        Profile="private" Scope="any" IgnoreFailure="no" />
+                    <fw:FirewallException Id="TorrPlayDomain" Name="TorrPlay Service (domain networks)"
+                        Profile="domain" Scope="any" IgnoreFailure="no" />
+                </File>
+                <ServiceInstall Id="TorrPlayServiceInstall" Name="torrplay" DisplayName="TorrPlay Service"
+                    Description="Streams torrents through the TorrPlay REST API." Type="ownProcess"
+                    Start="auto" ErrorControl="normal" Account="NT SERVICE\torrplay" Arguments="service"
+                    Vital="yes">
+                    <!-- Longer than the shutdown sequence's 30-second limit; the
+                         failure actions, which TorrPlayFailureActions sets,
+                         are for crashes, not for a failure the service
+                         reports as its exit code. -->
+                    <ServiceConfig OnInstall="yes" OnReinstall="yes" PreShutdownDelay="45000"
+                        FailureActionsWhen="failedToStop" />
+                </ServiceInstall>
+                <ServiceControl Id="TorrPlayServiceControl" Name="torrplay" Start="install" Stop="both"
+                    Remove="uninstall" Wait="yes" />
+            </Component>
+        </DirectoryRef>
+
+        <DirectoryRef Id="TARGETDIR">
+            <Directory Id="CommonAppDataFolder">
+                <Directory Id="TorrPlayDataDirectory" Name="TorrPlay" />
+            </Directory>
+        </DirectoryRef>
+        <DirectoryRef Id="TorrPlayDataDirectory">
+            <Component Id="TorrPlayData" Guid="59F42E8C-E200-4B7C-8D64-1BFBE7A7DAEB" Permanent="yes" KeyPath="yes">
+                <CreateFolder>
+                    <PermissionEx Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;S-1-5-80-2828507108-2845588903-360128926-4130653692-64400780)" />
+                </CreateFolder>
+            </Component>
+            <Component Id="TorrPlaySettings" Guid="4D8150CE-2536-42E3-BE75-20EDE9B5578B" Permanent="yes" NeverOverwrite="yes">
+                <File Id="TorrPlaySettings" Name="torrplay.env" Source="$(env.TAURI_TORRPLAY_SETTINGS_TEMPLATE)" KeyPath="yes">
+                    <PermissionEx Sddl="D:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1301bf;;;S-1-5-80-2828507108-2845588903-360128926-4130653692-64400780)(A;;FR;;;BU)" />
+                </File>
+            </Component>
+        </DirectoryRef>
+    </Fragment>
+</Wix>

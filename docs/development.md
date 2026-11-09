@@ -339,6 +339,9 @@ cannot play its format would pass.
 On Windows, the same overlay makes the application's NSIS installer, which
 installs for the current user, without administrator rights, in
 `%LOCALAPPDATA%\TorrPlay`, with `torrplay.exe` beside `torrplay-desktop.exe`.
+It, and the service edition's MSI, ask the user to accept the MIT license in
+`packaging/windows/license.txt`, which `desktop/tauri.conf.json` names: the text
+of `LICENSES/MIT.txt` with each paragraph on one line, for the dialogs to wrap.
 Its hooks, `packaging/windows/application.nsh`, refuse while the service
 edition is installed for the computer, which they find by the upgrade code in
 `desktop/tauri.client.conf.json` that its MSI registers; the hooks hold that
@@ -609,6 +612,44 @@ crash, a clean stop, a usage error and a taken port that stop it without a
 restart, and removal. It changes the system, so CI runs it on a disposable
 Windows runner, in the Windows service job, with an optimized build without
 the embedded web client, which the test does not open.
+
+The service edition's MSI, as [ADR 13](adr/0013-packaging.md) decides, comes
+from the Tauri bundler: the client, built with its `client` feature and
+`desktop/tauri.client.conf.json`, with `desktop/tauri.service.conf.json`,
+which adds `packaging/windows/service.wxs`. That WiX fragment installs
+`torrplay.exe` and does what `scripts/windows-service.ps1` does, through
+Windows Installer, which rolls an install back when it fails, and also adds
+inbound firewall rules for the service on private and domain networks. The
+client and the service go in `%ProgramFiles%\TorrPlay Client`. The client is a
+feature the installer's Custom Setup page can leave out, as `ADDLOCAL=Service`
+does from the command line, which `packaging/windows/main.wxs`, a copy of the
+bundler's template, adds; compare it with the bundler's own on a Tauri CLI
+upgrade. The MSI
+refuses while the application is installed for the user running it. Its
+ACLs name the service's account by SID, which follows from the service's
+name; the fragment says how, should the name change. The bundler downloads
+WiX itself. From the repository root in PowerShell 7, once the web client is
+built:
+
+```powershell
+cargo install tauri-cli --version 2.12.4 --locked
+scripts\build-service-msi.ps1 target\msi\torrplay-service.msi
+scripts\build-service-msi.ps1 target\msi\torrplay-service-next.msi -Version NEXT
+scripts\test-windows-service.ps1 -Package target\msi\torrplay-service.msi -Upgrade target\msi\torrplay-service-next.msi
+```
+
+NEXT is a version later than `desktop/tauri.conf.json`'s. With `-Package`, the
+service test installs the MSI instead of a build, and upgrades it to the
+`-Upgrade` MSI as its second install.
+It also checks the client, the firewall rules and the upgrade code the
+application's installer looks for, which removal must delete, that the MSI
+refuses beside a stand-in for the application, that its license dialog shows
+`LICENSES/MIT.txt`, and that the service installed alone stays alone through
+an upgrade. Nothing checks the NSIS installer's license page,
+which a silent install skips. CI builds
+both MSIs, the second with the next patch version, and runs the test on
+disposable `windows-latest` and `windows-11-arm` runners, in the service
+installer jobs.
 
 ## Benchmarks
 

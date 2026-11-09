@@ -1,0 +1,21 @@
+{
+  "bundle": {
+    "active": true,
+    "targets": [
+      "msi"
+    ],
+    "windows": {
+      "wix": {
+        "template": "../packaging/windows/main.wxs",
+        "fragmentPaths": [
+          "../packaging/windows/service.wxs"
+        ],
+        "componentRefs": [
+          "TorrPlayService",
+          "TorrPlayData",
+          "TorrPlaySettings"
+        ]
+      }
+    }
+  }
+}

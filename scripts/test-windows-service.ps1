@@ -4,20 +4,33 @@
 
 <#
 .SYNOPSIS
-Installs a torrplay build as the service edition's Windows service with
-scripts\windows-service.ps1 and tests it as the service manager runs it: under
-its virtual account, with its settings file, restarts, shutdown, and removal.
+Installs the service edition's Windows service and tests it as the service
+manager runs it: under its virtual account, with its settings file, restarts,
+shutdown, installing again, and removal.
 
 .DESCRIPTION
+Given a torrplay build, it installs that with scripts\windows-service.ps1.
+Given -Package, the service edition's MSI, it installs that instead, upgrades
+it to -Upgrade, a later version's MSI, as installing again, and also checks
+what only the MSI does: its license agreement, the client beside the service
+unless left out, the firewall rules, and that it refuses while the
+application is installed for the user.
+
 It changes the system it runs on, so CI runs it on a disposable runner. It needs
 an elevated PowerShell 7 and nothing listening on ports 8642 and 8643:
 
   scripts\test-windows-service.ps1 target\release\torrplay.exe
+  scripts\test-windows-service.ps1 -Package target\msi\torrplay-service.msi -Upgrade target\msi\torrplay-service-next.msi
 #>
 
+[CmdletBinding(DefaultParameterSetName = 'Binary')]
 param(
-    [Parameter(Mandatory)]
-    [string] $Binary
+    [Parameter(Mandatory, Position = 0, ParameterSetName = 'Binary')]
+    [string] $Binary,
+    [Parameter(Mandatory, ParameterSetName = 'Package')]
+    [string] $Package,
+    [Parameter(Mandatory, ParameterSetName = 'Package')]
+    [string] $Upgrade
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,10 +40,19 @@ $name = 'torrplay'
 $install = Join-Path $PSScriptRoot 'windows-service.ps1'
 $dataDirectory = Join-Path $env:ProgramData 'TorrPlay'
 $settings = Join-Path $dataDirectory 'torrplay.env'
-$programDirectory = Join-Path $env:ProgramFiles 'TorrPlay'
+$packaged = $PSCmdlet.ParameterSetName -eq 'Package'
+# The MSI installs in a directory named for its product, the client.
+$programDirectory = Join-Path $env:ProgramFiles ($packaged ? 'TorrPlay Client' : 'TorrPlay')
+$executable = Join-Path $programDirectory 'torrplay.exe'
+$applicationKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\TorrPlay'
 $holder = $null
+if ($packaged) {
+    $Package = (Resolve-Path -Path $Package).Path
+    $Upgrade = (Resolve-Path -Path $Upgrade).Path
+}
 
 . (Join-Path $PSScriptRoot 'windows-service-config.ps1')
+. (Join-Path $PSScriptRoot 'windows-service-edition.ps1')
 
 function Fail([string] $Message) {
     throw "FAIL: $Message"
@@ -95,10 +117,132 @@ function Assert-StartFails([int] $Code, [string] $Why) {
     }
 }
 
+# Runs msiexec quietly with a verbose log and returns its exit code. Unless
+# the code is the one expected, it prints what the log says of the action
+# that failed, which Windows Installer marks "Return value 3", and of the
+# errors it reports, since the log ends with its properties.
+function Invoke-Msi([string[]] $Arguments, [int] $Expected = 0) {
+    $log = New-TemporaryFile
+    $process = Start-Process -FilePath msiexec.exe -Wait -PassThru `
+        -ArgumentList ($Arguments + @('/qn', '/norestart', '/l*v', "`"$($log.FullName)`""))
+    if ($process.ExitCode -notin @($Expected, 3010)) {
+        Write-Host "--- msiexec $Arguments exited with $($process.ExitCode); its log says:"
+        Select-String -Path $log -Pattern 'Return value 3' -Context 30, 0 | ForEach-Object {
+            $_.Context.PreContext + $_.Line
+        } | Write-Host
+        Select-String -Path $log -Pattern '^Error \d+\.' | ForEach-Object { $_.Line } | Write-Host
+    }
+    Remove-Item -Path $log
+    $process.ExitCode
+}
+
+function Install-TorrPlay([string] $From) {
+    if ($packaged) {
+        $code = Invoke-Msi @('/i', "`"$From`"")
+        if ($code -notin @(0, 3010)) { Fail "installing $From exited with $code" }
+    } else {
+        & $install install $From
+    }
+}
+
+# The firewall rules for the service's executable, with their profiles.
+function Get-FirewallProfiles {
+    @(Get-NetFirewallApplicationFilter -Program $executable -ErrorAction SilentlyContinue |
+        Get-NetFirewallRule | Where-Object { $_.Direction -eq 'Inbound' -and $_.Action -eq 'Allow' } |
+        ForEach-Object { $_.Profile.ToString() -split ', ' } | Sort-Object -Unique)
+}
+
+# A text's printable words, without the byte order marks, carriage returns,
+# and other invisible characters that files and RTF carry around them.
+function Get-Words([string] $Text) {
+    @(($Text -replace '[^\x21-\x7E]', ' ') -split ' ' | Where-Object { $_ })
+}
+
+# The words of the license agreement the MSI shows, which the bundler writes as
+# RTF after a header of its own, with \par for each line break.
+function Get-LicenseWords([string] $Msi) {
+    $installer = New-Object -ComObject WindowsInstaller.Installer
+    $database = $installer.OpenDatabase($Msi, 0)
+    $view = $database.OpenView(
+        "SELECT ``Text`` FROM ``Control`` WHERE ``Dialog_`` = 'LicenseAgreementDlg' AND ``Type`` = 'ScrollableText'")
+    $record = $null
+    try {
+        # What a function does not capture it returns, and these return $null.
+        [void] $view.Execute()
+        $record = $view.Fetch()
+        [void] $view.Close()
+        if (-not $record) { return @() }
+        $text = $record.StringData(1) -replace '(?s)^.*?\\lang9 ', '' -replace '\\par\b', ' ' -replace '[{}]', ''
+        Get-Words $text
+    } finally {
+        # Released now, not when the collector runs, since msiexec opens the
+        # same file next.
+        foreach ($object in @($record, $view, $database, $installer)) {
+            if ($object) { [void] [System.Runtime.InteropServices.Marshal]::ReleaseComObject($object) }
+        }
+    }
+}
+
 try {
+    if ($packaged) {
+        Write-Host '== the license agreement'
+        $expected = Get-Words (Get-Content -Raw -Path (Join-Path $PSScriptRoot '../LICENSES/MIT.txt'))
+        $shown = Get-LicenseWords $Package
+        if ($shown.Count -eq 0) { Fail 'the MSI shows no license agreement' }
+        # Strict mode makes an index past an array's end an error.
+        for ($index = 0; $index -lt [Math]::Min($shown.Count, $expected.Count); $index++) {
+            if ($shown[$index] -cne $expected[$index]) {
+                Fail "the MSI's license agreement differs from LICENSES/MIT.txt at word $($index + 1): '$($shown[$index])', not '$($expected[$index])'"
+            }
+        }
+        if ($shown.Count -ne $expected.Count) {
+            Fail "the MSI's license agreement has $($shown.Count) words, and LICENSES/MIT.txt $($expected.Count)"
+        }
+
+        Write-Host '== refusal while the application is installed'
+        if (Test-Path -Path $applicationKey) { Fail 'the application is installed for this user' }
+        try {
+            New-Item -Path $applicationKey -Force | Out-Null
+            New-ItemProperty -Path $applicationKey -Name DisplayName -Value 'TorrPlay' | Out-Null
+            $code = Invoke-Msi @('/i', "`"$Package`"") -Expected 1603
+            if ($code -ne 1603) { Fail "the MSI exited with $code beside the application, not 1603" }
+            if (Get-Service -Name $name -ErrorAction SilentlyContinue) { Fail 'a refused install registered the service' }
+            if (Test-Path -Path $programDirectory) { Fail "a refused install made $programDirectory" }
+        } finally {
+            Remove-Item -Path $applicationKey -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        Write-Host '== the service alone, which an upgrade keeps alone'
+        $client = Join-Path $programDirectory 'torrplay-client.exe'
+        $code = Invoke-Msi @('/i', "`"$Package`"", 'ADDLOCAL=Service')
+        if ($code -notin @(0, 3010)) { Fail "installing the service alone exited with $code" }
+        if (-not (Wait-Until { Test-Ready 8642 } 60)) { Fail 'the service alone did not become ready' }
+        if (Test-Path -Path $client) { Fail 'the service alone came with the client' }
+        Install-TorrPlay $Upgrade
+        if (-not (Wait-Until { Test-Ready 8642 } 60)) { Fail 'the upgraded service did not become ready' }
+        if (Test-Path -Path $client) { Fail 'the upgrade added the client left out' }
+        $code = Invoke-Msi @('/x', "`"$Upgrade`"")
+        if ($code -notin @(0, 3010)) { Fail "removing the service alone exited with $code" }
+        if (Get-Service -Name $name -ErrorAction SilentlyContinue) { Fail 'removal left the service registered' }
+    }
+
     Write-Host '== install'
-    & $install install $Binary
+    Install-TorrPlay ($packaged ? $Package : $Binary)
     if (-not (Wait-Until { Test-Ready 8642 } 60)) { Fail 'the service did not become ready' }
+    if ($packaged) {
+        if (-not (Test-Path -Path $client)) { Fail 'the MSI installed no client by default' }
+        if ((Get-TorrPlay).PathName -ne "`"$executable`" service") {
+            Fail "the service runs $((Get-TorrPlay).PathName)"
+        }
+        # Where the application's installer looks for it, to refuse beside it.
+        if (-not (Test-Path -Path (Get-ServiceEditionKey))) {
+            Fail "the MSI did not register its upgrade code at $(Get-ServiceEditionKey)"
+        }
+        $profiles = @(Get-FirewallProfiles)
+        if (($profiles -join ',') -ne 'Domain,Private') {
+            Fail "the firewall lets the service listen on $($profiles -join ', ') networks, not domain and private ones"
+        }
+    }
     $service = Get-TorrPlay
     if ($service.DisplayName -cne 'TorrPlay Service') { Fail "the service is named $($service.DisplayName)" }
     if ($service.StartName -ne "NT SERVICE\$name") { Fail "the service runs as $($service.StartName)" }
@@ -128,6 +272,7 @@ try {
             Fail "$writer may change the data directory"
         }
     }
+    if ($serviceSid -notin $writers) { Fail 'the service may not change its data directory' }
     $readers = (Get-Acl -Path $settings).Access | ForEach-Object {
         $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
     }
@@ -136,7 +281,7 @@ try {
     Write-Host '== installing again keeps the settings and runs the new build'
     $before = (Get-TorrPlay).ProcessId
     Set-Listen '[::]:8643'
-    & $install install $Binary
+    Install-TorrPlay ($packaged ? $Upgrade : $Binary)
     if (-not (Wait-Until { Test-Ready 8643 } 60)) { Fail 'the service did not listen at the kept address' }
     if ((Get-TorrPlay).ProcessId -eq $before) { Fail 'installing again did not restart the service' }
     Set-Listen '[::]:8642'
@@ -181,7 +326,16 @@ try {
     if (-not (Wait-Until { Test-Ready 8642 } 60)) { Fail 'the service did not start once the port was free' }
 
     Write-Host '== removal'
-    & $install remove
+    if ($packaged) {
+        # By the upgrade's package, which is the one installed now.
+        $code = Invoke-Msi @('/x', "`"$Upgrade`"")
+        if ($code -notin @(0, 3010)) { Fail "removing the MSI exited with $code" }
+        # In @(), since PowerShell returns no rules as $null.
+        if (@(Get-FirewallProfiles).Count -ne 0) { Fail 'removal left the firewall rules' }
+        if (Test-Path -Path (Get-ServiceEditionKey)) { Fail 'removal left the upgrade code registered' }
+    } else {
+        & $install remove
+    }
     if (Get-Service -Name $name -ErrorAction SilentlyContinue) { Fail 'the service is still registered' }
     if (Test-Path -Path $programDirectory) { Fail "$programDirectory is still there" }
     if (-not (Test-Path -Path $settings)) { Fail 'removal deleted the settings' }
