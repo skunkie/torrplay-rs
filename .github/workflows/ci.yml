@@ -667,8 +667,8 @@ jobs:
           app="$mount/TorrPlay.app"
           scripts/check-macos-icon.sh "$app"
           codesign --verify --deep --strict "$app"
-          lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/torrplay-desktop"
-          lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/torrplay"
+          lipo "$app/Contents/MacOS/torrplay-desktop" -verify_arch arm64 x86_64
+          lipo "$app/Contents/MacOS/torrplay" -verify_arch arm64 x86_64
           "$app/Contents/MacOS/torrplay" --version
           hdiutil detach "$mount"
           trap - EXIT
