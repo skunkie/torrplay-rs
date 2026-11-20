@@ -140,7 +140,10 @@ def main():
         directory = appdir / "usr/share/common-licenses"
         directory.mkdir(parents=True, exist_ok=True)
         for name in sorted(common_licenses):
-            shutil.copyfile(Path("/usr/share/common-licenses") / name, directory / name)
+            # Some copyright files call LGPL version 2 LGPL-2.0. Preserve
+            # their referenced path using the distro's canonical license text.
+            source_name = "LGPL-2" if name == "LGPL-2.0" else name
+            shutil.copyfile(Path("/usr/share/common-licenses") / source_name, directory / name)
     notices = root / "torrplay/NATIVE-NOTICES.txt"
     notices.parent.mkdir(parents=True, exist_ok=True)
     notices.write_text("\n".join(lines), encoding="utf-8")
