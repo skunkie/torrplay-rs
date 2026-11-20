@@ -170,6 +170,131 @@ describe("AudioSync", () => {
     expect(context.decodedGain?.gain.value).toBe(0);
   });
 
+  it("disables native tracks while decoding even when native audio bypasses Web Audio", async () => {
+    const main = { enabled: true };
+    const unused = { enabled: false };
+    const late = { enabled: true };
+    const list = Object.assign(new EventTarget(), { 0: main, 1: unused, 2: late, length: 2 });
+    Object.defineProperty(media, "audioTracks", { value: list });
+    const { decoded, runs } = decodedOf();
+    const audio = sync(decoded);
+    try {
+      media.playing(5);
+      expect(audio.decode(1)).toBe(true);
+      expect(main.enabled).toBe(false);
+      expect(unused.enabled).toBe(false);
+      expect(context.isolate).not.toHaveBeenCalled();
+      expect(context.decodedGain?.gain.value).toBe(1);
+      await vi.waitFor(() => expect(runs).toEqual([{ track: 1, from: 5 }]));
+
+      list.length = 3;
+      list.dispatchEvent(new Event("addtrack"));
+      expect(late.enabled).toBe(false);
+      main.enabled = true;
+      list.dispatchEvent(new Event("change"));
+      expect(main.enabled).toBe(false);
+
+      audio.native();
+      expect(main.enabled).toBe(true);
+      expect(unused.enabled).toBe(false);
+      expect(late.enabled).toBe(true);
+      expect(context.decodedGain?.gain.value).toBe(0);
+    } finally {
+      audio.destroy();
+    }
+  });
+
+  it("restores current native tracks and detaches track listeners on destroy", () => {
+    const removed = { enabled: true };
+    const current = { enabled: true };
+    const list = Object.assign(new EventTarget(), { 0: removed, length: 1 });
+    Object.defineProperty(media, "audioTracks", { value: list });
+    const audio = sync(decodedOf().decoded);
+
+    audio.decode(1);
+    list[0] = current;
+    list.dispatchEvent(new Event("removetrack"));
+    list.dispatchEvent(new Event("addtrack"));
+    audio.destroy();
+
+    expect(removed.enabled).toBe(false);
+    expect(current.enabled).toBe(true);
+    list.dispatchEvent(new Event("change"));
+    expect(current.enabled).toBe(true);
+  });
+
+  it("suspends the decoded context and stops observing frames while native audio plays", () => {
+    const list = Object.assign(new EventTarget(), { 0: { enabled: true }, length: 1 });
+    Object.defineProperty(media, "audioTracks", { value: list });
+    const request = vi.fn(() => 7);
+    const cancel = vi.fn();
+    media.requestVideoFrameCallback = request;
+    media.cancelVideoFrameCallback = cancel;
+    const audio = sync(decodedOf().decoded);
+    try {
+      media.playing(3);
+      audio.decode(1);
+      expect(request).toHaveBeenCalledOnce();
+
+      audio.native();
+      expect(context.state).toBe("suspended");
+      expect(cancel).toHaveBeenCalledWith(7);
+      media.playing(4);
+      expect(context.state).toBe("suspended");
+      expect(request).toHaveBeenCalledOnce();
+
+      audio.decode(1);
+      expect(context.state).toBe("running");
+      expect(request).toHaveBeenCalledTimes(2);
+    } finally {
+      audio.destroy();
+    }
+  });
+
+  it("resumes on a fresh output when switching back before the context finishes suspending", async () => {
+    vi.useFakeTimers();
+    const list = Object.assign(new EventTarget(), { 0: { enabled: true }, length: 1 });
+    Object.defineProperty(media, "audioTracks", { value: list });
+    const audio = sync(decodedOf().decoded);
+    try {
+      media.playing(3);
+      audio.decode(1);
+      await vi.advanceTimersByTimeAsync(0);
+      media.dispatchEvent(new Event("seeked"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(context.sources).toHaveLength(2);
+      const outgoing = context.sources.at(-1);
+      const previousOutput = context.decodedGain;
+      // Context state changes arrive after the rendering thread handles the request.
+      context.suspend.mockImplementationOnce(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        context.state = "suspended";
+      });
+      audio.native();
+      expect(outgoing?.stop).toHaveBeenCalledWith(0);
+      expect(previousOutput?.disconnect).toHaveBeenCalledOnce();
+      expect(context.suspend).toHaveBeenCalledOnce();
+      expect(context.state).toBe("running");
+
+      context.resume.mockImplementationOnce(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        context.state = "running";
+      });
+      audio.decode(2);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(context.state).toBe("running");
+      expect(context.sources).toHaveLength(3);
+      const replacement = context.sources.at(-1)?.connect.mock.lastCall?.[0] as
+        FakeGain | undefined;
+      const replacementOutput = replacement?.connect.mock.lastCall?.[0] as FakeGain | undefined;
+      expect(replacementOutput).not.toBe(previousOutput);
+      expect(replacementOutput?.connect).toHaveBeenCalledWith(context.destination);
+    } finally {
+      audio.destroy();
+      vi.useRealTimers();
+    }
+  });
+
   it("follows the element's volume and mute", () => {
     const audio = sync(decodedOf().decoded);
     audio.decode(0);
@@ -342,7 +467,7 @@ describe("AudioSync", () => {
     await vi.waitFor(() => expect(runs).toHaveLength(3));
   });
 
-  it("observes frames only once playback starts and stops on destroy", () => {
+  it("observes frames only once playback starts and releases audio immediately on destroy", async () => {
     const request = vi.fn(() => 7);
     const cancel = vi.fn();
     media.requestVideoFrameCallback = request;
@@ -354,9 +479,14 @@ describe("AudioSync", () => {
     expect(request).not.toHaveBeenCalled();
     media.playing(40);
     expect(request).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(context.sources).toHaveLength(1));
+    const source = context.sources[0];
+    const gain = source?.connect.mock.lastCall?.[0] as FakeGain | undefined;
 
     audio.destroy();
     expect(cancel).toHaveBeenCalledWith(7);
+    expect(source?.stop).toHaveBeenCalledWith(0);
+    expect(gain?.disconnect).toHaveBeenCalledOnce();
     expect(context.close).toHaveBeenCalled();
   });
 
