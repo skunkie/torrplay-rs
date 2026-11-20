@@ -230,6 +230,64 @@ describe("AudioSync", () => {
     expect(current.enabled).toBe(true);
   });
 
+  it("suspends the decoded context and stops observing frames while native audio plays", () => {
+    const list = Object.assign(new EventTarget(), { 0: { enabled: true }, length: 1 });
+    Object.defineProperty(media, "audioTracks", { value: list });
+    const request = vi.fn(() => 7);
+    const cancel = vi.fn();
+    media.requestVideoFrameCallback = request;
+    media.cancelVideoFrameCallback = cancel;
+    const audio = sync(decodedOf().decoded);
+    try {
+      media.playing(3);
+      audio.decode(1);
+      expect(request).toHaveBeenCalledOnce();
+
+      audio.native();
+      expect(context.state).toBe("suspended");
+      expect(cancel).toHaveBeenCalledWith(7);
+      media.playing(4);
+      expect(context.state).toBe("suspended");
+      expect(request).toHaveBeenCalledOnce();
+
+      audio.decode(1);
+      expect(context.state).toBe("running");
+      expect(request).toHaveBeenCalledTimes(2);
+    } finally {
+      audio.destroy();
+    }
+  });
+
+  it("resumes decoded audio when switching back before the context finishes suspending", async () => {
+    vi.useFakeTimers();
+    const list = Object.assign(new EventTarget(), { 0: { enabled: true }, length: 1 });
+    Object.defineProperty(media, "audioTracks", { value: list });
+    const audio = sync(decodedOf().decoded);
+    try {
+      media.playing(3);
+      audio.decode(1);
+      // Context state changes arrive after the rendering thread handles the request.
+      context.suspend.mockImplementationOnce(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        context.state = "suspended";
+      });
+      audio.native();
+      expect(context.suspend).toHaveBeenCalledOnce();
+      expect(context.state).toBe("running");
+
+      context.resume.mockImplementationOnce(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        context.state = "running";
+      });
+      audio.decode(1);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(context.state).toBe("running");
+    } finally {
+      audio.destroy();
+      vi.useRealTimers();
+    }
+  });
+
   it("disconnects both current and fading audio from a previous track on a switch", async () => {
     vi.useFakeTimers();
     const { decoded, runs } = decodedOf();

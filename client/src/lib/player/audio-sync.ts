@@ -156,10 +156,15 @@ export class AudioSync {
   native(): void {
     this.#track = undefined;
     this.#stop(false);
+    this.#stopFrames();
     this.#updateGains();
     this.#restoreNativeTracks();
-    // The element's audio may still go through the context after a stall.
-    if (this.#nativeGain && !this.#media.paused) void this.#context?.resume();
+    if (this.#nativeTracks) {
+      void this.#context?.suspend().catch(() => {});
+    } else if (this.#nativeGain && !this.#media.paused) {
+      // The element's audio may still go through the context after a stall.
+      void this.#context?.resume();
+    }
   }
 
   /** Stops decoded audio and releases the Web Audio graph. */
@@ -233,9 +238,9 @@ export class AudioSync {
   }
 
   #started(): void {
-    // Native audio routed through the graph also needs the context to resume.
-    if ((this.decoding || this.#nativeGain) && this.#context?.state === "suspended") {
-      void this.#context.resume();
+    // A pending suspension may not yet be visible in the context state.
+    if (this.decoding || (this.#nativeGain && this.#context?.state === "suspended")) {
+      void this.#context?.resume().catch(() => {});
     }
     if (!this.decoding) return;
     this.#observeFrames();
