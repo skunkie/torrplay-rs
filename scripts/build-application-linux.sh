@@ -138,7 +138,7 @@ mkdir "$work/tmp"
   GSTREAMER_PLUGINS_DIR="$work/gstreamer" \
   TORRPLAY_APPIMAGE_NOTICES="$PWD/../scripts/appimage-notices.py" \
   TORRPLAY_APPIMAGE_PLUGIN="$work/pinned-appimage-plugin.AppImage" \
-  cargo tauri build --bundles deb,appimage --config tauri.bundle.conf.json -- --locked)
+  cargo tauri build --verbose --bundles deb,appimage --config tauri.bundle.conf.json -- --locked)
 built=("$bundles"/deb/*.deb)
 [[ ${#built[@]} -eq 1 && -f ${built[0]} ]] || {
   echo "the bundler did not make one package in $bundles/deb" >&2
