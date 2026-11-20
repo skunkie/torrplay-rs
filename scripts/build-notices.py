@@ -76,7 +76,7 @@ def crates():
                  "-o", str(output)],
                 check=True,
             )
-            for license in json.loads(output.read_text())["licenses"]:
+            for license in json.loads(output.read_text(encoding="utf-8"))["licenses"]:
                 group = groups.setdefault(
                     normalized(license["text"]),
                     {"ids": set(), "text": license["text"].strip("\n"), "users": set()},
@@ -96,7 +96,7 @@ def npm_packages(config):
     # Corepack selects pnpm before pnpm handles its own command-line options.
     result = subprocess.run(
         [command("pnpm"), "licenses", "list", "--prod", "--json"],
-        cwd="client", stdout=subprocess.PIPE, text=True,
+        cwd="client", stdout=subprocess.PIPE, encoding="utf-8",
     )
     if result.returncode:
         fail(f"pnpm licenses list exited with status {result.returncode}\n{result.stdout.strip()}".rstrip())
