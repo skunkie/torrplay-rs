@@ -1168,7 +1168,7 @@ test.describe("the demo", () => {
     }
   });
 
-  test("shows four lines of a long title below a tile without a poster", async ({ page }) => {
+  test("limits a long title below a tile without a poster to three lines", async ({ page }) => {
     await page.setViewportSize({ width: 360, height: 800 });
     await page.goto("/demo/titles/trr_aaaaaaaaaaaaaaaaaaaaaaaaa7/edit");
     const title = "The Last Night Train to the Village Beyond the Mountains";
@@ -1186,7 +1186,7 @@ test.describe("the demo", () => {
       await document.fonts.ready;
       return element.clientHeight / Number.parseFloat(getComputedStyle(element).lineHeight);
     });
-    expect(lines).toBeCloseTo(4);
+    expect(lines).toBeCloseTo(3);
   });
 
   test("shows a hero's poster whole, beside its content", async ({ page }) => {

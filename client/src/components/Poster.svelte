@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
   import type { TorrentKind } from "../lib/backend";
   import { breakParts } from "../lib/describe";
   import { toneOf } from "../lib/tone";
-  import Icon from "./Icon.svelte";
+  import MediaIcon from "./MediaIcon.svelte";
 
   interface Props {
     /** The poster's URL, or `undefined` for a tile in the title's color. */
@@ -39,10 +39,7 @@ SPDX-License-Identifier: MIT
   {#if url}
     <img src={url} alt="" loading="lazy" class="absolute inset-0 size-full object-cover" />
   {:else if titleBelow}
-    <Icon
-      name={kind === "movie" ? "film" : kind === "series" ? "tv" : "file"}
-      class="absolute inset-0 m-auto h-auto w-[28%] opacity-65"
-    />
+    <MediaIcon {kind} class="absolute inset-0 m-auto h-auto w-[28%]" />
   {:else}
     <span class="line-clamp-4 wrap-break-word">{@render name()}</span>
   {/if}
@@ -55,7 +52,5 @@ SPDX-License-Identifier: MIT
   {/if}
 </span>
 {#if url || titleBelow}
-  <span class={[url ? "line-clamp-3" : "line-clamp-4", "text-sm font-semibold wrap-break-word"]}>
-    {@render name()}
-  </span>
+  <span class="line-clamp-3 text-sm font-semibold wrap-break-word">{@render name()}</span>
 {/if}
