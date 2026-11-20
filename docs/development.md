@@ -91,11 +91,11 @@ icon whose pieces follow the system's light or dark appearance on macOS 26
 and later. The Tauri bundler compiles that one into the `.app`'s `Assets.car`
 with Xcode 26's `actool`, keeping the `.icns` for earlier macOS, and skips
 it, with an error in its log, where Xcode is older; a build run outside a
-bundle shows the `.icns`. CI's macOS application icon job bundles the
-application and runs `scripts/check-macos-icon.sh` on it. Never edit those
-files by hand. After changing the script, run it from the repository root
-with Pillow 11.3.0 and commit what it writes; it writes the same bytes on
-every run.
+bundle shows the `.icns`. The macOS application packaging job runs
+`scripts/check-macos-icon.sh` on the application inside the disk image.
+Never edit those files by hand. After changing the script, run it from the
+repository root with Pillow 11.3.0 and commit what it writes. It writes the
+same bytes on every run.
 
 A virtual environment under the ignored `target/` keeps Pillow out of the
 system Python:
@@ -691,6 +691,38 @@ which a silent install skips. CI builds
 both MSIs, the second with the next patch version, and runs the test on
 disposable `windows-latest` and `windows-11-arm` runners, in the service
 installer jobs.
+
+### Downloading CI packages
+
+Each packaging job uploads its packages after its tests pass. GitHub Actions
+keeps these artifacts for seven days:
+
+| Artifact | Packages |
+| --- | --- |
+| `application-linux-x86_64`, `application-linux-arm64` | Application `.deb` and AppImage |
+| `service-linux-x86_64`, `service-linux-arm64` | Service and standalone client `.deb` files |
+| `application-windows-x64`, `application-windows-arm64` | Application NSIS installer |
+| `service-windows-x64`, `service-windows-arm64` | Service MSI |
+| `application-macos-universal` | `TorrPlay.dmg` with the Intel and Apple Silicon application |
+
+Download an artifact from the run's page or use the run ID from `gh run list`:
+
+```bash
+gh run download RUN_ID -n application-linux-x86_64
+chmod +x appimage/torrplay.AppImage
+```
+
+The macOS disk image contains an ad hoc signed application and CLI. CI mounts
+the image, checks both architecture slices, verifies the app signature and
+icons, and runs the bundled CLI. Run the following commands from the
+repository root on macOS with Xcode 26 to build the image locally.
+
+```sh
+(cd client && pnpm install --frozen-lockfile && pnpm build)
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+cargo install tauri-cli --version 2.12.4 --locked
+scripts/build-application-macos.sh target/dmg/TorrPlay.dmg
+```
 
 ## Benchmarks
 
