@@ -24,3 +24,21 @@ it.each([
 
   expect(container.querySelectorAll("wbr")).toHaveLength(1);
 });
+
+it.each([
+  ["movie", "film"],
+  ["series", "tv"],
+  ["other", "file"],
+  [null, "file"],
+] as const)("uses a decorative fallback icon for %s", (kind, icon) => {
+  const { container } = render(Poster, {
+    url: undefined,
+    title: "Orchard Road",
+    kind,
+    titleBelow: true,
+  });
+
+  const svg = container.querySelector("[data-poster-tile] svg");
+  expect(svg).toHaveAttribute("data-icon", icon);
+  expect(svg).toHaveAttribute("aria-hidden", "true");
+});
