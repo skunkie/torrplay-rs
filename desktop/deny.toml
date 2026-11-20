@@ -9,7 +9,8 @@
 # END desktop only
 # cargo-deny policy for the workspace's dependency graph. Extend the license
 # list only for licenses compatible with distributing the project under MIT,
-# and say why in the commit that adds one.
+# and say why in the commit that adds one; about.toml, from which the
+# packages' third-party notices are written, accepts the same.
 
 [advisories]
 yanked = "deny"
@@ -26,6 +27,7 @@ ignore = [
     # librqbit change can bring. TorrPlay listens and connects over TCP only,
     # so the uTP code that uses ringbuf never runs. Revisit with the fork.
     { id = "RUSTSEC-2026-0293", reason = "uTP is unused; fixing it needs a librqbit change" },
+    { id = "RUSTSEC-2026-0543", reason = "Informational only; chrono remains in generated API types and dependency graphs pending migration" },
 ]
 
 [licenses]

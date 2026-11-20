@@ -14,6 +14,7 @@ ignore = [
     # librqbit change can bring. TorrPlay listens and connects over TCP only,
     # so the uTP code that uses ringbuf never runs. Revisit with the fork.
     { id = "RUSTSEC-2026-0293", reason = "uTP is unused; fixing it needs a librqbit change" },
+    { id = "RUSTSEC-2026-0543", reason = "Informational only; chrono remains in generated API types and dependency graphs pending migration" },
 ]
 
 [licenses]
