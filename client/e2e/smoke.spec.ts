@@ -1131,14 +1131,60 @@ test.describe("the demo", () => {
     expect(overflowing).toEqual([]);
   });
 
-  test("shows posters it serves itself, and a tile for a torrent with none", async ({ page }) => {
-    await page.goto("/demo/library");
-    const poster = page.locator('img[src^="/demo-media/posters/paper-moons.webp"]').first();
-    await expect(poster).toBeVisible();
-    await expect
-      .poll(() => poster.evaluate((image: HTMLImageElement) => image.naturalWidth))
-      .toBeGreaterThan(0);
-    await expect(page.getByText("Orchard Road")).toBeVisible();
+  test("shows the title and metadata below a torrent tile without a poster", async ({ page }) => {
+    for (const [width, height] of [
+      [360, 800],
+      [1280, 800],
+    ] as const) {
+      await page.setViewportSize({ width, height });
+      for (const path of ["/demo/library", "/demo"]) {
+        await page.goto(path);
+        const grid = path === "/demo" ? page.getByRole("region", { name: "Recently added" }) : page;
+        const fallback = grid.getByRole("link", { name: /Orchard Road/ });
+        const tile = fallback.locator("[data-poster-tile]");
+        const tileBox = await tile.boundingBox();
+        const title = await fallback.getByText("Orchard Road", { exact: true }).boundingBox();
+        const metadata = await fallback
+          .getByText("2018", { exact: true })
+          .locator("..")
+          .boundingBox();
+        if (!tileBox || !title || !metadata)
+          throw new Error("The fallback tile, title, and metadata must be visible");
+        expect(title.y).toBeGreaterThanOrEqual(tileBox.y + tileBox.height);
+        expect(metadata.y).toBeGreaterThanOrEqual(title.y + title.height);
+
+        const illustrated = grid.getByRole("link", { name: /Paper Moons/ });
+        const poster = illustrated.locator('img[src^="/demo-media/posters/paper-moons.webp"]');
+        await expect
+          .poll(() => poster.evaluate((image: HTMLImageElement) => image.naturalWidth))
+          .toBeGreaterThan(0);
+        const posterBox = await poster.boundingBox();
+        const caption = await illustrated.getByText("2023", { exact: true }).boundingBox();
+        if (!posterBox || !caption) throw new Error("The poster and metadata must be visible");
+        expect(caption.y).toBeGreaterThanOrEqual(posterBox.y + posterBox.height);
+      }
+    }
+  });
+
+  test("shows four lines of a long title below a tile without a poster", async ({ page }) => {
+    await page.setViewportSize({ width: 360, height: 800 });
+    await page.goto("/demo/titles/trr_aaaaaaaaaaaaaaaaaaaaaaaaa7/edit");
+    const title = "The Last Night Train to the Village Beyond the Mountains";
+    await page.getByLabel(/^Title/).fill(title);
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(title);
+    await page.getByRole("link", { name: "Back", exact: true }).click();
+    await page.getByRole("link", { name: "Library", exact: true }).first().click();
+
+    const caption = page
+      .getByRole("link", { name: /The Last Night Train/ })
+      .getByText(title, { exact: true });
+    await expect(caption).toBeVisible();
+    const lines = await caption.evaluate(async (element) => {
+      await document.fonts.ready;
+      return element.clientHeight / Number.parseFloat(getComputedStyle(element).lineHeight);
+    });
+    expect(lines).toBeCloseTo(4);
   });
 
   test("shows a hero's poster whole, beside its content", async ({ page }) => {

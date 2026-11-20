@@ -8,14 +8,16 @@ SPDX-License-Identifier: MIT
   import { toneOf } from "../lib/tone";
 
   interface Props {
-    /** The poster's URL, or `undefined` to write the title on its color. */
+    /** The poster's URL, or `undefined` for a tile in the title's color. */
     url: string | undefined;
     title: string;
+    /** Show the title below the tile even when there is no image. */
+    titleBelow?: boolean;
     /** A short state shown over the poster, such as "Paused". */
     badge?: string | undefined;
   }
 
-  let { url, title, badge }: Props = $props();
+  let { url, title, titleBelow = false, badge }: Props = $props();
 
   const tone = $derived(toneOf(title));
 </script>
@@ -25,13 +27,14 @@ SPDX-License-Identifier: MIT
 {/snippet}
 
 <span
+  data-poster-tile
   class="relative flex aspect-2/3 items-end overflow-hidden rounded-button p-3 text-sm/tight font-bold"
   style:background={tone.background}
   style:color={tone.color}
 >
   {#if url}
     <img src={url} alt="" loading="lazy" class="absolute inset-0 size-full object-cover" />
-  {:else}
+  {:else if !titleBelow}
     <span class="line-clamp-4 wrap-break-word">{@render name()}</span>
   {/if}
   {#if badge}
@@ -42,6 +45,8 @@ SPDX-License-Identifier: MIT
     </span>
   {/if}
 </span>
-{#if url}
-  <span class="line-clamp-3 text-sm font-semibold wrap-break-word">{@render name()}</span>
+{#if url || titleBelow}
+  <span class={[url ? "line-clamp-3" : "line-clamp-4", "text-sm font-semibold wrap-break-word"]}>
+    {@render name()}
+  </span>
 {/if}
