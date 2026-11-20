@@ -3,9 +3,9 @@
 #
 # SPDX-License-Identifier: MIT
 
-# Downloads pandoc VERSION for Linux on x86_64 into DIR, checks the archive
-# against SHA256, the digest GitHub publishes for it, and prints the directory
-# that holds the pandoc executable. CI pins both.
+# Downloads pandoc VERSION for the host's Linux architecture into DIR. Checks
+# the archive against SHA256, the digest GitHub publishes, and prints the
+# directory that holds the pandoc executable. CI pins both.
 #
 #   scripts/install-pandoc.sh 3.12.1 d0c9...20b8 "$RUNNER_TEMP"
 
@@ -19,7 +19,13 @@ version=$1
 sha256=$2
 dir=$3
 
-archive="pandoc-$version-linux-amd64.tar.gz"
+case "$(uname -m)" in
+  x86_64) arch=amd64 ;;
+  aarch64) arch=arm64 ;;
+  *) echo "no Pandoc archive for $(uname -m)" >&2; exit 1 ;;
+esac
+
+archive="pandoc-$version-linux-$arch.tar.gz"
 curl -fsSL --retry 3 --retry-all-errors -o "$dir/$archive" \
   "https://github.com/jgm/pandoc/releases/download/$version/$archive"
 echo "$sha256  $dir/$archive" | sha256sum --check --strict >&2
