@@ -93,10 +93,14 @@ def npm_packages(config):
     """The web client's packages that its build includes, with their paths:
     the production dependencies, as pnpm lists them, and the development ones
     the build puts in it."""
-    listing = json.loads(subprocess.run(
-        [command("pnpm"), "--dir", "client", "licenses", "list", "--prod", "--json"],
-        check=True, capture_output=True, text=True,
-    ).stdout)
+    # Corepack selects pnpm before pnpm handles its own command-line options.
+    result = subprocess.run(
+        [command("pnpm"), "licenses", "list", "--prod", "--json"],
+        cwd="client", stdout=subprocess.PIPE, text=True,
+    )
+    if result.returncode:
+        fail(f"pnpm licenses list exited with status {result.returncode}\n{result.stdout.strip()}".rstrip())
+    listing = json.loads(result.stdout)
     paths = {}
     for packages in listing.values():
         for package in packages:
