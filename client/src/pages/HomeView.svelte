@@ -168,7 +168,7 @@ SPDX-License-Identifier: MIT
         {#each recent as torrent (torrent.id)}
           <li>
             <a href={titlePath(torrent.id)} class="flex flex-col gap-2 rounded-button">
-              <Poster url={poster(torrent)} title={torrentTitle(torrent)} />
+              <Poster url={poster(torrent)} title={torrentTitle(torrent)} titleBelow />
               <Dotted parts={torrentDetails(torrent)} class="text-xs text-text-muted" />
             </a>
           </li>
