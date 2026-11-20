@@ -117,11 +117,13 @@ licenses, and where to find the source, of the Rust crates built into
 client's packages, from `client/node_modules`, with `packaging/notices.toml`.
 That file names the licenses the web client's packages may have, the
 development dependencies whose code the build includes, packages whose
-license file is their repository's, the notice for the FFmpeg in the AC-3 and
-DTS decoders, and the LGPL text that notice refers to, which the script
-downloads from FFmpeg's release and checks against its SHA-256. A license
-neither accepts, or a package without a license file, fails the script, and
-so the build. From the repository root, once `pnpm install` has run in
+license file is their repository's, and the exact FFmpeg source and rebuild
+instructions for the AC-3 and DTS decoders. The notice generator checks the
+decoder modules' SHA-256 digests and includes the LGPL text from their
+packages. It includes the notices for the embedded Scalar API reference,
+which `scripts/update-scalar.sh` collects from the pinned bundle's source
+map. A dependency with an unapproved license or unavailable license text
+fails the build. From the repository root, once `pnpm install` has run in
 `client`:
 
 ```bash
@@ -130,7 +132,12 @@ python3 scripts/build-notices.py target/notices/THIRD-PARTY-NOTICES.txt
 ```
 
 The packaging jobs for these formats run it, and their tests check that the
-license and the notices are installed. The same lockfiles write the same file.
+license and the notices are installed. The lockfiles and vendored bundle pin
+the common notices. For AppImage builds, linuxdeploy's output hook also writes
+`NATIVE-NOTICES.txt` from ELF files in the assembled image directory. It checks
+their build IDs against the installed originals and copies the matching Debian
+or Ubuntu copyright and common license files. The image also includes license
+notices for AppRun and the AppImage runtime.
 
 ## Generated wire types
 

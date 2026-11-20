@@ -57,6 +57,12 @@ SPDX-FileCopyrightText = [
 ]
 SPDX-License-Identifier = "MIT AND Apache-2.0 AND ISC AND BSD-3-Clause AND BSD-2-Clause AND 0BSD"
 
+# The pinned upstream AppImage runtime and AppRun license texts.
+[[annotations]]
+path = "packaging/linux/appimage-runtime-notices.txt"
+SPDX-FileCopyrightText = ["2004-20 Simon Peter", "2004-23 probonopd"]
+SPDX-License-Identifier = "MIT"
+
 # The DLNA media server's icons, which scripts/render-logo.py draws; image
 # formats have no place for a header.
 [[annotations]]

@@ -56,6 +56,14 @@ cmp -s "$root/usr/share/doc/torrplay/copyright" "$repository/LICENSES/MIT.txt" |
 grep -q '^GNU Lesser General Public License, version 2.1$' \
   "$root/usr/share/doc/torrplay/THIRD-PARTY-NOTICES.txt" ||
   fail "the AppImage holds no third-party notices with FFmpeg's license"
+native_notices="$root/usr/share/doc/torrplay/NATIVE-NOTICES.txt"
+[[ -s "$root/usr/share/doc/torrplay/APPIMAGE-RUNTIME-NOTICES.txt" ]] ||
+  fail "the AppImage holds no runtime license notices"
+grep -q '^gstreamer1.0-plugins-bad[: ]' "$native_notices" ||
+  fail "the AppImage holds no native source information for its GStreamer plugins"
+while IFS= read -r path; do
+  [[ -s "$root/$path" ]] || fail "the AppImage holds no $path from its native notices"
+done < <(sed -n 's/^  Notices: //p' "$native_notices")
 [[ "$("$root/usr/bin/torrplay" --version)" == "torrplay $version" ]] ||
   fail "the AppImage's torrplay is not this version's"
 entry=$(find "$root/usr/share/applications" -name '*.desktop' -print -quit)

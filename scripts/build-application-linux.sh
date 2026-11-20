@@ -83,7 +83,29 @@ fetch "linuxdeploy-$arch" "$releases/linuxdeploy-07333c6/linuxdeploy-$arch.AppIm
   "$tools/linuxdeploy-07333c6-$arch.AppImage"
 fetch "plugin-$arch" \
   "https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/1-alpha-20250213-1/linuxdeploy-plugin-appimage-$arch.AppImage" \
-  "$tools/linuxdeploy-plugin-appimage.AppImage"
+  "$work/pinned-appimage-plugin.AppImage"
+# linuxdeploy invokes its output plugin once the native files have been
+# copied. Add their notices to that exact AppDir before appimagetool runs.
+cat >"$tools/linuxdeploy-plugin-appimage.AppImage" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+args=("$@")
+while (( $# )); do
+  case "$1" in
+    --appdir)
+      python3 "$TORRPLAY_APPIMAGE_NOTICES" "$2"
+      break
+      ;;
+    --appdir=*)
+      python3 "$TORRPLAY_APPIMAGE_NOTICES" "${1#--appdir=}"
+      break
+      ;;
+  esac
+  shift
+done
+exec "$TORRPLAY_APPIMAGE_PLUGIN" "${args[@]}"
+EOF
+chmod +x "$tools/linuxdeploy-plugin-appimage.AppImage"
 fetch "runtime-$arch" \
   "https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-$arch" \
   "$work/runtime"
@@ -114,6 +136,8 @@ done
 mkdir "$work/tmp"
 (cd desktop && XDG_CACHE_HOME="$work/cache" LDAI_RUNTIME_FILE="$work/runtime" TMPDIR="$work/tmp" \
   GSTREAMER_PLUGINS_DIR="$work/gstreamer" \
+  TORRPLAY_APPIMAGE_NOTICES="$PWD/../scripts/appimage-notices.py" \
+  TORRPLAY_APPIMAGE_PLUGIN="$work/pinned-appimage-plugin.AppImage" \
   cargo tauri build --bundles deb,appimage --config tauri.bundle.conf.json -- --locked)
 built=("$bundles"/deb/*.deb)
 [[ ${#built[@]} -eq 1 && -f ${built[0]} ]] || {
@@ -147,6 +171,10 @@ echo "$out"
 images=("$bundles"/appimage/*.AppImage)
 [[ ${#images[@]} -eq 1 && -f ${images[0]} ]] || {
   echo "the bundler did not make one AppImage in $bundles/appimage" >&2
+  exit 1
+}
+[[ -s "$bundles/appimage/TorrPlay.AppDir/usr/share/doc/torrplay/NATIVE-NOTICES.txt" ]] || {
+  echo "the AppImage output plugin did not collect native notices" >&2
   exit 1
 }
 # The AppImage starts with the runtime appimagetool was given, which it

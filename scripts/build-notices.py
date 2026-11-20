@@ -25,7 +25,6 @@ import subprocess
 import sys
 import tempfile
 import tomllib
-import urllib.request
 from pathlib import Path
 
 # The crates whose executables the packages ship.
@@ -118,10 +117,10 @@ def license_text(path):
     """A package's license files, each of a dual license's among them, with
     its NOTICE file after them, which the Apache license asks to keep, or
     None."""
-    files = sorted(f for f in path.iterdir() if f.name.upper().startswith(LICENSE_FILES))
+    files = sorted(f for f in path.iterdir() if f.is_file() and f.name.upper().startswith(LICENSE_FILES))
     if not files:
         return None
-    files += sorted(f for f in path.iterdir() if f.name.upper().startswith("NOTICE"))
+    files += sorted(f for f in path.iterdir() if f.is_file() and f.name.upper().startswith("NOTICE"))
     return "\n\n".join(f.read_text(encoding="utf-8").strip("\n") for f in files)
 
 
@@ -155,14 +154,29 @@ def web_client(config):
     return list(groups.values()), versions
 
 
-def lgpl(config):
-    """The LGPL's text, checked against the pinned SHA-256."""
-    request = urllib.request.Request(config["url"], headers={"User-Agent": "torrplay-build-notices"})
-    with urllib.request.urlopen(request, timeout=60) as response:
-        body = response.read()
-    if hashlib.sha256(body).hexdigest() != config["sha256"]:
-        fail(f"{config['url']} is not the LGPL text packaging/notices.toml pins")
-    return body.decode("utf-8").strip("\n")
+def ffmpeg_notices(config, versions):
+    """Use the license files shipped with the documented decoder builds."""
+    licenses = set()
+    version = config["version"]
+    for codec, digest in config["modules"].items():
+        name = f"@mediabunny/{codec}"
+        if versions.get(name) != version:
+            fail(f"{name} is not the documented version {version}; update its FFmpeg provenance")
+        package = Path("client/node_modules", name)
+        module = package / "dist/modules/build" / f"{codec}.js"
+        if hashlib.sha256(module.read_bytes()).hexdigest() != digest:
+            fail(f"{module} is not the documented decoder build")
+        directory = package / "licenses/ffmpeg"
+        licenses.add(tuple((directory / file).read_text(encoding="utf-8").strip()
+                           for file in ("LICENSE.md", "COPYING.LGPLv2.1")))
+    if len(licenses) != 1:
+        fail("the documented FFmpeg builds do not ship identical license files")
+    license_summary, lgpl = licenses.pop()
+    return [
+        RULE, "FFmpeg", RULE, "", config["notice"].format(version=version), "",
+        license_summary, "",
+        RULE, "GNU Lesser General Public License, version 2.1", RULE, "", lgpl, "",
+    ]
 
 
 def section(title, groups):
@@ -174,39 +188,39 @@ def section(title, groups):
     return lines
 
 
+def scalar_notice():
+    directory = Path("crates/torrplay-server/assets/scalar")
+    digest = (directory / "standalone.js.sha256").read_text(encoding="utf-8").split()[0]
+    notice = (directory / "THIRD-PARTY-NOTICES.txt").read_text(encoding="utf-8").strip()
+    if not notice.splitlines()[0].endswith(f", SHA-256 {digest}"):
+        fail("the Scalar notices do not match the vendored bundle; run scripts/update-scalar.sh")
+    return [RULE, "Scalar API reference", RULE, "", notice, ""]
+
+
 def main():
     if len(sys.argv) != 2:
         sys.exit(f"usage: {sys.argv[0]} OUT")
     config = tomllib.loads(Path("packaging/notices.toml").read_text(encoding="utf-8"))
     web_groups, versions = web_client(config["npm"])
-    ffmpeg = config["ffmpeg"]
-    missing = [name for name in ffmpeg["packages"] if name not in versions]
-    if missing:
-        fail(f"the web client no longer includes {', '.join(missing)}; update packaging/notices.toml")
-    mediabunny = sorted({versions[name] for name in ffmpeg["packages"]})
-    if len(mediabunny) != 1:
-        fail(f"{', '.join(ffmpeg['packages'])} have different versions: {mediabunny}")
-
     lines = [
         "TorrPlay's third-party notices",
         "",
         "TorrPlay is distributed under the MIT License, in its license file beside",
         "this one. It includes the software below, under the licenses that follow.",
         "",
-        RULE, "FFmpeg", RULE, "",
-        ffmpeg["notice"].format(version=mediabunny[0]), "",
     ]
+    lines += ffmpeg_notices(config["ffmpeg"], versions)
     lines += section("The web client's packages", web_groups)
     lines += section("Rust crates", crates())
+    lines += scalar_notice()
     # Some packages' license files are the license's short notice alone, as
     # Video.js's, which refers to the whole text the license asks to give.
     apache = Path("LICENSES/Apache-2.0.txt").read_text(encoding="utf-8").strip("\n")
     lines += [RULE, "Apache License, version 2.0", RULE, "", apache, ""]
-    lines += [RULE, "GNU Lesser General Public License, version 2.1", RULE, "", lgpl(ffmpeg["lgpl"]), ""]
 
     out = Path(sys.argv[1])
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text("\n".join(lines), encoding="utf-8")
+    out.write_text("\n".join(lines), encoding="utf-8", newline="\n")
     print(out)
 
 

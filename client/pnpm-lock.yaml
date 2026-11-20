@@ -15,17 +15,17 @@ importers:
         specifier: 5.3.0
         version: 5.3.0
       '@mediabunny/ac3':
-        specifier: 1.61.6
-        version: 1.61.6(mediabunny@1.61.6)
+        specifier: 1.65.0
+        version: 1.65.0(mediabunny@1.65.0)
       '@mediabunny/dts':
-        specifier: 1.61.6
-        version: 1.61.6(mediabunny@1.61.6)
+        specifier: 1.65.0
+        version: 1.65.0(mediabunny@1.65.0)
       '@videojs/html':
         specifier: 10.1.0
         version: 10.1.0(react@19.3.1)
       mediabunny:
-        specifier: 1.61.6
-        version: 1.61.6
+        specifier: 1.65.0
+        version: 1.65.0
       openapi-fetch:
         specifier: 0.17.0
         version: 0.17.0
@@ -298,13 +298,13 @@ packages:
   '@lit/reactive-element@2.1.2':
     resolution: {integrity: sha512-pbCDiVMnne1lYUIaYNN5wrwQXDtHaYtg7YEFPeW+hws6U47WeFvISGUWekPGKWOP1ygrs0ef0o1VJMk1exos5A==}
 
-  '@mediabunny/ac3@1.61.6':
-    resolution: {integrity: sha512-APLHtzRuKu3UQFgUreenV1yDGUROVuMae9wJYfTEuNGgXVdR41FXkO4szg8S9ZV59HhHw2MxNg/XX4dp0RBVsw==}
+  '@mediabunny/ac3@1.65.0':
+    resolution: {integrity: sha512-xHvE9wIfCzIzzP5XTIr5BDdrE6F5Yty2nDjDKg/hHYws2XGMjqg+7mg1ZoDaS1jzpeaXfTjT8OfVmMTMsvVTQA==}
     peerDependencies:
       mediabunny: ^1.0.0
 
-  '@mediabunny/dts@1.61.6':
-    resolution: {integrity: sha512-08UnZDiPX9UeJIzOI2TzYGdhGfKtUruWwxANgJQfkT16HNmz8lfo1xAsL/efTCsWKBJwweF0fjoTeOYkbjp3AQ==}
+  '@mediabunny/dts@1.65.0':
+    resolution: {integrity: sha512-vV0ewGAG4tIL9f2XQW5tps1GrBfIkiNyMxpfPXBLit/AAqbS4Rtk024ry6gHdH/DR+x5yvZ4Vg5CMoGC0XoGgw==}
     peerDependencies:
       mediabunny: ^1.0.0
 
@@ -1626,8 +1626,8 @@ packages:
   mdn-data@2.37.2:
     resolution: {integrity: sha512-rz9YOBGItdSbe7HcSArUbhiAv4SB/4DKRYg96CSFS2CcIYMbUvBtZlzA1NCbk2AdgbmYwMqwNblLpR441lLeiQ==}
 
-  mediabunny@1.61.6:
-    resolution: {integrity: sha512-VHEZ53/7jGl4dQ+uOdndsZufFYwEUFWv9UXgvrGun3OapyzoqI9iaPOD7z3xxY/nAttLZBNwswgJzMtGJAquOQ==}
+  mediabunny@1.65.0:
+    resolution: {integrity: sha512-TNnDNOmD5Fme4rwMGWuNv485a9iQwd9lgw88PI9zQ0FMnzEUoo6EJpG7ZhdJ2iwZFWo8AzNkP1KPq5IAHaktKw==}
 
   min-indent@1.0.1:
     resolution: {integrity: sha512-I9jwMn07Sy/IwOj3zVkVik2JTvgpaykDZEigL6Rx6N9LbMywwUSMtxET+7lVoDLLd3O3IXwJwvuuns8UB/HeAg==}
@@ -2365,13 +2365,13 @@ snapshots:
     dependencies:
       '@lit-labs/ssr-dom-shim': 1.6.0
 
-  '@mediabunny/ac3@1.61.6(mediabunny@1.61.6)':
+  '@mediabunny/ac3@1.65.0(mediabunny@1.65.0)':
     dependencies:
-      mediabunny: 1.61.6
+      mediabunny: 1.65.0
 
-  '@mediabunny/dts@1.61.6(mediabunny@1.61.6)':
+  '@mediabunny/dts@1.65.0(mediabunny@1.65.0)':
     dependencies:
-      mediabunny: 1.61.6
+      mediabunny: 1.65.0
 
   '@napi-rs/wasm-runtime@1.2.6(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)':
     dependencies:
@@ -3455,7 +3455,7 @@ snapshots:
 
   mdn-data@2.37.2: {}
 
-  mediabunny@1.61.6:
+  mediabunny@1.65.0:
     dependencies:
       '@types/dom-mediacapture-transform': 0.1.12
       '@types/dom-webcodecs': 0.1.13

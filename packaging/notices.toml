@@ -24,27 +24,29 @@ bundled-development = ["svelte", "vite", "tailwindcss"]
 
 # FFmpeg's AC-3, E-AC-3, and DTS decoders, which @mediabunny/ac3 and
 # @mediabunny/dts carry as WebAssembly, under FFmpeg's LGPL rather than their
-# packages' MPL-2.0. Their build takes FFmpeg from Git without naming a
-# release, so the notice names where the build and FFmpeg's source are.
+# packages' MPL-2.0. The published packages document the exact decoder
+# builds. The hashes below cover the modules TorrPlay imports.
 [ffmpeg]
-packages = ["@mediabunny/ac3", "@mediabunny/dts"]
+version = "1.65.0"
 notice = """\
 The web client's AC-3, E-AC-3, and DTS audio decoders, in the packages
 @mediabunny/ac3 and @mediabunny/dts, are FFmpeg's, compiled to WebAssembly,
 and are distributed under the GNU Lesser General Public License, version 2.1
 or later, whose text follows at the end. FFmpeg is a trademark of Fabrice
-Bellard. The packages' README files give the FFmpeg configuration they were
-built with, which enables no GPL code, and their repository holds the
-WebAssembly and the code around it:
+Bellard. The corresponding FFmpeg source is at
+https://github.com/FFmpeg/FFmpeg/archive/60a2818f76dcd1fee3155b1791304af104a0fc1b.tar.gz.
+The AC-3 build applies the patch linked in its README. DTS uses the source
+unmodified. Both use Emscripten 4.0.21 and enable no GPL or nonfree components.
 
-  https://github.com/Vanilagy/mediabunny/tree/v{version}/packages
+The bridge sources and instructions for rebuilding with a modified FFmpeg are
+in the corresponding Mediabunny {version} packages:
 
-FFmpeg's source is at https://ffmpeg.org/download.html and
-https://github.com/FFmpeg/FFmpeg. TorrPlay's source, from which the web client
-can be built again with a changed FFmpeg, is at
-https://github.com/skunkie/torrplay-rs."""
+  https://github.com/Vanilagy/mediabunny/tree/v{version}/packages/ac3
+  https://github.com/Vanilagy/mediabunny/tree/v{version}/packages/dts
 
-# The LGPL's text, from FFmpeg's release 7.1, checked against its SHA-256.
-[ffmpeg.lgpl]
-url = "https://raw.githubusercontent.com/FFmpeg/FFmpeg/n7.1/COPYING.LGPLv2.1"
-sha256 = "b634ab5640e258563c536e658cad87080553df6f34f62269a21d554844e58bfe"
+Build TorrPlay's web client again with those rebuilt packages using
+the source and development guide in https://github.com/skunkie/torrplay-rs."""
+
+[ffmpeg.modules]
+ac3 = "b821a0e3d88de20d58816772d710220847e05538ea8003fe83dbfdb2ee45a400"
+dts = "58d1e0ce227b6fe630a8ad4290c4448ec739842336286c2431337a602507d6f2"

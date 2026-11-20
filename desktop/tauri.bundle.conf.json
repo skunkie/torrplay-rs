@@ -34,7 +34,8 @@
         "bundleMediaFramework": true,
         "files": {
           "/usr/share/doc/torrplay/copyright": "../LICENSES/MIT.txt",
-          "/usr/share/doc/torrplay/THIRD-PARTY-NOTICES.txt": "../target/notices/THIRD-PARTY-NOTICES.txt"
+          "/usr/share/doc/torrplay/THIRD-PARTY-NOTICES.txt": "../target/notices/THIRD-PARTY-NOTICES.txt",
+          "/usr/share/doc/torrplay/APPIMAGE-RUNTIME-NOTICES.txt": "../packaging/linux/appimage-runtime-notices.txt"
         }
       }
     },
