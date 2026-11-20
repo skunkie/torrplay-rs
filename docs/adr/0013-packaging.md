@@ -225,6 +225,36 @@ manifest chooses between two.
 - `torrplay-desktop` has no page of its own: it is started from the
   desktop, and its options are `torrplay`'s, which `torrplay(1)` describes.
 
+### Licenses
+
+- The Linux packages and NSIS installer install TorrPlay's MIT license and
+  third-party notices,
+  `THIRD-PARTY-NOTICES.txt`, which `scripts/build-notices.py` writes when
+  the packages are built: the licenses, and where to find the source, of
+  the Rust crates built into the executables, which cargo-about lists with
+  the licenses `deny.toml` accepts, and of the web client's packages, which
+  `torrplay` embeds, among them the development dependencies whose code its
+  build includes. They also include the notices for Scalar's embedded API
+  reference bundle, collected from its pinned source map. A license neither
+  list accepts, or a package without a known license file, fails the build.
+- The web client's AC-3, E-AC-3, and DTS audio decoders, in
+  `@mediabunny/ac3` and `@mediabunny/dts`, are FFmpeg's, compiled to
+  WebAssembly, under the LGPL 2.1 or later, though the packages say
+  MPL-2.0. The notices name the exact FFmpeg source revision, AC-3 patch,
+  and Emscripten version recorded by Mediabunny, and link to the decoder
+  rebuild instructions. The notice generator checks the imported modules
+  against their pinned digests and includes the license texts shipped with
+  those modules.
+- The `.deb`s install the license as `/usr/share/doc/<package>/copyright`,
+  as Debian asks, with the notices beside it, and the AppImage holds both
+  at the same paths. The NSIS installer puts `LICENSE.txt` and
+  `THIRD-PARTY-NOTICES.txt` beside the application. Installing those files
+  beside the MSI and `.app` executables is pending.
+- The AppImage also installs `NATIVE-NOTICES.txt` beside the common notices.
+  It records the distribution package and source version for the native
+  libraries copied into the image, including GStreamer and its plugins, and
+  points to the included copyright and license files.
+
 ### Signing
 
 - Releases may ship without an Apple or Microsoft signature; the project

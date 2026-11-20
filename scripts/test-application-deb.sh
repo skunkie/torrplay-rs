@@ -42,9 +42,15 @@ echo "== the package"
 echo "== install"
 sudo DEBIAN_FRONTEND=noninteractive apt-get install --yes "$package"
 for path in /usr/bin/torrplay-desktop /usr/bin/torrplay \
-  /usr/share/man/man1/torrplay.1.gz; do
+  /usr/share/man/man1/torrplay.1.gz /usr/share/doc/torrplay/copyright \
+  /usr/share/doc/torrplay/THIRD-PARTY-NOTICES.txt; do
   [[ -e $path ]] || fail "the package installed no $path"
 done
+cmp -s /usr/share/doc/torrplay/copyright "$(dirname "$0")/../LICENSES/MIT.txt" ||
+  fail "the package's copyright file is not TorrPlay's license"
+grep -q '^GNU Lesser General Public License, version 2.1$' \
+  /usr/share/doc/torrplay/THIRD-PARTY-NOTICES.txt ||
+  fail "the third-party notices lack FFmpeg's license"
 version=$(dpkg-query --showformat='${Version}' --show torrplay)
 version=${version%-*}
 [[ "$(/usr/bin/torrplay-desktop --version)" == "torrplay-desktop $version" ]] ||
@@ -69,7 +75,7 @@ fi
 
 echo "== removal"
 sudo DEBIAN_FRONTEND=noninteractive apt-get purge --yes torrplay
-for path in /usr/bin/torrplay-desktop /usr/bin/torrplay "$entry"; do
+for path in /usr/bin/torrplay-desktop /usr/bin/torrplay "$entry" /usr/share/doc/torrplay; do
   [[ ! -e $path ]] || fail "removing the package left $path"
 done
 

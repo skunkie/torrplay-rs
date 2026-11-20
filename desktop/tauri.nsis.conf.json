@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "resources": {
+      "../LICENSES/MIT.txt": "LICENSE.txt",
+      "../target/notices/THIRD-PARTY-NOTICES.txt": "THIRD-PARTY-NOTICES.txt"
+    }
+  }
+}

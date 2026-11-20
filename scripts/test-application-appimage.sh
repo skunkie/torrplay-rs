@@ -35,8 +35,11 @@ echo "== the runtime"
 [[ "$(od -An -tx1 -j8 -N3 "$image" | tr -d ' ')" == 414902 ]] ||
   fail "$image is not a type 2 AppImage"
 [[ -x $image ]] || fail "$image is not executable"
-# The runtime unpacks and runs the AppImage where FUSE is missing when asked.
-[[ "$(APPIMAGE_EXTRACT_AND_RUN=1 "$image" --version)" == "torrplay-desktop $version" ]] ||
+# The runtime unpacks and runs the AppImage where FUSE is missing when asked,
+# into TMPDIR, where it leaves the unpacked copy, so into one of the test's own.
+scratch=$(mktemp -d)
+trap 'rm -rf "$scratch"' EXIT
+[[ "$(TMPDIR=$scratch APPIMAGE_EXTRACT_AND_RUN=1 "$image" --version)" == "torrplay-desktop $version" ]] ||
   fail "the AppImage does not start this version's torrplay-desktop"
 
 echo "== the contents"
@@ -48,6 +51,19 @@ rm -rf "$root"
 for path in AppRun usr/bin/torrplay-desktop usr/bin/torrplay; do
   [[ -x "$root/$path" ]] || fail "the AppImage holds no $path"
 done
+cmp -s "$root/usr/share/doc/torrplay/copyright" "$repository/LICENSES/MIT.txt" ||
+  fail "the AppImage holds no copy of TorrPlay's license"
+grep -q '^GNU Lesser General Public License, version 2.1$' \
+  "$root/usr/share/doc/torrplay/THIRD-PARTY-NOTICES.txt" ||
+  fail "the AppImage holds no third-party notices with FFmpeg's license"
+native_notices="$root/usr/share/doc/torrplay/NATIVE-NOTICES.txt"
+[[ -s "$root/usr/share/doc/torrplay/APPIMAGE-RUNTIME-NOTICES.txt" ]] ||
+  fail "the AppImage holds no runtime license notices"
+grep -q '^gstreamer1.0-plugins-bad[: ]' "$native_notices" ||
+  fail "the AppImage holds no native source information for its GStreamer plugins"
+while IFS= read -r path; do
+  [[ -s "$root/$path" ]] || fail "the AppImage holds no $path from its native notices"
+done < <(sed -n 's/^  Notices: //p' "$native_notices")
 [[ "$("$root/usr/bin/torrplay" --version)" == "torrplay $version" ]] ||
   fail "the AppImage's torrplay is not this version's"
 entry=$(find "$root/usr/share/applications" -name '*.desktop' -print -quit)
@@ -71,8 +87,7 @@ echo "== its GStreamer"
 # find what WebKitGTK builds playback from: a demuxer for each container
 # content.rs serves but WMV, whose demuxer is in the ugly set, which the .deb
 # does not recommend either, and the decoders their usual streams need.
-registry=$(mktemp)
-trap 'rm -f "$registry"' EXIT
+registry="$scratch/registry.bin"
 LD_LIBRARY_PATH="$root/usr/lib" \
   GST_REGISTRY_1_0="$registry" GST_REGISTRY_REUSE_PLUGIN_SCANNER=no \
   GST_PLUGIN_SYSTEM_PATH_1_0="$root/usr/lib/gstreamer-1.0" \

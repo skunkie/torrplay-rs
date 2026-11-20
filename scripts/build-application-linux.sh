@@ -9,7 +9,8 @@
 # desktop/tauri.bundle.conf.json merged over it, into the .deb `torrplay`,
 # with its manual page, and an AppImage. Run it from the repository root on
 # x86_64 or aarch64 once the web client is built (`pnpm build` in client),
-# with the Tauri CLI, pandoc, patchelf, and GStreamer's plugins installed;
+# with the Tauri CLI, pandoc, patchelf, cargo-about, and GStreamer's plugins
+# installed;
 # DEB and APPIMAGE are the packages to write:
 #
 #   scripts/build-application-linux.sh target/debian/torrplay.deb target/appimage/torrplay.AppImage
@@ -29,6 +30,9 @@ arch=$(uname -m)
 }
 
 scripts/build-man-pages.sh target/man >/dev/null
+# TorrPlay's license and the third-party notices, which the packages install
+# beside it.
+python3 scripts/build-notices.py target/notices/THIRD-PARTY-NOTICES.txt >/dev/null
 
 # The bundler takes an extra executable named for the target, from beside the
 # configuration, and installs it without that suffix.
@@ -79,7 +83,29 @@ fetch "linuxdeploy-$arch" "$releases/linuxdeploy-07333c6/linuxdeploy-$arch.AppIm
   "$tools/linuxdeploy-07333c6-$arch.AppImage"
 fetch "plugin-$arch" \
   "https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/1-alpha-20250213-1/linuxdeploy-plugin-appimage-$arch.AppImage" \
-  "$tools/linuxdeploy-plugin-appimage.AppImage"
+  "$work/pinned-appimage-plugin.AppImage"
+# linuxdeploy invokes its output plugin once the native files have been
+# copied. Add their notices to that exact AppDir before appimagetool runs.
+cat >"$tools/linuxdeploy-plugin-appimage.AppImage" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+args=("$@")
+while (( $# )); do
+  case "$1" in
+    --appdir)
+      python3 "$TORRPLAY_APPIMAGE_NOTICES" "$2"
+      break
+      ;;
+    --appdir=*)
+      python3 "$TORRPLAY_APPIMAGE_NOTICES" "${1#--appdir=}"
+      break
+      ;;
+  esac
+  shift
+done
+exec "$TORRPLAY_APPIMAGE_PLUGIN" "${args[@]}"
+EOF
+chmod +x "$tools/linuxdeploy-plugin-appimage.AppImage"
 fetch "runtime-$arch" \
   "https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-$arch" \
   "$work/runtime"
@@ -105,9 +131,14 @@ mkdir "$work/gstreamer"
 for plugin in "$host_plugins"/*.so; do
   [[ -v excluded[$(basename "$plugin")] ]] || ln -s "$plugin" "$work/gstreamer/"
 done
-(cd desktop && XDG_CACHE_HOME="$work/cache" LDAI_RUNTIME_FILE="$work/runtime" \
+# linuxdeploy and its plugin unpack themselves into TMPDIR, where they leave
+# the unpacked copies, so into the work directory, which is removed.
+mkdir "$work/tmp"
+(cd desktop && XDG_CACHE_HOME="$work/cache" LDAI_RUNTIME_FILE="$work/runtime" TMPDIR="$work/tmp" \
   GSTREAMER_PLUGINS_DIR="$work/gstreamer" \
-  cargo tauri build --bundles deb,appimage --config tauri.bundle.conf.json -- --locked)
+  TORRPLAY_APPIMAGE_NOTICES="$PWD/../scripts/appimage-notices.py" \
+  TORRPLAY_APPIMAGE_PLUGIN="$work/pinned-appimage-plugin.AppImage" \
+  cargo tauri build --verbose --bundles deb,appimage --config tauri.bundle.conf.json -- --locked)
 built=("$bundles"/deb/*.deb)
 [[ ${#built[@]} -eq 1 && -f ${built[0]} ]] || {
   echo "the bundler did not make one package in $bundles/deb" >&2
@@ -140,6 +171,10 @@ echo "$out"
 images=("$bundles"/appimage/*.AppImage)
 [[ ${#images[@]} -eq 1 && -f ${images[0]} ]] || {
   echo "the bundler did not make one AppImage in $bundles/appimage" >&2
+  exit 1
+}
+[[ -s "$bundles/appimage/TorrPlay.AppDir/usr/share/doc/torrplay/NATIVE-NOTICES.txt" ]] || {
+  echo "the AppImage output plugin did not collect native notices" >&2
   exit 1
 }
 # The AppImage starts with the runtime appimagetool was given, which it

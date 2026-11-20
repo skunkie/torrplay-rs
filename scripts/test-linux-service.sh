@@ -119,9 +119,14 @@ check_package_files() {
   for path in /usr/bin/torrplay \
     /usr/lib/systemd/system/torrplay.service /usr/lib/sysusers.d/torrplay.conf \
     /usr/lib/firewalld/services/torrplay.xml /etc/ufw/applications.d/torrplay \
-    /usr/share/man/man1/torrplay.1.gz /usr/share/man/man5/torrplay.env.5.gz; do
+    /usr/share/man/man1/torrplay.1.gz /usr/share/man/man5/torrplay.env.5.gz \
+    /usr/share/doc/torrplay-service/copyright \
+    /usr/share/doc/torrplay-service/THIRD-PARTY-NOTICES.txt; do
     [[ -e $path ]] || fail "the package installed no $path"
   done
+  grep -q '^GNU Lesser General Public License, version 2.1$' \
+    /usr/share/doc/torrplay-service/THIRD-PARTY-NOTICES.txt ||
+    fail "the third-party notices lack FFmpeg's license"
   dpkg-query --showformat='${Conffiles}\n' --show torrplay-service |
     grep -q "^ $settings " || fail "the settings file is not a conffile"
   # The package's version without its revision, which torrplay reports.
@@ -150,9 +155,13 @@ install_client_package() {
   sudo DEBIAN_FRONTEND=noninteractive apt-get install --yes "$client_package"
   for path in /usr/bin/torrplay-client /usr/share/applications/org.torrplay.client.desktop \
     /usr/share/icons/hicolor/512x512/apps/org.torrplay.client.png \
-    /usr/share/man/man1/torrplay-client.1.gz; do
+    /usr/share/man/man1/torrplay-client.1.gz /usr/share/doc/torrplay-client/copyright \
+    /usr/share/doc/torrplay-client/THIRD-PARTY-NOTICES.txt; do
     [[ -e $path ]] || fail "the client's package installed no $path"
   done
+  cmp -s /usr/share/doc/torrplay-service/THIRD-PARTY-NOTICES.txt \
+    /usr/share/doc/torrplay-client/THIRD-PARTY-NOTICES.txt ||
+    fail "the client and service packages installed different third-party notices"
   # The client prints its version before it opens a window, so it needs no
   # display.
   [[ "$(/usr/bin/torrplay-client --version)" == "torrplay-client $version" ]] ||

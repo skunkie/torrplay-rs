@@ -53,13 +53,17 @@ fn judge(owners: &[u32], trusted: &[u32]) -> anyhow::Result<bool> {
     allow(dead_code)
 )]
 mod tables {
-    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+    use std::net::SocketAddr;
+    #[cfg(any(target_os = "linux", test))]
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     /// The kernel's state number of a listening TCP socket.
+    #[cfg(any(target_os = "linux", test))]
     const LISTEN: &str = "0A";
 
     /// The users that own the listening sockets at `address` in `table`, the contents
     /// of `/proc/net/tcp` or `/proc/net/tcp6`.
+    #[cfg(any(target_os = "linux", test))]
     pub fn listening_owners(table: &str, address: SocketAddr) -> Vec<u32> {
         table
             .lines()
@@ -76,6 +80,7 @@ mod tables {
 
     /// An address as the kernel's tables write it: the address's 32-bit words in
     /// hexadecimal, each as the host reads it, a colon, and the port.
+    #[cfg(any(target_os = "linux", test))]
     fn socket_address(text: &str) -> Option<SocketAddr> {
         let (address, port) = text.split_once(':')?;
         let port = u16::from_str_radix(port, 16).ok()?;
@@ -113,7 +118,7 @@ mod tables {
     }
 
     /// The user ID of `name` in `passwd`, the contents of `/etc/passwd`.
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    #[cfg(any(target_os = "linux", test))]
     pub fn user_id(passwd: &str, name: &str) -> Option<u32> {
         passwd.lines().find_map(|line| {
             let mut fields = line.split(':');
