@@ -71,6 +71,18 @@ it("stops telling the remux of seeks when it asks", () => {
   expect(seeked).toHaveBeenCalledTimes(1);
 });
 
+it("wakes the remux on an unbuffered seek before playback can update", async () => {
+  const video = document.createElement("video");
+  const stop = new AbortController();
+  const waiting = feedOf(video).waitForTimeChange(stop.signal);
+
+  video.currentTime = 90;
+  video.dispatchEvent(new Event("seeking"));
+  stop.abort();
+
+  await expect(waiting).resolves.toBeUndefined();
+});
+
 it("plays a source and lets go of it", () => {
   const media = document.createElement("video");
   const load = vi.spyOn(media, "load").mockImplementation(() => {});
@@ -80,4 +92,27 @@ it("plays a source and lets go of it", () => {
   feed.release();
   expect(media.hasAttribute("src")).toBe(false);
   expect(load).toHaveBeenCalled();
+});
+
+it("restores the requested position after the new source loads", () => {
+  const video = media(HTMLMediaElement.HAVE_METADATA, 120);
+  video.currentTime = 15;
+  const feed = feedOf(video);
+
+  feed.play("/content", 90);
+  expect(video.currentTime).toBe(15);
+  video.dispatchEvent(new Event("loadedmetadata"));
+  expect(video.currentTime).toBe(90);
+});
+
+it.each(["replace", "release"] as const)("cancels a pending source seek on %s", (action) => {
+  const video = media(HTMLMediaElement.HAVE_METADATA, 120);
+  vi.spyOn(video, "load").mockImplementation(() => {});
+  const feed = feedOf(video);
+  feed.play("/content", 90);
+
+  if (action === "replace") feed.play("/other");
+  else feed.release();
+  video.dispatchEvent(new Event("loadedmetadata"));
+  expect(video.currentTime).toBe(0);
 });

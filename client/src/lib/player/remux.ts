@@ -431,6 +431,7 @@ class Remux implements PlaybackSource {
 
   /** Appends `segment` once playback leaves room for it. */
   async #append(segment: Uint8Array, signal: AbortSignal): Promise<void> {
+    let retriedAfterEviction = false;
     for (;;) {
       while (bufferedAhead(this.#feed.buffered(), this.#feed.position()) > AHEAD_SECONDS) {
         await this.#feed.waitForTimeChange(signal);
@@ -444,9 +445,15 @@ class Remux implements PlaybackSource {
         if (!(failure instanceof DOMException && failure.name === "QuotaExceededError")) {
           throw failure;
         }
-        // Full: what has played goes, and the rest waits for playback to move on.
-        await this.#remove(FULL_BEHIND_SECONDS);
+        if (!retriedAfterEviction) {
+          await this.#remove(FULL_BEHIND_SECONDS);
+          retriedAfterEviction = true;
+          continue;
+        }
+        // A seek outside the buffer cannot advance to make more room.
+        if (bufferedAhead(this.#feed.buffered(), this.#feed.position()) === 0) throw failure;
         await this.#feed.waitForTimeChange(signal);
+        retriedAfterEviction = false;
       }
     }
   }
@@ -497,12 +504,13 @@ class Remux implements PlaybackSource {
   /** Gives the element the file itself, whose own error then shows. */
   #fallBack(): void {
     if (this.#closed || this.#fellBack) return;
+    const position = this.#feed.position();
     this.#fellBack = true;
     this.#run?.stop.abort();
     this.#stopSeeking();
     this.#input?.dispose();
     URL.revokeObjectURL(this.#objectUrl);
-    this.#feed.play(this.#url);
+    this.#feed.play(this.#url, position);
   }
 }
 
