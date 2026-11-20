@@ -177,6 +177,59 @@ describe("AudioSync", () => {
     expect(context.decodedGain?.gain.value).toBe(0);
   });
 
+  it("disables native tracks while decoding even when native audio bypasses Web Audio", async () => {
+    const main = { enabled: true };
+    const unused = { enabled: false };
+    const late = { enabled: true };
+    const list = Object.assign(new EventTarget(), { 0: main, 1: unused, 2: late, length: 2 });
+    Object.defineProperty(media, "audioTracks", { value: list });
+    const { decoded, runs } = decodedOf();
+    const audio = sync(decoded);
+    try {
+      media.playing(5);
+      expect(audio.decode(1)).toBe(true);
+      expect(main.enabled).toBe(false);
+      expect(unused.enabled).toBe(false);
+      expect(context.isolate).not.toHaveBeenCalled();
+      expect(context.decodedGain?.gain.value).toBe(1);
+      await vi.waitFor(() => expect(runs).toEqual([{ track: 1, from: 5 }]));
+
+      list.length = 3;
+      list.dispatchEvent(new Event("addtrack"));
+      expect(late.enabled).toBe(false);
+      main.enabled = true;
+      list.dispatchEvent(new Event("change"));
+      expect(main.enabled).toBe(false);
+
+      audio.native();
+      expect(main.enabled).toBe(true);
+      expect(unused.enabled).toBe(false);
+      expect(late.enabled).toBe(true);
+      expect(context.decodedGain?.gain.value).toBe(0);
+    } finally {
+      audio.destroy();
+    }
+  });
+
+  it("restores current native tracks and detaches track listeners on destroy", () => {
+    const removed = { enabled: true };
+    const current = { enabled: true };
+    const list = Object.assign(new EventTarget(), { 0: removed, length: 1 });
+    Object.defineProperty(media, "audioTracks", { value: list });
+    const audio = sync(decodedOf().decoded);
+
+    audio.decode(1);
+    list[0] = current;
+    list.dispatchEvent(new Event("removetrack"));
+    list.dispatchEvent(new Event("addtrack"));
+    audio.destroy();
+
+    expect(removed.enabled).toBe(false);
+    expect(current.enabled).toBe(true);
+    list.dispatchEvent(new Event("change"));
+    expect(current.enabled).toBe(true);
+  });
+
   it("disconnects both current and fading audio from a previous track on a switch", async () => {
     vi.useFakeTimers();
     const { decoded, runs } = decodedOf();

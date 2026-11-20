@@ -40,16 +40,19 @@ const MAX_LATENCY_SECONDS = 0.25;
  * so neither clicks. */
 const FADE_SECONDS = 0.025;
 
+interface NativeAudioTrack {
+  enabled: boolean;
+}
+
+type NativeAudioTrackList = EventTarget & ArrayLike<NativeAudioTrack>;
+
 /** Plays a media element's audio tracks the browser cannot play, decoded
  * by `decoded`, in sync with the element's video.
  *
- * The element's own audio stays in use until `decode` is called. From then
- * on it plays through a Web Audio graph, which silences it while decoded
- * audio plays; an element joins such a graph once in its lifetime, so
- * decoded audio never plays when that fails. The element's volume, mute,
- * playback rate, pauses, seeks, and stalls apply to decoded audio, and
- * drift between the video's time and the Web Audio clock resynchronizes
- * it. */
+ * While decoded audio plays, this disables the element's native tracks
+ * or silences them through Web Audio when the browser has no track list.
+ * Decoded audio follows the element's volume, mute, playback rate, pauses,
+ * seeks, and stalls, and resynchronizes when it drifts from the video. */
 export class AudioSync {
   #media: HTMLMediaElement;
   #decoded: DecodedAudio;
@@ -59,6 +62,8 @@ export class AudioSync {
   #context: AudioContext | undefined;
   #decodedGain: GainNode | undefined;
   #nativeGain: GainNode | undefined;
+  #nativeTracks: NativeAudioTrackList | undefined;
+  #disabledNativeTracks = new Set<NativeAudioTrack>();
   #isolationFailed = false;
   /** The decoded track, or `undefined` while the element's audio plays. */
   #track: number | undefined;
@@ -96,6 +101,13 @@ export class AudioSync {
     this.#decoded = decoded;
     this.#createContext = options.createContext ?? (() => new AudioContext());
     this.#onError = options.onError ?? (() => {});
+    const tracks = (media as HTMLMediaElement & { audioTracks?: NativeAudioTrackList }).audioTracks;
+    if (typeof tracks?.addEventListener === "function") this.#nativeTracks = tracks;
+    const trackEvents = ["addtrack", "change", "removetrack"];
+    const updateTracks = () => {
+      if (this.decoding) this.#disableNativeTracks();
+    };
+    for (const type of trackEvents) this.#nativeTracks?.addEventListener(type, updateTracks);
 
     const listeners: [string, () => void][] = [
       // Playback starts with `playing`, after `play`, once data is there;
@@ -113,6 +125,7 @@ export class AudioSync {
     for (const [type, listener] of listeners) media.addEventListener(type, listener);
     this.#detach = () => {
       for (const [type, listener] of listeners) media.removeEventListener(type, listener);
+      for (const type of trackEvents) this.#nativeTracks?.removeEventListener(type, updateTracks);
     };
   }
 
@@ -133,6 +146,7 @@ export class AudioSync {
     }
     this.#track = track;
     this.#failed = false;
+    this.#disableNativeTracks();
     this.#updateGains();
     if (!this.#media.paused) this.#started();
     return true;
@@ -143,9 +157,9 @@ export class AudioSync {
     this.#track = undefined;
     this.#stop(false);
     this.#updateGains();
-    // A pause or stall while decoding suspended the context the element's
-    // audio now plays through.
-    if (!this.#media.paused) void this.#context?.resume();
+    this.#restoreNativeTracks();
+    // The element's audio may still go through the context after a stall.
+    if (this.#nativeGain && !this.#media.paused) void this.#context?.resume();
   }
 
   /** Stops decoded audio and releases the Web Audio graph. */
@@ -153,17 +167,21 @@ export class AudioSync {
     this.#detach();
     this.#stop(false);
     this.#stopFrames();
+    this.#restoreNativeTracks();
     for (const node of [this.#nativeGain, this.#decodedGain]) node?.disconnect();
     if (this.#context && this.#context.state !== "closed") void this.#context.close();
     this.#context = undefined;
   }
 
-  /** Routes the element's audio through a gain this class controls. */
+  /** Prepares decoded audio and, if necessary, routes native audio through a gain. */
   #isolate(): boolean {
     if (this.#nativeGain) return true;
     if (this.#isolationFailed) return false;
     try {
       const context = this.#ensureContext();
+      // Safari can keep rendering remuxed audio outside Web Audio. Disable
+      // its native tracks directly so the element can keep its volume and mute.
+      if (this.#nativeTracks) return true;
       const source = context.createMediaElementSource(this.#media);
       this.#nativeGain = context.createGain();
       source.connect(this.#nativeGain);
@@ -174,6 +192,27 @@ export class AudioSync {
       this.#onError(failure);
       return false;
     }
+  }
+
+  #disableNativeTracks(): void {
+    if (!this.#nativeTracks) return;
+    const current = new Set(Array.from(this.#nativeTracks));
+    for (const track of this.#disabledNativeTracks) {
+      if (!current.has(track)) this.#disabledNativeTracks.delete(track);
+    }
+    for (const track of current) {
+      if (!track.enabled) continue;
+      this.#disabledNativeTracks.add(track);
+      track.enabled = false;
+    }
+  }
+
+  #restoreNativeTracks(): void {
+    if (!this.#nativeTracks) return;
+    for (const track of Array.from(this.#nativeTracks)) {
+      if (this.#disabledNativeTracks.has(track)) track.enabled = true;
+    }
+    this.#disabledNativeTracks.clear();
   }
 
   #ensureContext(): AudioContext {
@@ -194,8 +233,10 @@ export class AudioSync {
   }
 
   #started(): void {
-    // After a switch back to native audio, it still uses this context.
-    if (this.#context?.state === "suspended") void this.#context.resume();
+    // Native audio routed through the graph also needs the context to resume.
+    if ((this.decoding || this.#nativeGain) && this.#context?.state === "suspended") {
+      void this.#context.resume();
+    }
     if (!this.decoding) return;
     this.#observeFrames();
     this.#restart(this.#media.currentTime);
