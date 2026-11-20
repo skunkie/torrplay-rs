@@ -20,7 +20,7 @@ interface FakeGain {
 interface FakeSource {
   buffer: unknown;
   playbackRate: { value: number };
-  connect: ReturnType<typeof vi.fn>;
+  connect: ReturnType<typeof vi.fn<(gain: FakeGain) => void>>;
   disconnect: ReturnType<typeof vi.fn>;
   start: ReturnType<typeof vi.fn>;
   stop: ReturnType<typeof vi.fn>;
@@ -36,8 +36,8 @@ class FakeContext {
   destination = {};
   gains: FakeGain[] = [];
   sources: FakeSource[] = [];
-  isolate = vi.fn<(media: HTMLMediaElement) => unknown>(() => ({
-    connect: vi.fn(),
+  isolate = vi.fn<(media: HTMLMediaElement) => Pick<FakeSource, "connect" | "disconnect">>(() => ({
+    connect: vi.fn<(gain: FakeGain) => void>(),
     disconnect: vi.fn(),
   }));
 
@@ -64,7 +64,7 @@ class FakeContext {
     const source = {
       buffer: null,
       playbackRate: { value: 1 },
-      connect: vi.fn(),
+      connect: vi.fn<(gain: FakeGain) => void>(),
       disconnect: vi.fn(),
       start: vi.fn(),
       stop: vi.fn(),
@@ -86,12 +86,19 @@ class FakeContext {
 
   /** The gain decoded audio plays through, created with the context. */
   get decodedGain(): FakeGain | undefined {
-    return this.gains[0];
+    return this.gains.find(
+      (gain) => gain !== this.nativeGain && gain.connect.mock.lastCall?.[0] === this.destination,
+    );
   }
 
   /** The gain the element's own audio plays through. */
   get nativeGain(): FakeGain | undefined {
-    return this.gains[1];
+    const source = this.isolate.mock.results.at(-1);
+    if (source?.type === "return") return source.value.connect.mock.lastCall?.[0];
+  }
+
+  get latestSourceGain(): FakeGain | undefined {
+    return this.sources.at(-1)?.connect.mock.lastCall?.[0];
   }
 }
 
@@ -168,6 +175,67 @@ describe("AudioSync", () => {
     audio.native();
     expect(context.nativeGain?.gain.value).toBe(1);
     expect(context.decodedGain?.gain.value).toBe(0);
+  });
+
+  it("disconnects both current and fading audio from a previous track on a switch", async () => {
+    vi.useFakeTimers();
+    const { decoded, runs } = decodedOf();
+    const audio = sync(decoded);
+    try {
+      audio.decode(0);
+      media.playing(3);
+      await vi.advanceTimersByTimeAsync(0);
+      const fading = context.latestSourceGain;
+
+      media.dispatchEvent(new Event("seeked"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fading?.disconnect).not.toHaveBeenCalled();
+      const active = context.latestSourceGain;
+
+      audio.decode(1);
+      expect(fading?.disconnect).toHaveBeenCalledOnce();
+      expect(active?.disconnect).toHaveBeenCalledOnce();
+      expect(context.nativeGain?.gain.value).toBe(0);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(context.sources).toHaveLength(3);
+      expect(runs.at(-1)).toEqual({ track: 1, from: 3 });
+      expect(context.latestSourceGain?.connect).toHaveBeenCalledWith(context.decodedGain);
+      expect(context.latestSourceGain?.disconnect).not.toHaveBeenCalled();
+    } finally {
+      audio.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  it("discards a pending sample from a replaced track", async () => {
+    const previous = chunk(3);
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const reading = vi.fn();
+    const decoded: DecodedAudio = async function* (track, from) {
+      reading();
+      if (track === 1) {
+        await held;
+        yield previous;
+      } else {
+        yield chunk(from);
+      }
+    };
+    const audio = sync(decoded);
+    try {
+      media.playing(3);
+      audio.decode(1);
+      expect(reading).toHaveBeenCalledOnce();
+
+      audio.native();
+      audio.decode(2);
+      release();
+      await vi.waitFor(() => expect(previous.close).toHaveBeenCalledOnce());
+      expect(context.sources).toHaveLength(1);
+    } finally {
+      audio.destroy();
+      release();
+    }
   });
 
   it("follows the element's volume and mute", () => {
@@ -254,7 +322,7 @@ describe("AudioSync", () => {
     audio.decode(0);
     media.playing(3);
     await vi.waitFor(() => expect(context.sources).toHaveLength(1));
-    const run = context.gains[2];
+    const run = context.latestSourceGain;
     expect(run?.gain.value).toBe(0);
     expect(run?.gain.setValueAtTime).toHaveBeenCalledWith(0, 10);
     expect(run?.gain.linearRampToValueAtTime).toHaveBeenCalledWith(1, 10.025);
@@ -268,7 +336,10 @@ describe("AudioSync", () => {
     await vi.waitFor(() => expect(context.sources).toHaveLength(1));
 
     media.pause();
-    expect(context.gains[2]?.gain.linearRampToValueAtTime).toHaveBeenLastCalledWith(0, 10.025);
+    expect(context.latestSourceGain?.gain.linearRampToValueAtTime).toHaveBeenLastCalledWith(
+      0,
+      10.025,
+    );
     expect(context.sources[0]?.stop).toHaveBeenCalledWith(10.025);
     // Suspending waits for the fade.
     expect(context.suspend).not.toHaveBeenCalled();
@@ -288,6 +359,56 @@ describe("AudioSync", () => {
     media.playing(3);
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(context.suspend).not.toHaveBeenCalled();
+  });
+
+  it("suspends after switching decoded tracks during the pause fade", async () => {
+    vi.useFakeTimers();
+    const { decoded, runs } = decodedOf();
+    const audio = sync(decoded);
+    try {
+      audio.decode(0);
+      media.playing(3);
+      await vi.advanceTimersByTimeAsync(0);
+      const outgoing = context.latestSourceGain;
+      media.pause();
+      audio.decode(1);
+
+      expect(outgoing?.disconnect).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(context.state).toBe("suspended");
+      expect(runs).toEqual([{ track: 0, from: 3 }]);
+
+      media.playing(3);
+      expect(context.state).toBe("running");
+      expect(runs.at(-1)).toEqual({ track: 1, from: 3 });
+    } finally {
+      audio.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  it("resumes native audio after switching to it while suspended", async () => {
+    vi.useFakeTimers();
+    const { decoded, runs } = decodedOf();
+    const audio = sync(decoded);
+    try {
+      audio.decode(1);
+      media.playing(3);
+      media.pause();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(context.state).toBe("suspended");
+
+      audio.native();
+      expect(context.state).toBe("suspended");
+      expect(context.nativeGain?.gain.value).toBe(1);
+
+      media.playing(3);
+      expect(context.state).toBe("running");
+      expect(runs).toEqual([{ track: 1, from: 3 }]);
+    } finally {
+      audio.destroy();
+      vi.useRealTimers();
+    }
   });
 
   it("starts once for play and playing", async () => {

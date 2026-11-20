@@ -929,6 +929,154 @@ test.describe("the demo", () => {
     expect(await video.evaluate((media: HTMLVideoElement) => media.paused)).toBe(false);
   });
 
+  for (const forceDecoded of [false, true]) {
+    test(
+      forceDecoded
+        ? "disconnects the previous decoded track during a live audio switch"
+        : "outputs only the selected audio track and restores native audio after pause",
+      async ({ page }) => {
+        interface PlaybackProbe {
+          playbackAnalyser?: AnalyserNode;
+          decodedGains: Set<AudioNode>;
+          handoff?: { outgoing: number; stillConnected: number };
+        }
+        type PlaybackWindow = Window & { playbackProbe?: PlaybackProbe };
+        await page.addInitScript((forceDecoded) => {
+          const playback: PlaybackProbe = { decodedGains: new Set() };
+          (window as PlaybackWindow).playbackProbe = playback;
+          if (forceDecoded) {
+            const canPlayType = HTMLMediaElement.prototype.canPlayType;
+            HTMLMediaElement.prototype.canPlayType = function (type: string) {
+              return type === 'audio/mp4; codecs="opus"' || type === 'audio/webm; codecs="opus"'
+                ? ""
+                : canPlayType.call(this, type);
+            };
+          }
+          const connect = AudioNode.prototype.connect;
+          const disconnect = AudioNode.prototype.disconnect;
+          // Measure the same mix the player's graph sends to the speakers.
+          AudioNode.prototype.connect = function (this: AudioNode, ...args: unknown[]) {
+            if (args[0] === this.context.destination) {
+              if (!playback.playbackAnalyser) {
+                const analyser = this.context.createAnalyser();
+                analyser.fftSize = 8192;
+                analyser.smoothingTimeConstant = 0;
+                Reflect.apply(connect, analyser, [this.context.destination]);
+                playback.playbackAnalyser = analyser;
+              }
+              args[0] = playback.playbackAnalyser;
+            }
+            if (this instanceof AudioBufferSourceNode && args[0] instanceof GainNode) {
+              playback.decodedGains.add(args[0]);
+            }
+            return Reflect.apply(connect, this, args);
+          };
+          AudioNode.prototype.disconnect = function (this: AudioNode, ...args: unknown[]) {
+            if (args.length === 0) playback.decodedGains.delete(this);
+            return Reflect.apply(disconnect, this, args);
+          };
+        }, forceDecoded);
+
+        await page.goto("/demo");
+        await page.getByRole("link", { name: "Resume" }).first().click();
+        await page.getByRole("button", { name: "Play now" }).click();
+        const video = page.locator("video");
+        await expect
+          .poll(() => video.evaluate((media: HTMLVideoElement) => media.currentTime))
+          .toBeGreaterThan(10);
+
+        const openAudio = async () => {
+          await page.mouse.move(300, 300);
+          await page.getByRole("button", { name: "Audio" }).click();
+        };
+        const expectTone = async (audibleHz: number, silentHz: number) => {
+          await expect
+            .poll(
+              async () => {
+                const [audible, silent] = await page.evaluate(
+                  (tones) => {
+                    const analyser = (window as PlaybackWindow).playbackProbe?.playbackAnalyser;
+                    if (!analyser) return [-Infinity, -Infinity];
+                    const spectrum = new Float32Array(analyser.frequencyBinCount);
+                    analyser.getFloatFrequencyData(spectrum);
+                    return tones.map((hz) => {
+                      const bin = Math.round((hz * analyser.fftSize) / analyser.context.sampleRate);
+                      return Math.max(...spectrum.slice(bin - 1, bin + 2));
+                    });
+                  },
+                  [audibleHz, silentHz],
+                );
+                return (audible ?? -Infinity) > -48 && (silent ?? Infinity) < -60;
+              },
+              { message: `hear the ${audibleHz} Hz tone without the ${silentHz} Hz tone` },
+            )
+            .toBe(true);
+        };
+
+        // The demo sample encodes a different sine tone in each audio track.
+        const englishHz = 262;
+        const russianHz = 392;
+        await openAudio();
+        await page.getByRole("menuitemradio", { name: /^Russian/ }).click();
+        await expectTone(russianHz, englishHz);
+
+        if (forceDecoded) {
+          await openAudio();
+          await page.locator("#audio-menu media-menu-radio-group").evaluate((group) => {
+            const playback = (window as PlaybackWindow).playbackProbe;
+            if (!playback) throw new Error("The audio probe was not installed.");
+            let outgoing: AudioNode[] = [];
+            // Inspect the same paths before and after the player handles the menu event.
+            group.addEventListener(
+              "value-change",
+              () => {
+                outgoing = [...playback.decodedGains];
+              },
+              { capture: true, once: true },
+            );
+            group.addEventListener(
+              "value-change",
+              () => {
+                playback.handoff = {
+                  outgoing: outgoing.length,
+                  stillConnected: outgoing.filter((gain) => playback.decodedGains.has(gain)).length,
+                };
+              },
+              { once: true },
+            );
+          });
+          await page.getByRole("menuitemradio", { name: /^English/ }).click();
+          const handoff = await page.evaluate(
+            () => (window as PlaybackWindow).playbackProbe?.handoff,
+          );
+          expect(handoff?.outgoing).toBeGreaterThan(0);
+          expect(handoff?.stillConnected).toBe(0);
+          expect(await video.evaluate((media: HTMLVideoElement) => media.paused)).toBe(false);
+          await expectTone(englishHz, russianHz);
+          await expect
+            .poll(() =>
+              page.evaluate(() => (window as PlaybackWindow).playbackProbe?.decodedGains.size),
+            )
+            .toBeGreaterThan(0);
+          return;
+        }
+
+        await video.evaluate((media: HTMLVideoElement) => media.pause());
+        await expect
+          .poll(() =>
+            page.evaluate(
+              () => (window as PlaybackWindow).playbackProbe?.playbackAnalyser?.context.state,
+            ),
+          )
+          .toBe("suspended");
+        await openAudio();
+        await page.getByRole("menuitemradio", { name: /^English/ }).click();
+        await video.evaluate((media: HTMLVideoElement) => media.play());
+        await expectTone(englishHz, russianHz);
+      },
+    );
+  }
+
   test("remuxes the sample where the browser cannot play Matroska, as Safari cannot", async ({
     page,
   }) => {

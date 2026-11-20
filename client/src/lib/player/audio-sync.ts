@@ -68,8 +68,9 @@ export class AudioSync {
   #run = 0;
   #samples: AsyncGenerator<DecodedChunk, void> | undefined;
   #sources = new Set<AudioBufferSourceNode>();
-  /** The current run's gain, which fades it in and out. */
+  /** The current run's gain and gains still fading out after a restart. */
   #runGain: GainNode | undefined;
+  #fadingGains = new Map<GainNode, ReturnType<typeof setTimeout>>();
   #fadedIn = false;
   /** The video and Web Audio times the current run started at. */
   #epochVideo = 0;
@@ -124,6 +125,12 @@ export class AudioSync {
    * when the element's audio cannot be silenced. */
   decode(track: number): boolean {
     if (!this.#isolate()) return false;
+    if (track !== this.#track) {
+      // A pause already stopped the scheduler. Leave its pending suspension
+      // valid while cutting any remaining fade.
+      if (this.#runGain) this.#stop(false);
+      else this.#disconnectFadingGains();
+    }
     this.#track = track;
     this.#failed = false;
     this.#updateGains();
@@ -134,7 +141,7 @@ export class AudioSync {
   /** Plays the element's own audio again. */
   native(): void {
     this.#track = undefined;
-    this.#stop();
+    this.#stop(false);
     this.#updateGains();
     // A pause or stall while decoding suspended the context the element's
     // audio now plays through.
@@ -144,7 +151,7 @@ export class AudioSync {
   /** Stops decoded audio and releases the Web Audio graph. */
   destroy(): void {
     this.#detach();
-    this.#stop();
+    this.#stop(false);
     this.#stopFrames();
     for (const node of [this.#nativeGain, this.#decodedGain]) node?.disconnect();
     if (this.#context && this.#context.state !== "closed") void this.#context.close();
@@ -187,10 +194,10 @@ export class AudioSync {
   }
 
   #started(): void {
+    // After a switch back to native audio, it still uses this context.
+    if (this.#context?.state === "suspended") void this.#context.resume();
     if (!this.decoding) return;
     this.#observeFrames();
-    const context = this.#ensureContext();
-    if (context.state === "suspended") void context.resume();
     this.#restart(this.#media.currentTime);
   }
 
@@ -278,21 +285,40 @@ export class AudioSync {
     this.#lastFrameAt = undefined;
   }
 
-  /** Fades out and stops every scheduled source, so none outlives a pause,
-   * seek, or track change. */
-  #stop(): void {
+  #disconnectFadingGains(): void {
+    for (const [gain, timer] of this.#fadingGains) {
+      clearTimeout(timer);
+      gain.disconnect();
+    }
+    this.#fadingGains.clear();
+  }
+
+  /** Stops scheduled sources. Track changes also cut any audio still
+   * fading out from earlier pauses, seeks, or resyncs. */
+  #stop(fade = true): void {
     this.#run++;
     void this.#samples?.return().catch(() => {});
     this.#samples = undefined;
     const context = this.#context;
     const gain = this.#runGain;
+    if (!fade) this.#disconnectFadingGains();
     // A suspended context's clock stands still, so nothing could fade.
-    const fading = context?.state === "running" && gain !== undefined;
+    const fading = fade && context?.state === "running" && gain !== undefined;
     const end = fading ? context.currentTime + FADE_SECONDS : 0;
     if (fading) {
       gain.gain.cancelScheduledValues(context.currentTime);
       gain.gain.setValueAtTime(gain.gain.value, context.currentTime);
       gain.gain.linearRampToValueAtTime(0, end);
+      const timer = setTimeout(
+        () => {
+          gain.disconnect();
+          this.#fadingGains.delete(gain);
+        },
+        FADE_SECONDS * 1000 + 50,
+      );
+      this.#fadingGains.set(gain, timer);
+    } else {
+      gain?.disconnect();
     }
     for (const source of this.#sources) {
       try {
@@ -302,9 +328,6 @@ export class AudioSync {
       }
     }
     this.#sources.clear();
-    if (gain) {
-      setTimeout(() => gain.disconnect(), fading ? FADE_SECONDS * 1000 + 50 : 0);
-    }
     this.#runGain = undefined;
   }
 
@@ -343,7 +366,11 @@ export class AudioSync {
           continue;
         }
         const next = await samples.next();
-        if (next.done || !current()) break;
+        if (next.done) break;
+        if (!current()) {
+          next.value.close();
+          break;
+        }
         this.#play(context, next.value);
       }
     } catch (failure) {
