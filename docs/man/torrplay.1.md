@@ -91,7 +91,8 @@ With no command, **torrplay** runs the application with the *OPTIONS* below.
 
 **\--peer-port** *PORT*
 :   The BitTorrent peer port on every interface, which takes TCP. The
-    default is 4240. The DHT has a UDP port of its own.
+    default is 4240. Use 0 to let the operating system assign a port for
+    this run. The DHT has a UDP port of its own.
 
 **\--data-dir** *DIR*
 :   Where the database lives, on a local filesystem. On Linux the default is

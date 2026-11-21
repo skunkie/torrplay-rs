@@ -7,15 +7,13 @@
 //! public swarm.
 
 mod common;
-// Only the Unix signal test starts the executable, so elsewhere these go unused.
+// Only the Unix signal test starts the executable.
 #[cfg(unix)]
-mod ports;
+mod process;
 
 use std::time::{Duration, Instant};
 
 use common::{MIB, Running, alive_tasks, bounded, eventually, magnet, upload, upload_form};
-#[cfg(unix)]
-use ports::free_ports;
 use reqwest::{Client, StatusCode, Version};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
@@ -365,57 +363,26 @@ async fn asking_to_stop_again_ends_the_wait_for_connections() -> anyhow::Result<
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_second_signal_hurries_the_executables_shutdown() -> anyhow::Result<()> {
-    use std::process::Stdio;
-    use tokio::io::AsyncBufReadExt;
-    use tokio::process::Command;
+    use std::net::Ipv4Addr;
+
+    use process::Process;
+    use torrplay::LogFormat;
 
     let data = tempfile::tempdir()?;
-    let (port, peer_port) = free_ports()?;
-    let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-    let mut child = Command::new(env!("CARGO_BIN_EXE_torrplay"))
-        .args(["--no-dht", "--listen"])
-        .arg(address.to_string())
-        .arg("--peer-port")
-        .arg(peer_port.to_string())
-        .arg("--data-dir")
-        .arg(data.path())
-        .env_remove("TORRPLAY_LISTEN")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()?;
-    let stderr = child.stderr.take().expect("piped standard error");
-    let mut lines = tokio::io::BufReader::new(stderr).lines();
-    let mut until = async |text: &str| -> anyhow::Result<()> {
-        bounded(text, async {
-            while let Some(line) = lines.next_line().await? {
-                if line.contains(text) {
-                    return Ok(());
-                }
-            }
-            anyhow::bail!("the log ended before {text:?}")
-        })
-        .await?
-    };
-    until("the engine is ready").await?;
-    let mut held = TcpStream::connect(address).await?;
+    let mut process =
+        Process::start(data.path(), Ipv4Addr::LOCALHOST, 0, LogFormat::Json, "info").await?;
+    let mut held = TcpStream::connect(process.address()).await?;
     held.write_all(b"GET /livez HTTP/1.1\r\nHost: example.invalid\r\n")
         .await?;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let pid = child.id().expect("its process ID").to_string();
-    let terminate = async || -> anyhow::Result<()> {
-        let sent = Command::new("kill").args(["-TERM", &pid]).status().await?;
-        assert!(sent.success());
-        Ok(())
-    };
-    terminate().await?;
-    until("waiting for connections to close").await?;
-    terminate().await?;
-    until("asked again to stop").await?;
-    let status = bounded("the executable's exit", child.wait()).await??;
-    assert!(status.success(), "{status}");
+    process.signal().await?;
+    process
+        .wait_for_log("waiting for connections to close")
+        .await?;
+    process.signal().await?;
+    process.wait_for_log("asked again to stop").await?;
+    process.wait_for_exit().await?;
 
     let (store, contents) = torrplay_store::Store::open(data.path())?;
     store.close().await?;

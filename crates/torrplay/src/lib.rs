@@ -125,7 +125,7 @@ Options:
                              [default: [::]:8642, every interface]
   --allowed-host <NAME>      An exact host name or suffix wildcard (e.g. *.home.arpa).
                              Repeat to add to the comma-separated TORRPLAY_ALLOWED_HOSTS
-  --peer-port <PORT>         The BitTorrent peer port on every interface [default: 4240]
+  --peer-port <PORT>         The BitTorrent peer port, or 0 for an OS-assigned port [default: 4240]
   --data-dir <DIR>           Where the torrents database lives, on a local
                              filesystem [default: the platform's data directory]
   --download-dir <DIR>       Where torrents in disk storage keep their files, a
@@ -202,7 +202,7 @@ pub struct Config {
     pub listen: Option<SocketAddr>,
     /// Normalized exact host names and suffix wildcards beyond those always allowed.
     pub allowed_hosts: Vec<String>,
-    /// The peer listener's port, on every interface.
+    /// The peer listener's port, on every interface, or zero for an OS-assigned port.
     pub peer_port: u16,
     /// The most verbose level TorrPlay's own logs record, overriding the
     /// `log_level` setting; other crates log warnings and errors only.
@@ -679,9 +679,7 @@ pub fn parse_args(
                 let value = value()?;
                 config.peer_port = value
                     .parse()
-                    .ok()
-                    .filter(|&port| port != 0)
-                    .ok_or_else(|| invalid(value, "a port from 1 to 65535"))?;
+                    .map_err(|_| invalid(value, "a port from 0 to 65535"))?;
             }
             "--log-level" => {
                 let value = value()?;
@@ -2043,7 +2041,7 @@ mod tests {
     #[test]
     fn invalid_values_and_unknown_options_are_refused() {
         for args in [
-            &["--peer-port", "0"][..],
+            &["--peer-port", "-1"][..],
             &["--peer-port", "70000"],
             &["--log-level", "loud"],
             &["--log-filter", "librqbit=loud"],
@@ -2081,5 +2079,15 @@ mod tests {
         assert_eq!(engine.network.listen.port(), 6881);
         assert!(engine.network.listen.ip().is_unspecified());
         assert!(engine.network.dht);
+    }
+
+    #[test]
+    fn zero_requests_an_os_assigned_peer_port() {
+        let Command::Run(config) = parse(&["--peer-port", "0"]).expect("an ephemeral peer port")
+        else {
+            panic!("torrplay runs");
+        };
+        let engine = config.engine_config(Path::new("/session"), Path::new("/media/torrplay"));
+        assert_eq!(engine.network.listen.port(), 0);
     }
 }
