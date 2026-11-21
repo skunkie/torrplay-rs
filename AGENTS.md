@@ -113,6 +113,7 @@ These requirements apply when reusing or adding the client; they do not expand t
 
 ## Commit messages and history
 
+- Use `feat/` for feature branches and `fix/` for bug-fix branches. Follow the repository's existing branch names for other kinds of work.
 - Use Conventional Commits: `type(scope): concise imperative summary`, lowercase after the colon and without a trailing period. Choose a concrete subsystem scope when appropriate.
 - Keep one cohesive change and its supporting refactors and tests in one atomic commit. Every commit must pass the checks applicable to its contents.
 - For nontrivial commits, add a blank line and body bullets explaining observable behavior, important implementation details, and relevant validation. Write complete sentences ending with periods; avoid file-by-file narration.
