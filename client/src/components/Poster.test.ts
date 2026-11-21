@@ -35,7 +35,6 @@ it.each([
     url: undefined,
     title: "Orchard Road",
     kind,
-    titleBelow: true,
   });
 
   const svg = container.querySelector("[data-poster-tile] svg");

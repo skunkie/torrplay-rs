@@ -211,6 +211,18 @@ it("reports a change made elsewhere and reloads it rather than overwriting", asy
   });
 });
 
+it("previews the inferred media kind and updates the icon when the kind changes", async () => {
+  await open(backend(configuration({ kind: null })));
+  const tile = document.querySelector("[data-poster-tile]");
+  expect(tile?.querySelector("[data-icon]")).toHaveAttribute("data-icon", "film");
+
+  await fireEvent.click(screen.getByRole("button", { name: "Series" }));
+  expect(tile?.querySelector("[data-icon]")).toHaveAttribute("data-icon", "tv");
+
+  await fireEvent.click(screen.getByRole("button", { name: "Automatic" }));
+  expect(tile?.querySelector("[data-icon]")).toHaveAttribute("data-icon", "film");
+});
+
 it("uploads a chosen poster", async () => {
   const fake = backend();
   await open(fake);
@@ -238,7 +250,7 @@ it("refuses a poster over the limit before uploading it", async () => {
   expect(fake.setPoster).not.toHaveBeenCalled();
 });
 
-it("removes a poster the torrent has", async () => {
+it("previews the media icon immediately and removes the poster when saved", async () => {
   const withPoster = torrent(1, { poster: { media_type: "image/png" } } as never);
   const fake = backend(configuration(), {
     getTorrent: vi.fn(async () => ({ unchanged: false as const, data: withPoster, etag: '"t"' })),
@@ -247,6 +259,10 @@ it("removes a poster the torrent has", async () => {
 
   await fireEvent.click(screen.getByRole("button", { name: "Remove the poster" }));
   expect(screen.queryByRole("button", { name: "Remove the poster" })).not.toBeInTheDocument();
+  expect(document.querySelector("[data-poster-tile] [data-icon]")).toHaveAttribute(
+    "data-icon",
+    "tv",
+  );
   await save();
 
   await saved();

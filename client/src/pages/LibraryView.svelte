@@ -170,7 +170,6 @@ SPDX-License-Identifier: MIT
             title={torrentTitle(torrent)}
             kind={torrent.kind}
             badge={stateLabel(torrent)}
-            titleBelow
           />
           <Dotted parts={torrentDetails(torrent)} class="text-xs text-text-muted" />
         </a>
