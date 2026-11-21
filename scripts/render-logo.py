@@ -181,7 +181,7 @@ def windows_wizard_artwork():
                 )
             draw.multiline_text(
                 (panel_width // 2, tile_y + tile_size + 14),
-                "From magnet\nto play.",
+                "Still downloading.\nAlready watching.",
                 fill=LIGHT["tile"],
                 font=tagline_font,
                 anchor="ma",
