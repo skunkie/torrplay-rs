@@ -278,8 +278,17 @@ dbus-run-session -- python3 tests/smoke.py ../target/debug/torrplay-desktop
 A torrent file or magnet URI among the application's arguments opens on its add page,
 in the running application if there is one, as `cargo run -- invented.torrent` does.
 
-Run the last command from the repository root. Setting `CARGO_TARGET_DIR=../target`
-shares the main workspace's build directory.
+On macOS, the desktop app creates a commented
+`~/Library/Application Support/org.torrplay.desktop/torrplay.env` if the
+file is absent. This directory also holds the database, logs, and downloads
+by default. The app reads `TORRPLAY_ALLOWED_HOSTS`, `TORRPLAY_LISTEN`, and
+`TORRPLAY_LOG_FORMAT` from the file at startup. Allowed hosts from the file,
+the environment, and `--allowed-host` are combined. For the listen address
+and log format, command-line options take precedence, then environment
+variables, then the file. Quit and reopen the app after editing the file.
+
+Run the `cargo-deny` command from the repository root. Setting
+`CARGO_TARGET_DIR=../target` shares the main workspace's build directory.
 
 With its `client` feature in place of the default `engine`, the same crate builds the
 service edition's client of [ADR 12](adr/0012-editions.md): the window with no server,
@@ -405,8 +414,10 @@ cargo run -p torrplay -- --help
 dual-stack; `--listen`, or `TORRPLAY_LISTEN` without it, names another
 address, such as `127.0.0.1:8642`. Until a password is set, only clients on
 local networks may use it. `/api/v1/reference` shows the API in a browser.
-`--allowed-host` adds a host name requests may give, such as a reverse
-proxy's. `--peer-port` sets the BitTorrent peer port, 4240 by default, and
+Use `--allowed-host torrplay --allowed-host '*.home.arpa'` to allow a bare
+name and names below a DNS suffix. Each option adds to the comma-separated
+`TORRPLAY_ALLOWED_HOSTS` list. Use wildcards for DNS zones you control.
+`--peer-port` sets the BitTorrent peer port, 4240 by default, and
 `--download-dir` the download directory of torrents in disk storage,
 `downloads` in the data directory by default. Other options override
 settings for one run, as [the lifecycle](lifecycle.md#settings) describes:
@@ -434,10 +445,10 @@ public swarm through DHT and trackers.
 Torrents persist in `torrplay.db`, a SQLite database in the data directory,
 which `--data-dir` sets. It defaults to the platform's data directory for
 applications: `~/.local/share/torrplay` on Linux, or `$XDG_DATA_HOME/torrplay`
-when that is set, `~/Library/Application Support/torrplay` on macOS, and
-`%APPDATA%\torrplay\data` on Windows. It must be on a local filesystem, as
-ADR 8 requires. Tests and benchmark runs pass a temporary directory so that
-they never share a database.
+when that is set, `~/Library/Application Support/org.torrplay.desktop` on
+macOS, and `%APPDATA%\torrplay\data` on Windows. It must be on a local
+filesystem, as ADR 8 requires. Tests and benchmark runs pass a temporary
+directory so that they never share a database.
 
 The listener serves HTTP/1.1 and cleartext HTTP/2 to clients with prior
 knowledge, and it opens before the engine is ready, so `/readyz` answers
@@ -482,7 +493,8 @@ its restart backoff and restart it every 5 seconds:
   `torrplay` account. The client trusts a listener owned by it, so the unit uses
   this static account rather than `DynamicUser=`.
 - `torrplay.env`, the settings file, as `/etc/torrplay/torrplay.env`, with
-  `TORRPLAY_LISTEN` and `TORRPLAY_LOG_FORMAT` commented out at their defaults.
+  examples for `TORRPLAY_LISTEN`, `TORRPLAY_ALLOWED_HOSTS`, and
+  `TORRPLAY_LOG_FORMAT` commented out.
   The unit reads it as its environment, and the client reads the listen
   address there. Options without a variable, such as `--download-dir` or
   `--peer-port`, go in a drop-in from `systemctl edit torrplay` that clears

@@ -64,6 +64,11 @@ const FALLBACK_LISTEN: SocketAddr =
 /// does not.
 pub const LISTEN_VARIABLE: &str = "TORRPLAY_LISTEN";
 
+/// The environment variable that adds exact host names and suffix wildcards.
+pub const ALLOWED_HOSTS_VARIABLE: &str = "TORRPLAY_ALLOWED_HOSTS";
+const ALLOWED_HOST_EXPECTED: &str =
+    "a DNS name such as torrplay or a suffix wildcard such as *.home.arpa";
+
 /// The environment variable that chooses the log format where
 /// `--log-format` does not.
 pub const LOG_FORMAT_VARIABLE: &str = "TORRPLAY_LOG_FORMAT";
@@ -118,9 +123,8 @@ Options:
   --listen <ADDRESS>         The API's address, or TORRPLAY_LISTEN; until a
                              password is set, only local networks may use it
                              [default: [::]:8642, every interface]
-  --allowed-host <NAME>      A host name requests may give besides IP addresses,
-                             localhost, and .local names, such as a reverse
-                             proxy's; repeat for each
+  --allowed-host <NAME>      An exact host name or suffix wildcard (e.g. *.home.arpa).
+                             Repeat to add to the comma-separated TORRPLAY_ALLOWED_HOSTS
   --peer-port <PORT>         The BitTorrent peer port on every interface [default: 4240]
   --data-dir <DIR>           Where the torrents database lives, on a local
                              filesystem [default: the platform's data directory]
@@ -190,14 +194,13 @@ fn bind(address: SocketAddr) -> io::Result<TcpListener> {
     TcpListener::from_std(socket.into())
 }
 
-/// The application's configuration from its command line.
+/// The application's startup configuration.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
     /// The API's listen address, or `None` for [`LISTEN_DEFAULT`]; see
     /// [`bind_api`].
     pub listen: Option<SocketAddr>,
-    /// The host names requests may give beyond those always allowed,
-    /// normalized.
+    /// Normalized exact host names and suffix wildcards beyond those always allowed.
     pub allowed_hosts: Vec<String>,
     /// The peer listener's port, on every interface.
     pub peer_port: u16,
@@ -239,6 +242,37 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Sets the listen address from the value of [`LISTEN_VARIABLE`].
+    pub fn set_listen_from_variable(&mut self, value: String) -> Result<(), ArgsError> {
+        self.listen = Some(value.parse().map_err(|_| ArgsError::InvalidValue {
+            option: LISTEN_VARIABLE.to_owned(),
+            value,
+            reason: "an IP address and port",
+        })?);
+        Ok(())
+    }
+
+    /// Adds the comma-separated value of [`ALLOWED_HOSTS_VARIABLE`]. A blank
+    /// value adds nothing. An invalid entry leaves the whole list unchanged.
+    pub fn add_allowed_hosts(&mut self, value: &str) -> Result<(), ArgsError> {
+        if value.trim().is_empty() {
+            return Ok(());
+        }
+        let names = value
+            .split(',')
+            .map(str::trim)
+            .map(|entry| {
+                AllowedHosts::normalize(entry).ok_or_else(|| ArgsError::InvalidValue {
+                    option: ALLOWED_HOSTS_VARIABLE.to_owned(),
+                    value: entry.to_owned(),
+                    reason: ALLOWED_HOST_EXPECTED,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.allowed_hosts.extend(names);
+        Ok(())
+    }
+
     /// The data directory: `--data-dir`, or else the platform's data
     /// directory for applications, such as `~/.local/share/torrplay` on
     /// Linux.
@@ -246,7 +280,12 @@ impl Config {
         if let Some(directory) = &self.data_dir {
             return Ok(directory.clone());
         }
-        directories::ProjectDirs::from_path(PathBuf::from("torrplay"))
+        let directory = if cfg!(target_os = "macos") {
+            "org.torrplay.desktop"
+        } else {
+            "torrplay"
+        };
+        directories::ProjectDirs::from_path(PathBuf::from(directory))
             .map(|directories| directories.data_dir().to_owned())
             .context("no home directory to put the data directory in; pass --data-dir")
     }
@@ -567,13 +606,6 @@ pub fn parse_args(
     listen_variable: Option<String>,
 ) -> Result<Command, ArgsError> {
     let mut config = Config::default();
-    if let Some(value) = listen_variable {
-        config.listen = Some(value.parse().map_err(|_| ArgsError::InvalidValue {
-            option: LISTEN_VARIABLE.to_owned(),
-            value,
-            reason: "an IP address and port",
-        })?);
-    }
     let mut args = args.into_iter().peekable();
     if args.peek().map(String::as_str) == Some("mcp") {
         args.next();
@@ -640,7 +672,7 @@ pub fn parse_args(
             "--allowed-host" => {
                 let value = value()?;
                 let name = AllowedHosts::normalize(&value)
-                    .ok_or_else(|| invalid(value, "a DNS name such as torrplay.home.arpa"))?;
+                    .ok_or_else(|| invalid(value, ALLOWED_HOST_EXPECTED))?;
                 config.allowed_hosts.push(name);
             }
             "--peer-port" => {
@@ -692,10 +724,18 @@ pub fn parse_args(
             _ => return Err(ArgsError::Unknown(option)),
         }
     }
-    Ok(match password {
-        Some(change) => Command::Password(change, config),
-        None if service => Command::Service(config),
-        None => Command::Run(config),
+    if let Some(change) = password {
+        return Ok(Command::Password(change, config));
+    }
+    if config.listen.is_none()
+        && let Some(value) = listen_variable
+    {
+        config.set_listen_from_variable(value)?;
+    }
+    Ok(if service {
+        Command::Service(config)
+    } else {
+        Command::Run(config)
     })
 }
 
@@ -1810,14 +1850,12 @@ mod tests {
             panic!("the variable parses");
         };
         assert_eq!(config.listen, Some("127.0.0.1:9000".parse().unwrap()));
-        let Ok(Command::Run(config)) = run(&["--listen", "0.0.0.0:9001"], "127.0.0.1:9000") else {
-            panic!("the option parses");
-        };
-        assert_eq!(
-            config.listen,
-            Some("0.0.0.0:9001".parse().unwrap()),
-            "--listen wins"
-        );
+        for variable in ["127.0.0.1:9000", "localhost"] {
+            let Ok(Command::Run(config)) = run(&["--listen", "0.0.0.0:9001"], variable) else {
+                panic!("the option parses with {variable} in the environment");
+            };
+            assert_eq!(config.listen, Some("0.0.0.0:9001".parse().unwrap()));
+        }
         assert_eq!(
             run(&[], "localhost"),
             Err(ArgsError::InvalidValue {
@@ -1861,15 +1899,37 @@ mod tests {
         let Ok(Command::Run(config)) = parse(&[
             "--allowed-host",
             "TorrPlay.Home.Arpa.",
-            "--allowed-host=nas.lan",
+            "--allowed-host=*.LAN",
+            "--allowed-host=torrplay",
         ]) else {
             panic!("the hosts parse");
         };
-        assert_eq!(config.allowed_hosts, ["torrplay.home.arpa", "nas.lan"]);
+        assert_eq!(
+            config.allowed_hosts,
+            ["torrplay.home.arpa", "*.lan", "torrplay"]
+        );
         assert!(matches!(
             parse(&["--allowed-host", "evil example"]),
             Err(ArgsError::InvalidValue { .. })
         ));
+    }
+
+    #[test]
+    fn allowed_hosts_lists_add_to_the_command_line_and_fail_atomically() {
+        let Ok(Command::Run(mut config)) = parse(&["--allowed-host=torrplay"]) else {
+            panic!("the command line parses");
+        };
+        config.add_allowed_hosts(" ").unwrap();
+        config.add_allowed_hosts(" NAS.Home.Arpa., *.LAN ").unwrap();
+        let names = ["torrplay", "nas.home.arpa", "*.lan"];
+        assert_eq!(config.allowed_hosts, names);
+        for invalid in ["nas,", ",nas", "nas,,other", "nas,*", "nas:8642"] {
+            assert!(matches!(
+                config.add_allowed_hosts(invalid),
+                Err(ArgsError::InvalidValue { option, .. }) if option == ALLOWED_HOSTS_VARIABLE
+            ));
+            assert_eq!(config.allowed_hosts, names);
+        }
     }
 
     #[test]

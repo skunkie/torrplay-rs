@@ -260,9 +260,17 @@ errors=$(errors_since "$started")
 echo "== installing again keeps the settings and runs the new build"
 before=$(property MainPID)
 set_listen '[::]:8643'
+printf '%s\n' 'TORRPLAY_ALLOWED_HOSTS=torrplay,*.home.arpa' | sudo tee -a "$settings" >/dev/null
 install_service
 wait_for 60 ready 8643 || fail "the service did not listen at the kept address"
 [[ "$(property MainPID)" != "$before" ]] || fail "installing again did not restart the service"
+for host in torrplay nas.home.arpa; do
+  curl -fsS -o /dev/null --max-time 2 -H "Host: $host:8643" http://127.0.0.1:8643/api/v1 ||
+    fail "the service refused the configured host $host"
+done
+code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 \
+  -H 'Host: other.example' http://127.0.0.1:8643/api/v1)
+[[ "$code" == 421 ]] || fail "the unlisted host received $code instead of 421"
 set_listen '[::]:8642'
 sudo systemctl restart torrplay
 wait_for 60 ready 8642 || fail "the service did not return to port 8642"

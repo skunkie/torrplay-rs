@@ -855,12 +855,16 @@ or `:authority` over HTTP/2, so a web page cannot reach the API through
 DNS rebinding, a name the page's server controls that it points at the
 application. That holds whether or not authentication is on.
 
-- An IP address, `localhost`, a name under `.localhost` or `.local`, and a
-  name given with `--allowed-host` are allowed, ignoring case, the port,
-  and a trailing dot. Any other name is `421 misdirected-request`. A
-  request without `Host`, which no browser sends, is not refused.
-- It serves no TLS; a reverse proxy can, and its host name needs
-  `--allowed-host`.
+- IP literals, `localhost`, and names under `.localhost` or `.local` are
+  allowed by default. At startup, repeatable `--allowed-host` options add to
+  the comma-separated `TORRPLAY_ALLOWED_HOSTS` list. An entry can be an exact
+  name such as `torrplay` or a suffix wildcard such as `*.home.arpa`. A
+  wildcard matches names below the suffix. The zone apex needs its own exact
+  entry. Only use wildcards for DNS zones you control.
+- Matching ignores case, the port, and one trailing dot. An unlisted name
+  receives `421 misdirected-request`. A request without `Host` or `:authority`
+  is not refused.
+- A reverse proxy can provide TLS. Allow the hostname it passes to TorrPlay.
 - Logs never record credentials: requests are logged without their
   queries, and `Authorization` is never logged.
 
