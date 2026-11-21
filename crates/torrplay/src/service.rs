@@ -123,6 +123,11 @@ mod windows {
             Ok(_) => return Err("`service` takes the options of a run only".to_owned()),
             Err(error) => return Err(error.to_string()),
         };
+        if let Some(value) = variable(torrplay::ALLOWED_HOSTS_VARIABLE) {
+            config
+                .add_allowed_hosts(&value)
+                .map_err(|error| error.to_string())?;
+        }
         if config.data_dir.is_none() {
             config.data_dir = Some(directory);
         }

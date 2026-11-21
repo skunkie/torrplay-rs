@@ -382,6 +382,57 @@ remains prioritized, and failure paths preserve consistent persisted state.
 support status. Full application parity is a later milestone, not a
 prerequisite for accepting the engine prototype.
 
+### Configure allowed hosts at startup
+
+Make local hostname access configurable before the first desktop release.
+Keep the default [host policy](lifecycle.md#authentication) for IP literals,
+`localhost`, and names under `.localhost` and `.local`. Requests subject to
+the host check that name an unlisted host still receive
+`421 misdirected-request`.
+
+- Extend the repeatable `--allowed-host` option on `torrplay` and the desktop
+  application to accept an exact DNS name, including a bare name such as
+  `torrplay`, or a suffix wildcard such as `*.home.arpa`. Quote the wildcard
+  when passing it through a shell.
+- Read `TORRPLAY_ALLOWED_HOSTS` from the process environment. In the service
+  edition, support it in `/etc/torrplay/torrplay.env` on Linux and
+  `%ProgramData%\TorrPlay\torrplay.env` on Windows. The value is a
+  comma-separated list such as `torrplay,*.home.arpa`. Trim whitespace around
+  entries. An unset or blank value adds no entries. Command-line entries
+  add to the list. Changes take effect after restarting the service.
+- On macOS, also read the list from `torrplay.env` in the
+  desktop application's configuration directory under Application Support,
+  `org.torrplay.desktop`. Create a commented template if the file is absent.
+  Use this as the default data directory for the desktop app and CLI. The
+  app reads the list when opened from Finder. Merge the entries with those
+  from the process environment and the command line. Also read
+  `TORRPLAY_LISTEN` and `TORRPLAY_LOG_FORMAT` as fallbacks to command-line
+  options and the process environment. Apply changes after quitting and
+  reopening the app.
+- Match a wildcard at a DNS label boundary. `*.home.arpa` matches
+  `nas.home.arpa` and `media.nas.home.arpa`. The zone apex `home.arpa` needs
+  its own exact entry. Accept `*` only as the entire leftmost label of a
+  wildcard with a DNS suffix. Reject catch-all `*`, partial wildcards,
+  URLs, ports, and empty elements in a nonblank list. Ignore case, one
+  trailing dot, and the request port when matching. Fail startup on an
+  invalid entry and identify its configuration source in the error.
+- A wildcard allows every name beneath the configured suffix. Document that
+  administrators should use it for zones they control. Clients still need
+  local name resolution for bare names and DNS names.
+- Reuse the parser and matcher on Android when the platform is introduced.
+  A client connecting to an existing server relies on that server's allowed
+  hosts. An embedded server used by the app's own WebView can use loopback.
+  If Android later serves other devices, feed an app-local allowed-hosts
+  setting into the same parser at server startup.
+
+Update CLI help, service templates, man pages, and the documented host policy
+when implementing the change. Include both the flag and the variable in the
+`421` error detail. Test exact names, wildcard boundaries, malformed entries,
+and combined configuration sources. On Linux and Windows, verify that the
+installed service loads the list from its env file and returns `421` for an
+unrelated hostname. On macOS, verify that the packaged app reads its per-user
+file without host or data-directory options and enforces the same host policy.
+
 ## First implementation increment
 
 Start with milestone 1: write the glossary, conventions, initial OpenAPI

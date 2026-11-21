@@ -2,18 +2,17 @@
 //
 // SPDX-License-Identifier: MIT
 
-//! The service edition's settings file: `TORRPLAY_` variables, one per line,
-//! in `/etc/torrplay/torrplay.env`, which systemd reads as the service's
-//! environment, or `%ProgramData%\TorrPlay\torrplay.env` on Windows, which the
-//! service reads itself. The client reads its listen address too, so both
-//! read it here, the way systemd's `EnvironmentFile=` does for the lines the
-//! template has: `NAME=value`, a value in single or double quotes without
-//! them, and `#` comments.
+//! Startup files with one `TORRPLAY_` variable per line. systemd reads
+//! `/etc/torrplay/torrplay.env` into the service's environment. On Windows,
+//! the service reads `%ProgramData%\TorrPlay\torrplay.env` itself. The client
+//! reads the service's listen address, and the macOS application reads its
+//! own startup settings file. They share the template's format: `NAME=value`,
+//! optional single or double quotes around values, and `#` comments.
 
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// The settings file's name, in the service's directory.
+/// The startup settings file's name.
 pub const FILE_NAME: &str = "torrplay.env";
 
 /// Where the service's settings file is on this system, or `None` on Windows
@@ -122,7 +121,7 @@ mod tests {
     }
 
     #[test]
-    fn the_installed_templates_give_the_defaults_once_uncommented() {
+    fn the_installed_templates_offer_commented_examples() {
         for (system, template) in [
             (
                 "Linux",
@@ -133,10 +132,9 @@ mod tests {
                 include_str!("../../../packaging/windows/torrplay.env"),
             ),
         ] {
-            let file = SettingsFile::parse(template);
             assert_eq!(
-                file.get("TORRPLAY_LISTEN"),
-                None,
+                SettingsFile::parse(template),
+                SettingsFile::default(),
                 "{system}: all commented out"
             );
             let uncommented = SettingsFile::parse(&template.replace("#TORRPLAY_", "TORRPLAY_"));
@@ -148,6 +146,11 @@ mod tests {
             assert_eq!(
                 uncommented.get("TORRPLAY_LOG_FORMAT"),
                 Some("text"),
+                "{system}"
+            );
+            assert_eq!(
+                uncommented.get("TORRPLAY_ALLOWED_HOSTS"),
+                Some("torrplay,*.home.arpa"),
                 "{system}"
             );
         }

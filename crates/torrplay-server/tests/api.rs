@@ -7670,39 +7670,42 @@ mod scenario {
 
     /// AUT-08: requests name an allowed host, except for the health checks.
     pub async fn allowed_hosts() {
-        let server = TestServer::start_allowing(&["torrplay.home.arpa"]).await;
-        let port = server.get("/api/v1").await.status;
-        assert_eq!(port, StatusCode::OK);
+        let server = TestServer::start_allowing(&["torrplay.home.arpa", "torrplay", "*.lan"]).await;
+        let status = server.get("/api/v1").await.status;
+        assert_eq!(status, StatusCode::OK);
         for host in [
             "192.168.1.10:8642",
             "localhost:8642",
             "mypc.local",
             "TorrPlay.home.arpa.",
+            "torrplay:8642",
+            "NAS.LAN.:8642",
+            "media.nas.lan",
         ] {
             let answered = server
                 .send(with_header(Method::GET, "/api/v1", header::HOST, host))
                 .await;
             assert_eq!(answered.status, StatusCode::OK, "{host}");
         }
-        let refused = server
-            .send(with_header(
-                Method::GET,
-                "/api/v1/torrents",
-                header::HOST,
-                "evil.example:8642",
-            ))
-            .await;
-        assert_problem(
-            &refused,
-            StatusCode::MISDIRECTED_REQUEST,
-            "misdirected-request",
-        );
-        assert!(
-            refused.json()["detail"]
-                .as_str()
-                .unwrap()
-                .contains("--allowed-host")
-        );
+        for host in ["evil.example:8642", "lan", "notlan", "nas.lan.example"] {
+            let refused = server
+                .send(with_header(
+                    Method::GET,
+                    "/api/v1/torrents",
+                    header::HOST,
+                    host,
+                ))
+                .await;
+            assert_problem(
+                &refused,
+                StatusCode::MISDIRECTED_REQUEST,
+                "misdirected-request",
+            );
+            let problem = refused.json();
+            let detail = problem["detail"].as_str().unwrap();
+            assert!(detail.contains("--allowed-host"));
+            assert!(detail.contains("TORRPLAY_ALLOWED_HOSTS"));
+        }
         let live = server
             .send(with_header(
                 Method::GET,
