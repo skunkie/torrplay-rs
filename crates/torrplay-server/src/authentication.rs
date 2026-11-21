@@ -132,8 +132,8 @@ pub(crate) async fn guard<E: Engine>(
     {
         return Problem::new(
             ProblemType::MisdirectedRequest,
-            "The request names a host this application does not serve; start it with \
-             --allowed-host to allow the name.",
+            "The request names a host this application does not serve. Add the name with \
+             --allowed-host or TORRPLAY_ALLOWED_HOSTS and restart the application.",
         )
         .into_response();
     }

@@ -85,17 +85,18 @@ With no command, **torrplay** runs the application with the *OPTIONS* below.
     *[::]:8642*, every interface.
 
 **\--allowed-host** *NAME*
-:   A host name requests may give besides IP addresses, *localhost*, and
-    *.local* names, such as a reverse proxy's. Repeat it for each.
+:   An exact HTTP hostname, such as `torrplay`, or a suffix wildcard such as
+    `*.home.arpa`. Quote wildcards in the shell. Repeat the option to add
+    each entry to **TORRPLAY_ALLOWED_HOSTS**.
 
 **\--peer-port** *PORT*
 :   The BitTorrent peer port on every interface, which takes TCP. The
     default is 4240. The DHT has a UDP port of its own.
 
 **\--data-dir** *DIR*
-:   Where the database lives, on a local filesystem. The default is the
-    platform's data directory: *~/.local/share/torrplay* on Linux, or
-    *$XDG_DATA_HOME/torrplay* when that is set.
+:   Where the database lives, on a local filesystem. On Linux the default is
+    *~/.local/share/torrplay*, or *$XDG_DATA_HOME/torrplay* when that is set.
+    On macOS it is *~/Library/Application Support/org.torrplay.desktop*.
 
 **\--download-dir** *DIR*
 :   Where torrents in disk storage keep their files, a directory for
@@ -133,6 +134,13 @@ options.
 **TORRPLAY_LISTEN**
 :   The API's address where **\--listen** is not given.
 
+**TORRPLAY_ALLOWED_HOSTS**
+:   A comma-separated list of extra HTTP hostnames and suffix wildcards.
+    For example, `torrplay,*.home.arpa` permits `torrplay` and names such as
+    `nas.home.arpa`. `home.arpa` itself requires a separate entry. Use
+    wildcards for DNS zones you control. An unset or blank value adds no
+    entries. Invalid entries cause a startup error.
+
 **TORRPLAY_LOG_FORMAT**
 :   The log format where **\--log-format** is not given.
 
@@ -144,8 +152,8 @@ options.
 :   The API access token **torrplay mcp** sends. There is no option for it,
     since every user can read a process's arguments.
 
-The service reads the first two from its settings file; see
-**torrplay.env**(5).
+The service reads **TORRPLAY_LISTEN**, **TORRPLAY_ALLOWED_HOSTS**, and
+**TORRPLAY_LOG_FORMAT** from its settings file. See **torrplay.env**(5).
 
 # FILES
 

@@ -18,7 +18,8 @@ info:
     and link-local addresses, and the shared address space 100.64.0.0/10),
     and others 403 forbidden, setting the password included.
     docs/lifecycle.md describes access tokens, playback tokens, local
-    networks, and the allowed hosts.
+    networks, and the allowed hosts. The host check accepts configured exact
+    names and DNS suffix wildcards alongside the built-in names and IP literals.
   version: 0.1.0
   license:
     name: MIT

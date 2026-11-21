@@ -26,7 +26,7 @@ unwrap_used = "warn"
 default = ["engine"]
 # The application: the server and its engine in this process. The build takes one of
 # this and `client`.
-engine = ["dep:tokio", "dep:torrplay", "dep:torrplay-engine"]
+engine = ["dep:tempfile", "dep:tokio", "dep:torrplay", "dep:torrplay-engine"]
 # What the client needs alone: on Windows, the service manager, to find the service's
 # process. Build the client with `--no-default-features --features client`.
 client = ["dep:windows-service"]
@@ -53,6 +53,9 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 
 [target.'cfg(windows)'.dependencies]
 windows-service = { version = "0.8", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tempfile = { version = "3", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

@@ -211,6 +211,64 @@ impl Shell {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn read_startup_settings(
+    directory: &std::path::Path,
+) -> std::io::Result<torrplay_settings_file::SettingsFile> {
+    use std::io::{ErrorKind, Write};
+    use torrplay_settings_file::{FILE_NAME, SettingsFile};
+
+    const TEMPLATE: &str = include_str!("../../packaging/macos/torrplay.env");
+
+    let path = directory.join(FILE_NAME);
+    if let Some(settings) = SettingsFile::read(&path)? {
+        return Ok(settings);
+    }
+
+    let create_template = || -> std::io::Result<()> {
+        std::fs::create_dir_all(directory)?;
+        let mut template = tempfile::NamedTempFile::new_in(directory)?;
+        template.write_all(TEMPLATE.as_bytes())?;
+        match template.persist_noclobber(&path) {
+            Ok(_) => Ok(()),
+            Err(error) if error.error.kind() == ErrorKind::AlreadyExists => Ok(()),
+            Err(error) => Err(error.error),
+        }
+    };
+    if let Err(error) = create_template() {
+        let _ = writeln!(
+            std::io::stderr(),
+            "torrplay-desktop: could not create {}: {error}",
+            path.display()
+        );
+    }
+    Ok(SettingsFile::read(&path)?.unwrap_or_default())
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn with_startup_settings(
+    mut config: Config,
+    directory: &std::path::Path,
+) -> anyhow::Result<Config> {
+    let settings = read_startup_settings(directory)?;
+    if let Some(value) = settings.get(torrplay::ALLOWED_HOSTS_VARIABLE) {
+        config.add_allowed_hosts(value)?;
+    }
+    if config.listen.is_none()
+        && let Some(value) = settings.get(torrplay::LISTEN_VARIABLE)
+    {
+        config.set_listen_from_variable(value.to_owned())?;
+    }
+    if let Some(value) = settings.get(torrplay::LOG_FORMAT_VARIABLE) {
+        config.log_format = Some(torrplay::log_format(
+            config.log_format,
+            Some(value.to_owned()),
+            false,
+        )?);
+    }
+    Ok(config)
+}
+
 /// The application's entry point.
 pub fn main() -> ExitCode {
     let listen_variable = std::env::var_os(torrplay::LISTEN_VARIABLE)
@@ -221,7 +279,7 @@ pub fn main() -> ExitCode {
         &directory,
         &opening::options_with_values(torrplay::USAGE),
     );
-    let config = match torrplay::parse_args(options.clone(), listen_variable) {
+    let mut config = match torrplay::parse_args(options.clone(), listen_variable) {
         Ok(Command::Run(config)) => config,
         Ok(Command::Help) => {
             println!(
@@ -246,17 +304,26 @@ pub fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let variable = std::env::var_os(torrplay::LOG_FORMAT_VARIABLE)
-        .map(|value| value.to_string_lossy().into_owned());
-    let format =
-        match torrplay::log_format(config.log_format, variable, std::io::stderr().is_terminal()) {
-            Ok(format) => format,
+    if let Some(value) = std::env::var_os(torrplay::ALLOWED_HOSTS_VARIABLE)
+        && let Err(error) = config.add_allowed_hosts(&value.to_string_lossy())
+    {
+        eprintln!("torrplay-desktop: {error}\n\n{}", torrplay::USAGE);
+        return ExitCode::from(2);
+    }
+    if let Some(value) = std::env::var_os(torrplay::LOG_FORMAT_VARIABLE) {
+        match torrplay::log_format(
+            config.log_format,
+            Some(value.to_string_lossy().into_owned()),
+            false,
+        ) {
+            Ok(format) => config.log_format = Some(format),
             Err(error) => {
                 eprintln!("torrplay-desktop: {error}\n\n{}", torrplay::USAGE);
                 return ExitCode::from(2);
             }
-        };
-    match run(config, format, options, requests) {
+        }
+    }
+    match run(config, options, requests) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("torrplay-desktop: {error:#}");
@@ -265,12 +332,7 @@ pub fn main() -> ExitCode {
     }
 }
 
-fn run(
-    config: Config,
-    format: LogFormat,
-    options: Vec<String>,
-    requests: Vec<Request>,
-) -> anyhow::Result<()> {
+fn run(config: Config, options: Vec<String>, requests: Vec<Request>) -> anyhow::Result<()> {
     let (stop, stopped) = oneshot::channel();
     let app = tauri::Builder::default()
         // First, so a second launch ends before the rest of it starts anything.
@@ -300,14 +362,36 @@ fn run(
             }
             // The window opens from here once the server listens.
             std::thread::spawn(move || {
-                let result = catching_panic(|| serve(&config, format, &handle, stopped));
+                let result = catching_panic(|| {
+                    #[cfg(target_os = "macos")]
+                    let config = {
+                        let directory = handle.path().app_config_dir()?;
+                        with_startup_settings(config, &directory).with_context(|| {
+                            let path = directory.join(torrplay_settings_file::FILE_NAME);
+                            format!("loading {}", path.display())
+                        })?
+                    };
+                    let format = torrplay::log_format(
+                        config.log_format,
+                        None,
+                        std::io::stderr().is_terminal(),
+                    )?;
+                    serve(&config, format, &handle, stopped)
+                });
                 let shell = handle.state::<Shell>();
                 let code = if let Some(error) = shell.take_window_failure() {
                     report_failure(&handle, &error, Some(Notice::CouldNotStart));
                     1
                 } else if let Err(error) = result {
                     report_failure(&handle, &error, failure_notice(shell.stage(), &error));
-                    1
+                    let code = 1;
+                    #[cfg(target_os = "macos")]
+                    let code = if error.is::<torrplay::ArgsError>() {
+                        2
+                    } else {
+                        code
+                    };
+                    code
                 } else {
                     0
                 };
@@ -352,6 +436,59 @@ fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_settings_create_a_template_and_preserve_edits() -> anyhow::Result<()> {
+        use torrplay_settings_file::{FILE_NAME, SettingsFile};
+
+        let home = tempfile::tempdir()?;
+        let directory = home.path().join("Application Support/org.torrplay.desktop");
+        let path = directory.join(FILE_NAME);
+
+        assert_eq!(read_startup_settings(&directory)?, SettingsFile::default());
+        let created = std::fs::read_to_string(&path)?;
+        for key in [
+            torrplay::ALLOWED_HOSTS_VARIABLE,
+            torrplay::LISTEN_VARIABLE,
+            torrplay::LOG_FORMAT_VARIABLE,
+        ] {
+            assert!(created.contains(&format!("#{key}=")), "{key}");
+        }
+
+        let edited = "# My network\nTORRPLAY_ALLOWED_HOSTS=torrplay,*.home.arpa\n\
+                      TORRPLAY_LISTEN=127.0.0.1:8643\nTORRPLAY_LOG_FORMAT=text\n";
+        std::fs::write(&path, edited)?;
+        let config = with_startup_settings(Config::default(), &directory)?;
+        assert_eq!(config.allowed_hosts, ["torrplay", "*.home.arpa"]);
+        assert_eq!(config.listen, Some("127.0.0.1:8643".parse()?));
+        assert_eq!(config.log_format, Some(LogFormat::Text));
+
+        let address = "127.0.0.1:8644".parse()?;
+        let overrides = Config {
+            allowed_hosts: vec!["nas.lan".into()],
+            listen: Some(address),
+            log_format: Some(LogFormat::Json),
+            ..Config::default()
+        };
+        let config = with_startup_settings(overrides, &directory)?;
+        assert_eq!(config.allowed_hosts, ["nas.lan", "torrplay", "*.home.arpa"]);
+        assert_eq!(config.listen, Some(address));
+        assert_eq!(config.log_format, Some(LogFormat::Json));
+        assert_eq!(std::fs::read_to_string(&path)?, edited);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn missing_startup_settings_are_optional_when_template_creation_fails() -> anyhow::Result<()> {
+        use torrplay_settings_file::SettingsFile;
+
+        let home = tempfile::tempdir()?;
+        let directory = home.path().join("settings");
+        std::os::unix::fs::symlink(home.path().join("missing"), &directory)?;
+        assert_eq!(read_startup_settings(&directory)?, SettingsFile::default());
+        Ok(())
+    }
 
     #[test]
     fn a_failure_says_what_it_means_at_each_stage() {

@@ -658,26 +658,27 @@ impl AttemptLimiter {
 pub struct AllowedHosts(Vec<String>);
 
 impl AllowedHosts {
-    /// Allows `names`, each already [normalized](Self::normalize).
+    /// Allows valid exact names and suffix wildcards after normalization.
+    /// Invalid entries grant no access. Call [`Self::normalize`] first if
+    /// invalid configuration should be reported to the caller.
     pub fn new(names: Vec<String>) -> Self {
-        Self(names)
+        Self(
+            names
+                .into_iter()
+                .filter_map(|name| Self::normalize(&name))
+                .collect(),
+        )
     }
 
-    /// Normalizes a configured host name: lowercase, without a trailing
-    /// dot. `None` unless it is a DNS name of letters, digits, and hyphens.
+    /// Normalizes an exact DNS name or a wildcard with a DNS suffix.
     pub fn normalize(name: &str) -> Option<String> {
         let name = name.strip_suffix('.').unwrap_or(name).to_ascii_lowercase();
-        let valid = !name.is_empty()
-            && name.len() <= 253
-            && name.split('.').all(|label| {
-                !label.is_empty()
-                    && label.len() <= 63
-                    && !label.starts_with('-')
-                    && !label.ends_with('-')
-                    && label
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-            });
+        let valid = match name.strip_prefix("*.") {
+            Some(suffix) => {
+                name.len() <= 253 && is_dns_name(suffix) && suffix.parse::<Ipv4Addr>().is_err()
+            }
+            None => is_dns_name(&name),
+        };
         valid.then_some(name)
     }
 
@@ -703,8 +704,27 @@ impl AllowedHosts {
         host == "localhost"
             || host.ends_with(".localhost")
             || host.ends_with(".local")
-            || self.0.contains(&host)
+            || self.0.iter().any(|name| match name.strip_prefix('*') {
+                Some(suffix) => host
+                    .strip_suffix(suffix)
+                    .is_some_and(|prefix| !prefix.is_empty() && is_dns_name(&host)),
+                None => name == &host,
+            })
     }
+}
+
+/// Whether `name` contains only valid DNS labels in ASCII form.
+fn is_dns_name(name: &str) -> bool {
+    name.len() <= 253
+        && name.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
 }
 
 /// Whether `text` is empty or `:` and a port number.
@@ -1008,8 +1028,62 @@ mod tests {
     #[test]
     fn configured_host_names_must_be_dns_names() {
         assert_eq!(AllowedHosts::normalize("NAS.lan."), Some("nas.lan".into()));
-        for invalid in ["", ".", "bad name", "-x.lan", "x..lan", "x:80", "*.lan"] {
+        assert_eq!(AllowedHosts::normalize("*.LAN."), Some("*.lan".into()));
+        for invalid in [
+            "",
+            ".",
+            "bad name",
+            "-x.lan",
+            "x..lan",
+            "x:80",
+            "*",
+            "x*.lan",
+            "*.*.lan",
+            "lan.*",
+            "*.",
+            "*.127.0.0.1",
+            "https://nas.lan",
+            "*.lan:80",
+        ] {
             assert_eq!(AllowedHosts::normalize(invalid), None, "{invalid}");
+        }
+    }
+
+    #[test]
+    fn wildcard_matches_only_dns_names_below_its_suffix() {
+        let hosts = AllowedHosts::new(vec!["torrplay".into(), "*.home.arpa".into()]);
+        for allowed in [
+            "TORRPLAY:8642",
+            "NAS.Home.Arpa.:8642",
+            "media.nas.home.arpa",
+        ] {
+            assert!(hosts.allows(allowed), "{allowed}");
+        }
+        for refused in [
+            "nas",
+            "home.arpa",
+            "nothome.arpa",
+            ".home.arpa",
+            "nas..home.arpa",
+            "*.home.arpa",
+            "nas.home.arpa.example",
+            "nas.home.arpa:port",
+        ] {
+            assert!(!hosts.allows(refused), "{refused}");
+        }
+        assert!(!AllowedHosts::default().allows("nas.home.arpa"));
+    }
+
+    #[test]
+    fn direct_construction_ignores_malformed_wildcards() {
+        for (pattern, unlisted) in [
+            ("*", "other.example"),
+            ("*home.arpa", "nothome.arpa"),
+            ("*.127.0.0.1", "nas.127.0.0.1"),
+        ] {
+            let hosts = AllowedHosts::new(vec![pattern.into(), "*.home.arpa".into()]);
+            assert!(!hosts.allows(unlisted), "{pattern} allowed {unlisted}");
+            assert!(hosts.allows("nas.home.arpa"));
         }
     }
 }

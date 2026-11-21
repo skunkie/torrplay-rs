@@ -40,7 +40,7 @@ fn main() -> ExitCode {
     }
     let listen_variable = std::env::var_os(torrplay::LISTEN_VARIABLE)
         .map(|value| value.to_string_lossy().into_owned());
-    let config = match torrplay::parse_args(arguments, listen_variable) {
+    let mut config = match torrplay::parse_args(arguments, listen_variable) {
         Ok(Command::Run(config)) => config,
         // Only a first argument of `service` asks for it, which went above.
         Ok(Command::Service(_)) => return service::main(std::env::args().skip(1).collect()),
@@ -60,6 +60,12 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    if let Some(value) = std::env::var_os(torrplay::ALLOWED_HOSTS_VARIABLE)
+        && let Err(error) = config.add_allowed_hosts(&value.to_string_lossy())
+    {
+        eprintln!("torrplay: {error}\n\n{USAGE}");
+        return ExitCode::from(2);
+    }
     let variable = std::env::var_os(torrplay::LOG_FORMAT_VARIABLE)
         .map(|value| value.to_string_lossy().into_owned());
     let format =

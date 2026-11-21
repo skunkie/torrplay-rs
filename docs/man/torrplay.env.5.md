@@ -32,9 +32,9 @@ restart it after a change:
 
     sudo systemctl restart torrplay
 
-The package installs the file with every setting commented out at its
-default. It keeps an administrator's changes when it is upgraded or removed,
-and deletes the file when it is purged.
+The package installs the file with comments showing the settings. It keeps
+an administrator's changes when it is upgraded or removed, and deletes the
+file when it is purged.
 
 These settings start the service; the API's own settings, such as the DLNA
 media server's, are kept in its library and changed through the API.
@@ -44,6 +44,13 @@ media server's, are kept in its library and changed through the API.
 **TORRPLAY_LISTEN**
 :   The API's address and port. Until a password is set, only local networks
     may use it. The default is *[::]:8642*, every interface.
+
+**TORRPLAY_ALLOWED_HOSTS**
+:   A comma-separated list of extra HTTP hostnames and suffix wildcards,
+    such as `torrplay,*.home.arpa`. The default adds no names. Wildcards match
+    names below a suffix. Add the zone apex separately if needed. Use
+    wildcards for DNS zones you control. The client must be able to resolve
+    each name. Restart the service after changing the list.
 
 **TORRPLAY_LOG_FORMAT**
 :   The log's format, **text** or **json**. The service logs to the journal,
