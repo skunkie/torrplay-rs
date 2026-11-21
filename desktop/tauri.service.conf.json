@@ -6,6 +6,8 @@
     ],
     "windows": {
       "wix": {
+        "bannerPath": "icons/wix-banner.bmp",
+        "dialogImagePath": "icons/wix-dialog.bmp",
         "template": "../packaging/windows/main.wxs",
         "fragmentPaths": [
           "../packaging/windows/service.wxs"

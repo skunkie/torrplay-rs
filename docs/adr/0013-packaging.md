@@ -86,6 +86,9 @@ manifest chooses between two.
 - Tauri's bundler builds every package, from `desktop/tauri.conf.json`.
 - On Windows, an NSIS installer for the current user, with no
   administrator rights, in `%LOCALAPPDATA%`, which the updater replaces.
+  The installer and uninstaller both use TorrPlay's Windows app icon.
+  The setup wizard displays TorrPlay artwork in its header and on the
+  welcome and finish pages.
   Like the service edition's MSI, it shows TorrPlay's MIT license, which the
   user accepts to go on; a quiet install, as the updater's, shows none.
 - On Linux, a `.deb` named `torrplay`, which apt updates, and an AppImage,
@@ -162,6 +165,9 @@ manifest chooses between two.
   ADR 12 describes. It is installed for the computer, with administrator
   rights, in `%ProgramFiles%\TorrPlay Client`, which Tauri's template names
   after the product:
+  - the client shortcut and installed product entry use TorrPlay's icon.
+    File Explorer uses the system's Windows Installer icon for `.msi` files.
+    The setup wizard uses a TorrPlay banner and welcome and finish artwork.
   - the client is a feature of its own, installed unless the user leaves
     it out on the installer's Custom Setup page, or installs with
     `ADDLOCAL=Service`, for a computer only reached over the network; an
