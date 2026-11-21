@@ -442,6 +442,33 @@ describe("AudioSync", () => {
     await vi.waitFor(() => expect(runs.at(-1)).toEqual({ track: 0, from: 90 }));
   });
 
+  it("closes an audio sample delivered after its seek was superseded", async () => {
+    const sample = chunk(3);
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const decoded: DecodedAudio = async function* (_track, from) {
+      if (from === 3) {
+        await held;
+        yield sample;
+      }
+    };
+    const audio = sync(decoded);
+    try {
+      media.playing(3);
+      audio.decode(0);
+      media.currentTime = 90;
+      media.dispatchEvent(new Event("seeking"));
+      media.dispatchEvent(new Event("seeked"));
+      release();
+
+      await vi.waitFor(() => expect(sample.close).toHaveBeenCalledOnce());
+      expect(context.sources).toHaveLength(0);
+    } finally {
+      release();
+      audio.destroy();
+    }
+  });
+
   it("resynchronizes on lasting drift after a debounce and on large drift at once", async () => {
     const { decoded, runs } = decodedOf();
     const audio = sync(decoded);

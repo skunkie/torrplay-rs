@@ -2,6 +2,9 @@
 //
 // SPDX-License-Identifier: MIT
 
+import type * as Mediabunny from "mediabunny";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 
 import type { MediaFeed } from "./media";
@@ -17,6 +20,22 @@ import {
   REACH_SECONDS,
   spansToRemove,
 } from "./remux";
+
+vi.mock("mediabunny", async (importOriginal) => {
+  const original = await importOriginal<typeof Mediabunny>();
+  return {
+    ...original,
+    UrlSource: class extends original.BufferSource {
+      constructor() {
+        super(
+          new Uint8Array(
+            readFileSync(join(import.meta.dirname, "../../../e2e/fixtures/test-pattern.webm")),
+          ),
+        );
+      }
+    },
+  };
+});
 
 /** What Safari answers: nothing for Matroska, and MP4 as it is. */
 const safari = (type: string) => (type.startsWith("video/mp4") ? "probably" : "");
@@ -70,6 +89,8 @@ function feed(answers: (type: string) => string): MediaFeed {
   return {
     canPlay: answers,
     play: vi.fn(),
+    replace: vi.fn(),
+    onMetadata: vi.fn(),
     release: vi.fn(),
     position: () => 0,
     buffered: () => [],
@@ -100,7 +121,7 @@ it("gives a file the browser plays to the element as it is, audio and all", asyn
   expect(given.release).not.toHaveBeenCalled();
 });
 
-it("gives the element a media source for Matroska the browser cannot play, and lets go of it", () => {
+it("releases a media source that is still opening when playback leaves", async () => {
   const revoked = vi.fn();
   vi.stubGlobal("URL", { createObjectURL: () => "blob:remux", revokeObjectURL: revoked });
   const given = feed(safari);
@@ -109,6 +130,114 @@ it("gives the element a media source for Matroska the browser cannot play, and l
   source.detach();
   expect(given.release).toHaveBeenCalled();
   expect(revoked).toHaveBeenCalledWith("blob:remux");
+  await expect(source.nativeAudio).resolves.toBe(true);
+  expect(given.play).toHaveBeenCalledOnce();
+});
+
+it.each([
+  {
+    scenario: "retries immediately after eviction",
+    failures: 1,
+    end: 1,
+    waits: 0,
+    fallsBack: false,
+  },
+  {
+    scenario: "rebuilds the media source if no data can reach the seek",
+    failures: 2,
+    end: 1,
+    waits: 0,
+    fallsBack: false,
+    rebuilds: true,
+  },
+  {
+    scenario: "falls back if a rebuilt source still cannot append",
+    failures: 4,
+    end: 1,
+    waits: 0,
+    fallsBack: true,
+    rebuilds: true,
+  },
+  {
+    scenario: "falls back at a newer seek made before the rebuilt source has metadata",
+    failures: 4,
+    end: 1,
+    waits: 0,
+    fallsBack: true,
+    rebuilds: true,
+    newerSeek: 45,
+  },
+  {
+    scenario: "waits after repeated quota errors if playback can advance",
+    failures: 2,
+    end: 10,
+    waits: 1,
+    fallsBack: false,
+  },
+])("when the media buffer is full, $scenario", async (scenario) => {
+  const { failures, end, waits, fallsBack, rebuilds, newerSeek } = scenario;
+  const buffer = new EventTarget();
+  let spans = [{ start: 0, end }];
+  const update = () => queueMicrotask(() => buffer.dispatchEvent(new Event("updateend")));
+  const appendBuffer = vi.fn(() => {
+    if (appendBuffer.mock.calls.length <= failures)
+      throw new DOMException("Full", "QuotaExceededError");
+    update();
+  });
+  const remove = vi.fn((_start: number, end: number) => {
+    spans = spans.filter((span) => span.end > end).map((span) => ({ ...span, start: end }));
+    update();
+  });
+  Object.assign(buffer, { appendBuffer, remove, abort: vi.fn(), updating: false });
+  const finished = vi.fn();
+  class OpenSource extends EventTarget {
+    readonly readyState = "open";
+    static isTypeSupported = () => true;
+    addSourceBuffer = () => buffer;
+    endOfStream = finished;
+  }
+  const createObjectURL = vi.fn().mockReturnValueOnce("blob:remux").mockReturnValue("blob:rebuilt");
+  const revokeObjectURL = vi.fn();
+  vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+  const waitForTimeChange = vi.fn(async () => {});
+  let position = 4;
+  const replace = vi.fn((_url: string, requested: number) => {
+    position = requested;
+    if (newerSeek !== undefined) queueMicrotask(() => (position = newerSeek));
+  });
+  const given = {
+    ...feed(safari),
+    replace,
+    position: () => position,
+    buffered: () => spans,
+    waitForTimeChange,
+  };
+  const source = playSource(
+    given,
+    "/content",
+    "video/x-matroska",
+    0,
+    OpenSource as unknown as typeof MediaSource,
+  );
+  try {
+    await vi.waitFor(() => {
+      if (fallsBack) expect(given.play).toHaveBeenLastCalledWith("/content", newerSeek ?? 4);
+      else expect(finished).toHaveBeenCalledOnce();
+    });
+    expect(remove).toHaveBeenCalledWith(0, 2);
+    expect(waitForTimeChange).toHaveBeenCalledTimes(waits);
+    if (rebuilds) {
+      expect(given.replace).toHaveBeenCalledExactlyOnceWith("blob:rebuilt", 4);
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:remux");
+    } else {
+      expect(given.replace).not.toHaveBeenCalled();
+    }
+    expect(createObjectURL).toHaveBeenCalledTimes(rebuilds ? 2 : 1);
+    expect(given.play).toHaveBeenCalledTimes(fallsBack ? 2 : 1);
+    if (fallsBack) expect(appendBuffer).toHaveBeenCalledTimes(4);
+  } finally {
+    source.detach();
+  }
 });
 
 const DURATION = 300;

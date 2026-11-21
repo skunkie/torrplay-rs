@@ -392,7 +392,11 @@ export class AudioSync {
           continue;
         }
         const next = await samples.next();
-        if (next.done || !current()) break;
+        if (next.done) break;
+        if (!current()) {
+          next.value.close();
+          break;
+        }
         this.#play(context, next.value);
       }
     } catch (failure) {

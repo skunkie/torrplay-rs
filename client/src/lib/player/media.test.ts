@@ -71,6 +71,18 @@ it("stops telling the remux of seeks when it asks", () => {
   expect(seeked).toHaveBeenCalledTimes(1);
 });
 
+it("wakes the remux on an unbuffered seek before playback can update", async () => {
+  const video = document.createElement("video");
+  const stop = new AbortController();
+  const waiting = feedOf(video).waitForTimeChange(stop.signal);
+
+  video.currentTime = 90;
+  video.dispatchEvent(new Event("seeking"));
+  stop.abort();
+
+  await expect(waiting).resolves.toBeUndefined();
+});
+
 it("plays a source and lets go of it", () => {
   const media = document.createElement("video");
   const load = vi.spyOn(media, "load").mockImplementation(() => {});
@@ -80,4 +92,65 @@ it("plays a source and lets go of it", () => {
   feed.release();
   expect(media.hasAttribute("src")).toBe(false);
   expect(load).toHaveBeenCalled();
+});
+
+it("sets the requested position after resetting the media element", () => {
+  const video = media(HTMLMediaElement.HAVE_METADATA, 120);
+  video.currentTime = 15;
+  vi.spyOn(video, "load").mockImplementation(() => {
+    expect(video.getAttribute("src")).toBe("/content");
+    expect(video.currentTime).toBe(15);
+    video.currentTime = 0;
+  });
+  const feed = feedOf(video);
+
+  feed.play("/content", 90);
+  expect(video.currentTime).toBe(90);
+});
+
+it("keeps a paused video paused through replacement and fallback until playback starts", () => {
+  const video = media(HTMLMediaElement.HAVE_METADATA, 120);
+  video.autoplay = true;
+  vi.spyOn(video, "load").mockImplementation(() => {});
+  const feed = feedOf(video);
+
+  feed.replace("blob:rebuilt", 90);
+  expect(video.autoplay).toBe(false);
+  expect(video.currentTime).toBe(90);
+
+  feed.play("/content", 90);
+  expect(video.autoplay).toBe(false);
+  video.dispatchEvent(new Event("play"));
+  expect(video.autoplay).toBe(true);
+});
+
+it("keeps the autoplay setting when replacing a playing source", () => {
+  const video = media(HTMLMediaElement.HAVE_METADATA, 120);
+  Object.defineProperty(video, "paused", { value: false });
+  video.autoplay = true;
+  vi.spyOn(video, "load").mockImplementation(() => {});
+  feedOf(video).replace("blob:rebuilt", 90);
+  expect(video.autoplay).toBe(true);
+});
+
+it("restores suppressed autoplay when the feed releases the source", () => {
+  const video = media(HTMLMediaElement.HAVE_METADATA, 120);
+  vi.spyOn(video, "load").mockImplementation(() => {});
+  video.autoplay = true;
+  const feed = feedOf(video);
+  feed.replace("blob:rebuilt", 90);
+  feed.release();
+  expect(video.autoplay).toBe(true);
+});
+
+it.each([0, 45])("keeps a newer seek to %i when replacement metadata arrives", (target) => {
+  const video = media(HTMLMediaElement.HAVE_NOTHING, 120);
+  vi.spyOn(video, "load").mockImplementation(() => {});
+  const feed = feedOf(video);
+
+  feed.replace("blob:rebuilt", 90);
+  video.currentTime = target;
+  Object.defineProperty(video, "readyState", { value: HTMLMediaElement.HAVE_METADATA });
+  video.dispatchEvent(new Event("loadedmetadata"));
+  expect(video.currentTime).toBe(target);
 });
