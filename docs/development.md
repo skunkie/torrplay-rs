@@ -417,8 +417,9 @@ local networks may use it. `/api/v1/reference` shows the API in a browser.
 Use `--allowed-host torrplay --allowed-host '*.home.arpa'` to allow a bare
 name and names below a DNS suffix. Each option adds to the comma-separated
 `TORRPLAY_ALLOWED_HOSTS` list. Use wildcards for DNS zones you control.
-`--peer-port` sets the BitTorrent peer port, 4240 by default, and
-`--download-dir` the download directory of torrents in disk storage,
+`--peer-port` sets the BitTorrent peer port, 4240 by default. Use
+`--peer-port 0` to let the operating system assign it for this run.
+`--download-dir` sets the download directory of torrents in disk storage,
 `downloads` in the data directory by default. Other options override
 settings for one run, as [the lifecycle](lifecycle.md#settings) describes:
 `--no-dht` turns the DHT off, and `--log-level` and `--log-filter` set the

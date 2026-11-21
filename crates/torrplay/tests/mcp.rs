@@ -6,23 +6,37 @@
 //! the application's origin from its environment, and ends when its input
 //! closes. MCP-10: over HTTP, it shuts down on SIGTERM.
 
+use std::net::{Ipv4Addr, SocketAddr};
 use std::process::Stdio;
 use std::time::Duration;
 
 use serde_json::{Value, json};
+use socket2::{Domain, Protocol, Socket, Type};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
+use torrplay::{LOG_FORMAT_VARIABLE, TOKEN_VARIABLE, URL_VARIABLE};
 
 #[tokio::test]
 async fn stdio_carries_only_protocol_messages() {
-    // A port nothing listens on: the tool call fails, naming the origin.
-    let unused = std::net::TcpListener::bind("127.0.0.1:0").expect("a port");
-    let origin = format!("http://{}", unused.local_addr().expect("an address"));
-    drop(unused);
+    // Hold the port without listening so the call fails at this origin.
+    let unavailable =
+        Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)).expect("a TCP socket");
+    unavailable
+        .bind(&SocketAddr::from((Ipv4Addr::LOCALHOST, 0)).into())
+        .expect("a port");
+    let address = unavailable
+        .local_addr()
+        .expect("the bound address")
+        .as_socket()
+        .expect("an IP address");
+    let origin = format!("http://{address}");
     let mut child = Command::new(env!("CARGO_BIN_EXE_torrplay"))
         .args(["mcp", "--log-level", "debug"])
-        .env("TORRPLAY_URL", &origin)
-        .env("TORRPLAY_TOKEN", "atk_secret_that_must_not_be_logged")
+        .env(LOG_FORMAT_VARIABLE, "json")
+        .env(URL_VARIABLE, &origin)
+        .env(TOKEN_VARIABLE, "atk_secret_that_must_not_be_logged")
+        .env("NO_PROXY", "127.0.0.1")
+        .env("no_proxy", "127.0.0.1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -91,28 +105,51 @@ async fn stdio_carries_only_protocol_messages() {
 #[cfg(unix)]
 #[tokio::test]
 async fn the_http_transport_stops_on_sigterm() {
-    let unused = std::net::TcpListener::bind("127.0.0.1:0").expect("a port");
-    let address = unused.local_addr().expect("an address");
-    drop(unused);
     let mut child = Command::new(env!("CARGO_BIN_EXE_torrplay"))
-        .args(["mcp", "--transport", "http", "--listen"])
-        .arg(address.to_string())
-        .env_remove("TORRPLAY_URL")
-        .env_remove("TORRPLAY_TOKEN")
+        .args([
+            "mcp",
+            "--transport",
+            "http",
+            "--listen",
+            "127.0.0.1:0",
+            "--log-level",
+            "info",
+        ])
+        .env(LOG_FORMAT_VARIABLE, "json")
+        .env_remove(URL_VARIABLE)
+        .env_remove(TOKEN_VARIABLE)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .expect("torrplay mcp starts");
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-    while tokio::net::TcpStream::connect(address).await.is_err() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "torrplay mcp did not listen"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    let mut logs = BufReader::new(child.stderr.take().expect("its standard error")).lines();
+    let mut startup_log = String::new();
+    let bound: SocketAddr = tokio::time::timeout(Duration::from_secs(30), async {
+        while let Some(line) = logs.next_line().await.expect("a log line") {
+            let record: Value = serde_json::from_str(&line).expect("a JSON log record");
+            if record["message"] == "serving MCP over Streamable HTTP" {
+                return record["fields"]["address"]
+                    .as_str()
+                    .and_then(|text| text.parse().ok());
+            }
+            startup_log.push_str(&line);
+            startup_log.push('\n');
+        }
+        None
+    })
+    .await
+    .unwrap_or_else(|_| panic!("torrplay mcp did not listen in time\n{startup_log}"))
+    .unwrap_or_else(|| panic!("torrplay mcp did not report a bound address\n{startup_log}"));
+    assert_ne!(bound.port(), 0, "the listener reports its OS-assigned port");
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        tokio::net::TcpStream::connect(bound),
+    )
+    .await
+    .expect("the connection completes in time")
+    .expect("MCP accepts connections at the reported address");
     let pid = child.id().expect("its process ID");
     let sent = Command::new("kill")
         .args(["-TERM", &pid.to_string()])
