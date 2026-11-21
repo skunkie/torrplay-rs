@@ -89,6 +89,8 @@ function feed(answers: (type: string) => string): MediaFeed {
   return {
     canPlay: answers,
     play: vi.fn(),
+    replace: vi.fn(),
+    onMetadata: vi.fn(),
     release: vi.fn(),
     position: () => 0,
     buffered: () => [],
@@ -119,7 +121,7 @@ it("gives a file the browser plays to the element as it is, audio and all", asyn
   expect(given.release).not.toHaveBeenCalled();
 });
 
-it("gives the element a media source for Matroska the browser cannot play, and lets go of it", () => {
+it("releases a media source that is still opening when playback leaves", async () => {
   const revoked = vi.fn();
   vi.stubGlobal("URL", { createObjectURL: () => "blob:remux", revokeObjectURL: revoked });
   const given = feed(safari);
@@ -128,6 +130,8 @@ it("gives the element a media source for Matroska the browser cannot play, and l
   source.detach();
   expect(given.release).toHaveBeenCalled();
   expect(revoked).toHaveBeenCalledWith("blob:remux");
+  await expect(source.nativeAudio).resolves.toBe(true);
+  expect(given.play).toHaveBeenCalledOnce();
 });
 
 it.each([
@@ -139,11 +143,29 @@ it.each([
     fallsBack: false,
   },
   {
-    scenario: "falls back if no data can reach the seek",
+    scenario: "rebuilds the media source if no data can reach the seek",
     failures: 2,
     end: 1,
     waits: 0,
+    fallsBack: false,
+    rebuilds: true,
+  },
+  {
+    scenario: "falls back if a rebuilt source still cannot append",
+    failures: 4,
+    end: 1,
+    waits: 0,
     fallsBack: true,
+    rebuilds: true,
+  },
+  {
+    scenario: "falls back at a newer seek made before the rebuilt source has metadata",
+    failures: 4,
+    end: 1,
+    waits: 0,
+    fallsBack: true,
+    rebuilds: true,
+    newerSeek: 45,
   },
   {
     scenario: "waits after repeated quota errors if playback can advance",
@@ -152,7 +174,8 @@ it.each([
     waits: 1,
     fallsBack: false,
   },
-])("when the media buffer is full, $scenario", async ({ failures, end, waits, fallsBack }) => {
+])("when the media buffer is full, $scenario", async (scenario) => {
+  const { failures, end, waits, fallsBack, rebuilds, newerSeek } = scenario;
   const buffer = new EventTarget();
   let spans = [{ start: 0, end }];
   const update = () => queueMicrotask(() => buffer.dispatchEvent(new Event("updateend")));
@@ -173,9 +196,22 @@ it.each([
     addSourceBuffer = () => buffer;
     endOfStream = finished;
   }
-  vi.stubGlobal("URL", { createObjectURL: () => "blob:remux", revokeObjectURL: vi.fn() });
+  const createObjectURL = vi.fn().mockReturnValueOnce("blob:remux").mockReturnValue("blob:rebuilt");
+  const revokeObjectURL = vi.fn();
+  vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
   const waitForTimeChange = vi.fn(async () => {});
-  const given = { ...feed(safari), position: () => 4, buffered: () => spans, waitForTimeChange };
+  let position = 4;
+  const replace = vi.fn((_url: string, requested: number) => {
+    position = requested;
+    if (newerSeek !== undefined) queueMicrotask(() => (position = newerSeek));
+  });
+  const given = {
+    ...feed(safari),
+    replace,
+    position: () => position,
+    buffered: () => spans,
+    waitForTimeChange,
+  };
   const source = playSource(
     given,
     "/content",
@@ -185,12 +221,20 @@ it.each([
   );
   try {
     await vi.waitFor(() => {
-      if (fallsBack) expect(given.play).toHaveBeenLastCalledWith("/content", 4);
+      if (fallsBack) expect(given.play).toHaveBeenLastCalledWith("/content", newerSeek ?? 4);
       else expect(finished).toHaveBeenCalledOnce();
     });
     expect(remove).toHaveBeenCalledWith(0, 2);
     expect(waitForTimeChange).toHaveBeenCalledTimes(waits);
-    if (fallsBack) expect(appendBuffer).toHaveBeenCalledTimes(2);
+    if (rebuilds) {
+      expect(given.replace).toHaveBeenCalledExactlyOnceWith("blob:rebuilt", 4);
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:remux");
+    } else {
+      expect(given.replace).not.toHaveBeenCalled();
+    }
+    expect(createObjectURL).toHaveBeenCalledTimes(rebuilds ? 2 : 1);
+    expect(given.play).toHaveBeenCalledTimes(fallsBack ? 2 : 1);
+    if (fallsBack) expect(appendBuffer).toHaveBeenCalledTimes(4);
   } finally {
     source.detach();
   }

@@ -38,6 +38,8 @@ const FULL_BEHIND_SECONDS = 2;
 const GAP_SECONDS = 0.5;
 /** How near its end a span may stop and still hold the rest of the file. */
 const END_SECONDS = 0.5;
+/** How long a media source has to attach to the element. */
+const SOURCE_OPEN_MS = 10_000;
 
 /** Where the media element plays a file from. */
 export interface PlaybackSource {
@@ -101,17 +103,22 @@ export function copyFrom(position: number): Copy {
 }
 
 /** `feed` as the remux sees it before playback starts at `startAt`: until the
- * element first seeks, its position is 0 whatever the page asks for, so until
- * then playback counts as at `startAt`. Releasing it stops watching for the seek. */
+ * element first seeks or the source is replaced, playback counts as at
+ * `startAt`. Releasing it stops watching for the seek. */
 export function anchored(feed: MediaFeed, startAt: number): MediaFeed {
-  let seeked = startAt <= 0;
-  const stop = feed.onSeeking(() => {
-    seeked = true;
+  let starting = startAt > 0;
+  const followPosition = () => {
+    starting = false;
     stop();
-  });
+  };
+  const stop = feed.onSeeking(followPosition);
   return {
     ...feed,
-    position: () => (seeked ? feed.position() : startAt),
+    position: () => (starting ? startAt : feed.position()),
+    replace(url, position) {
+      followPosition();
+      feed.replace(url, position);
+    },
     release() {
       stop();
       feed.release();
@@ -180,11 +187,15 @@ interface Run extends Copy {
 }
 
 interface Tracks {
+  type: string;
+  duration: number;
   video: InputVideoTrack;
   videoCodec: VideoCodec;
   /** The default audio track, if the media source plays it, with its codec. */
   audio: { track: InputAudioTrack; codec: AudioCodec } | undefined;
 }
+
+class MediaBufferError extends Error {}
 
 class Remux implements PlaybackSource {
   readonly nativeAudio: Promise<boolean>;
@@ -192,6 +203,7 @@ class Remux implements PlaybackSource {
 
   #feed: MediaFeed;
   #url: string;
+  #sourceClass: MediaSourceClass;
   #source: MediaSource;
   #objectUrl: string;
   #buffer: SourceBuffer | undefined;
@@ -204,6 +216,7 @@ class Remux implements PlaybackSource {
   #inputReady: Promise<Input | undefined>;
   #inputKnown: (input: Input | undefined) => void = () => {};
   #stopSeeking: () => void;
+  #lifetime = new AbortController();
   #closed = false;
   #fellBack = false;
 
@@ -211,6 +224,7 @@ class Remux implements PlaybackSource {
     // First, so it knows of a seek before the remux does.
     this.#feed = anchored(feed, startAt);
     this.#url = url;
+    this.#sourceClass = Source;
     this.#inputReady = new Promise((resolve) => (this.#inputKnown = resolve));
     // The audio tracks read through the remux's input, sharing its cache and reads.
     this.probe = async (given, signal) => {
@@ -223,7 +237,7 @@ class Remux implements PlaybackSource {
     this.#objectUrl = URL.createObjectURL(this.#source);
     this.#stopSeeking = this.#feed.onSeeking(() => this.#follow());
     this.#feed.play(this.#objectUrl);
-    this.nativeAudio = this.#open(Source).then(
+    this.nativeAudio = this.#open().then(
       (tracks) => {
         this.#tracks = tracks;
         this.#start(this.#pending ?? startAt);
@@ -239,6 +253,7 @@ class Remux implements PlaybackSource {
 
   detach(): void {
     this.#closed = true;
+    this.#lifetime.abort();
     this.#run?.stop.abort();
     this.#stopSeeking();
     this.#input?.dispose();
@@ -247,8 +262,8 @@ class Remux implements PlaybackSource {
   }
 
   /** Reads the file's tracks and prepares a buffer for those the media source plays. */
-  async #open(Source: MediaSourceClass): Promise<Tracks> {
-    await opened(this.#source);
+  async #open(): Promise<Tracks> {
+    await opened(this.#source, this.#lifetime.signal);
     const { ALL_FORMATS, Input, Mp4OutputFormat, UrlSource } = await import("mediabunny");
     if (this.#closed) throw new Error("The file was left.");
     const input = new Input({ formats: ALL_FORMATS, source: new UrlSource(this.#url) });
@@ -275,23 +290,31 @@ class Remux implements PlaybackSource {
     const audioString = await candidate?.getCodecParameterString();
     if (candidate?.codec && audioString && supported.includes(candidate.codec)) {
       const both = `video/mp4; codecs="${videoString},${audioString}"`;
-      if (Source.isTypeSupported(both)) {
+      if (this.#sourceClass.isTypeSupported(both)) {
         type = both;
         audio = { track: candidate, codec: candidate.codec };
       }
     }
-    if (!Source.isTypeSupported(type)) throw new Error("The media source cannot play the video.");
-    if (this.#closed) throw new Error("The file was left.");
-    this.#buffer = this.#source.addSourceBuffer(type);
-    // A managed media source removes buffered media itself when memory runs
-    // short, which can leave a gap ahead of playback with no seek to refill it.
-    this.#buffer.addEventListener("bufferedchange", () => this.#follow());
+    if (!this.#sourceClass.isTypeSupported(type))
+      throw new Error("The media source cannot play the video.");
     const duration =
       (await input.getDurationFromMetadata([video])) ?? (await input.computeDuration([video]));
-    if (Number.isFinite(duration) && duration > 0 && this.#source.readyState === "open") {
+    if (this.#closed) throw new Error("The file was left.");
+    const tracks = { type, duration, video, videoCodec: video.codec, audio };
+    this.#prepareBuffer(tracks);
+    return tracks;
+  }
+
+  #prepareBuffer({ type, duration }: Tracks): void {
+    const buffer = this.#source.addSourceBuffer(type);
+    this.#buffer = buffer;
+    // A managed media source can evict buffered data without a seek.
+    buffer.addEventListener("bufferedchange", () => {
+      if (this.#buffer === buffer) this.#follow();
+    });
+    if (Number.isFinite(duration) && duration > 0) {
       this.#source.duration = duration;
     }
-    return { video, videoCodec: video.codec, audio };
   }
 
   /** Starts a copy where playback needs one, after a seek or a change to what
@@ -303,6 +326,7 @@ class Remux implements PlaybackSource {
       this.#pending = position;
       return;
     }
+    if (!this.#buffer) return;
     const run = this.#run;
     const active = run && !run.finished && !run.stop.signal.aborted ? run : undefined;
     const from = copyStartFor(this.#feed.buffered(), position, active, this.#source.duration);
@@ -310,7 +334,7 @@ class Remux implements PlaybackSource {
   }
 
   /** Copies the file from `position`, once the copy before it has stopped. */
-  #start(position: number): void {
+  #start(position: number, replaceBuffer = false): void {
     const previous = this.#run;
     previous?.stop.abort();
     const stop = new AbortController();
@@ -323,12 +347,34 @@ class Remux implements PlaybackSource {
     run.done = (async () => {
       await previous?.done;
       if (stop.signal.aborted) return;
-      this.#resetParser();
+      if (replaceBuffer) await this.#replaceBuffer(position, stop.signal);
+      else this.#resetParser();
       await this.#copy(run);
-    })().catch(() => {
-      if (!stop.signal.aborted) this.#fallBack();
+    })().catch((failure: unknown) => {
+      if (stop.signal.aborted) return;
+      if (!replaceBuffer && failure instanceof MediaBufferError)
+        this.#start(this.#feed.position(), true);
+      else this.#fallBack();
     });
     this.#run = run;
+  }
+
+  /** Rebuilds the media buffer without reopening the input or the audio probe. */
+  async #replaceBuffer(position: number, signal: AbortSignal): Promise<void> {
+    const tracks = this.#tracks;
+    if (!tracks) throw new Error("The media tracks are unavailable.");
+    const source = new this.#sourceClass();
+    const objectUrl = URL.createObjectURL(source);
+    URL.revokeObjectURL(this.#objectUrl);
+    this.#source = source;
+    this.#objectUrl = objectUrl;
+    this.#buffer = undefined;
+    // A seek to zero before metadata may take effect without a seeking event.
+    this.#feed.onMetadata(() => this.#follow(), signal);
+    this.#feed.replace(objectUrl, position);
+    await opened(source, signal);
+    signal.throwIfAborted();
+    this.#prepareBuffer(tracks);
   }
 
   async #copy(run: Run): Promise<void> {
@@ -451,7 +497,11 @@ class Remux implements PlaybackSource {
           continue;
         }
         // A seek outside the buffer cannot advance to make more room.
-        if (bufferedAhead(this.#feed.buffered(), this.#feed.position()) === 0) throw failure;
+        if (bufferedAhead(this.#feed.buffered(), this.#feed.position()) === 0) {
+          throw new MediaBufferError("The media buffer is full at the seek target.", {
+            cause: failure,
+          });
+        }
         await this.#feed.waitForTimeChange(signal);
         retriedAfterEviction = false;
       }
@@ -479,7 +529,7 @@ class Remux implements PlaybackSource {
       };
       const failed = () => {
         done();
-        reject(new Error("The media source refused the media."));
+        reject(new MediaBufferError("The media source refused the media."));
       };
       buffer.addEventListener("updateend", ended);
       buffer.addEventListener("error", failed);
@@ -487,14 +537,23 @@ class Remux implements PlaybackSource {
         change(buffer);
       } catch (failure) {
         done();
-        reject(failure);
+        reject(
+          failure instanceof DOMException && failure.name === "QuotaExceededError"
+            ? failure
+            : new MediaBufferError("Could not update the media buffer.", { cause: failure }),
+        );
       }
     });
   }
 
   /** Readies the buffer for a new init segment, after a copy stopped partway. */
   #resetParser(): void {
-    if (this.#buffer && this.#source.readyState === "open") this.#buffer.abort();
+    if (!this.#buffer || this.#source.readyState !== "open") return;
+    try {
+      this.#buffer.abort();
+    } catch (failure) {
+      throw new MediaBufferError("Could not reset the media buffer.", { cause: failure });
+    }
   }
 
   #endOfStream(): void {
@@ -514,11 +573,30 @@ class Remux implements PlaybackSource {
   }
 }
 
-function opened(source: MediaSource): Promise<void> {
+function opened(source: MediaSource, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
   if (source.readyState === "open") return Promise.resolve();
-  return new Promise((resolve) =>
-    source.addEventListener("sourceopen", () => resolve(), { once: true }),
-  );
+  return new Promise((resolve, reject) => {
+    const done = () => {
+      clearTimeout(timer);
+      source.removeEventListener("sourceopen", ready);
+      signal.removeEventListener("abort", abort);
+    };
+    const ready = () => {
+      done();
+      resolve();
+    };
+    const abort = () => {
+      done();
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      done();
+      reject(new Error("The media source did not open."));
+    }, SOURCE_OPEN_MS);
+    source.addEventListener("sourceopen", ready);
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }
 
 function joined(...parts: Uint8Array[]): Uint8Array {

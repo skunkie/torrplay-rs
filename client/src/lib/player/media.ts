@@ -55,6 +55,8 @@ export interface MediaFeed {
   canPlay(type: string): string;
   /** Plays a file or media source, optionally from a position in seconds. */
   play(url: string, position?: number): void;
+  /** Replaces the source at `position` without resuming a paused video. */
+  replace(url: string, position: number): void;
   /** Lets go of what the element plays. */
   release(): void;
   position(): number;
@@ -62,6 +64,8 @@ export interface MediaFeed {
   buffered(): TimeSpan[];
   /** Calls `listener` when a seek starts. */
   onSeeking(listener: () => void): () => void;
+  /** Calls `listener` once when the source's metadata arrives. */
+  onMetadata(listener: () => void, signal: AbortSignal): void;
   /** Settles when playback's time next changes or a seek starts. */
   waitForTimeChange(signal?: AbortSignal): Promise<void>;
   /** Keeps the element from offering remote playback, as a managed media
@@ -71,27 +75,38 @@ export interface MediaFeed {
 
 /** `media` as a feed. */
 export function feedOf(media: HTMLMediaElement): MediaFeed {
-  let pendingSeek: AbortController | undefined;
+  let autoplayHeld = false;
+  const restoreAutoplay = () => {
+    if (!autoplayHeld) return;
+    autoplayHeld = false;
+    media.removeEventListener("play", restoreAutoplay);
+    media.autoplay = true;
+  };
+  const play = (url: string, position = 0) => {
+    media.src = url;
+    if (position > 0) {
+      // Reset the old source before setting the new source's initial position.
+      // Later seeks can then replace it even before metadata is available.
+      media.load();
+      media.currentTime = position;
+    }
+  };
   return {
     canPlay: (type) => media.canPlayType(type),
-    play(url, position = 0) {
-      pendingSeek?.abort();
-      pendingSeek = undefined;
-      if (position > 0) {
-        pendingSeek = new AbortController();
-        // The old source may still have metadata when the replacement is assigned.
-        media.addEventListener("loadedmetadata", () => seekWhenReady(media, position), {
-          once: true,
-          signal: pendingSeek.signal,
-        });
+    play,
+    replace(url, position) {
+      if (media.paused && media.autoplay) {
+        // Keep autoplay off until playback resumes, even if loading falls back again.
+        autoplayHeld = true;
+        media.autoplay = false;
+        media.addEventListener("play", restoreAutoplay, { once: true });
       }
-      media.src = url;
+      play(url, position);
     },
     release() {
-      pendingSeek?.abort();
-      pendingSeek = undefined;
       media.removeAttribute("src");
       media.load();
+      restoreAutoplay();
     },
     position: () => media.currentTime,
     buffered() {
@@ -104,6 +119,9 @@ export function feedOf(media: HTMLMediaElement): MediaFeed {
     onSeeking(listener) {
       media.addEventListener("seeking", listener);
       return () => media.removeEventListener("seeking", listener);
+    },
+    onMetadata(listener, signal) {
+      media.addEventListener("loadedmetadata", listener, { once: true, signal });
     },
     // An unbuffered seek cannot advance playback until the remux appends data.
     waitForTimeChange: (signal) => timeChange(media, signal, ["timeupdate", "seeking"]),
