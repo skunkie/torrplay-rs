@@ -191,6 +191,13 @@ remove_package() {
   [[ ! -e $settings ]] || fail "purging the package left the settings"
 }
 
+# The service can exit before its last messages reach the journal. Read the
+# whole result so a match cannot stop journalctl with SIGPIPE under pipefail.
+clean_shutdown_recorded() {
+  sudo journalctl --no-pager -o cat "_SYSTEMD_INVOCATION_ID=$1" |
+    grep -F '"message":"recording the clean shutdown"' >/dev/null
+}
+
 errors_since() {
   sudo journalctl -u torrplay --since "$1" --no-pager -o cat |
     grep '"level":"error"' || true
@@ -286,14 +293,14 @@ sudo systemctl restart torrplay
 wait_for 60 ready 8642 || fail "the service did not start without the drop-in"
 
 echo "== stopping is a clean shutdown"
-stopping=$(date '+%Y-%m-%d %H:%M:%S')
+invocation=$(property InvocationID)
+[[ -n $invocation ]] || fail "the service has no invocation ID before stopping"
 began=$SECONDS
 sudo systemctl stop torrplay
 ((SECONDS - began < 45)) || fail "stopping took $((SECONDS - began)) seconds"
 [[ "$(property Result)" == success ]] || fail "the stop's result is $(property Result)"
 [[ "$(property ExecMainStatus)" == 0 ]] || fail "torrplay exited with $(property ExecMainStatus)"
-sudo journalctl -u torrplay --since "$stopping" --no-pager -o cat |
-  grep -q 'recording the clean shutdown' || fail "no clean shutdown was recorded"
+wait_for 5 clean_shutdown_recorded "$invocation" || fail "no clean shutdown was recorded"
 
 echo "== a usage error stops it without restarting"
 set_listen 'every interface'

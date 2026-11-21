@@ -52,7 +52,7 @@ it("shows up next and recently added for the only person profile", async () => {
   const series = torrent(1, { kind: "series" });
   const fake = backend([ana, devices], () => [
     upNext(series, null, { season: 1, number: 3 }),
-    upNext(torrent(2), 0.25),
+    upNext(torrent(2, { kind: "movie" }), 0.25),
   ]);
   render(App, { backend: fake });
   const banner = within(await screen.findByRole("region", { name: "Title 1" }));
@@ -68,7 +68,8 @@ it("shows up next and recently added for the only person profile", async () => {
     titlePath(series.id),
   );
   const upNextList = within(screen.getByRole("region", { name: "Up next" }));
-  expect(upNextList.getByText("Title 2")).toBeInTheDocument();
+  const row = upNextList.getByRole("link", { name: /Title 2/ });
+  expect(row.querySelector("[data-icon]")).toHaveAttribute("data-icon", "film");
   expect(upNextList.getByText("45 min left")).toBeInTheDocument();
   expect(await screen.findByText("Title 7")).toBeInTheDocument();
   expect(fake.listUpNext).toHaveBeenCalledWith(ana.id, expect.anything());

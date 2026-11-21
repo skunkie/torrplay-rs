@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts" module>
-  import type { TorrentConfiguration } from "../lib/backend";
+  import type { TorrentConfiguration, TorrentKind } from "../lib/backend";
 
   /** The members the form edits, as they would be stored. */
   export type EditValues = Pick<
@@ -34,7 +34,8 @@ SPDX-License-Identifier: MIT
     partlySaved: boolean;
     /** The torrent's name, which an empty title falls back to. */
     name: string;
-    torrentTitle: string;
+    /** The inferred kind when the torrent is already configured as Automatic. */
+    automaticKind: TorrentKind | null;
     /** The poster's URL, once it can be read. */
     poster: string | undefined;
     hasPoster: boolean;
@@ -53,7 +54,7 @@ SPDX-License-Identifier: MIT
     stored,
     partlySaved,
     name,
-    torrentTitle,
+    automaticKind,
     poster,
     hasPoster,
     cancelHref,
@@ -186,8 +187,8 @@ SPDX-License-Identifier: MIT
 
   <div class="flex flex-col gap-8 md:flex-row">
     <div data-arrows-column class="flex shrink-0 flex-col gap-2.5 md:w-60">
-      <div class="w-40 md:w-full">
-        <Poster url={shown} title={torrentTitle} />
+      <div class="flex w-40 flex-col gap-2 md:w-full">
+        <Poster url={shown} title={title.trim() || name} kind={kind ?? automaticKind} />
       </div>
       <input
         bind:this={picker}

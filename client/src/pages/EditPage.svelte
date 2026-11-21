@@ -154,7 +154,7 @@ SPDX-License-Identifier: MIT
       stored={stored ?? configuration}
       {partlySaved}
       name={torrent.name ?? t().common.untitled}
-      torrentTitle={torrent.title ?? torrent.name ?? ""}
+      automaticKind={configuration.kind === null ? torrent.kind : null}
       poster={posterUrl(torrent, imageGrant.current)}
       hasPoster={Boolean(torrent.poster)}
       cancelHref={titlePath(torrentId)}

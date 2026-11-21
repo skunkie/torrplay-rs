@@ -1142,6 +1142,7 @@ test.describe("the demo", () => {
         const grid = path === "/demo" ? page.getByRole("region", { name: "Recently added" }) : page;
         const fallback = grid.getByRole("link", { name: /Orchard Road/ });
         const tile = fallback.locator("[data-poster-tile]");
+        await expect(tile.locator('[data-icon="film"]')).toBeVisible();
         const tileBox = await tile.boundingBox();
         const title = await fallback.getByText("Orchard Road", { exact: true }).boundingBox();
         const metadata = await fallback
@@ -1154,6 +1155,7 @@ test.describe("the demo", () => {
         expect(metadata.y).toBeGreaterThanOrEqual(title.y + title.height);
 
         const illustrated = grid.getByRole("link", { name: /Paper Moons/ });
+        await expect(illustrated.locator("[data-icon]")).toHaveCount(0);
         const poster = illustrated.locator('img[src^="/demo-media/posters/paper-moons.webp"]');
         await expect
           .poll(() => poster.evaluate((image: HTMLImageElement) => image.naturalWidth))
@@ -1166,7 +1168,7 @@ test.describe("the demo", () => {
     }
   });
 
-  test("shows four lines of a long title below a tile without a poster", async ({ page }) => {
+  test("limits a long title below a tile without a poster to three lines", async ({ page }) => {
     await page.setViewportSize({ width: 360, height: 800 });
     await page.goto("/demo/titles/trr_aaaaaaaaaaaaaaaaaaaaaaaaa7/edit");
     const title = "The Last Night Train to the Village Beyond the Mountains";
@@ -1184,7 +1186,7 @@ test.describe("the demo", () => {
       await document.fonts.ready;
       return element.clientHeight / Number.parseFloat(getComputedStyle(element).lineHeight);
     });
-    expect(lines).toBeCloseTo(4);
+    expect(lines).toBeCloseTo(3);
   });
 
   test("shows a hero's poster whole, beside its content", async ({ page }) => {

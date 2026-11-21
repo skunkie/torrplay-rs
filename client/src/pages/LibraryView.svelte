@@ -165,7 +165,12 @@ SPDX-License-Identifier: MIT
           data-focus-start={index === 0 || undefined}
           class="flex flex-col gap-2 rounded-button"
         >
-          <Poster {url} title={torrentTitle(torrent)} badge={stateLabel(torrent)} titleBelow />
+          <Poster
+            {url}
+            title={torrentTitle(torrent)}
+            kind={torrent.kind}
+            badge={stateLabel(torrent)}
+          />
           <Dotted parts={torrentDetails(torrent)} class="text-xs text-text-muted" />
         </a>
       </li>

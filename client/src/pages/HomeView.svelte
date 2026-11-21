@@ -7,6 +7,7 @@ SPDX-License-Identifier: MIT
   import Dotted from "../components/Dotted.svelte";
   import Hero from "../components/Hero.svelte";
   import Icon from "../components/Icon.svelte";
+  import MediaIcon from "../components/MediaIcon.svelte";
   import Poster from "../components/Poster.svelte";
   import RetryAlert from "../components/RetryAlert.svelte";
   import WatchedBar from "../components/WatchedBar.svelte";
@@ -116,18 +117,22 @@ SPDX-License-Identifier: MIT
           {#each rest as entry (entry.id)}
             {@const url = poster(entry.torrent)}
             {@const subject = entrySubject(entry)}
+            {@const tone = toneOf(torrentTitle(entry.torrent))}
             <li class="flex items-center gap-2 rounded-2xl bg-tile pr-2">
               <a
                 href={watchPath(entry.torrent.id, entry.file.id)}
                 class="flex min-h-19 min-w-0 grow items-center gap-3.5 rounded-2xl pl-4"
               >
                 <span
-                  class="size-11 shrink-0 overflow-hidden rounded-xl"
-                  style:background={toneOf(torrentTitle(entry.torrent)).background}
+                  class="grid size-11 shrink-0 place-items-center overflow-hidden rounded-xl"
+                  style:background={tone.background}
+                  style:color={tone.color}
                   aria-hidden="true"
                 >
                   {#if url}
                     <img src={url} alt="" loading="lazy" class="size-full object-cover" />
+                  {:else}
+                    <MediaIcon kind={entry.torrent.kind} class="size-6" />
                   {/if}
                 </span>
                 <span class="flex min-w-0 flex-col gap-0.5">
@@ -168,7 +173,7 @@ SPDX-License-Identifier: MIT
         {#each recent as torrent (torrent.id)}
           <li>
             <a href={titlePath(torrent.id)} class="flex flex-col gap-2 rounded-button">
-              <Poster url={poster(torrent)} title={torrentTitle(torrent)} titleBelow />
+              <Poster url={poster(torrent)} title={torrentTitle(torrent)} kind={torrent.kind} />
               <Dotted parts={torrentDetails(torrent)} class="text-xs text-text-muted" />
             </a>
           </li>
