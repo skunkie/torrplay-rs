@@ -19,6 +19,7 @@ bitmaps cannot drift:
   mostly dark;
 - crates/torrplay-server/assets/dlna/icon-{48,120}.jpg, the same filled to
   the corners, since JPEG has no transparency;
+- desktop/icons/{nsis,wix}-*.bmp, the Windows setup wizard artwork;
 - desktop/icons/icon.icns, the light tile inside the margin and shadow of
   Apple's 1024-point icon grid, so the Dock shows it at the size of other
   icons, where the full-bleed icon.png looks larger;
@@ -35,7 +36,7 @@ Run it from the repository root with Pillow 11.3.0:
 import json
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 # The design grid, in units of a 120-unit tile.
 TILE = 120
@@ -152,6 +153,47 @@ def bitmap(size, rounded, palette=DARK, supersample=SUPERSAMPLE):
     return image.resize((size, size), Image.Resampling.LANCZOS)
 
 
+def windows_wizard_artwork():
+    """Logo tiles for the headers and welcome panels of the setup wizards."""
+    panel_width = 164
+    tagline_font = ImageFont.load_default(size=16)
+    for name, size, has_panel, tile_size, tile_x in (
+        ("nsis-header.bmp", (150, 57), False, 38, 56),
+        ("nsis-sidebar.bmp", (panel_width, 314), True, 84, None),
+        ("wix-banner.bmp", (493, 58), False, 38, 439),
+        ("wix-dialog.bmp", (493, 312), True, 84, None),
+    ):
+        image = Image.new("RGB", size, "white")
+        tile_y = (image.height - tile_size) // 2
+        if has_panel:
+            tile_x = (panel_width - tile_size) // 2
+            tile_y -= 22
+            # Keep all welcome artwork in the left strip so WixUI text stays on white.
+            panel = Image.new("RGB", (panel_width, image.height), DARK["tile"])
+            draw = ImageDraw.Draw(panel)
+            for x, y, _ in cells():
+                x += panel_width - 72
+                y += panel.height - 87
+                draw.rounded_rectangle(
+                    (x, y, x + CELL - 1, y + CELL - 1),
+                    radius=CELL_RADIUS,
+                    fill="#29374C",
+                )
+            draw.multiline_text(
+                (panel_width // 2, tile_y + tile_size + 14),
+                "Still downloading.\nAlready watching.",
+                fill=LIGHT["tile"],
+                font=tagline_font,
+                anchor="ma",
+                align="center",
+                spacing=3,
+            )
+            image.paste(panel)
+        tile = bitmap(tile_size, rounded=True, palette=LIGHT if has_panel else DARK)
+        image.paste(tile, (tile_x, tile_y), tile)
+        image.save(DESKTOP / name)
+
+
 def mac_icon():
     """The light tile on Apple's grid, with its shadow."""
     tile = bitmap(MAC_TILE, rounded=True, palette=LIGHT, supersample=MAC_SUPERSAMPLE)
@@ -217,6 +259,7 @@ def main():
             ICONS / f"icon-{size}.jpg", quality=95, optimize=True
         )
     DESKTOP.mkdir(parents=True, exist_ok=True)
+    windows_wizard_artwork()
     mac_icon().save(DESKTOP / "icon.icns")
     assets = DESKTOP / "icon.icon" / "Assets"
     assets.mkdir(parents=True, exist_ok=True)

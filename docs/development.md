@@ -84,6 +84,7 @@ light palette: `brand/logo-dark.svg`, `brand/logo-light.svg`, the adaptive
 `brand/logo.svg` that follows the viewer's color scheme, and the DLNA media
 server's PNG and JPEG icons in `crates/torrplay-server/assets/dlna/`, and
 the adaptive logo again as the web client's `client/public/favicon.svg`.
+It also renders the NSIS and WiX setup wizard bitmaps in `desktop/icons/`.
 For macOS it draws `desktop/icons/icon.icns`, the light tile inside the
 margin and shadow of Apple's icon grid, which the Dock shows at the size of
 other applications' icons, and `desktop/icons/icon.icon`, an Icon Composer
