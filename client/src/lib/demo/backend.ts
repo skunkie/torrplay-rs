@@ -452,7 +452,7 @@ export function demoBackend(now: () => number = Date.now): Backend {
         throw refused(422, "unsupported-torrent", "This magnet link could not be read.");
       }
       const name = fileName ?? magnet?.name ?? "Unnamed.torrent";
-      const identity = magnet ? magnet.uri.match(/btih:([0-9a-z]+)/i)?.[1]?.toLowerCase() : name;
+      const identity = magnet?.infoHash ?? name;
       const existing = all().find((item) => item.identity === identity);
       if (existing) {
         throw refused(409, "duplicate-torrent", "The demo already has this torrent.", {
@@ -485,7 +485,7 @@ export function demoBackend(now: () => number = Date.now): Backend {
         pending: fileName ? undefined : contents,
         configuredKind: null,
         paused: false,
-        identity: identity ?? "",
+        identity,
         version: 1,
       });
       log("info", "torrplay_server::app", "a torrent was added", { torrent_id: torrent.id });

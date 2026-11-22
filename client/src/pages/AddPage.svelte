@@ -82,7 +82,7 @@ SPDX-License-Identifier: MIT
   /** Starts a magnet URI as a temporary torrent, the only way to learn its
    * files, which come from peers, unless the application has it already. */
   async function readMagnet(magnet: Magnet, mine: number): Promise<void> {
-    if (magnet.infoHash) await findExisting(magnet.infoHash, mine);
+    await findExisting(magnet.infoHash, mine);
     if (mine !== generation) return;
     if (existing) {
       const contents = await contentsOf(existing).catch(() => undefined);

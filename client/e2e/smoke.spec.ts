@@ -4,6 +4,8 @@
 
 import { test as base, expect, type Locator, type Page } from "@playwright/test";
 
+import { TORRENT_NAME } from "./constants";
+
 const TITLE = /test.pattern/i;
 
 /** Fails a test when the content security policy refuses anything or a script
@@ -74,6 +76,117 @@ test("plays a magnet link from a peer and adds it to the library", async ({ page
   await deleteFromTitlePage(page);
   await page.goto("/library");
   await expect(page.getByText("The library is empty.")).toBeVisible();
+});
+
+test("uses the same v1 magnet topic as the server when looking in the library", async ({
+  page,
+  request,
+}) => {
+  const created = await request.post("/api/v1/torrents", {
+    data: { magnet_uri: `magnet:?xt=urn:btih:${"00".repeat(20)}`, retention: "persisted" },
+  });
+  expect(created.status()).toBe(201);
+  const { id } = (await created.json()) as { id: string };
+  const magnet = environment("TORRPLAY_E2E_MAGNET").replace(
+    "magnet:?",
+    `magnet:?xt=urn:btih:${"A".repeat(32)}&`,
+  );
+
+  await page.goto("/add");
+  await page.getByLabel("Magnet link").fill(magnet);
+
+  await expect(page.getByRole("button", { name: `Play ${TORRENT_NAME}` })).toBeEnabled({
+    timeout: 30_000,
+  });
+  await expect(page.locator(`main a[href="/titles/${id}"]`)).toHaveCount(0);
+});
+
+test("opens the same magnet with case variants before and after adding it to the library", async ({
+  page,
+}) => {
+  const magnet = environment("TORRPLAY_E2E_MAGNET").replace(
+    "magnet:?xt=urn:btih:",
+    `MAGNET:?xt=URN:BTIH:${"a".repeat(32)}&xt=URN:BTIH:`,
+  );
+
+  await page.goto("/add");
+  await page.getByLabel("Magnet link").fill(magnet);
+  await expect(page.getByRole("button", { name: `Play ${TORRENT_NAME}` })).toBeEnabled({
+    timeout: 30_000,
+  });
+  await page.getByRole("button", { name: "Add to library", exact: true }).click();
+  await expect(page).toHaveURL(/\/titles\/trr_/);
+  const title = new URL(page.url()).pathname;
+
+  await page.goto("/add");
+  await page.getByLabel("Magnet link").fill(magnet);
+  await expect(page.getByRole("link", { name: "Open the title" })).toHaveAttribute("href", title);
+});
+
+test("normalizes a magnet near the API limit without expanding its trackers", async ({ page }) => {
+  const seed = environment("TORRPLAY_E2E_MAGNET");
+  const tracker = new URL(seed).searchParams.get("tr");
+  if (!tracker) throw new Error("the test magnet has no tracker");
+  const entry = `&tr=${tracker}`;
+  const canonical = seed + entry.repeat(Math.floor((7900 - seed.length) / entry.length));
+  const variant = canonical.replace("urn:btih:", "URN:BTIH:");
+
+  await page.goto("/add");
+  const submitted = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/v1/torrents") && response.request().method() === "POST",
+  );
+  await page.getByLabel("Magnet link").fill(variant);
+
+  const response = await submitted;
+  expect(response.status()).toBe(201);
+  expect(response.request().postDataJSON().magnet_uri).toBe(canonical);
+});
+
+for (const [kind, topic] of [
+  ["a malformed v1", "urn:btih:bad"],
+  ["a malformed v2", "urn:btmh:1220abcd"],
+  ["an unsupported", "urn:unrecognized:1234"],
+]) {
+  test(`rejects ${kind} topic even when another topic is in the library`, async ({
+    page,
+    request,
+  }) => {
+    const magnet = environment("TORRPLAY_E2E_MAGNET");
+    const created = await request.post("/api/v1/torrents", {
+      data: { magnet_uri: magnet, retention: "persisted" },
+    });
+    expect(created.status()).toBe(201);
+
+    await page.goto("/add");
+    const input = page.getByLabel("Magnet link");
+    await input.fill(magnet.replace("magnet:?", `magnet:?xt=${topic}&`));
+    await input.press("Enter", { timeout: 3000 });
+
+    await expect(page.getByRole("alert")).toHaveText("This magnet link could not be read.");
+  });
+}
+
+test("opens a saved torrent from a magnet with a fragment after its topic", async ({
+  page,
+  request,
+}) => {
+  const magnet = environment("TORRPLAY_E2E_MAGNET");
+  const created = await request.post("/api/v1/torrents", {
+    data: { magnet_uri: magnet, retention: "persisted" },
+  });
+  expect(created.status()).toBe(201);
+  const { id } = (await created.json()) as { id: string };
+  const topic = new URL(magnet).searchParams.get("xt");
+  if (!topic) throw new Error("the test magnet has no exact topic");
+
+  await page.goto("/add");
+  await page.getByLabel("Magnet link").fill(`magnet:?xt=${topic}#preview`);
+
+  await expect(page.getByRole("link", { name: "Open the title" })).toHaveAttribute(
+    "href",
+    `/titles/${id}`,
+  );
 });
 
 test("keeps a refused magnet link's way back on one line on a phone in Russian", async ({

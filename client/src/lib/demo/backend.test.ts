@@ -188,15 +188,19 @@ describe("adding a magnet link", () => {
     expect(other.id).not.toBe(created.id);
   });
 
-  it("knows a base32 magnet link it has, whatever its name", async () => {
+  it("finds the same magnet by its hexadecimal hash after adding it as Base32", async () => {
     const { backend } = start();
+    const infoHash = "3138313230313831323031383132303138313230";
     const created = await backend.createTorrent(
       { magnetUri: `${BASE32_A}&dn=One` },
       { retention: "temporary" },
     );
 
     const failure: unknown = await backend
-      .createTorrent({ magnetUri: `${BASE32_A}&dn=Two` }, { retention: "temporary" })
+      .createTorrent(
+        { magnetUri: `magnet:?xt=urn:btih:${infoHash}&dn=Two` },
+        { retention: "temporary" },
+      )
       .catch((error: unknown) => error);
 
     expect(duplicateOf(failure)).toBe(created.id);
