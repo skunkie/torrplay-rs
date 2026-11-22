@@ -7,6 +7,7 @@ SPDX-License-Identifier: MIT
   import type { TorrentKind } from "../lib/backend";
   import { breakParts } from "../lib/describe";
   import { toneOf } from "../lib/tone";
+  import Icon from "./Icon.svelte";
   import MediaIcon from "./MediaIcon.svelte";
 
   interface Props {
@@ -17,9 +18,11 @@ SPDX-License-Identifier: MIT
     kind?: TorrentKind | null;
     /** A short state shown over the poster, such as "Paused". */
     badge?: string | undefined;
+    /** The label of the disk icon, when this torrent uses disk storage. */
+    diskLabel?: string | undefined;
   }
 
-  let { url, title, kind, badge }: Props = $props();
+  let { url, title, kind, badge, diskLabel }: Props = $props();
 
   const tone = $derived(toneOf(title));
 </script>
@@ -39,11 +42,25 @@ SPDX-License-Identifier: MIT
   {:else}
     <MediaIcon {kind} class="absolute inset-0 m-auto h-auto w-[28%]" />
   {/if}
-  {#if badge}
-    <span
-      class="absolute top-1 left-1 max-w-[calc(100%-0.5rem)] rounded-lg bg-scrim/80 px-1.5 py-1 text-xs font-medium text-hero-text sm:top-2 sm:left-2 sm:max-w-[calc(100%-1rem)] sm:px-2 sm:mono"
-    >
-      {badge}
+  {#if badge || diskLabel}
+    <span class="absolute inset-x-1 top-1 flex flex-wrap items-start gap-1 sm:inset-x-2 sm:top-2">
+      {#if badge}
+        <span
+          class="max-w-full rounded-lg bg-scrim/80 p-1 text-xs font-medium wrap-anywhere text-hero-text sm:px-2 sm:mono"
+        >
+          {badge}
+        </span>
+      {/if}
+      {#if diskLabel}
+        <span
+          role="img"
+          aria-label={diskLabel}
+          title={diskLabel}
+          class="ml-auto flex size-6 shrink-0 items-center justify-center rounded-inner bg-scrim/80 text-hero-text"
+        >
+          <Icon name="drive" class="size-3.5" />
+        </span>
+      {/if}
     </span>
   {/if}
 </span>

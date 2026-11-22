@@ -140,8 +140,9 @@ seek index. The plan keeps them.
 
 | Path                            | Page     | What it shows                                                                                                                                                                                                                                                                                                     |
 | ------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/`                             | Home     | Up next for the profile, recently added titles, and a way to add                                                                                                                                                                                                                                                  |
-| `/library`                      | Library  | The library's posters, with search, kind, category, and genre filters from the facets; the filters live in the URL                                                                                                                                                                                                |
+| `/`                             | Home     | Up next for the profile, temporary torrents when present, recently added titles, and a way to add                                                                                                                                                                                                                                                  |
+| `/library`                      | Library  | Saved torrents, with search, kind, category, and genre filters in the URL                                                                                                                                                                                                                |
+| `/temporary-torrents`           | Temporary torrents | The full list of temporary torrents, reached from Home |
 | `/titles/{torrent_id}`          | Title    | Poster, title, year, description, and genres; for a series, its episodes by season with each one's progress, from the episodes the contract reports on files; otherwise its video files. A **Download** section holds the storage mode and statistics; **Edit** changes the library members and poster |
 | `/watch/{torrent_id}/{file_id}` | Player   | The player, full window; resume, audio and subtitle tracks, and the next episode at the end                                                                                                                                                                                                                       |
 | `/add`                          | Add      | A magnet URI or torrent file; a torrent file is previewed first. **Play** creates a temporary torrent; **Add to library** a persisted one                                                                                                                                                                         |
@@ -247,6 +248,22 @@ the tokens.
   retention describes, and the player's top bar offers to add it to the library,
   also when the video ends. That keeps it in memory without disturbing playback;
   the title page's Download section then moves it to disk.
+- **Finding temporary torrents.** Home shows up to three temporary torrents
+  between **Up next** and **Recently added**. The row appears when there are
+  temporary torrents. **See all** opens **Temporary torrents** when more
+  exist. Both views refresh as torrents expire or are kept. Open a torrent
+  to use **Add to library** in its **Download** panel. Keeping it preserves
+  its ID and moves it into the Library. Browsing a temporary torrent list
+  does not keep a torrent alive. The demo checks for expiry on access and counts
+  idle time from creation, the most recent preload, or the end of playback.
+  Re-adding an expired temporary torrent in the demo restores its playback
+  progress until the temporary progress retention period passes. The demo
+  matches magnets by decoded info hash and uploaded files by a fingerprint
+  of the entire file.
+- **Browsing the library.** The Library lists saved torrents. Search,
+  kind, category, and genre filters apply to those torrents. A hard-drive
+  icon on the poster marks disk storage, with room for a state badge
+  alongside it.
 - **Preloading.** Before a file plays, the player creates a preload for where
   playback starts and shows its progress in tiles over the title's art, with
   **Play now** to go ahead without waiting. Playback starts when the preload is
@@ -358,8 +375,9 @@ set, so sign-in has none, and a failed read leaves it out.
   browser.
 - The back and forward buttons return a page to where it was scrolled, once its
   content is tall enough; a link opens a new page at its top.
-- A title's back arrow returns to the list it was reached from, Home or the
-  Library with its filters, and to Home when it was opened directly.
+- A title's back arrow returns to the list it was reached from. That can be
+  Home, Temporary torrents, or the Library with its filters. The title keeps
+  that origin through Edit and reload. A title opened directly returns to Home.
 - That arrow and the player's Back links go back through the history when the
   previous entry is where they lead, so a remote's back key does not then return to
   the page just left. Otherwise they open that page as a new entry.

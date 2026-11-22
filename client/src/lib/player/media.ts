@@ -20,6 +20,33 @@ export function isPaused(media: HTMLMediaElement): boolean {
   return media.paused;
 }
 
+/** Holds playback activity until the element pauses, ends, or is detached. */
+export function trackPlayback(
+  media: HTMLMediaElement,
+  begin: () => (() => void) | undefined,
+): () => void {
+  let release: (() => void) | undefined;
+  const start = () => {
+    release ??= begin();
+  };
+  const stop = () => {
+    release?.();
+    release = undefined;
+  };
+  media.addEventListener("play", start);
+  media.addEventListener("pause", stop);
+  media.addEventListener("ended", stop);
+  media.addEventListener("emptied", stop);
+  if (!media.paused && !media.ended) start();
+  return () => {
+    media.removeEventListener("play", start);
+    media.removeEventListener("pause", stop);
+    media.removeEventListener("ended", stop);
+    media.removeEventListener("emptied", stop);
+    stop();
+  };
+}
+
 /** Moves `media` by `seconds`, within its length. */
 export function seekBy(media: HTMLMediaElement, seconds: number): void {
   const moved = Math.max(0, media.currentTime + seconds);

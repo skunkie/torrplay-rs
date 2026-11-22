@@ -4,9 +4,11 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import { untrack } from "svelte";
+
   import RetryAlert from "../components/RetryAlert.svelte";
   import { ApiError } from "../lib/api/http";
-  import type { Torrent, UpNextEntry } from "../lib/backend";
+  import type { Torrent, TorrentPage, UpNextEntry } from "../lib/backend";
   import { useBackend } from "../lib/context";
   import { pollFailure } from "../lib/engine.svelte";
   import { imageGrant, refreshGrant } from "../lib/grant.svelte";
@@ -19,15 +21,18 @@ SPDX-License-Identifier: MIT
 
   const UP_NEXT_SIZE = 20;
   const RECENT_SIZE = 24;
+  const TEMPORARY_SIZE = 3;
   const POLL_MS = 5000;
 
   const backend = useBackend();
 
   let entries = $state.raw<UpNextEntry[]>();
   let recent = $state.raw<Torrent[]>();
+  let temporary = $state.raw<TorrentPage>();
   let error = $state<string>();
   let upNextTag: string | undefined;
   let recentTag: string | undefined;
+  let temporaryTag: string | undefined;
   /** Counts profile changes, so a response for an earlier one is ignored. */
   let generation = 0;
 
@@ -79,6 +84,20 @@ SPDX-License-Identifier: MIT
     await refresh(profileId, generation);
   }
 
+  async function refreshTemporary(): Promise<void> {
+    const page = await backend.listTorrents(
+      { retention: "temporary" },
+      {
+        pageSize: TEMPORARY_SIZE,
+        ...(temporaryTag ? { etag: temporaryTag } : {}),
+      },
+    );
+    if (!page.unchanged) {
+      temporary = page.data;
+      temporaryTag = page.etag;
+    }
+  }
+
   /** Its ID alone, since reading the profiles again gives the same one anew, which
    * must not start polling over. */
   const watching = $derived(profiles.current?.id);
@@ -95,12 +114,16 @@ SPDX-License-Identifier: MIT
   $effect(() => {
     void refreshGrant(backend);
   });
+
+  // This row refreshes independently of the profile and the saved library.
+  $effect(() => untrack(() => poll(refreshTemporary, POLL_MS)));
 </script>
 
 {#if profiles.current}
   <HomeView
     {entries}
     {recent}
+    {temporary}
     {error}
     poster={(torrent) => posterUrl(torrent, imageGrant.current)}
     ondismiss={dismiss}

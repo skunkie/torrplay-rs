@@ -196,6 +196,18 @@ it("goes back to the list the client opened on", async () => {
   expect(back).toHaveAttribute("href", `${libraryPath}?genre=Drama`);
 });
 
+it("keeps Home as the Back destination for a title opened directly", async () => {
+  window.history.pushState(null, "", titlePath(shown.id));
+  render(App, { backend: backend() });
+  expect(await screen.findByRole("link", { name: "Back" })).toHaveAttribute("href", homePath);
+
+  navigate(libraryPath);
+  await screen.findByRole("heading", { level: 1, name: "Library" });
+  window.history.back();
+
+  expect(await screen.findByRole("link", { name: "Back" })).toHaveAttribute("href", homePath);
+});
+
 it("leaves the page for a dropped torrent file, but not for another file", async () => {
   navigate(libraryPath);
   render(App, {

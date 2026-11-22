@@ -6,17 +6,19 @@ import { describe, expect, it } from "vitest";
 
 import shared from "../../../fixtures/search-cases.json";
 import { torrent } from "../testing";
-import { searchItems, searchTorrents } from "./search";
+import { searchTorrents } from "./search";
 
 describe("the cases the server's matcher passes", () => {
+  const library = shared.library.map((item, index) => torrent(index + 1, item));
   it.each(shared.cases)("$name", ({ query, want }) => {
-    const found = searchItems(shared.library, query, ({ title, name }) => [title, name]);
+    const found = searchTorrents(library, query);
     expect(found.map(({ name }) => name)).toEqual(want);
   });
 });
 
 it("matches everything, in order, for a blank search", () => {
-  expect(searchItems(["b", "a"], " \t ", (item) => [item])).toEqual(["b", "a"]);
+  const films = [torrent(2), torrent(1)];
+  expect(searchTorrents(films, " \t ")).toEqual(films);
 });
 
 it("searches a torrent's title and name together", () => {
@@ -27,5 +29,5 @@ it("searches a torrent's title and name together", () => {
 });
 
 it("leaves a typo to the server", () => {
-  expect(searchItems(["Sintel"], "sintl", (item) => [item])).toEqual([]);
+  expect(searchTorrents([torrent(1, { title: "Sintel" })], "sintl")).toEqual([]);
 });

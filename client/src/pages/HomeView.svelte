@@ -10,8 +10,9 @@ SPDX-License-Identifier: MIT
   import MediaIcon from "../components/MediaIcon.svelte";
   import Poster from "../components/Poster.svelte";
   import RetryAlert from "../components/RetryAlert.svelte";
+  import TemporaryTorrentRows from "../components/TemporaryTorrentRows.svelte";
   import WatchedBar from "../components/WatchedBar.svelte";
-  import type { Torrent, UpNextEntry } from "../lib/backend";
+  import type { Torrent, TorrentPage, UpNextEntry } from "../lib/backend";
   import {
     entryReason,
     entrySubject,
@@ -21,7 +22,7 @@ SPDX-License-Identifier: MIT
     torrentTitle,
   } from "../lib/describe";
   import { t } from "../lib/i18n/index.svelte";
-  import { libraryPath, titlePath, watchPath } from "../lib/routes";
+  import { libraryPath, temporaryTorrentsPath, titlePath, watchPath } from "../lib/routes";
   import { toneOf } from "../lib/tone";
 
   interface Props {
@@ -30,6 +31,7 @@ SPDX-License-Identifier: MIT
     entries: UpNextEntry[] | undefined;
     /** The library's newest torrents, or `undefined` before they are read. */
     recent: Torrent[] | undefined;
+    temporary: TorrentPage | undefined;
     error: string | undefined;
     /** The URL of a torrent's poster, or `undefined` without one. */
     poster: (torrent: Torrent) => string | undefined;
@@ -37,7 +39,7 @@ SPDX-License-Identifier: MIT
     onretry: () => void;
   }
 
-  let { entries, recent, error, poster, ondismiss, onretry }: Props = $props();
+  let { entries, recent, temporary, error, poster, ondismiss, onretry }: Props = $props();
 
   const lead = $derived(entries?.[0]);
   const rest = $derived(entries?.slice(1) ?? []);
@@ -156,6 +158,20 @@ SPDX-License-Identifier: MIT
     <section class="flex flex-col gap-2">
       <h1 class="text-lg font-bold">{t().home.upNext}</h1>
       <p class="text-text-muted">{t().home.upNextEmpty}</p>
+    </section>
+  {/if}
+
+  {#if temporary && temporary.items.length > 0}
+    <section aria-labelledby="temporary-torrents" class="flex flex-col gap-3">
+      <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h2 id="temporary-torrents" class="text-lg font-bold">{t().temporaryTorrents.title}</h2>
+        {#if temporary.links.next}
+          <a href={temporaryTorrentsPath} class="text-sm font-semibold text-accent-text">
+            {t().temporaryTorrents.seeAll}
+          </a>
+        {/if}
+      </div>
+      <TemporaryTorrentRows torrents={temporary.items} focusFirst={!lead} />
     </section>
   {/if}
 

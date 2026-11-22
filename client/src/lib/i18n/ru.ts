@@ -218,6 +218,11 @@ export const ru: Messages = {
     empty: "Библиотека пуста.",
     showMore: "Показать ещё",
   },
+  temporaryTorrents: {
+    title: "Временные торренты",
+    seeAll: "Показать все",
+    empty: "Временных торрентов нет.",
+  },
   engine: {
     unavailable: "TorrPlay запускается или останавливается. Действия пока могут не выполниться.",
     unreachable: "Не удалось подключиться к TorrPlay. Повторная попытка…",
@@ -519,6 +524,9 @@ export const ru: Messages = {
   problems: {
     "duplicate-profile": "У другого профиля уже есть такое имя.",
     "too-many-profiles": "В TorrPlay может быть не больше 32\u00A0профилей. Сначала удалите один.",
+    "too-many-temporary-torrents":
+      "Нет места для нового временного торрента. Остановите воспроизведение или добавьте этот торрент в библиотеку.",
+    "content-too-large": "Слишком большой запрос.",
     "unsupported-media-type": "TorrPlay не может использовать этот файл как изображение.",
     "invalid-credentials": "Неверный пароль.",
     "too-many-attempts": "Слишком много попыток. Подождите немного и попробуйте ещё раз.",

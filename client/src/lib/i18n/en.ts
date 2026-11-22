@@ -217,6 +217,11 @@ export const en = {
     empty: "The library is empty.",
     showMore: "Show more",
   },
+  temporaryTorrents: {
+    title: "Temporary torrents",
+    seeAll: "See all",
+    empty: "No temporary torrents.",
+  },
   engine: {
     unavailable: "TorrPlay is starting or stopping. Actions may not go through for now.",
     unreachable: "TorrPlay could not be reached. Trying again…",
@@ -509,6 +514,9 @@ export const en = {
   problems: {
     "duplicate-profile": "Another profile has this name.",
     "too-many-profiles": "TorrPlay keeps at most 32 profiles. Delete one first.",
+    "too-many-temporary-torrents":
+      "There’s no room for another temporary torrent. Stop playback or add this torrent to the library.",
+    "content-too-large": "The request is too large.",
     "unsupported-media-type": "This file is not an image TorrPlay can use.",
     "invalid-credentials": "The password is not correct.",
     "too-many-attempts": "Too many attempts. Wait a moment and try again.",

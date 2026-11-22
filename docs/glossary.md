@@ -92,9 +92,10 @@ of each.
   restarts. Only persisted torrents may use disk storage.
 
 **Temporary torrent**
-: A torrent kept in memory only to be played, never stored, hidden from the
-  library and the DLNA media server, and deleted once it goes unwatched for
-  a while or the application restarts. Making it persisted keeps it.
+: A torrent kept in memory for playback and deleted once it goes unwatched
+  for a while or the application restarts. The Library and the DLNA media
+  server leave it out. Home and the **Temporary torrents** page show it
+  while it exists. Making it persisted keeps it.
 
 **Retention**
 : Whether the application keeps a torrent: `persisted` or `temporary`.
