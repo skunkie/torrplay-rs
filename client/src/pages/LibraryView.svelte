@@ -95,13 +95,13 @@ SPDX-License-Identifier: MIT
   </div>
 
   <div class="flex flex-wrap items-center gap-3">
-    <div class="segments max-w-full overflow-x-auto" role="group" aria-label={t().library.kind}>
+    <div class="segments max-w-full flex-wrap" role="group" aria-label={t().library.kind}>
       {#each kinds as option (option.value ?? "")}
         <button
           type="button"
           aria-pressed={query.kind === option.value}
           onclick={() => kind(option.value)}
-          class="segment shrink-0"
+          class="segment shrink-0 max-sm:px-2"
         >
           {option.label}
         </button>
@@ -109,12 +109,12 @@ SPDX-License-Identifier: MIT
     </div>
 
     {#if facets && (query.category || query.uncategorized || facets.categories.length > 0 || facets.uncategorized > 0)}
-      <label class="flex items-center gap-2 text-sm">
+      <label class="flex max-w-full items-center gap-2 text-sm">
         <span class="text-text-muted">{t().library.category}</span>
         <select
           value={query.uncategorized ? UNCATEGORIZED : (query.category ?? "")}
           onchange={(event) => category(event.currentTarget.value)}
-          class="field"
+          class="field min-w-0"
         >
           <option value="">{t().library.allCount(facets.total_count)}</option>
           {#each facets.categories as label (label.name)}
@@ -131,12 +131,12 @@ SPDX-License-Identifier: MIT
     {/if}
 
     {#if facets && (query.genre || facets.genres.length > 0)}
-      <label class="flex items-center gap-2 text-sm">
+      <label class="flex max-w-full items-center gap-2 text-sm">
         <span class="text-text-muted">{t().library.genre}</span>
         <select
           value={query.genre ?? ""}
           onchange={(event) => genre(event.currentTarget.value)}
-          class="field"
+          class="field min-w-0"
         >
           <option value="">{t().library.all}</option>
           {#each facets.genres as label (label.name)}

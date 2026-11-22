@@ -1405,6 +1405,116 @@ test.describe("the demo", () => {
     expect(overflowing).toEqual([]);
   });
 
+  test("keeps Russian library filters and poster badges readable on phones", async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem("torrplay.locale", "ru"));
+    await page.setViewportSize({ width: 320, height: 800 });
+    await page.goto("/demo/library");
+    await page.evaluate(() => document.fonts.ready);
+
+    const filters = page.getByRole("group", { name: "Тип" });
+    const options = filters.getByRole("button");
+    await expect(options).toHaveCount(4);
+    for (const filter of await options.all()) {
+      await expect(filter).toBeInViewport({ ratio: 1 });
+    }
+    await filters.getByRole("button", { name: "Другое" }).click();
+    await expect(filters.getByRole("button", { name: "Другое" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    await page.setViewportSize({ width: 360, height: 800 });
+    const badge = page.getByText("Приостановлен", { exact: true });
+    await expect(badge).toBeVisible();
+    const lines = await badge.evaluate((element) => {
+      const text = document.createRange();
+      text.selectNodeContents(element);
+      return text.getClientRects().length;
+    });
+    expect(lines).toBe(1);
+  });
+
+  test("keeps the main page's Russian playback actions and episode numbers readable", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("torrplay.locale", "ru");
+      localStorage.setItem("torrplay.demo.intro-seen", "1");
+    });
+    await page.setViewportSize({ width: 320, height: 800 });
+    await page.goto("/demo");
+
+    const hero = page.getByRole("region", { name: "The Lighthouse Keepers" });
+    const resume = hero.getByRole("link", { name: "Продолжить" });
+    const episodes = hero.getByRole("link", { name: "Серии" });
+    await expect(resume).toBeVisible();
+    await expect(episodes).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+    expect((await resume.boundingBox())?.y).toBe((await episodes.boundingBox())?.y);
+
+    const next = page
+      .getByRole("link", { name: /Paper Moons/ })
+      .filter({ hasText: "Следующая серия" });
+    const episode = next.getByText("С1 Е2", { exact: true });
+    await expect(episode).toBeVisible();
+    expect(await episode.evaluate((label) => label.scrollWidth)).toBe(
+      await episode.evaluate((label) => label.clientWidth),
+    );
+  });
+
+  test("keeps Dismiss reachable by arrow keys on the Russian main page", async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("torrplay.locale", "ru");
+      localStorage.setItem("torrplay.demo.intro-seen", "1");
+    });
+    await page.setViewportSize({ width: 400, height: 800 });
+    await page.goto("/demo");
+
+    const hero = page.getByRole("region", { name: "The Lighthouse Keepers" });
+    const resume = hero.getByRole("link", { name: "Продолжить" });
+    const episodes = hero.getByRole("link", { name: "Серии" });
+    const dismiss = hero.getByRole("button", { name: /^Убрать/ });
+    await expect(episodes).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+    await episodes.focus();
+    await page.keyboard.press("ArrowUp");
+    await expect(dismiss).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(episodes).toBeFocused();
+
+    await page.locator("html").evaluate((html) => (html.style.fontSize = "150%"));
+    await page.keyboard.press("ArrowUp");
+    await expect(resume).toBeFocused();
+    await page.keyboard.press("ArrowUp");
+    await expect(dismiss).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(resume).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(episodes).toBeFocused();
+  });
+
+  test("keeps the Russian type options separate with enlarged text", async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem("torrplay.locale", "ru"));
+    await page.setViewportSize({ width: 360, height: 800 });
+    await page.goto("/demo/titles/trr_aaaaaaaaaaaaaaaaaaaaaaaaa7/edit");
+    await page.locator("html").evaluate((html) => (html.style.fontSize = "150%"));
+
+    const kind = page.getByRole("group", { name: "Тип" });
+    const automatic = kind.getByRole("button", { name: "Автоматически" });
+    await expect(automatic).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+    const fits = await automatic.evaluate((button) => {
+      const text = document.createRange();
+      text.selectNodeContents(button);
+      const textBox = text.getBoundingClientRect();
+      const buttonBox = button.getBoundingClientRect();
+      return textBox.left >= buttonBox.left && textBox.right <= buttonBox.right;
+    });
+    expect(fits).toBe(true);
+    await automatic.click();
+    await expect(automatic).toHaveAttribute("aria-pressed", "true");
+  });
+
   test("shows the title and metadata below a torrent tile without a poster", async ({ page }) => {
     for (const [width, height] of [
       [360, 800],
