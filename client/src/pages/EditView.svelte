@@ -239,10 +239,10 @@ SPDX-License-Identifier: MIT
         {@render problem(fieldErrors["title"], "title-error")}
       </label>
 
-      <div class="flex flex-col gap-2 text-sm font-semibold">
+      <div class="@container flex flex-col gap-2 text-sm font-semibold">
         <span id="kind-label">{t().edit.kind}</span>
         <div
-          class="segments max-w-full flex-wrap self-start"
+          class="segments max-w-full flex-wrap self-start max-sm:grid max-sm:grid-cols-1 max-sm:self-stretch max-sm:@min-[18rem]:grid-cols-2"
           role="group"
           aria-labelledby="kind-label"
         >
@@ -250,7 +250,7 @@ SPDX-License-Identifier: MIT
             <button
               type="button"
               aria-pressed={kind === option.value}
-              class="segment shrink-0"
+              class="segment shrink-0 max-sm:h-auto max-sm:min-h-9 max-sm:px-2 max-sm:wrap-anywhere"
               onclick={() => (kind = option.value)}
             >
               {option.label}

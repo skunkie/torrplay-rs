@@ -35,7 +35,7 @@ SPDX-License-Identifier: MIT
 
 <span
   data-poster-tile
-  class="relative block aspect-2/3 overflow-hidden rounded-button"
+  class="@container relative block aspect-2/3 overflow-hidden rounded-button"
   style:background={tone.background}
   style:color={tone.color}
 >
@@ -45,10 +45,12 @@ SPDX-License-Identifier: MIT
     <MediaIcon {kind} class="absolute inset-0 m-auto h-auto w-[28%]" />
   {/if}
   {#if badge || diskLabel}
-    <span class="absolute inset-x-1 top-1 flex flex-wrap items-start gap-1 sm:inset-x-2 sm:top-2">
+    <span
+      class="absolute inset-x-1 top-1 flex flex-wrap items-start gap-1 sm:inset-x-2 sm:top-2 @max-[8rem]:inset-x-0.5"
+    >
       {#if badge}
         <span
-          class="max-w-full rounded-lg bg-scrim/80 p-1 text-xs font-medium wrap-anywhere text-hero-text sm:px-2 sm:mono"
+          class="max-w-full rounded-lg bg-scrim/80 p-1 text-xs font-medium wrap-anywhere text-hero-text sm:px-2 sm:mono @max-[8rem]:px-0.5 @max-[8rem]:tracking-tight"
         >
           {badge}
         </span>

@@ -78,7 +78,8 @@ SPDX-License-Identifier: MIT
       url={poster(lead.torrent)}
       title={torrentTitle(lead.torrent)}
       labelledby="continue"
-      class="min-h-65 rounded-panel md:min-h-85 md:rounded-3xl"
+      class="@container min-h-65 rounded-panel md:min-h-85 md:rounded-3xl"
+      gutter="max-md:pt-16 md:px-12 md:py-10"
     >
       <!-- Resuming needs no words here: the button says it. -->
       {#if lead.reason === "next_episode" || subject}
@@ -94,15 +95,27 @@ SPDX-License-Identifier: MIT
       {#if note}
         <p class="text-meta text-hero-muted md:text-base">{note}</p>
       {/if}
-      <div class="mt-2 flex flex-wrap items-center gap-3 md:gap-4">
-        <a href={watchPath(lead.torrent.id, lead.file.id)} data-focus-start class="btn btn-hero">
+      <div class="mt-2 flex flex-wrap items-center gap-2 md:gap-4">
+        <!-- When the actions stack, this spans both sides so Up and Down can reach Dismiss. -->
+        <a
+          href={watchPath(lead.torrent.id, lead.file.id)}
+          data-focus-start
+          class="btn btn-hero max-md:px-3 max-md:@max-[18rem]:h-auto max-md:@max-[18rem]:min-h-12 max-md:@max-[18rem]:w-full max-md:@max-[18rem]:wrap-anywhere"
+        >
           <Icon name="play" class="size-4" />
           {lead.reason === "next_episode" ? t().common.play : t().progress.resume}
         </a>
-        <a href={titlePath(lead.torrent.id)} class="btn h-12 rounded-button btn-glass px-5">
+        <!-- On phones, keep this link in the same column as Dismiss. -->
+        <a
+          href={titlePath(lead.torrent.id)}
+          class="btn h-12 rounded-button btn-glass px-5 max-md:ml-auto max-md:px-3"
+        >
           {lead.torrent.kind === "series" ? t().home.episodes : t().home.details}
         </a>
-        {@render dismiss(lead, "btn-glass h-12 w-12 rounded-button")}
+        {@render dismiss(
+          lead,
+          "btn-glass rounded-button max-md:absolute max-md:top-4 max-md:right-4 md:size-12",
+        )}
         {#if lead.progress}
           <WatchedBar
             ratio={lead.progress.completion_ratio}
@@ -139,12 +152,12 @@ SPDX-License-Identifier: MIT
                 </span>
                 <span class="flex min-w-0 flex-col gap-0.5">
                   <span class="truncate font-semibold">{torrentTitle(entry.torrent)}</span>
-                  <span class="flex gap-1.5 text-meta text-text-muted">
+                  <span class="flex items-baseline gap-1.5 text-meta text-text-muted">
                     {#if subject}
-                      <span class="truncate">{subject}</span>
+                      <span class={entry.file.episode ? "shrink-0" : "truncate"}>{subject}</span>
                       <span aria-hidden="true">·</span>
                     {/if}
-                    <span class="shrink-0">{entryReason(entry)}</span>
+                    <span class="min-w-0 wrap-break-word">{entryReason(entry)}</span>
                   </span>
                 </span>
               </a>
