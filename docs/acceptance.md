@@ -242,7 +242,7 @@ mode (M6).
 |---|---|---|
 | TMP-01 | Create a torrent with `retention: temporary`, read it, its configuration, and its files, and stream a file | `201`; `retention` is `temporary` in both resources; it streams like a persisted torrent (M7) |
 | TMP-02 | List torrents with no `retention`, then with `temporary` and `any` | The default page and its facets leave the temporary torrent out; the others include it (M7) |
-| TMP-03 | Create a temporary torrent with library members or disk storage; then patch its library or storage mode, and upload a poster | `422 validation-failed` naming each member; then `409 lifecycle-conflict` for each change (M7) |
+| TMP-03 | Create a temporary torrent with disk storage, or switch an existing temporary torrent to disk | `422 validation-failed` and `409 lifecycle-conflict`, respectively (M7) |
 | TMP-04 | Let a temporary torrent go past `temporary_idle_seconds` unwatched, counting from its last stream, and keep another streaming | The idle one is deleted and `404`; the streaming one stays (M7) |
 | TMP-05 | Add temporary torrents past `temporary_torrent_limit`, first with one idle, then with every one streaming | The one idle longest is deleted; then `409 too-many-temporary-torrents` and nothing changes (M7) |
 | TMP-06 | Patch a temporary torrent to `retention: persisted`, restart; patch a persisted torrent to `temporary` | It survives the restart with its ID and URLs; the second patch is `422` (M7) |
@@ -252,6 +252,7 @@ mode (M6).
 | TMP-10 | Let a temporary torrent with progress expire, then add it again as temporary | The new torrent's file has the progress |
 | TMP-11 | Patch a temporary torrent with progress to `retention: persisted`, then restart | The progress is ordinary progress, listed in up next, and survives the restart |
 | TMP-12 | Let `temporary_progress_seconds` pass after the last save | The progress is gone |
+| TMP-13 | Create a temporary torrent with library members, patch its description, upload a poster, and promote it | The temporary listing shows its title and poster. A failed promotion leaves them available in memory. After successful promotion and a restart, its ID, library members, and poster are preserved |
 
 ### Backup and restore
 
@@ -287,7 +288,7 @@ These scenarios accept serving the [web client](adr/0011-web-client.md)
 | WEB-03 | GET a page and a script with a password set, and a page path without a bundle | `200` without a credential, while the API still needs one; `404 not-found` |
 | WEB-04 | Open Home with zero, three, and four temporary torrents | The row is absent with zero. It lists up to three below **Up next** and shows **See all** when more exist. **See all** opens the full list, which can be reloaded |
 | WEB-05 | Let a temporary torrent expire while browsing Home or **Temporary torrents**, then open the Library | The expired torrent disappears on refresh. The Library shows only saved torrents, with a hard-drive icon for disk storage alongside any state badge |
-| WEB-06 | Open a temporary torrent from Home or the full list and use **Add to library** in its **Download** panel | The torrent keeps its ID, appears in the Library, and leaves the temporary lists |
+| WEB-06 | Open a temporary torrent with a title and poster from Home or the full list and use **Add to library** in its **Download** panel | Its title and poster appear on the temporary row. It keeps its ID, title, and poster when it moves to the Library |
 
 ### Settings
 

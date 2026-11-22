@@ -331,6 +331,24 @@ ${text(46, 858, "A DOCUMENTARY", 18, ink, 600, "start", 5)}
 `);
 }
 
+function northboundSignal() {
+  return wrap(`
+<rect width="600" height="900" fill="#14283F"/>
+${stars(41, 42, 18, 450, "#E3EFFF")}
+<circle cx="315" cy="328" r="137" fill="#E9A76B"/>
+<path d="M0 545 110 378l109 122 95-60 105 85 93-145 88 121v399H0Z" fill="#2B4660"/>
+<path d="M0 610 143 537l135 39 139-28 183 47v305H0Z" fill="#0C1727"/>
+<path d="m301 526-136 374m153-374 140 374" stroke="#8A9AAA" stroke-width="7"/>
+<path d="M255 638h111m-131 55h152m-177 62h202m-228 69h253" stroke="#53677D" stroke-width="9"/>
+<path d="M383 592V385" stroke="#0C1727" stroke-width="13"/>
+<rect x="361" y="337" width="44" height="89" rx="15" fill="#0C1727"/>
+<circle cx="383" cy="359" r="13" fill="#FF6662"/>
+<circle cx="383" cy="401" r="10" fill="#44566A"/>
+${text(44, 99, "Northbound", 69, "#F5E5D2", 700, "start", -1)}
+${text(44, 172, "Signal", 69, "#F5E5D2", 700, "start", -1)}
+`);
+}
+
 const POSTERS = {
   "the-lighthouse-keepers": theLighthouseKeepers,
   "paper-moons": paperMoons,
@@ -338,6 +356,7 @@ const POSTERS = {
   "salt-and-copper": saltAndCopper,
   "dolgaya-zima": dolgayaZima,
   "small-engines": smallEngines,
+  "northbound-signal": northboundSignal,
 };
 
 const faces = ["latin", "cyrillic"]

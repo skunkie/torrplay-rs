@@ -20,6 +20,7 @@ use axum::body::{Body, Bytes, HttpBody};
 use http_body::{Frame, SizeHint};
 use torrplay_core::engine::Source;
 use torrplay_core::id::TorrentId;
+use torrplay_core::image::ImageInfo;
 
 use crate::app::Clock;
 
@@ -30,6 +31,7 @@ pub(crate) struct Temporaries(Arc<Mutex<HashMap<TorrentId, Temporary>>>);
 struct Temporary {
     /// What the torrent was created from, with metadata once recorded.
     source: Source,
+    poster: Option<(ImageInfo, Bytes)>,
     /// Responses streaming its content.
     active: usize,
     /// When it last stopped being active, or was created.
@@ -47,6 +49,7 @@ impl Temporaries {
             id,
             Temporary {
                 source,
+                poster: None,
                 active: 0,
                 idle_since: now,
             },
@@ -74,6 +77,19 @@ impl Temporaries {
         self.lock()
             .get(id)
             .map(|temporary| temporary.source.clone())
+    }
+
+    pub(crate) fn poster(&self, id: &TorrentId) -> Option<(ImageInfo, Bytes)> {
+        self.lock().get(id)?.poster.clone()
+    }
+
+    pub(crate) fn set_poster(&self, id: &TorrentId, poster: Option<(ImageInfo, Bytes)>) -> bool {
+        let mut entries = self.lock();
+        let Some(temporary) = entries.get_mut(id) else {
+            return false;
+        };
+        temporary.poster = poster;
+        true
     }
 
     /// Replaces a temporary torrent's source with its torrent file, once its

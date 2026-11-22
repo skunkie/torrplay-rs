@@ -39,10 +39,23 @@ impl Worker {
                 Command::Insert(torrent, reply) => {
                     let _ = reply.send(self.write(|connection| insert(connection, &torrent)));
                 }
-                Command::Promote(torrent, info_hash, reply) => {
+                Command::Promote(torrent, poster, reply) => {
                     let _ = reply.send(self.write(|connection| {
                         insert(connection, &torrent)?;
-                        profiles::adopt_temporary_progress(connection, &info_hash, &torrent.id)
+                        if let Some((image, bytes)) = poster {
+                            images::set(
+                                connection,
+                                Images::Posters,
+                                torrent.id.as_str(),
+                                &image,
+                                &bytes,
+                            )?;
+                        }
+                        profiles::adopt_temporary_progress(
+                            connection,
+                            &torrent.info_hash,
+                            &torrent.id,
+                        )
                     }));
                 }
                 Command::SetConfiguration(id, configuration, reply) => {

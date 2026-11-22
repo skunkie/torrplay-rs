@@ -78,15 +78,25 @@ test("plays a magnet link from a peer and adds it to the library", async ({ page
   await expect(page.getByText("The library is empty.")).toBeVisible();
 });
 
-test("shows a temporary torrent on Home and moves it into the Library by keeping it", async ({
+test("shows a temporary torrent's title and poster on Home and keeps them in the Library", async ({
   page,
   request,
 }) => {
   const created = await request.post("/api/v1/torrents", {
-    data: { magnet_uri: environment("TORRPLAY_E2E_MAGNET"), retention: "temporary" },
+    data: {
+      magnet_uri: environment("TORRPLAY_E2E_MAGNET"),
+      retention: "temporary",
+      title: "Harbor Lights",
+      year: 2024,
+    },
   });
   expect(created.status()).toBe(201);
   const { id } = (await created.json()) as { id: string };
+  const upload = await request.put(`/api/v1/torrents/${id}/poster`, {
+    data: PIXEL,
+    headers: { "Content-Type": "image/png" },
+  });
+  expect(upload.status()).toBe(201);
 
   await page.goto("/library");
   await expect(page.getByText("The library is empty.")).toBeVisible();
@@ -94,6 +104,8 @@ test("shows a temporary torrent on Home and moves it into the Library by keeping
   const section = page.getByRole("region", { name: "Temporary torrents" });
   const title = section.locator(`a[href="/titles/${id}"]`);
   await expect(title).toBeVisible();
+  await expect(title).toContainText("Harbor Lights");
+  await expect(title.locator("img")).toHaveJSProperty("naturalWidth", 1);
   await expect(section.getByRole("link", { name: "See all" })).toHaveCount(0);
   await expect(section.getByRole("button", { name: "Add to library" })).toHaveCount(0);
 
@@ -108,7 +120,9 @@ test("shows a temporary torrent on Home and moves it into the Library by keeping
   ).toBeVisible();
   await expect(section).toHaveCount(0);
   await page.getByRole("navigation").getByRole("link", { name: "Library" }).click();
-  await expect(page.locator(`main a[href="/titles/${id}"]`)).toBeVisible();
+  const saved = page.locator(`main a[href="/titles/${id}"]`);
+  await expect(saved).toContainText("Harbor Lights");
+  await expect(saved.locator("img")).toHaveJSProperty("naturalWidth", 1);
 });
 
 test("opens the full temporary list and returns there after deleting a torrent", async ({
@@ -1083,6 +1097,33 @@ test.describe("on the real server", () => {
 });
 
 test.describe("the demo", () => {
+  test("shows the sample temporary poster and keeps it in the Library", async ({ page }) => {
+    await page.goto("/demo");
+    const row = page.getByRole("region", { name: "Temporary torrents" });
+    const card = row.getByRole("link", { name: /Northbound Signal/ });
+    const image = card.locator("img");
+    await expect(image).toHaveJSProperty("naturalWidth", 600);
+    await expect(card.getByText("Northbound Signal", { exact: true })).toHaveCount(1);
+
+    await page.setViewportSize({ width: 360, height: 760 });
+    await expect(card).toBeVisible();
+    expect(await page.locator("main").evaluate((main) => main.scrollWidth)).toBeLessThanOrEqual(
+      360,
+    );
+    await card.click();
+    await expect(
+      page.getByText("A late train picks up a signal from a station that closed years ago."),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Add to library" }).click();
+    await expect(page.getByRole("button", { name: "Keep on disk" })).toBeVisible();
+
+    await page.goBack();
+    await expect(row).toHaveCount(0);
+    await page.getByRole("navigation").getByRole("link", { name: "Library" }).click();
+    const saved = page.getByRole("main").getByRole("link", { name: /Northbound Signal/ });
+    await expect(saved.locator("img")).toHaveJSProperty("naturalWidth", 600);
+  });
+
   test("runs the pages and plays its video without the API", async ({ page }) => {
     const reached: string[] = [];
     page.on("request", (request) => {

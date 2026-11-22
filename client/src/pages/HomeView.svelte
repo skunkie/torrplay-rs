@@ -171,7 +171,7 @@ SPDX-License-Identifier: MIT
           </a>
         {/if}
       </div>
-      <TemporaryTorrentRows torrents={temporary.items} focusFirst={!lead} />
+      <TemporaryTorrentRows torrents={temporary.items} {poster} focusFirst={!lead} />
     </section>
   {/if}
 

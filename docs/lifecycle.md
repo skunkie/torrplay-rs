@@ -389,10 +389,10 @@ temporary`; every other torrent is persisted.
   temporary or any torrents, and the facets and listing version count the
   torrents the filter holds. The DLNA media server never shows it. Reading
   it by its ID, its files, and its statistics work as for any torrent.
-- It takes no library members or poster, and no change to disk storage:
-  creating one with library members or disk storage is
-  `422 validation-failed` naming each member, and a later configuration
-  change of them or a poster upload is `409 lifecycle-conflict`.
+- Clients can supply library members on creation or through the configuration
+  and upload a poster of up to 1 MiB. Both stay in memory and are discarded
+  with the torrent. Creating it in disk storage is `422 validation-failed`.
+  Switching to disk while it remains temporary is `409 lifecycle-conflict`.
 - Its files take progress like any torrent's, kept by the torrent's info
   hash and the file's ID rather than its torrent ID, so the progress
   outlives it: adding the same torrent again, temporary, finds the
@@ -412,7 +412,7 @@ temporary`; every other torrent is persisted.
   more deletes the one unwatched longest; if every one is streaming, the
   creation is `409 too-many-temporary-torrents` and nothing changes.
 - A configuration change to `retention: persisted` keeps the torrent: it is
-  stored with its source, ID, and configuration before the response, as
+  stored with its source, ID, configuration, and poster before the response, as
   [Persistence](#persistence) describes, and from then on it is an ordinary
   persisted torrent. Its files' progress becomes ordinary progress in the
   same write. A failed write leaves it temporary. A persisted
@@ -534,7 +534,10 @@ configuration.
   whose bytes must begin with the signature of the type its `Content-Type`
   names. It answers `201` with `Location` when the torrent had no poster and
   `204` when it replaces one, both with the poster's ETag, a digest of its
-  bytes. The server never fetches an image from a URL.
+  bytes. Send `If-None-Match: *` to upload only when the torrent has no
+  poster. If another upload already supplied one, the conditional request
+  returns `412 precondition-failed`. The server never fetches an image from
+  a URL.
 - `GET` serves the image as uploaded, with `X-Content-Type-Options: nosniff`
   and `Content-Security-Policy: sandbox`, and `DELETE` removes it; without a
   poster both are `not-found`. The torrent resource's `poster` gives its

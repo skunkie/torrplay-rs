@@ -21,7 +21,52 @@ function answering(response: () => Response) {
   return { backend, fetch };
 }
 
+function replying(replies: Response[]) {
+  return answering(() => {
+    const reply = replies.shift();
+    if (!reply) throw new Error("Unexpected request after the configured replies");
+    return reply;
+  });
+}
+
 const image = new File(["x"], "poster.png", { type: "image/png" });
+
+it("rereads configuration and keeps the torrent after metadata makes its ETag stale", async () => {
+  const configuration = (tag: string) =>
+    Response.json({ retention: "temporary" }, { headers: { ETag: tag } });
+  const replies = [
+    configuration('"old"'),
+    new Response(null, { status: 412 }),
+    configuration('"with-metadata"'),
+    Response.json({ retention: "persisted" }),
+  ];
+  const { backend, fetch } = replying(replies);
+
+  await backend.keepTorrent("trr_a", "memory");
+
+  expect(fetch.mock.calls.map(([request]) => request.method)).toEqual([
+    "GET",
+    "PATCH",
+    "GET",
+    "PATCH",
+  ]);
+  const retry = fetch.mock.lastCall?.[0];
+  expect(retry?.headers.get("If-Match")).toBe('"with-metadata"');
+  expect(await retry?.json()).toEqual({ retention: "persisted" });
+});
+
+it("leaves storage alone if another request kept the torrent during promotion", async () => {
+  const replies = [
+    Response.json({ retention: "temporary" }, { headers: { ETag: '"temporary"' } }),
+    new Response(null, { status: 412 }),
+    Response.json({ retention: "persisted" }, { headers: { ETag: '"persisted"' } }),
+  ];
+  const { backend, fetch } = replying(replies);
+
+  await backend.keepTorrent("trr_a", "disk");
+
+  expect(fetch.mock.calls.map(([request]) => request.method)).toEqual(["GET", "PATCH", "GET"]);
+});
 
 it.each([201, 204])("takes a poster stored with an empty %i", async (status) => {
   const { backend, fetch } = answering(() => new Response(null, { status }));

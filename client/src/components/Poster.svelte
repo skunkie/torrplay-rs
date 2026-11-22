@@ -14,6 +14,8 @@ SPDX-License-Identifier: MIT
     /** The poster's URL, or `undefined` for a tile in the title's color. */
     url: string | undefined;
     title: string;
+    /** Hide the caption when the surrounding layout already displays the title. */
+    showTitle?: boolean;
     /** The media type for the icon on a tile without a poster. */
     kind?: TorrentKind | null;
     /** A short state shown over the poster, such as "Paused". */
@@ -22,7 +24,7 @@ SPDX-License-Identifier: MIT
     diskLabel?: string | undefined;
   }
 
-  let { url, title, kind, badge, diskLabel }: Props = $props();
+  let { url, title, showTitle = true, kind, badge, diskLabel }: Props = $props();
 
   const tone = $derived(toneOf(title));
 </script>
@@ -64,4 +66,6 @@ SPDX-License-Identifier: MIT
     </span>
   {/if}
 </span>
-<span class="line-clamp-3 text-sm font-semibold wrap-break-word">{@render name()}</span>
+{#if showTitle}
+  <span class="line-clamp-3 text-sm font-semibold wrap-break-word">{@render name()}</span>
+{/if}

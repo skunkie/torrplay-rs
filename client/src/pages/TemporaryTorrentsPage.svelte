@@ -12,7 +12,9 @@ SPDX-License-Identifier: MIT
   import { cursorOf, type Torrent } from "../lib/backend";
   import { useBackend } from "../lib/context";
   import { pollFailure } from "../lib/engine.svelte";
+  import { imageGrant, refreshGrant } from "../lib/grant.svelte";
   import { t } from "../lib/i18n/index.svelte";
+  import { posterUrl } from "../lib/playback";
   import { poll } from "../lib/poll";
   import { homePath } from "../lib/routes";
 
@@ -65,6 +67,9 @@ SPDX-License-Identifier: MIT
   }
 
   $effect(() => untrack(() => poll(refresh, POLL_MS)));
+  $effect(() => {
+    void refreshGrant(backend);
+  });
 </script>
 
 <div class="flex flex-col gap-4">
@@ -89,6 +94,10 @@ SPDX-License-Identifier: MIT
   {:else if torrents.length === 0}
     <p class="text-text-muted">{t().temporaryTorrents.empty}</p>
   {:else}
-    <TemporaryTorrentRows {torrents} focusFirst />
+    <TemporaryTorrentRows
+      {torrents}
+      poster={(torrent) => posterUrl(torrent, imageGrant.current)}
+      focusFirst
+    />
   {/if}
 </div>

@@ -247,7 +247,7 @@ enum Command {
     SetTemporaryProgress(StoredTemporaryProgress, Reply<()>),
     DeleteTemporaryProgress(ProfileId, InfoHashV1, FileId, Reply<()>),
     ExpireTemporaryProgress(SystemTime, Reply<()>),
-    Promote(StoredTorrent, InfoHashV1, Reply<()>),
+    Promote(StoredTorrent, Option<(ImageInfo, Vec<u8>)>, Reply<()>),
     DeleteTitleProgress(ProfileId, TitleKey, Reply<()>),
     SetDismissal(StoredDismissal, Reply<()>),
     SetPassword(PasswordHash, SystemTime, bool, Reply<()>),
@@ -521,15 +521,15 @@ impl Store {
     }
 
     /// Stores a temporary torrent that becomes persisted, as
-    /// [`insert`](Self::insert) does, and in the same transaction turns the
+    /// [`insert`](Self::insert) does, including an optional poster, and in the same transaction turns the
     /// progress of the temporary torrent with the info hash into its
     /// progress.
     pub async fn promote(
         &self,
         torrent: StoredTorrent,
-        info_hash: InfoHashV1,
+        poster: Option<(ImageInfo, Vec<u8>)>,
     ) -> Result<(), StoreError> {
-        self.send(|reply| Command::Promote(torrent, info_hash, reply))
+        self.send(|reply| Command::Promote(torrent, poster, reply))
             .await
     }
 

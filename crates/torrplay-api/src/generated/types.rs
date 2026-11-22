@@ -680,7 +680,7 @@ impl AsRef<str> for CreationStorageMode {
         self.as_str()
     }
 }
-///Whether the application keeps the new torrent, as Retention describes. It defaults to persisted. A temporary torrent must use memory storage and set no library members.
+///Whether the application keeps the new torrent, as Retention describes. It defaults to persisted. A temporary torrent must use memory storage.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum CreationRetention {
     #[default]
@@ -734,7 +734,7 @@ impl AsRef<str> for CreationDesiredState {
         self.as_str()
     }
 }
-///A JSON merge patch of a torrent's configuration. Omitted members keep their values. Setting retention to persisted keeps a temporary torrent; a temporary torrent takes no other change of storage mode or library member until then. A library member set to null takes its default: null, or an empty list for categories and genres. A list replaces the whole list, as RFC 7396 replaces arrays.
+///A JSON merge patch of a torrent's configuration. Omitted members keep their values. Setting retention to persisted keeps a temporary torrent, including its library members and poster. Storage mode can change to disk only when the torrent is persisted. A library member set to null takes its default, which is an empty list for categories and genres and null for other library members. A list replaces the whole list, as RFC 7396 replaces arrays.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct TorrentConfigurationPatch {
     ///The categories, replacing the current ones; null clears them.
@@ -930,7 +930,7 @@ pub struct TorrentFailure {
     ///An explanation of the failure.
     pub detail: String,
 }
-///Whether the application keeps the torrent. A persisted torrent is stored and survives restarts. A temporary torrent lives in memory storage only: it is hidden from the listing by default and from the DLNA media server, takes no library members or poster, and is deleted once it has gone unwatched for the temporary_idle_seconds setting, or when the application restarts. Its files' progress is kept by its info hash for the temporary_progress_seconds setting. Changing it to persisted keeps the torrent with its ID; a persisted torrent cannot become temporary. Clients must handle values added later.
+///Whether the application keeps the torrent. A persisted torrent is stored and survives restarts. A temporary torrent lives in memory storage only: it is hidden from the listing by default and from the DLNA media server, and is deleted with its library members and poster once it has gone unwatched for the temporary_idle_seconds setting, or when the application restarts. Its files' progress is kept by its info hash for the temporary_progress_seconds setting. Changing it to persisted keeps the torrent with its ID, library members, and poster. A persisted torrent cannot become temporary. Clients must handle values added later.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum Retention {
     #[default]
