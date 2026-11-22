@@ -150,6 +150,18 @@ it("ignores a late refresh for the previous filters", async () => {
   expect(calls.at(-1)?.[0].kind).toBe("series");
 });
 
+it("labels disk posters independently of playback state", async () => {
+  const disk = torrent(2, { storage_mode: "disk", observed_state: "paused" });
+  const { fake } = backend(() => ({
+    unchanged: false,
+    data: page([disk, torrent(3)]),
+    etag: '"test"',
+  }));
+  render(LibraryPage, { context: backendContext(fake) });
+  expect(await screen.findByRole("img", { name: "On disk" })).toBeInTheDocument();
+  expect(screen.getByText("Paused")).toBeInTheDocument();
+});
+
 it("narrows what it holds at once, then shows what the server finds", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const harbor = torrent(1, { title: "Harbor" });

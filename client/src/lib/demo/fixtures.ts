@@ -280,6 +280,10 @@ export function fixtures(): Fixture[] {
       failure: { detail: "The disk that holds this torrent is full." },
       storage_mode: "disk",
     }),
+    movie(8, "Northbound.Signal.2024.1080p", 0.3, {
+      name: "Northbound Signal (2024)",
+      retention: "temporary",
+    }),
   ];
 }
 

@@ -13,7 +13,7 @@ import type {
   Preload,
   Profile,
   Progress,
-  Settings,
+  SettingsPatch,
   Torrent,
   TorrentConfiguration,
   TorrentFile,
@@ -25,7 +25,7 @@ import { nextEpisode, playables } from "../episodes";
 import { IMAGE_TYPES } from "../limits";
 import { LOG_LEVELS } from "../logs";
 import { parseMagnet } from "../magnet";
-import { searchTorrents } from "../search";
+import { rankedTorrents } from "../search";
 import {
   accessTokenFixtures,
   DEMO_RUN,
@@ -63,6 +63,31 @@ const LOG_PAGE_SIZE = 50;
 /** The share of a file played that marks it viewed, as the server's default. */
 const VIEWED_RATIO = 0.9;
 const PAGE_SIZE = 24;
+/** The server's limit for uploaded metainfo. */
+const METAINFO_MAX_BYTES = 33 * 1024 * 1024;
+
+type TorrentOrder = Pick<Torrent, "created_at" | "id">;
+
+function compareTorrentOrder(a: TorrentOrder, b: TorrentOrder): number {
+  return b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id);
+}
+
+/** The last match's rank and sort key, which remain usable if it is removed. */
+function listingAnchor(cursor: string): TorrentOrder & { rank: number } {
+  const [score, created_at, id, extra] = cursor.split(",");
+  const rank = Number(score);
+  if (
+    !score ||
+    !Number.isSafeInteger(rank) ||
+    rank < 0 ||
+    !created_at ||
+    !id ||
+    extra !== undefined
+  ) {
+    throw refused(400, "malformed-request", "The listing cursor could not be read.");
+  }
+  return { rank, created_at, id };
+}
 
 /** A zip archive with nothing in it: only its end-of-directory record. */
 const EMPTY_ZIP = new Uint8Array([0x50, 0x4b, 0x05, 0x06, ...new Array<number>(18).fill(0)]);
@@ -76,6 +101,9 @@ interface Held {
   ratio: number;
   since: number;
   reading: boolean;
+  /** Active demo players and the most recent activity of a temporary torrent. */
+  players: number;
+  idleSince: number;
   /** When a magnet link's metadata arrives, if it has yet to. */
   metadataAt: number | undefined;
   /** The files and details that arrive with the metadata. */
@@ -84,8 +112,7 @@ interface Held {
   configuredKind: TorrentConfiguration["kind"];
   /** Whether it stays paused when its metadata arrives. */
   paused: boolean;
-  /** What tells this torrent from others: its info hash as a magnet link
-   * writes it, or a torrent file's name. */
+  /** The magnet's info hash or a fingerprint of the uploaded torrent file. */
   identity: string;
   version: number;
 }
@@ -103,6 +130,25 @@ function refused(status: number, name: string, detail: string, members: object =
 
 function notFound(): ApiError {
   return refused(404, "not-found", "The demo has no such thing.");
+}
+
+/** FNV-1a over the uploaded bytes, independent of the filename. The demo
+ * synthesizes files instead of parsing the uploaded metainfo. */
+async function fileIdentity(file: File): Promise<string> {
+  if (file.size > METAINFO_MAX_BYTES) {
+    throw refused(413, "content-too-large", "The torrent file is too large.");
+  }
+  const reader = file.stream().getReader();
+  let hash = 0xcbf29ce484222325n;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return `file:${file.size}:${hash.toString(16)}`;
+      for (const byte of value) hash = BigInt.asUintN(64, (hash ^ BigInt(byte)) * 0x100000001b3n);
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 /** `bits` as a BEP 3 bitfield in lowercase hexadecimal. */
@@ -129,9 +175,12 @@ export function demoBackend(now: () => number = Date.now): Backend {
   const progress = new Map<string, Map<string, { torrentId: string; progress: Progress }>>([
     [FIRST_PROFILE, new Map(progressFixtures().map((entry) => [entry.progress.file_id, entry]))],
   ]);
+  /** Temporary progress uses the source identity and file index across torrent IDs. */
+  const temporaryProgress = new Map<string, Map<string, Progress>>();
   const dismissed = new Set<string>();
-  const preloads = new Map<string, { at: number; offset: number | null }>();
-  let settings = settingsFixture();
+  const preloads = new Map<string, { torrentId: string; at: number; offset: number | null }>();
+  const defaults = settingsFixture();
+  const settings = { ...defaults };
   let settingsVersion = 1;
   let serial = held.size;
   /** The password never checks anything here, as it is not known to the
@@ -139,8 +188,8 @@ export function demoBackend(now: () => number = Date.now): Backend {
   let passwordAt: string | undefined = new Date(started).toISOString();
   let tokens = accessTokenFixtures(started);
   const logged = logFixtures(started);
-  /** Bumped by every change a listing would show. */
-  let version = 1;
+  /** Version of the demo's Up next response. */
+  let upNextVersion = 1;
 
   function adopt(fixture: Fixture, at: number): Held {
     return {
@@ -149,6 +198,8 @@ export function demoBackend(now: () => number = Date.now): Backend {
       ratio: fixture.ratio,
       since: at,
       reading: fixture.reading ?? false,
+      players: 0,
+      idleSince: at,
       metadataAt: undefined,
       pending: undefined,
       configuredKind: fixture.torrent.kind,
@@ -178,18 +229,73 @@ export function demoBackend(now: () => number = Date.now): Backend {
     });
   }
 
+  function removeTorrent(id: string): void {
+    held.delete(id);
+    for (const [preloadId, preload] of preloads) {
+      if (preload.torrentId === id) preloads.delete(preloadId);
+    }
+    for (const own of progress.values()) {
+      for (const [fileId, entry] of own) {
+        if (entry.torrentId === id) own.delete(fileId);
+      }
+    }
+    upNextVersion += 1;
+  }
+
+  function makeRoomForTemporary(items: Held[]): void {
+    const temporary = items.filter((item) => item.torrent.retention === "temporary");
+    const needed = temporary.length - settings.temporary_torrent_limit + 1;
+    if (needed <= 0) return;
+
+    const idle = temporary
+      .filter((item) => !item.reading && item.players === 0)
+      .sort((a, b) => a.idleSince - b.idleSince || a.torrent.id.localeCompare(b.torrent.id));
+    // Like the server, evict idle torrents even if active ones still fill the limit.
+    for (const item of idle.slice(0, needed)) removeTorrent(item.torrent.id);
+    if (idle.length < needed) {
+      throw refused(
+        409,
+        "too-many-temporary-torrents",
+        "There is no room for another temporary torrent.",
+      );
+    }
+  }
+
+  /** Checks expiry on access, without keeping a timer across demo visits. */
+  function expire(item: Held, at: number): boolean {
+    if (
+      item.torrent.retention !== "temporary" ||
+      item.reading ||
+      item.players > 0 ||
+      at - item.idleSince < settings.temporary_idle_seconds * 1000
+    )
+      return false;
+    const id = item.torrent.id;
+    removeTorrent(id);
+    log("info", "torrplay_server::app", "an unwatched temporary torrent was deleted", {
+      torrent_id: id,
+    });
+    return true;
+  }
+
   /** The torrent with `id`, its metadata applied if that has arrived. */
   function read(id: string): Held {
     const item = held.get(id);
-    if (!item) throw notFound();
-    if (item.metadataAt !== undefined && now() >= item.metadataAt) {
+    const at = now();
+    if (!item || expire(item, at)) throw notFound();
+    return withMetadata(item, at);
+  }
+
+  function withMetadata(item: Held, at: number): Held {
+    if (item.metadataAt !== undefined && at >= item.metadataAt) {
       Object.assign(item.torrent, item.pending?.torrent, {
+        kind: item.configuredKind ?? item.pending?.torrent.kind ?? null,
         observed_state: item.paused ? "paused" : "downloading",
       } satisfies Partial<Torrent>);
       item.files = item.pending?.files ?? [];
       item.metadataAt = undefined;
       item.pending = undefined;
-      item.since = now();
+      item.since = at;
       changed(item);
     }
     return item;
@@ -197,7 +303,7 @@ export function demoBackend(now: () => number = Date.now): Backend {
 
   function changed(item: Held): void {
     item.version += 1;
-    version += 1;
+    upNextVersion += 1;
   }
 
   function ratioOf(item: Held): number {
@@ -207,7 +313,11 @@ export function demoBackend(now: () => number = Date.now): Backend {
   }
 
   function all(): Held[] {
-    return [...held.keys()].map(read);
+    const at = now();
+    pruneTemporaryProgress(at);
+    return [...held.values()]
+      .filter((item) => !expire(item, at))
+      .map((item) => withMetadata(item, at));
   }
 
   function configurationOf(item: Held): TorrentConfiguration {
@@ -302,7 +412,7 @@ export function demoBackend(now: () => number = Date.now): Backend {
   ): { torrent: Partial<Torrent>; files: TorrentFile[] } {
     const size = 4 * 1024 ** 3;
     return {
-      torrent: { name, size_bytes: size, file_count: 1 },
+      torrent: { name, kind: "movie", size_bytes: size, file_count: 1 },
       files: [makeFile(n, 0, `${name}.mkv`, size)],
     };
   }
@@ -357,6 +467,58 @@ export function demoBackend(now: () => number = Date.now): Backend {
     }
   }
 
+  function temporaryFileKey(item: Held, index: number): string {
+    return JSON.stringify([item.identity, index]);
+  }
+
+  function pruneTemporaryProgress(at: number): void {
+    const cutoff = at - settings.temporary_progress_seconds * 1000;
+    for (const [profileId, own] of temporaryProgress) {
+      for (const [key, entry] of own) {
+        if (Date.parse(entry.updated_at) < cutoff) own.delete(key);
+      }
+      if (own.size === 0) temporaryProgress.delete(profileId);
+    }
+  }
+
+  function progressLinks(file: TorrentFile): Progress["links"] {
+    return {
+      self: `${file.links.self}/progress`,
+      profile: "",
+      torrent: file.links.torrent,
+      file: file.links.self,
+      content: file.links.content,
+    };
+  }
+
+  function progressForFile(entry: Progress, file: TorrentFile): Progress {
+    return { ...entry, file_id: file.id, links: progressLinks(file) };
+  }
+
+  function saveProgress(profileId: string, torrentId: string, saved: Progress): void {
+    let own = progress.get(profileId);
+    if (!own) {
+      own = new Map();
+      progress.set(profileId, own);
+    }
+    own.set(saved.file_id, { torrentId, progress: saved });
+  }
+
+  function promoteProgress(item: Held): void {
+    pruneTemporaryProgress(now());
+    const files = item.pending?.files ?? item.files;
+    for (const [profileId, own] of temporaryProgress) {
+      files.forEach((file, index) => {
+        const key = temporaryFileKey(item, index);
+        const entry = own.get(key);
+        if (!entry) return;
+        saveProgress(profileId, item.torrent.id, progressForFile(entry, file));
+        own.delete(key);
+      });
+      if (own.size === 0) temporaryProgress.delete(profileId);
+    }
+  }
+
   function upNextOf(profileId: string): UpNextEntry[] {
     const entries: UpNextEntry[] = [];
     for (const item of all()) {
@@ -392,25 +554,46 @@ export function demoBackend(now: () => number = Date.now): Backend {
     getReadiness: async () => true,
 
     async listTorrents(query, page) {
-      const persisted = all().filter((item) => item.torrent.retention === "persisted");
-      const etag = `"l-${version}-${JSON.stringify(query)}-${page.cursor ?? ""}"`;
+      const retention = query.retention ?? "persisted";
+      const scope = all().filter(
+        ({ torrent }) =>
+          (retention === "any" || torrent.retention === retention) &&
+          (!query.kind || torrent.kind === query.kind) &&
+          (!query.infoHash || torrent.info_hashes.some((hash) => hash.value === query.infoHash)),
+      );
+      const listingVersion = `lv-${scope.map(({ torrent, version }) => `${torrent.id}.${version}`).join(",")}`;
+      const size = page.pageSize ?? PAGE_SIZE;
+      const key = JSON.stringify([
+        listingVersion,
+        { ...query, retention },
+        size,
+        page.cursor ?? "",
+      ]);
+      const etag = `"l-${encodeURIComponent(key)}"`;
       if (page.etag === etag) return { unchanged: true };
-      const torrents = persisted.map((item) => item.torrent);
+      const torrents = scope.map((item) => item.torrent);
       const filtered = torrents
         .filter((torrent) => {
-          if (query.kind && torrent.kind !== query.kind) return false;
           if (query.category && !torrent.categories.includes(query.category)) return false;
           if (query.uncategorized && torrent.categories.length > 0) return false;
-          if (query.genre && !torrent.genres.includes(query.genre)) return false;
-          return (
-            !query.infoHash ||
-            torrent.info_hashes.some((infoHash) => infoHash.value === query.infoHash)
-          );
+          return !query.genre || torrent.genres.includes(query.genre);
         })
-        .sort((a, b) => b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id));
-      const matches = query.search ? searchTorrents(filtered, query.search) : filtered;
-      const size = page.pageSize ?? PAGE_SIZE;
-      const start = Number(page.cursor ?? 0);
+        .sort(compareTorrentOrder);
+      const matches = query.search
+        ? rankedTorrents(filtered, query.search)
+        : filtered.map((item) => ({ item, rank: 0 }));
+      const anchor = page.cursor ? listingAnchor(page.cursor) : undefined;
+      const remaining = anchor
+        ? matches.filter(({ item, rank }) =>
+            rank === anchor.rank ? compareTorrentOrder(item, anchor) > 0 : rank < anchor.rank,
+          )
+        : matches;
+      const visible = remaining.slice(0, size);
+      const last = visible.at(-1);
+      const next =
+        last && remaining.length > size
+          ? new URLSearchParams({ cursor: `${last.rank},${last.item.created_at},${last.item.id}` })
+          : undefined;
       const labels = (of: (torrent: Torrent) => string[]) => {
         const counts = new Map<string, number>();
         for (const label of torrents.flatMap(of)) {
@@ -419,20 +602,18 @@ export function demoBackend(now: () => number = Date.now): Backend {
         return [...counts].map(([name, count]) => ({ name, count }));
       };
       const data: TorrentPage = {
-        items: structuredClone(matches.slice(start, start + size)),
+        items: structuredClone(visible.map(({ item }) => item)),
         total_count: matches.length,
         facets: {
           total_count: torrents.length,
           uncategorized: torrents.filter((torrent) => torrent.categories.length === 0).length,
           categories: labels((torrent) => torrent.categories),
           genres: labels((torrent) => torrent.genres),
-          version: String(version),
+          version: listingVersion,
         },
         links: {
           self: "/api/v1/torrents",
-          ...(start + size < matches.length
-            ? { next: `/api/v1/torrents?cursor=${start + size}` }
-            : {}),
+          ...(next ? { next: `/api/v1/torrents?${next}` } : {}),
         },
       };
       return { unchanged: false, data, etag };
@@ -447,19 +628,22 @@ export function demoBackend(now: () => number = Date.now): Backend {
 
     async createTorrent(source, keeping) {
       const magnet = "magnetUri" in source ? parseMagnet(source.magnetUri) : undefined;
-      const fileName = "file" in source ? source.file.name.replace(/\.torrent$/i, "") : undefined;
-      if ("magnetUri" in source && !magnet) {
+      const file = "file" in source ? source.file : undefined;
+      const identity = file ? await fileIdentity(file) : magnet?.infoHash;
+      if (identity === undefined) {
         throw refused(422, "unsupported-torrent", "This magnet link could not be read.");
       }
-      const name = fileName ?? magnet?.name ?? "Unnamed.torrent";
-      const identity = magnet?.infoHash ?? name;
-      const existing = all().find((item) => item.identity === identity);
+      const name = file?.name.replace(/\.torrent$/i, "") ?? magnet?.name ?? "Unnamed.torrent";
+      const items = all();
+      const existing = items.find((item) => item.identity === identity);
       if (existing) {
         throw refused(409, "duplicate-torrent", "The demo already has this torrent.", {
           torrent: existing.torrent.links.self,
         });
       }
+      if (keeping.retention === "temporary") makeRoomForTemporary(items);
       const n = nextId();
+      const at = now();
       const contents = contentsOf(n, name);
       const torrent = makeTorrent(n, {
         info_hashes: [
@@ -470,32 +654,35 @@ export function demoBackend(now: () => number = Date.now): Backend {
         ],
         retention: keeping.retention,
         storage_mode: keeping.retention === "persisted" ? keeping.storageMode : "memory",
-        created_at: new Date(now()).toISOString(),
-        ...(fileName
+        created_at: new Date(at).toISOString(),
+        ...(file
           ? contents.torrent
           : { name: magnet?.name ?? null, observed_state: "retrieving_metadata" as const }),
       });
       held.set(torrent.id, {
         torrent,
-        files: fileName ? contents.files : [],
+        files: file ? contents.files : [],
         ratio: 0,
-        since: now(),
+        since: at,
         reading: false,
-        metadataAt: fileName ? undefined : now() + METADATA_MS,
-        pending: fileName ? undefined : contents,
+        players: 0,
+        idleSince: at,
+        metadataAt: file ? undefined : at + METADATA_MS,
+        pending: file ? undefined : contents,
         configuredKind: null,
         paused: false,
         identity,
         version: 1,
       });
       log("info", "torrplay_server::app", "a torrent was added", { torrent_id: torrent.id });
-      version += 1;
+      upNextVersion += 1;
       return structuredClone(torrent);
     },
 
     async keepTorrent(torrentId, storageMode) {
       const item = read(torrentId);
       if (item.torrent.retention !== "temporary") return;
+      promoteProgress(item);
       item.torrent.retention = "persisted";
       item.torrent.storage_mode = storageMode;
       changed(item);
@@ -503,16 +690,10 @@ export function demoBackend(now: () => number = Date.now): Backend {
 
     async deleteTorrent(torrentId) {
       read(torrentId);
-      held.delete(torrentId);
+      removeTorrent(torrentId);
       log("info", "torrplay_server::app", "a torrent was deleted", {
         torrent_id: torrentId,
       });
-      for (const own of progress.values()) {
-        for (const [fileId, entry] of own) {
-          if (entry.torrentId === torrentId) own.delete(fileId);
-        }
-      }
-      version += 1;
     },
 
     getTorrentStatistics: async (torrentId) => statisticsOf(read(torrentId)),
@@ -537,7 +718,7 @@ export function demoBackend(now: () => number = Date.now): Backend {
     }),
 
     async getStatistics() {
-      const items = [...held.keys()].map(read);
+      const items = all();
       const measured = items.map(statisticsOf);
       const sum = (of: (statistics: TorrentStatistics) => number) =>
         measured.reduce((total, statistics) => total + of(statistics), 0);
@@ -642,11 +823,19 @@ export function demoBackend(now: () => number = Date.now): Backend {
         }
       }
       if (patch.storage_mode) torrent.storage_mode = patch.storage_mode;
-      if (patch.retention) torrent.retention = patch.retention;
+      if (patch.retention) {
+        if (torrent.retention === "temporary" && patch.retention === "persisted") {
+          promoteProgress(item);
+        }
+        torrent.retention = patch.retention;
+      }
       if (patch.title !== undefined) torrent.title = patch.title;
       if (patch.kind !== undefined) {
         item.configuredKind = patch.kind;
-        torrent.kind = patch.kind ?? (item.files.some((file) => file.episode) ? "series" : "movie");
+        torrent.kind = patch.kind;
+        if (patch.kind === null && item.metadataAt === undefined) {
+          torrent.kind = item.files.some((file) => file.episode) ? "series" : "movie";
+        }
       }
       if (patch.year !== undefined) torrent.year = patch.year;
       if (patch.imdb_id !== undefined) torrent.imdb_id = patch.imdb_id;
@@ -684,7 +873,8 @@ export function demoBackend(now: () => number = Date.now): Backend {
     async previewTorrent(file) {
       const name = file.name.replace(/\.torrent$/i, "");
       const contents = contentsOf(0, name);
-      const existing = all().find((item) => item.identity === name);
+      const identity = await fileIdentity(file);
+      const existing = all().find((item) => item.identity === identity);
       return {
         info_hashes: [],
         name,
@@ -712,7 +902,15 @@ export function demoBackend(now: () => number = Date.now): Backend {
     },
 
     async listProgress(profileId, torrentId) {
-      read(torrentId);
+      const item = read(torrentId);
+      if (item.torrent.retention === "temporary") {
+        pruneTemporaryProgress(now());
+        const own = temporaryProgress.get(profileId);
+        return item.files.flatMap((file, index) => {
+          const entry = own?.get(temporaryFileKey(item, index));
+          return entry ? [progressForFile(entry, file)] : [];
+        });
+      }
       return [...(progress.get(profileId)?.values() ?? [])]
         .filter((entry) => entry.torrentId === torrentId)
         .map((entry) => structuredClone(entry.progress));
@@ -720,7 +918,8 @@ export function demoBackend(now: () => number = Date.now): Backend {
 
     async setProgress(profileId, torrentId, fileId, update) {
       const item = read(torrentId);
-      const file = item.files.find((candidate) => candidate.id === fileId);
+      const index = item.files.findIndex((candidate) => candidate.id === fileId);
+      const file = item.files[index];
       if (!file) throw notFound();
       const duration = update.duration_seconds ?? SAMPLE_SECONDS;
       const ratio = duration > 0 ? update.position_seconds / duration : 0;
@@ -734,33 +933,46 @@ export function demoBackend(now: () => number = Date.now): Backend {
         viewed,
         viewed_at: viewed ? at : null,
         updated_at: at,
-        links: {
-          self: `${file.links.self}/progress`,
-          profile: "",
-          torrent: file.links.torrent,
-          file: file.links.self,
-          content: file.links.content,
-        },
+        links: progressLinks(file),
       };
-      let own = progress.get(profileId);
-      if (!own) {
-        own = new Map();
-        progress.set(profileId, own);
+      if (item.torrent.retention === "temporary") {
+        let own = temporaryProgress.get(profileId);
+        if (!own) {
+          own = new Map();
+          temporaryProgress.set(profileId, own);
+        }
+        own.set(temporaryFileKey(item, index), saved);
+      } else {
+        saveProgress(profileId, torrentId, saved);
       }
-      own.set(fileId, { torrentId, progress: saved });
       dismissed.delete(`${profileId}/upn_${torrentId.slice(4)}`);
-      version += 1;
+      upNextVersion += 1;
       return structuredClone(saved);
     },
 
     async createPreload(torrentId, fileId, offset) {
-      read(torrentId);
+      const item = read(torrentId);
+      const at = now();
+      item.idleSince = at;
       const id = `prl_${String(nextId()).padStart(26, "a")}`;
-      preloads.set(id, { at: now(), offset: offset ?? null });
+      preloads.set(id, { torrentId, at, offset: offset ?? null });
       return preloadOf(id);
     },
 
-    getPreload: async (_torrentId, _fileId, preloadId) => preloadOf(preloadId),
+    async getPreload(torrentId, _fileId, preloadId) {
+      read(torrentId);
+      return preloadOf(preloadId);
+    },
+
+    beginPlayback(torrentId) {
+      const item = read(torrentId);
+      if (item.torrent.retention !== "temporary") return;
+      item.players += 1;
+      return () => {
+        item.players -= 1;
+        item.idleSince = now();
+      };
+    },
 
     async deletePreload(_torrentId, _fileId, preloadId) {
       preloads.delete(preloadId);
@@ -789,7 +1001,8 @@ export function demoBackend(now: () => number = Date.now): Backend {
       if (profile.links.avatar.startsWith("blob:")) URL.revokeObjectURL(profile.links.avatar);
       people.splice(people.indexOf(profile), 1);
       progress.delete(profileId);
-      version += 1;
+      temporaryProgress.delete(profileId);
+      upNextVersion += 1;
     },
 
     async setAvatar(profileId, image) {
@@ -818,7 +1031,7 @@ export function demoBackend(now: () => number = Date.now): Backend {
     },
 
     async listUpNext(profileId, page) {
-      const etag = `"u-${version}-${profileId}"`;
+      const etag = `"u-${upNextVersion}-${profileId}"`;
       if (page.etag === etag) return { unchanged: true };
       const items = upNextOf(profileId);
       return { unchanged: false, data: { items, links: { self: "" } }, etag };
@@ -826,7 +1039,7 @@ export function demoBackend(now: () => number = Date.now): Backend {
 
     async dismissUpNext(profileId, entryId) {
       dismissed.add(`${profileId}/${entryId}`);
-      version += 1;
+      upNextVersion += 1;
     },
 
     getSettings: async () => ({ data: structuredClone(settings), etag: `"s-${settingsVersion}"` }),
@@ -839,7 +1052,10 @@ export function demoBackend(now: () => number = Date.now): Backend {
           "The settings have changed since they were read.",
         );
       }
-      settings = { ...settings, ...patch } as Settings;
+      for (const key of Object.keys(patch) as (keyof SettingsPatch)[]) {
+        const value = patch[key];
+        if (value !== undefined) Object.assign(settings, { [key]: value ?? defaults[key] });
+      }
       settingsVersion += 1;
       log("info", "torrplay_server::app", "the settings changed", {
         changed: Object.keys(patch).join(", "),

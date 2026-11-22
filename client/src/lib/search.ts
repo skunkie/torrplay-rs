@@ -95,22 +95,19 @@ function rankMatch(query: SearchQuery, fields: string[]): number | undefined {
   return rank;
 }
 
-/** The `items` whose `fields` match `text`, best first; equal matches keep their
- * order. */
-export function searchItems<T>(items: T[], text: string, fields: (item: T) => string[]): T[] {
+/** Matches titles and names and exposes their ranks for pagination. Equal matches keep their order. */
+export function rankedTorrents(torrents: Torrent[], text: string) {
   const query = parseSearch(text);
-  return items
+  return torrents
     .flatMap((item) => {
-      const rank = rankMatch(query, fields(item));
+      const fields = [item.title, item.name].filter((field) => field !== null);
+      const rank = rankMatch(query, fields);
       return rank === undefined ? [] : [{ item, rank }];
     })
-    .sort((a, b) => b.rank - a.rank)
-    .map(({ item }) => item);
+    .sort((a, b) => b.rank - a.rank);
 }
 
 /** The `torrents` matching `text`, best first, by title and name. */
 export function searchTorrents(torrents: Torrent[], text: string): Torrent[] {
-  return searchItems(torrents, text, ({ title, name }) =>
-    [title, name].filter((field) => field !== null && field !== undefined),
-  );
+  return rankedTorrents(torrents, text).map(({ item }) => item);
 }

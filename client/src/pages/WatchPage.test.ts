@@ -8,6 +8,8 @@ import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 
 import App from "../App.svelte";
 import type { Backend, Profile, Progress, Torrent, TorrentFile } from "../lib/backend";
+import { demoBackend } from "../lib/demo/backend";
+import { torrentId } from "../lib/demo/fixtures";
 import { location, navigate } from "../lib/navigation.svelte";
 import type * as Audio from "../lib/player/audio";
 import type { AudioTrack } from "../lib/player/audio";
@@ -223,6 +225,33 @@ it("saves the position when playback pauses and keeps the viewed mark", async ()
       { keepalive: false },
     ),
   );
+});
+
+it("stops the demo player when a temporary torrent expires during a pause", async () => {
+  let now = Date.now();
+  const demo = demoBackend(() => now);
+  const id = torrentId(8);
+  const read = await demo.getTorrent(id);
+  const files = await demo.listFiles(id);
+  const [first] = files;
+  const beginPlayback = demo.beginPlayback;
+  if (read.unchanged || !first || !beginPlayback) {
+    throw new Error("the demo temporary torrent cannot be played");
+  }
+  const fake = backend(read.data, files);
+  fake.beginPlayback = beginPlayback;
+  navigate(watchPath(id, first.id));
+  render(App, { backend: fake });
+  const media = await video();
+  await fireEvent.play(media);
+  await fireEvent.pause(media);
+
+  now += (await demo.getSettings()).data.temporary_idle_seconds * 1000;
+  await fireEvent.play(media);
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("Title not found");
+  expect(media).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Add to library" })).not.toBeInTheDocument();
 });
 
 afterEach(() => {

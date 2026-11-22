@@ -285,6 +285,9 @@ These scenarios accept serving the [web client](adr/0011-web-client.md)
 | WEB-01 | GET a script of the bundle that Vite named by its content, again with its ETag, with `HEAD`, and a file it did not name so | `200` with its media type, `nosniff`, a strong ETag, and a year's immutable caching; `304`; the headers and length without a body; `no-cache` |
 | WEB-02 | GET `/`, page paths, a missing file, paths under `/api`, `/dlna`, `/stremio`, `/.well-known`, and `/livez`, and POST a page path | `index.html` with `no-cache` and the client's Content-Security-Policy for each page, which allows compiling WebAssembly but not evaluating JavaScript (`script-src 'self' 'wasm-unsafe-eval'`); `404 not-found` for the rest |
 | WEB-03 | GET a page and a script with a password set, and a page path without a bundle | `200` without a credential, while the API still needs one; `404 not-found` |
+| WEB-04 | Open Home with zero, three, and four temporary torrents | The row is absent with zero. It lists up to three below **Up next** and shows **See all** when more exist. **See all** opens the full list, which can be reloaded |
+| WEB-05 | Let a temporary torrent expire while browsing Home or **Temporary torrents**, then open the Library | The expired torrent disappears on refresh. The Library shows only saved torrents, with a hard-drive icon for disk storage alongside any state badge |
+| WEB-06 | Open a temporary torrent from Home or the full list and use **Add to library** in its **Download** panel | The torrent keeps its ID, appears in the Library, and leaves the temporary lists |
 
 ### Settings
 

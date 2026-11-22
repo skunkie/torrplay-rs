@@ -11,6 +11,7 @@ import {
   succeeded,
   unwrap,
 } from "./api/http";
+import type { components } from "./api/schema";
 
 export type Torrent = Schemas["Torrent"];
 export type TorrentPage = Schemas["TorrentPage"];
@@ -47,8 +48,10 @@ export type AccessTokenCreation = Schemas["AccessTokenCreation"];
 export type CreatedAccessToken = Schemas["CreatedAccessToken"];
 export type SettingsPatch = Schemas["SettingsPatch"];
 
-/** What the library lists: torrents matching every given filter. */
+/** Filters for listing torrents. Each result matches every supplied filter. */
 export interface TorrentQuery {
+  /** Which torrents to list by retention. Defaults to persisted torrents. */
+  retention?: components["parameters"]["RetentionFilter"];
   search?: string;
   kind?: TorrentKind;
   category?: string;
@@ -92,7 +95,7 @@ export interface PlaybackGrant {
 export interface Backend {
   /** Whether the application can serve what needs its engine. */
   getReadiness(): Promise<boolean>;
-  /** A page of the library's persisted torrents. */
+  /** A page of torrents matching the query. */
   listTorrents(query: TorrentQuery, page: PageRequest): Promise<Conditional<TorrentPage>>;
   /** A torrent, or `unchanged` when `etag` is still its ETag. */
   getTorrent(torrentId: string, etag?: string): Promise<Conditional<Torrent>>;
@@ -140,6 +143,8 @@ export interface Backend {
   getPreload(torrentId: string, fileId: string, preloadId: string): Promise<Preload>;
   /** Cancels a preload. */
   deletePreload(torrentId: string, fileId: string, preloadId: string): Promise<void>;
+  /** Tracks local playback in the demo until released. Throws if the torrent is gone. */
+  beginPlayback?(torrentId: string): (() => void) | undefined;
   /** Every profile, person and device, oldest first. */
   listProfiles(): Promise<Profile[]>;
   /** Adds a person. */
@@ -334,7 +339,7 @@ export function httpBackend(http: Http): Backend {
         await http.GET("/api/v1/torrents", {
           params: {
             query: {
-              retention: "persisted",
+              retention: query.retention ?? "persisted",
               ...(query.search ? { search: query.search, fuzzy: true } : {}),
               ...(query.kind ? { kind: [query.kind] } : {}),
               ...(query.category ? { category: [query.category] } : {}),

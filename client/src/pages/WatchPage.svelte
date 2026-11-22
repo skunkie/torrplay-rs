@@ -6,6 +6,7 @@ SPDX-License-Identifier: MIT
 <script lang="ts">
   import { untrack } from "svelte";
 
+  import { ApiError } from "../lib/api/http";
   import type { PlaybackGrant, Progress, Torrent, TorrentFile } from "../lib/backend";
   import { useBackend } from "../lib/context";
   import { fileName, torrentTitle } from "../lib/describe";
@@ -16,7 +17,7 @@ SPDX-License-Identifier: MIT
   import { playbackGrants, posterUrl, withGrant } from "../lib/playback";
   import { trackLabel } from "../lib/player/audio";
   import { AudioTracks } from "../lib/player/audio-tracks.svelte";
-  import { feedOf, subtitleHost } from "../lib/player/media";
+  import { feedOf, subtitleHost, trackPlayback } from "../lib/player/media";
   import { PlaybackPreload, resumeOffset } from "../lib/player/preload.svelte";
   import { ProgressSaver, type Sample, startPosition } from "../lib/player/progress";
   import { playSource } from "../lib/player/remux";
@@ -86,7 +87,7 @@ SPDX-License-Identifier: MIT
    * one is chosen, nothing is saved. */
   function save(sample: Sample, keepalive: boolean): void {
     const id = profileId;
-    if (!id) return;
+    if (!id || error) return;
     backend
       .setProgress(
         id,
@@ -143,6 +144,23 @@ SPDX-License-Identifier: MIT
   const url = $derived(
     file && grant !== null && preload?.settled ? withGrant(file.links.content, grant) : undefined,
   );
+
+  $effect(() => {
+    const beginPlayback = backend.beginPlayback;
+    if (!media || !url || !beginPlayback) return;
+    const id = torrentId;
+    return trackPlayback(media, () => {
+      try {
+        return beginPlayback.call(backend, id);
+      } catch (failure) {
+        error =
+          failure instanceof ApiError && failure.type === "not-found"
+            ? t().title.notFound
+            : failureMessage(failure);
+        return undefined;
+      }
+    });
+  });
 
   /** Apart from `file`, which every refresh of the files replaces. */
   const mediaType = $derived(file?.media_type);
@@ -224,7 +242,7 @@ SPDX-License-Identifier: MIT
     : undefined}
   onskippreload={() => preload?.skip()}
   {error}
-  library={torrent?.retention !== "temporary"
+  library={error || torrent?.retention !== "temporary"
     ? undefined
     : added
       ? "added"

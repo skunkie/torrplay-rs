@@ -78,6 +78,122 @@ test("plays a magnet link from a peer and adds it to the library", async ({ page
   await expect(page.getByText("The library is empty.")).toBeVisible();
 });
 
+test("shows a temporary torrent on Home and moves it into the Library by keeping it", async ({
+  page,
+  request,
+}) => {
+  const created = await request.post("/api/v1/torrents", {
+    data: { magnet_uri: environment("TORRPLAY_E2E_MAGNET"), retention: "temporary" },
+  });
+  expect(created.status()).toBe(201);
+  const { id } = (await created.json()) as { id: string };
+
+  await page.goto("/library");
+  await expect(page.getByText("The library is empty.")).toBeVisible();
+  await page.getByRole("navigation").getByRole("link", { name: "Home" }).click();
+  const section = page.getByRole("region", { name: "Temporary torrents" });
+  const title = section.locator(`a[href="/titles/${id}"]`);
+  await expect(title).toBeVisible();
+  await expect(section.getByRole("link", { name: "See all" })).toHaveCount(0);
+  await expect(section.getByRole("button", { name: "Add to library" })).toHaveCount(0);
+
+  await title.click();
+  await expect(page).toHaveURL(`/titles/${id}`);
+  await page.getByRole("button", { name: "Add to library" }).click();
+  await expect(page.getByRole("button", { name: "Keep on disk" })).toBeVisible();
+
+  await page.goBack();
+  await expect(
+    page.getByRole("region", { name: "Recently added" }).locator(`a[href="/titles/${id}"]`),
+  ).toBeVisible();
+  await expect(section).toHaveCount(0);
+  await page.getByRole("navigation").getByRole("link", { name: "Library" }).click();
+  await expect(page.locator(`main a[href="/titles/${id}"]`)).toBeVisible();
+});
+
+test("opens the full temporary list and returns there after deleting a torrent", async ({
+  page,
+  request,
+}) => {
+  const ids: string[] = [];
+  for (const index of [1, 2, 3, 4]) {
+    const created = await request.post("/api/v1/torrents", {
+      data: {
+        magnet_uri: `magnet:?xt=urn:btih:${String(index).repeat(40)}`,
+        retention: "temporary",
+      },
+    });
+    expect(created.status()).toBe(201);
+    ids.push(((await created.json()) as { id: string }).id);
+  }
+
+  await page.goto("/");
+  const section = page.getByRole("region", { name: "Temporary torrents" });
+  await expect(section.getByRole("listitem")).toHaveCount(3);
+  await section.getByRole("link", { name: "See all" }).click();
+  await expect(page).toHaveURL("/temporary-torrents");
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Temporary torrents", level: 1 })).toBeVisible();
+  await expect(page.locator("main li")).toHaveCount(4);
+
+  await page.locator(`main a[href="/titles/${ids[0]}"]`).click();
+  await deleteFromTitlePage(page);
+
+  await expect(page).toHaveURL("/temporary-torrents");
+  await expect(page.locator("main li")).toHaveCount(3);
+  await page.getByRole("link", { name: "Back", exact: true }).click();
+  await expect(section.getByRole("listitem")).toHaveCount(3);
+  await expect(section.getByRole("link", { name: "See all" })).toHaveCount(0);
+});
+
+test("returns to the original temporary-list URL after reloading or deleting a title", async ({
+  page,
+  request,
+}) => {
+  const created = await request.post("/api/v1/torrents", {
+    data: { magnet_uri: environment("TORRPLAY_E2E_MAGNET"), retention: "temporary" },
+  });
+  expect(created.status()).toBe(201);
+  const { id } = (await created.json()) as { id: string };
+  const origin = "/temporary-torrents/";
+  const title = page.locator(`main a[href="/titles/${id}"]`);
+
+  await page.goto(origin);
+  await title.click();
+  await page.reload();
+  await page.getByRole("link", { name: "Back", exact: true }).click();
+  await expect(page).toHaveURL(origin);
+
+  await title.click();
+  await deleteFromTitlePage(page);
+  await expect(page).toHaveURL(origin);
+  await expect(page.getByText("No temporary torrents.")).toBeVisible();
+});
+
+test("returns to the filtered Library after saving and reloading a title", async ({
+  page,
+  request,
+}) => {
+  const created = await request.post("/api/v1/torrents", {
+    data: { magnet_uri: environment("TORRPLAY_E2E_MAGNET"), retention: "persisted", kind: "movie" },
+  });
+  expect(created.status()).toBe(201);
+  const { id } = (await created.json()) as { id: string };
+  const origin = "/library?kind=movie";
+
+  await page.goto(origin);
+  await page.locator(`main a[href="/titles/${id}"]`).click();
+  await page.getByRole("link", { name: "Edit" }).click();
+  await page.getByRole("textbox", { name: "Title", exact: true }).fill("Harbor Lights");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page).toHaveURL(`/titles/${id}`);
+
+  await page.reload();
+  await page.getByRole("link", { name: "Back", exact: true }).click();
+  await expect(page).toHaveURL(origin);
+  await expect(page.getByRole("link", { name: /Harbor Lights/ })).toBeVisible();
+});
+
 test("uses the same v1 magnet topic as the server when looking in the library", async ({
   page,
   request,
@@ -1219,6 +1335,7 @@ test.describe("the demo", () => {
       const paths = [
         "/demo",
         "/demo/library",
+        "/demo/temporary-torrents",
         "/demo/add",
         "/demo/settings",
         ...["playback", "network", "stremio", "profiles", "security", "backup", "system"].map(
@@ -1233,6 +1350,9 @@ test.describe("the demo", () => {
         for (const path of paths) {
           await page.goto(path);
           await page.locator("main > *").first().waitFor();
+          if (path === "/demo/temporary-torrents") {
+            await page.locator("main li").first().waitFor();
+          }
           const over = await page.evaluate(
             () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
           );
@@ -1622,7 +1742,7 @@ test.describe("with only a remote's arrows and confirming key", () => {
 
   test("passes through the Library's dropdowns without changing them", async ({ page }) => {
     await page.goto("/demo/library");
-    const select = page.locator("main select").first();
+    const select = page.getByRole("combobox", { name: "Category" });
     await select.focus();
     await page.keyboard.press("ArrowDown");
     await expect(select).toHaveValue("");
@@ -1632,12 +1752,13 @@ test.describe("with only a remote's arrows and confirming key", () => {
 
   test("opens a dropdown with the confirming key and chooses in it", async ({ page }) => {
     await page.goto("/demo/library");
-    const select = page.locator("main select").first();
+    const select = page.getByRole("combobox", { name: "Category" });
     await select.focus();
     await page.keyboard.press("Enter");
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
     await expect(select).toHaveValue("Family");
+    await expect(page).toHaveURL("/demo/library?category=Family");
     await expect(select).toBeFocused();
   });
 

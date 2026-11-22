@@ -4,7 +4,26 @@
 
 import { expect, it, vi } from "vitest";
 
-import { feedOf, sampleOf, seekWhenReady } from "./media";
+import { feedOf, sampleOf, seekWhenReady, trackPlayback } from "./media";
+
+it("holds activity once per playback and releases it on pause or detach", () => {
+  const video = document.createElement("video");
+  const release = vi.fn();
+  const begin = vi.fn(() => release);
+  const detach = trackPlayback(video, begin);
+
+  video.dispatchEvent(new Event("play"));
+  video.dispatchEvent(new Event("play"));
+  expect(begin).toHaveBeenCalledTimes(1);
+  video.dispatchEvent(new Event("pause"));
+  expect(release).toHaveBeenCalledTimes(1);
+
+  video.dispatchEvent(new Event("play"));
+  detach();
+  video.dispatchEvent(new Event("play"));
+  expect(begin).toHaveBeenCalledTimes(2);
+  expect(release).toHaveBeenCalledTimes(2);
+});
 
 /** A video element reporting `readyState` and `duration`, as jsdom does
  * not load media. */

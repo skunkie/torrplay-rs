@@ -7,7 +7,12 @@ import { expect, it } from "vitest";
 import { formatQuery, parseQuery } from "./library-query";
 
 it("round-trips every filter through the page's query", () => {
-  const query = { search: "show", kind: "series", category: "TV/Anime", genre: "Comedy" } as const;
+  const query = {
+    search: "show",
+    kind: "series",
+    category: "TV/Anime",
+    genre: "Comedy",
+  } as const;
   const search = `?${formatQuery(query)}`;
   expect(search).toBe("?q=show&kind=series&category=TV%2FAnime&genre=Comedy");
   expect(parseQuery(search)).toEqual(query);
@@ -15,5 +20,10 @@ it("round-trips every filter through the page's query", () => {
 });
 
 it("drops values the library does not take", () => {
-  expect(parseQuery("?q=%20%20&kind=film&category=")).toEqual({});
+  expect(parseQuery("?q=%20%20&kind=film&category=&retention=unknown")).toEqual({});
+});
+
+it("ignores retention parameters because the Library lists saved torrents", () => {
+  expect(parseQuery("?retention=temporary&q=harbor")).toEqual({ search: "harbor" });
+  expect(formatQuery({ retention: "any" }).toString()).toBe("");
 });

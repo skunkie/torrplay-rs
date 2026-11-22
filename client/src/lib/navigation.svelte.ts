@@ -4,7 +4,7 @@
 
 import { untrack } from "svelte";
 
-import { demo, homePath, isDemoPath, match, pagePath } from "./routes";
+import { demo, homePath, isDemoPath, libraryPath, match, pagePath } from "./routes";
 
 /** The page's location, which the history API changes without reloading:
  * its path, and its query, which pages keep their state in. */
@@ -18,6 +18,9 @@ let newest = 0;
 
 /** Tells this history entry from others, across the back and forward buttons. */
 let entry = entryOf(window.history.state) ?? newEntry();
+
+/** The list recorded for the current torrent's history entry. */
+let listOrigin: string | undefined;
 
 /** Where each history entry this page has left was scrolled to. */
 // Bookkeeping that no page reads.
@@ -90,8 +93,21 @@ function restoreScroll(top: number): void {
   );
 }
 
-function pageName(): string | undefined {
-  return match(pagePath(location.path))?.name;
+function routeAt(target = location.path) {
+  const [path = ""] = target.split(/[?#]/, 1);
+  return match(pagePath(path));
+}
+
+function pageName() {
+  return routeAt()?.name;
+}
+
+function isListPage(name: ReturnType<typeof pageName>): boolean {
+  return name === "home" || name === "library" || name === "temporaryTorrents";
+}
+
+function listUrl(target: unknown): string | undefined {
+  return typeof target === "string" && isListPage(routeAt(target)?.name) ? target : undefined;
 }
 
 /** The links in the page's content to `href`, in the page's order. */
@@ -131,14 +147,24 @@ function restoreFocus(): void {
 }
 
 /** The list a title was last reached from, which its back arrow returns to:
- * Home, or the Library with its filters. */
+ * Home, Temporary torrents, or the Library with its filters. */
 export const listPath = $state({ value: homePath });
 
 function follow(): void {
   location.path = window.location.pathname;
   location.search = window.location.search;
-  const name = match(pagePath(location.path))?.name;
-  if (name === "home" || name === "library") listPath.value = here();
+  const route = routeAt();
+  const name = route?.name;
+  const state = window.history.state as { listOrigin?: unknown } | null;
+  listOrigin = route?.params.torrent_id
+    ? (listUrl(state?.listOrigin) ?? listUrl(cameFrom()))
+    : undefined;
+  if (isListPage(name)) {
+    listPath.value = here();
+  } else if (name === "title") {
+    if (listOrigin) listPath.value = listOrigin;
+    else if (cameFrom() === undefined) listPath.value = homePath;
+  }
 }
 
 /** Shows `target`, a path with an optional query, adding it to the history. */
@@ -147,10 +173,14 @@ export function navigate(target: string): void {
     // A title's back arrow returns to its list, as the back button does.
     const returning = pageName() === "title" && target === listPath.value;
     const from = here();
+    const torrentId = routeAt(target)?.params.torrent_id;
+    const origin = torrentId
+      ? (listUrl(from) ?? (routeAt()?.params.torrent_id === torrentId ? listOrigin : undefined))
+      : undefined;
     positions.set(entry, window.scrollY);
     noteLinkFollowed();
     entry = newEntry();
-    window.history.pushState({ entry, from }, "", target);
+    window.history.pushState({ entry, from, listOrigin: origin }, "", target);
     follow();
     stopRestoring?.();
     // A new page starts at its top; the history's own moves restore theirs.
@@ -178,6 +208,15 @@ export function goBack(fallback: string): void {
 function returnTo(target: string): void {
   if (cameFrom() === target) window.history.back();
   else navigate(target);
+}
+
+/** Returns to the list that opened a deleted torrent, or to the Library. */
+export function returnAfterDelete(temporary: boolean): void {
+  if (listOrigin && (routeAt(listOrigin)?.name !== "home" || temporary)) {
+    returnTo(listOrigin);
+    return;
+  }
+  navigate(libraryPath);
 }
 
 /** Replaces the current page's query with `query`, without adding to the
@@ -233,7 +272,7 @@ export function startNavigation(): () => void {
     } else {
       // The history has moved already: this puts the page held back on top.
       const from = window.location.pathname + window.location.search;
-      window.history.pushState({ entry, from }, "", here());
+      window.history.pushState({ entry, from, listOrigin }, "", here());
     }
   };
   const pressed = () => (usingKeys = true);

@@ -21,12 +21,11 @@ SPDX-License-Identifier: MIT
   import { playables } from "../lib/episodes";
   import { imageGrant, refreshGrant } from "../lib/grant.svelte";
   import { failureMessage, t } from "../lib/i18n/index.svelte";
-  import { navigate } from "../lib/navigation.svelte";
+  import { returnAfterDelete } from "../lib/navigation.svelte";
   import { namePage } from "../lib/page-title.svelte";
   import { posterUrl } from "../lib/playback";
   import { poll } from "../lib/poll";
   import { loadProfiles, profiles } from "../lib/profile.svelte";
-  import { libraryPath } from "../lib/routes";
   import TitleView from "./TitleView.svelte";
 
   const POLL_MS = 5000;
@@ -181,13 +180,14 @@ SPDX-License-Identifier: MIT
   onkeepinmemory={() => act((api, id) => changeTorrent(api, id, { storage_mode: "memory" }))}
   onaddtolibrary={() => act((api, id) => api.keepTorrent(id, "memory"))}
   ondelete={async () => {
+    const temporary = torrent?.retention === "temporary";
     busy = true;
     actionError = undefined;
     try {
       await backend.deleteTorrent(torrentId);
-      navigate(libraryPath);
+      returnAfterDelete(temporary);
     } catch (failure) {
-      if (failure instanceof ApiError && failure.type === "not-found") navigate(libraryPath);
+      if (failure instanceof ApiError && failure.type === "not-found") returnAfterDelete(temporary);
       else actionError = failureMessage(failure);
     } finally {
       busy = false;

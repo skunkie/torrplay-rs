@@ -2,12 +2,21 @@
 //
 // SPDX-License-Identifier: MIT
 
+import { File as ReadableFile } from "node:buffer";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../api/http";
-import { type Backend, changeTorrent, cursorOf, duplicateOf, type Torrent } from "../backend";
+import {
+  type Backend,
+  changeTorrent,
+  cursorOf,
+  duplicateOf,
+  type Torrent,
+  type TorrentQuery,
+  type TorrentSource,
+} from "../backend";
 import { failureMessage } from "../i18n/index.svelte";
 import { pieceCounts, pieceState } from "../pieces";
 import { demoBackend } from "./backend";
@@ -16,9 +25,16 @@ import { FIRST_PROFILE, POSTER_BYTES, torrentId } from "./fixtures";
 const LIGHTHOUSE = torrentId(1);
 const GLASS_HARBOR = torrentId(3);
 const ORCHARD_ROAD = torrentId(7);
+const TEMPORARY = torrentId(8);
 const MAGNET = `magnet:?xt=urn:btih:${"a".repeat(40)}&dn=Night.Ferry`;
 const BASE32_A = "magnet:?xt=urn:btih:ge4dcmrqge4dcmrqge4dcmrqge4dcmrq";
 const BASE32_B = "magnet:?xt=urn:btih:mfrggzdfmztwq2lknnwg23tpobyxe43u";
+
+/** jsdom's File has no stream. Node's File supplies one, with a different
+ * TypeScript overload for byte readers the demo does not use. */
+function upload(content: string, name: string): File {
+  return new ReadableFile([content], name) as unknown as File;
+}
 
 /** A backend on a clock the test moves. */
 function start(): { backend: Backend; advance: (ms: number) => void } {
@@ -31,7 +47,7 @@ function start(): { backend: Backend; advance: (ms: number) => void } {
   };
 }
 
-async function library(backend: Backend, query = {}): Promise<Torrent[]> {
+async function listedTorrents(backend: Backend, query: TorrentQuery = {}): Promise<Torrent[]> {
   const page = await backend.listTorrents(query, {});
   return page.unchanged ? [] : page.data.items;
 }
@@ -47,7 +63,7 @@ describe("the library", () => {
     const { backend } = start();
     const { id } = await backend.createTorrent({ magnetUri: MAGNET }, { retention: "temporary" });
 
-    const items = await library(backend);
+    const items = await listedTorrents(backend);
 
     const created = items.map((item) => item.created_at);
     expect(created).toEqual([...created].sort().reverse());
@@ -62,12 +78,12 @@ describe("the library", () => {
     [{ search: "зима долгая" }, ["Долгая зима"]],
     [{ search: "harbr" }, []],
     [{ genre: "Comedy" }, ["Paper Moons"]],
-    [{ kind: "other" }, ["Small Engines"]],
+    [{ kind: "other" as const }, ["Small Engines"]],
     [{ category: "Documentaries" }, ["Small Engines"]],
   ])("filters by %o", async (query, titles) => {
     const { backend } = start();
 
-    expect((await library(backend, query)).map((item) => item.title)).toEqual(titles);
+    expect((await listedTorrents(backend, query)).map((item) => item.title)).toEqual(titles);
   });
 
   it("counts every choice in the facets, whatever the filter", async () => {
@@ -81,6 +97,151 @@ describe("the library", () => {
     expect(page.data.facets.genres.map((genre) => genre.name)).toContain("Drama");
   });
 
+  it("lists and counts torrents within the requested retention", async () => {
+    const { backend } = start();
+    const saved = await listedTorrents(backend);
+    const temporary = await backend.listTorrents({ retention: "temporary" }, {});
+    if (temporary.unchanged || !temporary.etag) throw new Error("nothing was held");
+
+    const { items, facets } = temporary.data;
+    expect(items.map((item) => item.id)).toEqual([TEMPORARY]);
+    expect(facets).toMatchObject({ total_count: 1, uncategorized: 1, categories: [], genres: [] });
+
+    const combined = await backend.listTorrents({ retention: "any" }, { etag: temporary.etag });
+    if (combined.unchanged) throw new Error("the scopes must have different ETags");
+    expect(combined.data.facets.version).not.toBe(facets.version);
+    expect(combined.data.facets.total_count).toBe(saved.length + items.length);
+    expect(combined.data.items.map((item) => item.id)).toEqual([
+      ...items.map((item) => item.id),
+      ...saved.map((item) => item.id),
+    ]);
+  });
+
+  it("expires an idle temporary torrent without invalidating the persisted listing", async () => {
+    const { backend, advance } = start();
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ temporary_idle_seconds: 60 }, etag);
+    const query = { retention: "temporary" } as const;
+    const temporary = await backend.listTorrents(query, {});
+    const persisted = await backend.listTorrents({}, {});
+    if (temporary.unchanged || persisted.unchanged || !temporary.etag || !persisted.etag) {
+      throw new Error("nothing was held");
+    }
+
+    advance(59_999);
+    expect(await listedTorrents(backend, query)).toHaveLength(1);
+    expect((await torrentOf(backend, TEMPORARY)).id).toBe(TEMPORARY);
+
+    advance(1);
+    const expired = await backend.listTorrents(query, { etag: temporary.etag });
+    if (expired.unchanged) throw new Error("the temporary listing changed");
+    expect(expired.data.items).toEqual([]);
+    expect(expired.data.facets.total_count).toBe(0);
+    expect(expired.data.facets.version).not.toBe(temporary.data.facets.version);
+    await expect(backend.getTorrent(TEMPORARY)).rejects.toMatchObject({ type: "not-found" });
+    expect(await backend.listTorrents({}, { etag: persisted.etag })).toEqual({ unchanged: true });
+  });
+
+  it("counts idle time from the most recent preload", async () => {
+    const { backend, advance } = start();
+    const idle = (await backend.getSettings()).data.temporary_idle_seconds * 1000;
+    const [file] = await backend.listFiles(TEMPORARY);
+    if (!file) throw new Error("the temporary torrent has no files");
+
+    advance(idle - 1000);
+    const preload = await backend.createPreload(TEMPORARY, file.id, undefined);
+    advance(1000);
+    expect((await torrentOf(backend, TEMPORARY)).id).toBe(TEMPORARY);
+
+    advance(idle - 1000);
+    await expect(backend.getPreload(TEMPORARY, file.id, preload.id)).rejects.toMatchObject({
+      type: "not-found",
+    });
+  });
+
+  it("starts the idle countdown after the last active player releases the torrent", async () => {
+    const { backend, advance } = start();
+    const idle = (await backend.getSettings()).data.temporary_idle_seconds * 1000;
+    const releaseFirst = backend.beginPlayback?.(TEMPORARY);
+    const releaseLast = backend.beginPlayback?.(TEMPORARY);
+    if (!releaseFirst || !releaseLast) throw new Error("unable to start playback");
+    releaseFirst();
+
+    advance(idle);
+    expect((await torrentOf(backend, TEMPORARY)).id).toBe(TEMPORARY);
+    releaseLast();
+
+    advance(idle - 1);
+    expect((await torrentOf(backend, TEMPORARY)).id).toBe(TEMPORARY);
+    advance(1);
+    await expect(backend.getTorrent(TEMPORARY)).rejects.toMatchObject({ type: "not-found" });
+  });
+
+  it("evicts the longest-idle temporary torrent when making room for a new one", async () => {
+    const { backend, advance } = start();
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ temporary_torrent_limit: 2 }, etag);
+    advance(1000);
+    const second = await backend.createTorrent({ magnetUri: MAGNET }, { retention: "temporary" });
+    advance(1000);
+    const [file] = await backend.listFiles(TEMPORARY);
+    if (!file) throw new Error("the seeded temporary torrent has no files");
+    await backend.createPreload(TEMPORARY, file.id, undefined);
+
+    advance(1000);
+    const newest = await backend.createTorrent({ magnetUri: BASE32_A }, { retention: "temporary" });
+
+    await expect(backend.getTorrent(second.id)).rejects.toMatchObject({ type: "not-found" });
+    expect((await listedTorrents(backend, { retention: "temporary" })).map(({ id }) => id)).toEqual(
+      [newest.id, TEMPORARY],
+    );
+  });
+
+  it("preserves active temporary torrents at the limit", async () => {
+    const { backend } = start();
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ temporary_torrent_limit: 1 }, etag);
+    const release = backend.beginPlayback?.(TEMPORARY);
+    if (!release) throw new Error("unable to start playback");
+    try {
+      await expect(
+        backend.createTorrent({ magnetUri: MAGNET }, { retention: "temporary" }),
+      ).rejects.toMatchObject({ status: 409, type: "too-many-temporary-torrents" });
+      expect(
+        (await listedTorrents(backend, { retention: "temporary" })).map(({ id }) => id),
+      ).toEqual([TEMPORARY]);
+    } finally {
+      release();
+    }
+
+    const added = await backend.createTorrent({ magnetUri: MAGNET }, { retention: "temporary" });
+    expect((await listedTorrents(backend, { retention: "temporary" })).map(({ id }) => id)).toEqual(
+      [added.id],
+    );
+  });
+
+  it("evicts idle torrents after lowering the limit even if the addition is refused", async () => {
+    const { backend } = start();
+    const idle = await backend.createTorrent({ magnetUri: MAGNET }, { retention: "temporary" });
+    const release = backend.beginPlayback?.(TEMPORARY);
+    if (!release) throw new Error("unable to start playback");
+    try {
+      const { etag } = await backend.getSettings();
+      await backend.updateSettings({ temporary_torrent_limit: 1 }, etag);
+
+      await expect(
+        backend.createTorrent({ magnetUri: BASE32_A }, { retention: "temporary" }),
+      ).rejects.toMatchObject({ status: 409, type: "too-many-temporary-torrents" });
+
+      await expect(backend.getTorrent(idle.id)).rejects.toMatchObject({ type: "not-found" });
+      expect(
+        (await listedTorrents(backend, { retention: "temporary" })).map(({ id }) => id),
+      ).toEqual([TEMPORARY]);
+    } finally {
+      release();
+    }
+  });
+
   it("pages through the listing by cursor", async () => {
     const { backend } = start();
 
@@ -92,6 +253,60 @@ describe("the library", () => {
     if (second.unchanged) throw new Error("nothing was held");
     expect(second.data.items[0]?.id).not.toBe(first.data.items[0]?.id);
     expect(first.data.items).toHaveLength(2);
+  });
+
+  it.each(["insertion", "removal"])("continues a temporary listing after %s", async (change) => {
+    const { backend, advance } = start();
+    async function add(n: number) {
+      advance(1);
+      return backend.createTorrent(
+        { magnetUri: `magnet:?xt=urn:btih:${String(n).padStart(40, "f")}` },
+        { retention: "temporary" },
+      );
+    }
+    const oldest = await add(1);
+    const middle = await add(2);
+    const newest = await add(3);
+    const query = { retention: "temporary" } as const;
+    const first = await backend.listTorrents(query, { pageSize: 2 });
+    if (first.unchanged) throw new Error("missing first page");
+    const cursor = cursorOf(first.data.links.next);
+    if (!cursor) throw new Error("missing next cursor");
+    expect(first.data.items.map(({ id }) => id)).toEqual([newest.id, middle.id]);
+
+    if (change === "insertion") await add(4);
+    else await backend.deleteTorrent(middle.id);
+
+    const next = await backend.listTorrents(query, { pageSize: 2, cursor });
+    if (next.unchanged) throw new Error("missing next page");
+    expect(next.data.items.map(({ id }) => id)).toEqual([oldest.id, TEMPORARY]);
+  });
+
+  it("resumes a search at the next rank after the last match is removed", async () => {
+    const { backend, advance } = start();
+    const query = { retention: "temporary", search: "harbor" } as const;
+    const keeping = { retention: "temporary" } as const;
+    const best = await backend.createTorrent(
+      { magnetUri: `magnet:?xt=urn:btih:${"a".repeat(40)}&dn=Harbor` },
+      keeping,
+    );
+    advance(1000);
+    const nextBest = await backend.createTorrent(
+      { magnetUri: `magnet:?xt=urn:btih:${"b".repeat(40)}&dn=Harborside` },
+      keeping,
+    );
+    const first = await backend.listTorrents(query, { pageSize: 1 });
+    if (first.unchanged) throw new Error("missing first page");
+    const cursor = cursorOf(first.data.links.next);
+    if (!cursor) throw new Error("missing next cursor");
+    expect(first.data.items.map(({ id }) => id)).toEqual([best.id]);
+
+    await backend.deleteTorrent(best.id);
+    const next = await backend.listTorrents(query, { pageSize: 1, cursor });
+
+    if (next.unchanged) throw new Error("missing next page");
+    expect(next.data.items.map(({ id }) => id)).toEqual([nextBest.id]);
+    expect(next.data.links.next).toBeUndefined();
   });
 
   it("answers unchanged while the ETag is current, until something changes", async () => {
@@ -138,14 +353,45 @@ describe("adding a magnet link", () => {
   it("keeps a temporary torrent in the library", async () => {
     const { backend } = start();
     const { id } = await backend.createTorrent({ magnetUri: MAGNET }, { retention: "temporary" });
-    expect((await library(backend)).map((item) => item.id)).not.toContain(id);
+    expect((await listedTorrents(backend)).map((item) => item.id)).not.toContain(id);
+    expect(
+      (await listedTorrents(backend, { retention: "temporary" })).map((item) => item.id),
+    ).toContain(id);
 
     await backend.keepTorrent(id, "disk");
 
     const kept = await torrentOf(backend, id);
     expect(kept.retention).toBe("persisted");
     expect(kept.storage_mode).toBe("disk");
-    expect((await library(backend)).map((item) => item.id)).toContain(id);
+    expect((await listedTorrents(backend)).map((item) => item.id)).toContain(id);
+    expect(
+      (await listedTorrents(backend, { retention: "temporary" })).map((item) => item.id),
+    ).not.toContain(id);
+  });
+
+  it("lists a new temporary movie under Movies after its metadata arrives", async () => {
+    const { backend, advance } = start();
+    const { id } = await backend.createTorrent({ magnetUri: MAGNET }, { retention: "temporary" });
+    const query = { retention: "temporary", kind: "movie" } as const;
+    expect((await listedTorrents(backend, query)).map((item) => item.id)).not.toContain(id);
+
+    advance(3000);
+
+    expect((await listedTorrents(backend, query)).map((item) => item.id)).toContain(id);
+    expect((await backend.getConfiguration(id)).data.kind).toBeNull();
+  });
+
+  it("keeps the configured kind when a demo torrent's metadata arrives", async () => {
+    const { backend, advance } = start();
+    const { id } = await backend.createTorrent(
+      { magnetUri: MAGNET },
+      { retention: "persisted", storageMode: "memory" },
+    );
+    await changeTorrent(backend, id, { kind: "other" });
+
+    advance(3000);
+
+    expect((await torrentOf(backend, id)).kind).toBe("other");
   });
 
   it("stays paused when its metadata arrives", async () => {
@@ -204,6 +450,9 @@ describe("adding a magnet link", () => {
       .catch((error: unknown) => error);
 
     expect(duplicateOf(failure)).toBe(created.id);
+    expect(
+      (await listedTorrents(backend, { infoHash, retention: "temporary" })).map(({ id }) => id),
+    ).toEqual([created.id]);
   });
 
   it("refuses an unreadable link with a problem the contract has, saying why", async () => {
@@ -220,9 +469,28 @@ describe("adding a magnet link", () => {
 });
 
 describe("a torrent file", () => {
+  it("rejects oversized metainfo before opening the file stream", async () => {
+    const { backend } = start();
+    const file = upload("d", "Too-large.torrent");
+    vi.spyOn(file, "size", "get").mockReturnValue(33 * 1024 * 1024 + 1);
+    const stream = vi.spyOn(file, "stream");
+
+    await expect(backend.previewTorrent(file)).rejects.toMatchObject({
+      status: 413,
+      type: "content-too-large",
+    });
+    await expect(backend.createTorrent({ file }, { retention: "temporary" })).rejects.toMatchObject(
+      {
+        status: 413,
+        type: "content-too-large",
+      },
+    );
+    expect(stream).not.toHaveBeenCalled();
+  });
+
   it("shows what it holds and is added at once", async () => {
     const { backend } = start();
-    const file = new File(["d"], "Harbor.Lights.torrent");
+    const file = upload("d", "Harbor.Lights.torrent");
 
     const preview = await backend.previewTorrent(file);
     const created = await backend.createTorrent(
@@ -233,8 +501,12 @@ describe("a torrent file", () => {
     expect(preview.name).toBe("Harbor.Lights");
     expect(preview.links.torrent).toBeUndefined();
     expect(created.observed_state).toBe("downloading");
+    expect(created.kind).toBe("movie");
     expect(await backend.listFiles(created.id)).toHaveLength(1);
-    expect((await backend.previewTorrent(file)).links.torrent).toBe(created.links.self);
+    const renamed = upload("d", "Renamed.torrent");
+    expect((await backend.previewTorrent(renamed)).links.torrent).toBe(created.links.self);
+    const different = upload("e", file.name);
+    expect((await backend.previewTorrent(different)).links.torrent).toBeUndefined();
   });
 });
 
@@ -344,6 +616,118 @@ describe("progress and up next", () => {
     return page.unchanged ? [] : page.data.items;
   }
 
+  it("resumes a temporary torrent re-added after expiry until its progress expires", async () => {
+    const { backend, advance } = start();
+    const { temporary_idle_seconds: idle, temporary_progress_seconds: retention } = (
+      await backend.getSettings()
+    ).data;
+    const keeping = { retention: "temporary" } as const;
+    const first = await backend.createTorrent({ magnetUri: MAGNET }, keeping);
+    advance(3000);
+    const [originalFile] = await backend.listFiles(first.id);
+    if (!originalFile) throw new Error("the temporary torrent has no files");
+    await backend.setProgress(FIRST_PROFILE, first.id, originalFile.id, {
+      position_seconds: 15,
+      duration_seconds: 30,
+      viewed: false,
+    });
+
+    advance(idle * 1000);
+    const readded = await backend.createTorrent(
+      { magnetUri: MAGNET.replace("Night.Ferry", "Late.Ferry") },
+      keeping,
+    );
+    expect(readded.id).not.toBe(first.id);
+    advance(3000);
+    const [currentFile] = await backend.listFiles(readded.id);
+    if (!currentFile) throw new Error("the re-added torrent has no files");
+    expect(await backend.listProgress(FIRST_PROFILE, readded.id)).toMatchObject([
+      {
+        file_id: currentFile.id,
+        position_seconds: 15,
+        links: { file: currentFile.links.self, torrent: currentFile.links.torrent },
+      },
+    ]);
+    expect((await upNext(backend)).some((entry) => entry.torrent.id === readded.id)).toBe(false);
+
+    advance((retention - idle) * 1000);
+    const expired = await backend.createTorrent({ magnetUri: MAGNET }, keeping);
+    advance(3000);
+    expect(await backend.listProgress(FIRST_PROFILE, expired.id)).toEqual([]);
+  });
+
+  it.each([
+    [
+      "the same magnet info hash in Base32",
+      { magnetUri: `magnet:?xt=urn:btih:${"00".repeat(20)}` },
+      { magnetUri: `magnet:?xt=urn:btih:${"a".repeat(32)}` },
+      [10],
+    ],
+    [
+      "a different magnet info hash with the same display name",
+      { magnetUri: `magnet:?dn=btih:sample&xt=urn:btih:${"aa".repeat(20)}` },
+      { magnetUri: `magnet:?dn=btih:sample&xt=urn:btih:${"bb".repeat(20)}` },
+      [],
+    ],
+    [
+      "identical uploaded bytes under a new name",
+      { file: upload("demo-spec-1", "Original.torrent") },
+      { file: upload("demo-spec-1", "Renamed.torrent") },
+      [10],
+    ],
+    [
+      "different uploaded bytes under the same name",
+      { file: upload("demo-spec-1", "Sample.torrent") },
+      { file: upload("demo-spec-2", "Sample.torrent") },
+      [],
+    ],
+  ] satisfies [string, TorrentSource, TorrentSource, number[]][])(
+    "restores only matching temporary progress when adding %s",
+    async (_, first, second, positions) => {
+      const { backend, advance } = start();
+      const keeping = { retention: "temporary" } as const;
+      const original = await backend.createTorrent(first, keeping);
+      advance(3000);
+      const [file] = await backend.listFiles(original.id);
+      if (!file) throw new Error("the temporary torrent has no files");
+      await backend.setProgress(FIRST_PROFILE, original.id, file.id, {
+        position_seconds: 10,
+        duration_seconds: 30,
+        viewed: false,
+      });
+      advance((await backend.getSettings()).data.temporary_idle_seconds * 1000);
+
+      const next = await backend.createTorrent(second, keeping);
+      advance(3000);
+
+      const restored = await backend.listProgress(FIRST_PROFILE, next.id);
+      expect(restored.map(({ position_seconds }) => position_seconds)).toEqual(positions);
+    },
+  );
+
+  it("keeps temporary progress as library progress when a re-added torrent is promoted", async () => {
+    const { backend, advance } = start();
+    const keeping = { retention: "temporary" } as const;
+    const { id } = await backend.createTorrent({ magnetUri: MAGNET }, keeping);
+    advance(3000);
+    const [file] = await backend.listFiles(id);
+    if (!file) throw new Error("the temporary torrent has no files");
+    await backend.setProgress(FIRST_PROFILE, id, file.id, {
+      position_seconds: 12,
+      duration_seconds: 30,
+      viewed: false,
+    });
+    await backend.deleteTorrent(id);
+
+    const readded = await backend.createTorrent({ magnetUri: MAGNET }, keeping);
+    await backend.keepTorrent(readded.id, "memory");
+    advance((await backend.getSettings()).data.temporary_progress_seconds * 1000 + 3000);
+
+    const resumed = (await upNext(backend)).find((entry) => entry.torrent.id === readded.id);
+    expect(resumed?.progress?.position_seconds).toBe(12);
+    expect(resumed?.progress?.file_id).toBe(resumed?.file.id);
+  });
+
   it("offers what the first person can resume and the next episode", async () => {
     const { backend } = start();
 
@@ -438,6 +822,21 @@ describe("progress and up next", () => {
 });
 
 describe("settings", () => {
+  it("resets the temporary idle timeout to its default without expiring torrents early", async () => {
+    const { backend, advance } = start();
+    const initial = await backend.getSettings();
+    await backend.updateSettings({ temporary_idle_seconds: 60 }, initial.etag);
+    const changed = await backend.getSettings();
+    await backend.updateSettings({ temporary_idle_seconds: null }, changed.etag);
+
+    const { temporary_idle_seconds: idle } = (await backend.getSettings()).data;
+    expect(idle).toBe(initial.data.temporary_idle_seconds);
+    advance(idle * 1000 - 1);
+    expect((await torrentOf(backend, TEMPORARY)).id).toBe(TEMPORARY);
+    advance(1);
+    await expect(backend.getTorrent(TEMPORARY)).rejects.toMatchObject({ type: "not-found" });
+  });
+
   it("stores a change and refuses one made from an old copy", async () => {
     const { backend } = start();
     const { data, etag } = await backend.getSettings();
@@ -466,7 +865,7 @@ describe("changes", () => {
     const changed = await torrentOf(backend, LIGHTHOUSE);
     expect(changed.title).toBe("Renamed");
     expect(changed.description).toBeNull();
-    expect((await library(backend, { genre: "Comedy" })).map((item) => item.id)).toContain(
+    expect((await listedTorrents(backend, { genre: "Comedy" })).map((item) => item.id)).toContain(
       LIGHTHOUSE,
     );
   });
@@ -519,7 +918,7 @@ describe("changes", () => {
     const { backend } = start();
     await backend.deleteTorrent(GLASS_HARBOR);
 
-    expect((await library(start().backend)).map((item) => item.id)).toContain(GLASS_HARBOR);
+    expect((await listedTorrents(start().backend)).map((item) => item.id)).toContain(GLASS_HARBOR);
   });
 });
 
@@ -678,7 +1077,7 @@ describe("backup", () => {
 describe("the posters", () => {
   it("are files the demo serves, of the sizes it reports", async () => {
     const { backend } = start();
-    const posters = (await library(backend)).filter((torrent) => torrent.poster);
+    const posters = (await listedTorrents(backend)).filter((torrent) => torrent.poster);
 
     expect(posters).toHaveLength(Object.keys(POSTER_BYTES).length);
     for (const { links, poster } of posters) {
@@ -689,7 +1088,7 @@ describe("the posters", () => {
 
   it("leaves one torrent without a poster", async () => {
     const { backend } = start();
-    const without = (await library(backend)).filter((torrent) => !torrent.poster);
+    const without = (await listedTorrents(backend)).filter((torrent) => !torrent.poster);
 
     expect(without.map((torrent) => torrent.title)).toEqual(["Orchard Road"]);
   });

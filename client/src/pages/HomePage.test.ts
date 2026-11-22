@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import App from "../App.svelte";
 import { ApiError, type Conditional } from "../lib/api/http";
@@ -29,10 +29,10 @@ function backend(
   return fakeBackend({
     listProfiles: vi.fn(async () => people),
     listUpNext: vi.fn(async (profileId: string) => upNextPage(upNextOf(profileId))),
-    listTorrents: vi.fn(async () => ({
+    listTorrents: vi.fn(async (query) => ({
       unchanged: false as const,
       data: {
-        items: [torrent(7)],
+        items: query.retention === "temporary" ? [] : [torrent(7)],
         total_count: 1,
         facets: { total_count: 1, uncategorized: 1, categories: [], genres: [], version: "" },
         links: { self: "" },
@@ -47,6 +47,8 @@ beforeEach(() => {
   localStorage.clear();
   navigate("/");
 });
+
+afterEach(() => vi.useRealTimers());
 
 it("shows up next and recently added for the only person profile", async () => {
   const series = torrent(1, { kind: "series" });
@@ -72,8 +74,54 @@ it("shows up next and recently added for the only person profile", async () => {
   expect(row.querySelector("[data-icon]")).toHaveAttribute("data-icon", "film");
   expect(upNextList.getByText("45 min left")).toBeInTheDocument();
   expect(await screen.findByText("Title 7")).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Temporary torrents" })).not.toBeInTheDocument();
   expect(fake.listUpNext).toHaveBeenCalledWith(ana.id, expect.anything());
   expect(screen.queryByRole("combobox", { name: "Profile", hidden: true })).not.toBeInTheDocument();
+});
+
+it("shows temporary torrents between Up next and Recently added until they expire", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const fake = backend([ana], () => [upNext(torrent(1), 0.5), upNext(torrent(2), 0.25)]);
+  const temp = torrent(8, { retention: "temporary", observed_state: "retrieving_metadata" });
+  const read = fake.listTorrents;
+  let expired = false;
+  fake.listTorrents = vi.fn(async (query, request) =>
+    query.retention === "temporary"
+      ? {
+          unchanged: false,
+          data: {
+            items: expired ? [] : [temp],
+            total_count: Number(!expired),
+            facets: { total_count: 1, uncategorized: 1, categories: [], genres: [], version: "" },
+            links: { self: "" },
+          },
+          etag: '"temporary"',
+        }
+      : read(query, request),
+  );
+  render(App, { backend: fake });
+  const row = await screen.findByRole("region", { name: "Temporary torrents" });
+  const upNextSection = await screen.findByRole("region", { name: "Up next" });
+  const sections = screen.getAllByRole("region");
+  expect(sections.indexOf(row)).toBeGreaterThan(sections.indexOf(upNextSection));
+  expect(sections.indexOf(row)).toBeLessThan(
+    sections.indexOf(screen.getByRole("region", { name: "Recently added" })),
+  );
+  expect(within(row).getByRole("link", { name: /Title 8/ })).toHaveAttribute(
+    "href",
+    titlePath(temp.id),
+  );
+  expect(within(row).getByText("Finding files")).toBeInTheDocument();
+  expect(within(row).queryByRole("link", { name: "See all" })).not.toBeInTheDocument();
+  expect(fake.listTorrents).toHaveBeenCalledWith({ retention: "temporary" }, { pageSize: 3 });
+
+  expired = true;
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(screen.queryByRole("region", { name: "Temporary torrents" })).not.toBeInTheDocument();
+  expect(fake.listTorrents).toHaveBeenCalledWith(
+    { retention: "temporary" },
+    { pageSize: 3, etag: '"temporary"' },
+  );
 });
 
 it("asks who is watching once, then remembers the choice", async () => {

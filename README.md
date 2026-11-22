@@ -10,8 +10,8 @@ Experimental Rust implementation of TorrPlay: a torrent streaming server
 with a contract-first REST API and a bounded-memory piece cache.
 
 The project is at milestone 7 of the
-[implementation plan](docs/implementation-plan.md). The backend is in place,
-and the web client comes next.
+[implementation plan](docs/implementation-plan.md). It includes the Rust
+server, the [web client](docs/adr/0011-web-client.md), and its standalone demo.
 
 ## What it does
 
@@ -20,7 +20,8 @@ and the web client comes next.
   the downloads.
 - Keeps a library of persisted torrents with titles, kinds, categories,
   genres, and posters, searchable with typo tolerance, and plays temporary
-  torrents it forgets once they go unwatched.
+  torrents it forgets once they go unwatched. The web client shows temporary
+  torrents on Home and saved torrents in the Library.
 - Tracks profiles' playback progress, title progress for external catalogs,
   and up next, and estimates progress for players that report none.
 - Serves the library to televisions as a DLNA media server, to Stremio as an
@@ -39,6 +40,10 @@ The API listens on port 8642 on every interface, and
 <http://localhost:8642/api/v1/reference> shows it in a browser. `--help`
 lists the options; the [development guide](docs/development.md) describes
 them.
+
+With the [web client built](docs/development.md#web-client), open
+<http://localhost:8642/> for the client or <http://localhost:8642/demo> for
+the standalone demo.
 
 ## Documentation
 

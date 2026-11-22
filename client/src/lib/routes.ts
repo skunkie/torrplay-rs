@@ -26,6 +26,7 @@ export function pagePath(path: string): string {
 const routes = {
   home: "/",
   library: "/library",
+  temporaryTorrents: "/temporary-torrents",
   add: "/add",
   title: "/titles/:torrent_id",
   edit: "/titles/:torrent_id/edit",
@@ -85,6 +86,7 @@ function split(path: string): string[] {
 
 export const homePath = base || "/";
 export const libraryPath = `${base}/library`;
+export const temporaryTorrentsPath = `${base}/temporary-torrents`;
 export const addPath = `${base}/add`;
 export const signInPath = `${base}/sign-in`;
 

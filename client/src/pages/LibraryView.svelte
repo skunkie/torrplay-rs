@@ -176,6 +176,7 @@ SPDX-License-Identifier: MIT
             title={torrentTitle(torrent)}
             kind={torrent.kind}
             badge={stateLabel(torrent)}
+            diskLabel={torrent.storage_mode === "disk" ? t().add.disk : undefined}
           />
           <Dotted parts={torrentDetails(torrent)} class="text-xs text-text-muted" />
         </a>

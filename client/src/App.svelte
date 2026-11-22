@@ -45,6 +45,7 @@ SPDX-License-Identifier: MIT
   import SignInPage from "./pages/SignInPage.svelte";
   import StremioPage from "./pages/StremioPage.svelte";
   import SystemPage from "./pages/SystemPage.svelte";
+  import TemporaryTorrentsPage from "./pages/TemporaryTorrentsPage.svelte";
   import TitlePage from "./pages/TitlePage.svelte";
 
   const ENGINE_POLL_MS = 5000;
@@ -113,6 +114,8 @@ SPDX-License-Identifier: MIT
         return undefined;
       case "library":
         return t().nav.library;
+      case "temporaryTorrents":
+        return t().temporaryTorrents.title;
       case "add":
         return t().add.action;
       case "settings":
@@ -152,7 +155,10 @@ SPDX-License-Identifier: MIT
 
   /** Whether the page offers the main navigation and search. */
   const browsing = $derived(
-    page?.name === "home" || page?.name === "library" || page?.name === "add",
+    page?.name === "home" ||
+      page?.name === "library" ||
+      page?.name === "temporaryTorrents" ||
+      page?.name === "add",
   );
   /** Whether the page opens with a hero instead of the header. */
   const overHero = $derived(
@@ -363,6 +369,8 @@ SPDX-License-Identifier: MIT
     <HomePage />
   {:else if page?.name === "library"}
     <LibraryPage />
+  {:else if page?.name === "temporaryTorrents"}
+    <TemporaryTorrentsPage />
   {:else if page?.name === "add"}
     <AddPage />
   {:else if page?.name === "settingsSection" && page.params.section === "profiles"}
