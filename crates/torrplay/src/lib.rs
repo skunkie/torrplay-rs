@@ -18,6 +18,7 @@
 //! sequence is bounded.
 
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::future::{Future, IntoFuture};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -68,6 +69,10 @@ pub const LISTEN_VARIABLE: &str = "TORRPLAY_LISTEN";
 pub const ALLOWED_HOSTS_VARIABLE: &str = "TORRPLAY_ALLOWED_HOSTS";
 const ALLOWED_HOST_EXPECTED: &str =
     "a DNS name such as torrplay or a suffix wildcard such as *.home.arpa";
+
+/// The environment variable that names the download directory where
+/// `--download-dir` does not.
+pub const DOWNLOAD_DIR_VARIABLE: &str = "TORRPLAY_DOWNLOAD_DIR";
 
 /// The environment variable that chooses the log format where
 /// `--log-format` does not.
@@ -128,9 +133,9 @@ Options:
   --peer-port <PORT>         The BitTorrent peer port, or 0 for an OS-assigned port [default: 4240]
   --data-dir <DIR>           Where the torrents database lives, on a local
                              filesystem [default: the platform's data directory]
-  --download-dir <DIR>       Where torrents in disk storage keep their files, a
-                             directory for TorrPlay alone [default: downloads in
-                             the data directory]
+  --download-dir <DIR>       Where torrents in disk storage keep their files, or
+                             TORRPLAY_DOWNLOAD_DIR [default: downloads in the
+                             data directory]. Use a directory for TorrPlay alone.
   --log-format <FORMAT>      text or json, or TORRPLAY_LOG_FORMAT [default: text
                              when standard error is a terminal, else json]
 
@@ -290,8 +295,30 @@ impl Config {
             .context("no home directory to put the data directory in; pass --data-dir")
     }
 
+    /// Uses the value of [`DOWNLOAD_DIR_VARIABLE`] if a higher-priority
+    /// source has not already set the download directory.
+    pub fn apply_download_dir_variable(
+        &mut self,
+        value: Option<OsString>,
+    ) -> Result<(), ArgsError> {
+        if self.download_dir.is_none()
+            && let Some(value) = value
+        {
+            if value.is_empty() {
+                return Err(ArgsError::InvalidValue {
+                    option: DOWNLOAD_DIR_VARIABLE.to_owned(),
+                    value: String::new(),
+                    reason: "a directory",
+                });
+            }
+            self.download_dir = Some(PathBuf::from(value));
+        }
+        Ok(())
+    }
+
     /// The download directory, where torrents in disk storage keep their
-    /// files: `--download-dir`, or else `downloads` in `data_dir`.
+    /// files: `--download-dir`, [`DOWNLOAD_DIR_VARIABLE`], or else
+    /// `downloads` in `data_dir`.
     pub fn download_dir(&self, data_dir: &Path) -> PathBuf {
         self.download_dir
             .clone()
@@ -1757,6 +1784,30 @@ mod tests {
             Path::new("/srv/torrplay/downloads"),
             "the download directory defaults to one in the data directory"
         );
+    }
+
+    #[test]
+    fn the_download_directory_uses_the_variable_unless_the_option_is_given() {
+        let data_dir = Path::new("data");
+        let mut config = Config::default();
+        config
+            .apply_download_dir_variable(Some("Media Downloads".into()))
+            .unwrap();
+        assert_eq!(config.download_dir(data_dir), Path::new("Media Downloads"));
+
+        let Ok(Command::Run(mut config)) = parse(&["--download-dir=chosen"]) else {
+            panic!("the download directory option parses");
+        };
+        for value in ["", "Media Downloads"] {
+            config
+                .apply_download_dir_variable(Some(value.into()))
+                .unwrap();
+            assert_eq!(config.download_dir(data_dir), Path::new("chosen"));
+        }
+        assert!(matches!(
+            Config::default().apply_download_dir_variable(Some(OsString::new())),
+            Err(ArgsError::InvalidValue { option, .. }) if option == DOWNLOAD_DIR_VARIABLE
+        ));
     }
 
     #[test]

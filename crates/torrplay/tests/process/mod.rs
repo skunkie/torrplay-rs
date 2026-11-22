@@ -54,6 +54,7 @@ impl Process {
             .arg("--data-dir")
             .arg(data)
             .env_remove(ALLOWED_HOSTS_VARIABLE)
+            .env_remove(torrplay::DOWNLOAD_DIR_VARIABLE)
             .env("NO_COLOR", "1")
             .stdin(Stdio::null())
             .stdout(Stdio::null())

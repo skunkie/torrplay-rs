@@ -184,6 +184,8 @@ export default async function setup(): Promise<() => Promise<void>> {
     String(PEER_PORT),
     "--data-dir",
     join(work, "data"),
+    "--download-dir",
+    join(work, "data", "downloads"),
   ]);
 
   const deadline = Date.now() + READY_MS;

@@ -173,8 +173,9 @@ peers never fails a torrent.
 
 [ADR 9](adr/0009-disk-storage.md) decides how disk storage works. A torrent
 in disk storage keeps its verified pieces in files below the download
-directory, `downloads` in the data directory unless `--download-dir` moves
-it, in a directory named by its torrent ID, at the paths the API reports.
+directory, `downloads` in the data directory unless `--download-dir` or
+`TORRPLAY_DOWNLOAD_DIR` names another. Each torrent's files go in a
+directory named by its torrent ID, at the paths the API reports.
 TorrPlay owns these directories: others may read the files, but changing
 them is unsupported.
 
@@ -1071,9 +1072,13 @@ whether torrents use the DHT, the log level, and the
 [temporary torrents'](#retention) idle time, limit, and progress
 retention. The contract gives each one's bounds and default.
 
-Command-line options set what the application needs before it serves the
-API: its listen address, allowed hosts, peer port, data directory, and
-download directory. A few options instead override a setting for one run:
+Startup configuration includes the listen address, allowed hosts, peer port,
+data directory, download directory, and log format. The
+[CLI manual](man/torrplay.1.md#environment) describes how options interact
+with environment variables. The [settings-file manual](man/torrplay.env.5.md#settings)
+lists the variables the service reads from its settings file.
+
+A few command-line options override a stored setting for one run:
 `--no-dht` turns the DHT off, and `--log-level` and `--log-filter` set the
 log level. Overrides follow one rule:
 

@@ -677,7 +677,8 @@ jobs:
             mkdir -p "$data_dir"
             printf '%s\n' 'TORRPLAY_ALLOWED_HOSTS=torrplay,*.home.arpa' \
               'TORRPLAY_LISTEN=127.0.0.1:8643' 'TORRPLAY_LOG_FORMAT=text' > "$data_dir/torrplay.env"
-            env -u TORRPLAY_ALLOWED_HOSTS -u TORRPLAY_LISTEN -u TORRPLAY_LOG_FORMAT HOME="$test_home" NO_COLOR=1 \
+            env -u TORRPLAY_ALLOWED_HOSTS -u TORRPLAY_DOWNLOAD_DIR -u TORRPLAY_LISTEN -u TORRPLAY_LOG_FORMAT \
+              HOME="$test_home" NO_COLOR=1 \
               "$app/Contents/MacOS/torrplay-desktop" --no-dht > "$test_home/startup.log" 2>&1 &
             pid=$!
             trap 'kill -KILL "$pid" 2>/dev/null || true; wait "$pid" || true; cat "$test_home/startup.log"' EXIT

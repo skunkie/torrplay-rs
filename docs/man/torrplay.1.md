@@ -71,17 +71,17 @@ With no command, **torrplay** runs the application with the *OPTIONS* below.
     torrents.
 
 **torrplay mcp**
-:   Serves a running application's API to an MCP client. It reaches the
-    application at **\--url**, or **TORRPLAY_URL**, by default
-    *http://127.0.0.1:8642*, sends **TORRPLAY_TOKEN**, an API access token,
-    as its credential, and speaks on standard input and output, or with
-    **\--transport http** at */mcp* on **\--listen**, a loopback address, by
-    default *127.0.0.1:8643*.
+:   Serves a running application's API to an MCP client. **\--url** sets
+    the application's origin and overrides **TORRPLAY_URL**. The default
+    origin is *http://127.0.0.1:8642*. The command sends
+    **TORRPLAY_TOKEN**, an API access token, as its credential. It speaks
+    on standard input and output, or with **\--transport http** at */mcp*
+    on **\--listen**, a loopback address, by default *127.0.0.1:8643*.
 
 # OPTIONS
 
 **\--listen** *ADDRESS*
-:   The API's address and port, or **TORRPLAY_LISTEN**. The default is
+:   The API's address and port. Overrides **TORRPLAY_LISTEN**. The default is
     *[::]:8642*, every interface.
 
 **\--allowed-host** *NAME*
@@ -101,10 +101,11 @@ With no command, **torrplay** runs the application with the *OPTIONS* below.
 
 **\--download-dir** *DIR*
 :   Where torrents in disk storage keep their files, a directory for
-    TorrPlay alone. The default is *downloads* in the data directory.
+    TorrPlay alone. Overrides **TORRPLAY_DOWNLOAD_DIR**. The default is
+    *downloads* in the data directory.
 
 **\--log-format** *FORMAT*
-:   **text** or **json**, or **TORRPLAY_LOG_FORMAT**. The default is
+:   **text** or **json**. Overrides **TORRPLAY_LOG_FORMAT**. The default is
     **text** when standard error is a terminal and **json** otherwise.
 
 These override a stored setting for this run only:
@@ -132,9 +133,6 @@ options.
 
 # ENVIRONMENT
 
-**TORRPLAY_LISTEN**
-:   The API's address where **\--listen** is not given.
-
 **TORRPLAY_ALLOWED_HOSTS**
 :   A comma-separated list of extra HTTP hostnames and suffix wildcards.
     For example, `torrplay,*.home.arpa` permits `torrplay` and names such as
@@ -142,19 +140,27 @@ options.
     wildcards for DNS zones you control. An unset or blank value adds no
     entries. Invalid entries cause a startup error.
 
+**TORRPLAY_DOWNLOAD_DIR**
+:   The download directory where **\--download-dir** is not given. An empty
+    value causes a startup error.
+
+**TORRPLAY_LISTEN**
+:   The API's address where **\--listen** is not given.
+
 **TORRPLAY_LOG_FORMAT**
 :   The log format where **\--log-format** is not given.
-
-**TORRPLAY_URL**
-:   The application's origin for **torrplay mcp** where **\--url** is not
-    given.
 
 **TORRPLAY_TOKEN**
 :   The API access token **torrplay mcp** sends. There is no option for it,
     since every user can read a process's arguments.
 
-The service reads **TORRPLAY_LISTEN**, **TORRPLAY_ALLOWED_HOSTS**, and
-**TORRPLAY_LOG_FORMAT** from its settings file. See **torrplay.env**(5).
+**TORRPLAY_URL**
+:   The application's origin for **torrplay mcp** where **\--url** is not
+    given.
+
+The service reads **TORRPLAY_ALLOWED_HOSTS**, **TORRPLAY_DOWNLOAD_DIR**,
+**TORRPLAY_LISTEN**, and **TORRPLAY_LOG_FORMAT** from its settings file.
+See **torrplay.env**(5).
 
 # FILES
 
@@ -167,8 +173,8 @@ The service reads **TORRPLAY_LISTEN**, **TORRPLAY_ALLOWED_HOSTS**, and
 :   The log files, which **torrplay** writes beside standard error.
 
 *DATA_DIR/downloads/*
-:   The files of torrents in disk storage, unless **\--download-dir** names
-    another directory.
+:   The files of torrents in disk storage, unless **\--download-dir** or
+    **TORRPLAY_DOWNLOAD_DIR** names another directory.
 
 With the **torrplay-service** package there are also these:
 
@@ -211,7 +217,7 @@ every 5 minutes; after a usage error, such as an invalid **TORRPLAY_LISTEN**,
 it stays stopped, and **systemctl status torrplay** and the journal say why.
 
 Its settings are in */etc/torrplay/torrplay.env*. Options without a variable,
-such as **\--download-dir** or **\--peer-port**, go in a drop-in that
+such as **\--peer-port**, go in a drop-in that
 **sudo systemctl edit torrplay** opens, clearing *ExecStart=* and setting it
 again:
 

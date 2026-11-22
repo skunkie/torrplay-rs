@@ -24,11 +24,8 @@ package=
 if [[ $# -eq 3 && $1 == --package ]]; then
   package=$(realpath "$2")
   client_package=$(realpath "$3")
-  # Where the package puts the executable, which a drop-in names.
-  executable=/usr/bin/torrplay
 elif [[ $# -eq 1 ]]; then
   build=$1
-  executable=/usr/local/bin/torrplay
 else
   echo "usage: $0 BINARY | --package SERVICE_DEB CLIENT_DEB" >&2
   exit 2
@@ -198,6 +195,11 @@ clean_shutdown_recorded() {
     grep -F '"message":"recording the clean shutdown"' >/dev/null
 }
 
+download_dir_recorded() {
+  sudo journalctl --no-pager -o cat "_SYSTEMD_INVOCATION_ID=$1" |
+    grep -F '"path":"/home/media/torrents"' >/dev/null
+}
+
 errors_since() {
   sudo journalctl -u torrplay --since "$1" --no-pager -o cat |
     grep '"level":"error"' || true
@@ -275,19 +277,20 @@ set_listen '[::]:8642'
 sudo systemctl restart torrplay
 wait_for 60 ready 8642 || fail "the service did not return to port 8642"
 
-echo "== a download directory under /home, as the docs' drop-in gives it"
+echo "== a download directory from the settings file under /home"
 sudo install -d -o torrplay -g torrplay -m 0750 /home/media/torrents
+printf '%s\n' 'TORRPLAY_DOWNLOAD_DIR=/home/media/torrents' | sudo tee -a "$settings" >/dev/null
 sudo mkdir -p "$drop_in"
-sudo tee "$drop_in/download-dir.conf" >/dev/null <<EOF
+sudo tee "$drop_in/download-dir.conf" >/dev/null <<'EOF'
 [Service]
-ExecStart=
-ExecStart=$executable --data-dir \${STATE_DIRECTORY} --download-dir /home/media/torrents
 ProtectHome=tmpfs
 BindPaths=/home/media/torrents
 EOF
 sudo systemctl daemon-reload
 sudo systemctl restart torrplay
 wait_for 60 ready 8642 || fail "the service did not start with the drop-in"
+wait_for 5 download_dir_recorded "$(property InvocationID)" ||
+  fail "the service did not use the configured download directory"
 pid=$(property MainPID)
 sudo nsenter -t "$pid" -m -S "$service_uid" -G "$service_gid" \
   touch /home/media/torrents/probe || fail "the service cannot write its download directory"
@@ -296,6 +299,7 @@ if sudo nsenter -t "$pid" -m test -e "$HOME"; then
   fail "the service sees other home directories"
 fi
 sudo rm -r "$drop_in" /home/media
+set_listen '[::]:8642'
 sudo systemctl daemon-reload
 sudo systemctl restart torrplay
 wait_for 60 ready 8642 || fail "the service did not start without the drop-in"

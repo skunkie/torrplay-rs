@@ -260,7 +260,8 @@ Build the client first, then run or check it from `desktop/`. It takes the serve
 command line:
 
 ```sh
-cargo run -- --data-dir /tmp/torrplay-desktop
+cargo run -- --data-dir /tmp/torrplay-desktop \
+  --download-dir /tmp/torrplay-desktop/downloads
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
@@ -282,11 +283,12 @@ in the running application if there is one, as `cargo run -- invented.torrent` d
 On macOS, the desktop app creates a commented
 `~/Library/Application Support/org.torrplay.desktop/torrplay.env` if the
 file is absent. This directory also holds the database, logs, and downloads
-by default. The app reads `TORRPLAY_ALLOWED_HOSTS`, `TORRPLAY_LISTEN`, and
-`TORRPLAY_LOG_FORMAT` from the file at startup. Allowed hosts from the file,
-the environment, and `--allowed-host` are combined. For the listen address
-and log format, command-line options take precedence, then environment
-variables, then the file. Quit and reopen the app after editing the file.
+by default. The app reads `TORRPLAY_ALLOWED_HOSTS`, `TORRPLAY_LISTEN`,
+`TORRPLAY_DOWNLOAD_DIR`, and `TORRPLAY_LOG_FORMAT` from the file at startup.
+Allowed hosts from the file, the environment, and `--allowed-host` are
+combined. For the listen address, download directory, and log format,
+command-line options take precedence, then environment variables, then the
+file. Quit and reopen the app after editing the file.
 
 Run the `cargo-deny` command from the repository root. Setting
 `CARGO_TARGET_DIR=../target` shares the main workspace's build directory.
@@ -420,8 +422,9 @@ name and names below a DNS suffix. Each option adds to the comma-separated
 `TORRPLAY_ALLOWED_HOSTS` list. Use wildcards for DNS zones you control.
 `--peer-port` sets the BitTorrent peer port, 4240 by default. Use
 `--peer-port 0` to let the operating system assign it for this run.
-`--download-dir` sets the download directory of torrents in disk storage,
-`downloads` in the data directory by default. Other options override
+`--download-dir` or `TORRPLAY_DOWNLOAD_DIR` sets the download directory of
+torrents in disk storage, `downloads` in the data directory by default.
+The command-line option takes precedence. Other options override
 settings for one run, as [the lifecycle](lifecycle.md#settings) describes:
 `--no-dht` turns the DHT off, and `--log-level` and `--log-filter` set the
 level of TorrPlay's own logs, which go to standard error; other crates log
@@ -495,11 +498,11 @@ its restart backoff and restart it every 5 seconds:
   `torrplay` account. The client trusts a listener owned by it, so the unit uses
   this static account rather than `DynamicUser=`.
 - `torrplay.env`, the settings file, as `/etc/torrplay/torrplay.env`, with
-  examples for `TORRPLAY_LISTEN`, `TORRPLAY_ALLOWED_HOSTS`, and
-  `TORRPLAY_LOG_FORMAT` commented out.
+  examples for `TORRPLAY_LISTEN`, `TORRPLAY_ALLOWED_HOSTS`,
+  `TORRPLAY_DOWNLOAD_DIR`, and `TORRPLAY_LOG_FORMAT` commented out.
   The unit reads it as its environment, and the client reads the listen
-  address there. Options without a variable, such as `--download-dir` or
-  `--peer-port`, go in a drop-in from `systemctl edit torrplay` that clears
+  address there. Options without a variable, such as `--peer-port`,
+  go in a drop-in from `systemctl edit torrplay` that clears
   `ExecStart=` and sets it again.
 
 The unit restarts torrplay after a failure, such as its port being taken,
@@ -510,16 +513,14 @@ it at once, stopped or waiting. It does not restart after a usage error, exit st
 invalid `TORRPLAY_LISTEN`; `systemctl status torrplay` and the journal say
 why it stopped.
 
-A download directory outside `/var/lib/torrplay` must be writable by the
-`torrplay` account, and the unit must let the service reach it:
-`ReadWritePaths=` for a directory elsewhere, and, since the unit hides home
-directories, `ProtectHome=tmpfs` with `BindPaths=` for one under `/home`:
+Set `TORRPLAY_DOWNLOAD_DIR=/home/media/torrents` in `torrplay.env`, for
+example. A directory outside `/var/lib/torrplay` must be writable by the
+`torrplay` account. Use `ReadWritePaths=` in a systemd drop-in to grant
+write access. For a directory under `/home`, which the unit hides, use
+`ProtectHome=tmpfs` with `BindPaths=` in the drop-in:
 
 ```ini
 [Service]
-ExecStart=
-# /usr/local/bin/torrplay after scripts/linux-service.sh install.
-ExecStart=/usr/bin/torrplay --data-dir ${STATE_DIRECTORY} --download-dir /home/media/torrents
 ProtectHome=tmpfs
 BindPaths=/home/media/torrents
 ```
@@ -545,9 +546,10 @@ journalctl -u torrplay -f
 
 `sudo scripts/linux-service.sh remove` removes the service, the build, the
 settings file, and drop-ins from `systemctl edit`, keeping the account and the
-data in `/var/lib/torrplay`. `sudo rm -r /var/lib/torrplay` then deletes the
-library and its downloads for good, `sudo rm -r /var/backups/torrplay` its
-backups, and `sudo userdel torrplay` the account.
+data in `/var/lib/torrplay`. `sudo rm -r /var/lib/torrplay` then permanently
+deletes the library and any downloads stored under that directory. Downloads
+in a custom location outside it remain. `sudo rm -r /var/backups/torrplay`
+deletes the backups, and `sudo userdel torrplay` removes the account.
 
 `scripts/test-linux-service.sh target/release/torrplay` installs a release
 build with that script and tests the service as systemd runs it: its account
@@ -625,8 +627,10 @@ hand, it says so and exits with status 2. The service manager gives a
 service no environment of its own, so it reads its `TORRPLAY_` variables
 from `%ProgramData%\TorrPlay\torrplay.env`, whose template is
 `packaging/windows/torrplay.env`, and keeps its data, and its logs in
-`logs`, in that directory unless `--data-dir` names another. It reports
-itself running once the API listens. Its stop control and the system's
+`logs`, in that directory unless `--data-dir` names another.
+`TORRPLAY_DOWNLOAD_DIR` in the settings file can select a separate
+download directory. The service account needs write access to it. The service
+reports itself running once the API listens. Its stop control and the system's
 shutdown begin the shutdown sequence; the service manager refuses controls
 while a service stops, so a second stop cannot hurry it as a second signal
 does. A usage error, such as an invalid `TORRPLAY_LISTEN`, stops it with

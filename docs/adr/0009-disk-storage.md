@@ -126,11 +126,13 @@ on the new storage.
 ### Download directory and ownership
 
 TorrPlay keeps disk data in a download directory, `downloads` in the data
-directory by default, which the `--download-dir` startup option can move.
-Unlike the database, it may be on a network filesystem. It is not a setting,
-because changing it would move data. The download directory is dedicated to
-TorrPlay: the application treats every entry in it that is named like a
-torrent ID as its own, and never touches other entries.
+directory by default. The `--download-dir` startup option and
+`TORRPLAY_DOWNLOAD_DIR` can select another directory. The download directory
+may be on a network filesystem. Keep the database on a local filesystem.
+To keep existing downloads when changing the path, move the torrent
+directories and their resume bitfields while TorrPlay is stopped. Use a
+directory dedicated to this TorrPlay instance. TorrPlay treats entries named
+like torrent IDs as its own and leaves other entries alone.
 
 Each disk torrent has one directory, named by its torrent ID (option A). It
 holds the torrent's files at the paths the API reports for them, so the

@@ -66,6 +66,12 @@ fn main() -> ExitCode {
         eprintln!("torrplay: {error}\n\n{USAGE}");
         return ExitCode::from(2);
     }
+    if let Err(error) =
+        config.apply_download_dir_variable(std::env::var_os(torrplay::DOWNLOAD_DIR_VARIABLE))
+    {
+        eprintln!("torrplay: {error}\n\n{USAGE}");
+        return ExitCode::from(2);
+    }
     let variable = std::env::var_os(torrplay::LOG_FORMAT_VARIABLE)
         .map(|value| value.to_string_lossy().into_owned());
     let format =

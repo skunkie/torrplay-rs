@@ -153,6 +153,16 @@ mod tests {
                 Some("torrplay,*.home.arpa"),
                 "{system}"
             );
+            let directory = if system == "Linux" {
+                "/srv/torrplay/downloads"
+            } else {
+                r"D:\TorrPlay Downloads"
+            };
+            assert_eq!(
+                uncommented.get("TORRPLAY_DOWNLOAD_DIR"),
+                Some(directory),
+                "{system}"
+            );
         }
     }
 

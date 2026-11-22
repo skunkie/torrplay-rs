@@ -259,6 +259,11 @@ fn with_startup_settings(
     {
         config.set_listen_from_variable(value.to_owned())?;
     }
+    config.apply_download_dir_variable(
+        settings
+            .get(torrplay::DOWNLOAD_DIR_VARIABLE)
+            .map(Into::into),
+    )?;
     if let Some(value) = settings.get(torrplay::LOG_FORMAT_VARIABLE) {
         config.log_format = Some(torrplay::log_format(
             config.log_format,
@@ -306,6 +311,12 @@ pub fn main() -> ExitCode {
     };
     if let Some(value) = std::env::var_os(torrplay::ALLOWED_HOSTS_VARIABLE)
         && let Err(error) = config.add_allowed_hosts(&value.to_string_lossy())
+    {
+        eprintln!("torrplay-desktop: {error}\n\n{}", torrplay::USAGE);
+        return ExitCode::from(2);
+    }
+    if let Err(error) =
+        config.apply_download_dir_variable(std::env::var_os(torrplay::DOWNLOAD_DIR_VARIABLE))
     {
         eprintln!("torrplay-desktop: {error}\n\n{}", torrplay::USAGE);
         return ExitCode::from(2);
@@ -450,23 +461,30 @@ mod tests {
         for key in [
             torrplay::ALLOWED_HOSTS_VARIABLE,
             torrplay::LISTEN_VARIABLE,
+            torrplay::DOWNLOAD_DIR_VARIABLE,
             torrplay::LOG_FORMAT_VARIABLE,
         ] {
             assert!(created.contains(&format!("#{key}=")), "{key}");
         }
 
         let edited = "# My network\nTORRPLAY_ALLOWED_HOSTS=torrplay,*.home.arpa\n\
-                      TORRPLAY_LISTEN=127.0.0.1:8643\nTORRPLAY_LOG_FORMAT=text\n";
+                      TORRPLAY_LISTEN=127.0.0.1:8643\nTORRPLAY_LOG_FORMAT=text\n\
+                      TORRPLAY_DOWNLOAD_DIR=\"/Volumes/Media/TorrPlay Downloads\"\n";
         std::fs::write(&path, edited)?;
         let config = with_startup_settings(Config::default(), &directory)?;
         assert_eq!(config.allowed_hosts, ["torrplay", "*.home.arpa"]);
         assert_eq!(config.listen, Some("127.0.0.1:8643".parse()?));
         assert_eq!(config.log_format, Some(LogFormat::Text));
+        assert_eq!(
+            config.download_dir(&directory),
+            std::path::Path::new("/Volumes/Media/TorrPlay Downloads")
+        );
 
         let address = "127.0.0.1:8644".parse()?;
         let overrides = Config {
             allowed_hosts: vec!["nas.lan".into()],
             listen: Some(address),
+            download_dir: Some("/Volumes/Other/Downloads".into()),
             log_format: Some(LogFormat::Json),
             ..Config::default()
         };
@@ -474,6 +492,10 @@ mod tests {
         assert_eq!(config.allowed_hosts, ["nas.lan", "torrplay", "*.home.arpa"]);
         assert_eq!(config.listen, Some(address));
         assert_eq!(config.log_format, Some(LogFormat::Json));
+        assert_eq!(
+            config.download_dir(&directory),
+            std::path::Path::new("/Volumes/Other/Downloads")
+        );
         assert_eq!(std::fs::read_to_string(&path)?, edited);
         Ok(())
     }

@@ -131,7 +131,9 @@ try {
     Write-Host '== the installed application serves'
     $data = Join-Path ([System.IO.Path]::GetTempPath()) "torrplay-nsis-$PID"
     New-Item -ItemType Directory -Path $data | Out-Null
-    $running = Start-Process -FilePath $application -ArgumentList "--data-dir `"$data`" --listen 127.0.0.1:$port" -PassThru
+    $downloads = Join-Path $data 'downloads'
+    $arguments = "--data-dir `"$data`" --download-dir `"$downloads`" --listen 127.0.0.1:$port"
+    $running = Start-Process -FilePath $application -ArgumentList $arguments -PassThru
     if (-not (Wait-Until { Test-Ready } 60)) { Fail 'the installed application did not become ready' }
     $listeners = @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
             Select-Object -ExpandProperty OwningProcess -Unique)

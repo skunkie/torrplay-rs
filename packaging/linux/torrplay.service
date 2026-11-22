@@ -4,7 +4,7 @@
 
 # TorrPlay's service edition: torrplay as a system service that starts at boot,
 # as its own system user. Its settings are in /etc/torrplay/torrplay.env; options
-# without a variable, such as --download-dir, go in a drop-in that replaces
+# without a variable, such as --peer-port, go in a drop-in that replaces
 # ExecStart, made with `systemctl edit torrplay`.
 
 [Unit]
