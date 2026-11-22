@@ -108,7 +108,7 @@ SPDX-License-Identifier: MIT
       {/each}
     </div>
 
-    {#if facets && (facets.categories.length > 0 || facets.uncategorized > 0)}
+    {#if facets && (query.category || query.uncategorized || facets.categories.length > 0 || facets.uncategorized > 0)}
       <label class="flex items-center gap-2 text-sm">
         <span class="text-text-muted">{t().library.category}</span>
         <select
@@ -120,14 +120,17 @@ SPDX-License-Identifier: MIT
           {#each facets.categories as label (label.name)}
             <option value={label.name}>{label.name} ({label.count})</option>
           {/each}
-          {#if facets.uncategorized > 0}
+          {#if query.category && !facets.categories.some((label) => label.name === query.category)}
+            <option value={query.category}>{query.category}</option>
+          {/if}
+          {#if facets.uncategorized > 0 || query.uncategorized}
             <option value={UNCATEGORIZED}>{t().library.uncategorized(facets.uncategorized)}</option>
           {/if}
         </select>
       </label>
     {/if}
 
-    {#if facets && facets.genres.length > 0}
+    {#if facets && (query.genre || facets.genres.length > 0)}
       <label class="flex items-center gap-2 text-sm">
         <span class="text-text-muted">{t().library.genre}</span>
         <select
@@ -139,6 +142,9 @@ SPDX-License-Identifier: MIT
           {#each facets.genres as label (label.name)}
             <option value={label.name}>{label.name} ({label.count})</option>
           {/each}
+          {#if query.genre && !facets.genres.some((label) => label.name === query.genre)}
+            <option value={query.genre}>{query.genre}</option>
+          {/if}
         </select>
       </label>
     {/if}

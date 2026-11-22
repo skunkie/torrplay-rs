@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT
 <script lang="ts">
   import { untrack } from "svelte";
 
-  import { cursorOf, type TorrentPage, type TorrentQuery } from "../lib/backend";
+  import { cursorOf, type Torrent, type TorrentPage, type TorrentQuery } from "../lib/backend";
   import { useBackend } from "../lib/context";
   import { pollFailure } from "../lib/engine.svelte";
   import { imageGrant, refreshGrant } from "../lib/grant.svelte";
@@ -27,8 +27,8 @@ SPDX-License-Identifier: MIT
 
   const query = $derived(parseQuery(location.search));
   let pages = $state.raw<TorrentPage[]>([]);
-  /** The search `pages` were read for. */
-  let readSearch = $state("");
+  /** The query that produced the pages and ETag we hold. */
+  let readQuery = $state.raw<TorrentQuery>();
   let loading = $state(true);
   let error = $state<string>();
   /** The search as typed, ahead of the page's query while it waits. */
@@ -58,23 +58,22 @@ SPDX-License-Identifier: MIT
           pageSize: PAGE_SIZE,
           ...(cursor ? { cursor } : {}),
         });
+        if (mine !== generation || filters !== query) return;
         if (page.unchanged) break;
         tag ??= page.etag;
         read.push(page.data);
         cursor = cursorOf(page.data.links.next);
       } while (cursor && read.length < count);
-      if (mine === generation) {
-        pages = read;
-        readSearch = filters.search ?? "";
-        etag = tag;
-      }
+      pages = read;
+      readQuery = filters;
+      etag = tag;
     } catch (failure) {
-      if (mine === generation) {
+      if (mine === generation && filters === query) {
         error = pollFailure(failure);
         retrying = error === undefined;
       }
     } finally {
-      if (mine === generation) loading = false;
+      if (mine === generation && filters === query) loading = false;
     }
   }
 
@@ -83,24 +82,30 @@ SPDX-License-Identifier: MIT
     if (loading) return;
     const filters = query;
     // Quietly: the banner already says what is wrong, every few seconds at that.
-    if (retrying) return load(filters, Math.max(pages.length, 1), true);
-    if (etag === undefined) return;
+    if (retrying) return load(filters, pageCount, true);
+    if (etag === undefined || readQuery !== filters) return;
+    const mine = generation;
     const page = await backend.listTorrents(filters, { pageSize: PAGE_SIZE, etag });
-    if (!page.unchanged) await load(filters, Math.max(pages.length, 1));
+    if (mine === generation && filters === query && !page.unchanged) {
+      await load(filters, pageCount);
+    }
   }
 
   async function loadMore(): Promise<void> {
+    const filters = query;
     const cursor = cursorOf(pages.at(-1)?.links.next);
-    if (!cursor) return;
-    const mine = generation;
+    if (loading || readQuery !== filters || !cursor) return;
+    const mine = ++generation;
     loading = true;
     try {
-      const page = await backend.listTorrents(query, { pageSize: PAGE_SIZE, cursor });
-      if (mine === generation && !page.unchanged) pages = [...pages, page.data];
+      const page = await backend.listTorrents(filters, { pageSize: PAGE_SIZE, cursor });
+      if (mine === generation && filters === query && !page.unchanged) {
+        pages = [...pages, page.data];
+      }
     } catch (failure) {
-      if (mine === generation) error = failureMessage(failure);
+      if (mine === generation && filters === query) error = failureMessage(failure);
     } finally {
-      if (mine === generation) loading = false;
+      if (mine === generation && filters === query) loading = false;
     }
   }
 
@@ -140,14 +145,22 @@ SPDX-License-Identifier: MIT
     return () => clearTimeout(searchTimer);
   });
 
+  const pageCount = $derived(readQuery === query ? Math.max(pages.length, 1) : 1);
   const typed = $derived(searchText.trim());
-  /** Whether what is held answers the search as typed. Until it does, the server,
-   * which also finds typos, is being asked. */
-  const answered = $derived(typed === readSearch);
+  /** Whether the held pages answer the current filters and the search as typed. */
+  const answered = $derived(readQuery === query && typed === (query.search ?? ""));
   /** What is held, narrowed at once while the server is asked. Finding nothing
    * here says nothing yet, since the server may find a typo, so it stays. */
   const torrents = $derived.by(() => {
-    const held = pages.flatMap((page) => page.items);
+    // A title change can move a search result across the cursor. Keep its
+    // first position and use the latest representation we read. This map is
+    // discarded after the derivation.
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity
+    const byId = new Map<string, Torrent>();
+    for (const page of pages) {
+      for (const item of page.items) byId.set(item.id, item);
+    }
+    const held = [...byId.values()];
     if (answered || typed === "") return held;
     const found = searchTorrents(held, typed);
     return found.length > 0 ? found : held;
@@ -169,5 +182,5 @@ SPDX-License-Identifier: MIT
     replaceQuery(formatQuery(query.search ? { ...rest, search: query.search } : rest));
   }}
   onloadmore={loadMore}
-  onretry={() => load(query, Math.max(pages.length, 1))}
+  onretry={() => load(query, pageCount)}
 />
