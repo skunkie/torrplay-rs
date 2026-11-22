@@ -289,6 +289,8 @@ class Environment:
         self.arguments = [
             "--data-dir",
             self.data,
+            "--download-dir",
+            os.path.join(self.data, "downloads"),
             "--listen",
             f"127.0.0.1:{PORT}",
             "--peer-port",

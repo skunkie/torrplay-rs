@@ -360,6 +360,12 @@ async fn run(options: &Options) -> anyhow::Result<()> {
                 .to_str()
                 .context("temporary paths must be UTF-8")?
                 .to_owned(),
+            "--download-dir".to_owned(),
+            data.path()
+                .join("downloads")
+                .to_str()
+                .context("temporary paths must be UTF-8")?
+                .to_owned(),
             "--log-level".to_owned(),
             "warn".to_owned(),
         ]

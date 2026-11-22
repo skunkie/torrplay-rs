@@ -128,6 +128,14 @@ mod windows {
                 .add_allowed_hosts(&value)
                 .map_err(|error| error.to_string())?;
         }
+        config
+            .apply_download_dir_variable(
+                settings
+                    .get(torrplay::DOWNLOAD_DIR_VARIABLE)
+                    .map(Into::into)
+                    .or_else(|| std::env::var_os(torrplay::DOWNLOAD_DIR_VARIABLE)),
+            )
+            .map_err(|error| error.to_string())?;
         if config.data_dir.is_none() {
             config.data_dir = Some(directory);
         }

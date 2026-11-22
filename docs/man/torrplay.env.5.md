@@ -41,16 +41,39 @@ media server's, are kept in its library and changed through the API.
 
 # SETTINGS
 
-**TORRPLAY_LISTEN**
-:   The API's address and port. Until a password is set, only local networks
-    may use it. The default is *[::]:8642*, every interface.
-
 **TORRPLAY_ALLOWED_HOSTS**
 :   A comma-separated list of extra HTTP hostnames and suffix wildcards,
     such as `torrplay,*.home.arpa`. The default adds no names. Wildcards match
     names below a suffix. Add the zone apex separately if needed. Use
     wildcards for DNS zones you control. The client must be able to resolve
     each name. Restart the service after changing the list.
+
+**TORRPLAY_DOWNLOAD_DIR**
+:   Where torrents in disk storage keep their files. The default is
+    */var/lib/torrplay/downloads*.
+    The *torrplay* account needs write access. For a directory outside
+    */var/lib/torrplay*, allow access in a systemd drop-in with
+    *ReadWritePaths=*. For a directory under */home*, use
+    *ProtectHome=tmpfs* and *BindPaths=* to expose it to the service.
+
+    To keep existing downloads, stop TorrPlay before changing this value.
+    Use **systemctl cat torrplay** to check the service's *ExecStart=*
+    command for **\--download-dir**, which overrides this setting. If a
+    drop-in supplies that option, remove it and its argument. Update any
+    directory access settings for the new path and run
+    **sudo systemctl daemon-reload** after editing the drop-in. Move the
+    torrent directories and their accompanying *.have* files directly into
+    the new directory before starting TorrPlay again. If the files stay at
+    the old path, TorrPlay may download them again.
+
+    Use a directory dedicated to this TorrPlay instance. At startup, TorrPlay
+    deletes entries named like torrent IDs, including *.have* files, unless
+    the corresponding torrent uses disk storage or is switching to or from
+    it in this instance's database.
+
+**TORRPLAY_LISTEN**
+:   The API's address and port. Until a password is set, only local networks
+    may use it. The default is *[::]:8642*, every interface.
 
 **TORRPLAY_LOG_FORMAT**
 :   The log's format, **text** or **json**. The service logs to the journal,

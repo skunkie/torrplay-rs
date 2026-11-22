@@ -282,9 +282,15 @@ try {
     $before = (Get-TorrPlay).ProcessId
     Set-Listen '[::]:8643'
     Add-Content -Path $settings -Value 'TORRPLAY_ALLOWED_HOSTS=torrplay,*.home.arpa' -Encoding utf8NoBOM
+    $downloadDir = Join-Path $dataDirectory 'Media Downloads'
+    Add-Content -Path $settings -Value "TORRPLAY_DOWNLOAD_DIR=`"$downloadDir`"" -Encoding utf8NoBOM
     Install-TorrPlay ($packaged ? $Upgrade : $Binary)
     if (-not (Wait-Until { Test-Ready 8643 } 60)) { Fail 'the service did not listen at the kept address' }
     if ((Get-TorrPlay).ProcessId -eq $before) { Fail 'installing again did not restart the service' }
+    $downloadPathField = '"path":' + (ConvertTo-Json -InputObject $downloadDir -Compress)
+    if (-not (Wait-Until { (Get-Logged $downloadPathField) -gt 0 } 5)) {
+        Fail 'the service did not use the configured download directory'
+    }
     foreach ($hostname in @('torrplay', 'nas.home.arpa', 'other.example')) {
         $code = & curl.exe -sS -o NUL -w '%{http_code}' --max-time 2 -H "Host: ${hostname}:8643" http://127.0.0.1:8643/api/v1
         $expected = $hostname -eq 'other.example' ? '421' : '200'
