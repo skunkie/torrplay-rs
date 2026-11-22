@@ -29,7 +29,12 @@ function page(items: Torrent[], next?: string): TorrentPage {
 }
 
 /** A backend that answers listings with `answer` and records the calls. */
-function backend(answer: (query: TorrentQuery, page: PageRequest) => Conditional<TorrentPage>) {
+function backend(
+  answer: (
+    query: TorrentQuery,
+    page: PageRequest,
+  ) => Conditional<TorrentPage> | Promise<Conditional<TorrentPage>>,
+) {
   const calls: [TorrentQuery, PageRequest][] = [];
   const fake = fakeBackend({
     async listTorrents(query, request) {
@@ -73,6 +78,35 @@ it("lists the library's torrents with their posters and loads more", async () =>
   expect(calls.at(-1)?.[1].cursor).toBe("c2");
 });
 
+it("updates a search result that appears on two pages without duplicating it", async () => {
+  navigate("/library?q=harbor");
+  const original = torrent(1, { title: "Harbor" });
+  const renamed = { ...original, title: "East Harborline" };
+  const { fake, calls } = backend((_, request) => ({
+    unchanged: false,
+    etag: '"search"',
+    data:
+      request.cursor === "second"
+        ? page([torrent(2, { title: "Harborside" }), renamed], "/api/v1/torrents?cursor=third")
+        : request.cursor === "third"
+          ? page([torrent(3, { title: "South Harborline" })])
+          : page([original], "/api/v1/torrents?cursor=second"),
+  }));
+  const { container } = render(LibraryPage, { context: backendContext(fake) });
+  expect(await screen.findByText("Harbor")).toBeInTheDocument();
+
+  await fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+
+  expect(await screen.findByText("East Harborline")).toBeInTheDocument();
+  expect(screen.getByText("Harborside")).toBeInTheDocument();
+  expect(screen.queryByText("Harbor")).not.toBeInTheDocument();
+  expect(container.querySelectorAll(`a[href="/titles/${original.id}"]`)).toHaveLength(1);
+
+  await fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+  expect(await screen.findByText("South Harborline")).toBeInTheDocument();
+  expect(calls.at(-1)?.[1].cursor).toBe("third");
+});
+
 it("keeps filters in the page's query and searches after a pause", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const { fake, calls } = backend(() => ({ unchanged: false, data: page([]), etag: '"e"' }));
@@ -86,6 +120,34 @@ it("keeps filters in the page's query and searches after a pause", async () => {
   expect(location.search).toBe("?q=show&kind=series");
   await waitFor(() => expect(calls.at(-1)?.[0]).toEqual({ kind: "series", search: "show" }));
   expect(await screen.findByText("Nothing matches.")).toBeInTheDocument();
+});
+
+it("ignores a late refresh for the previous filters", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const saved = { unchanged: false, data: page([torrent(1)]), etag: '"saved"' } as const;
+  let finishRefresh: (response: Conditional<TorrentPage>) => void = () => {};
+  const pending = new Promise<Conditional<TorrentPage>>((resolve) => {
+    finishRefresh = resolve;
+  });
+  const { fake, calls } = backend((query, request) => {
+    if (request.etag === saved.etag) return pending;
+    if (query.kind === "series") {
+      return { unchanged: false, data: page([torrent(2)]), etag: '"series"' };
+    }
+    return saved;
+  });
+  render(LibraryPage, { context: backendContext(fake) });
+  await screen.findByText("Title 1");
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(calls.at(-1)?.[1].etag).toBe(saved.etag);
+  await fireEvent.click(screen.getByRole("button", { name: "Series" }));
+  await screen.findByText("Title 2");
+
+  finishRefresh(saved);
+  await vi.advanceTimersByTimeAsync(0);
+
+  expect(screen.queryByText("Title 1")).not.toBeInTheDocument();
+  expect(calls.at(-1)?.[0].kind).toBe("series");
 });
 
 it("narrows what it holds at once, then shows what the server finds", async () => {
