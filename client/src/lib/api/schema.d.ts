@@ -123,7 +123,7 @@ export interface paths {
         put?: never;
         /**
          * Create a torrent
-         * @description Creates a torrent from a magnet URI in JSON or from an uploaded torrent file in a multipart form. The torrent exists as soon as this returns; a persisted torrent is stored so that it survives restarts with its ID, while a temporary one lives in memory until it goes unwatched, as retention describes. Metadata for a magnet URI is retrieved in the background. Retrying is safe: a client whose request timed out receives either 201 or a duplicate-torrent problem that links to the torrent its first attempt created. A torrent created in disk storage keeps its files in the download directory, as docs/adr/0009-disk-storage.md describes. The request may also set the configuration's library members; a poster is uploaded to the torrent's poster afterward.
+         * @description Creates a torrent from a magnet URI in JSON or from an uploaded torrent file in a multipart form. The torrent exists as soon as this returns; a persisted torrent is stored so that it survives restarts with its ID, while a temporary one lives in memory until it goes unwatched, as retention describes. Metadata for a magnet URI is retrieved in the background. Retrying is safe: a client whose request timed out receives either 201 or a duplicate-torrent problem that links to the torrent its first attempt created. A torrent created in disk storage keeps its files in the download directory, as docs/adr/0009-disk-storage.md describes. The request may also set the configuration's library members for either retention mode; a poster is uploaded afterward. Temporary torrents keep both in memory and save them when promoted to persisted.
          */
         post: operations["createTorrent"];
         delete?: never;
@@ -232,13 +232,13 @@ export interface paths {
         get: operations["getTorrentPoster"];
         /**
          * Upload a torrent's poster
-         * @description Stores the image as the torrent's poster, replacing any poster it had. The server never fetches images itself; a client with an image URL downloads it and uploads the bytes. The image is stored before this returns, survives restarts, and is deleted with the torrent. The bytes must be an image of the type the Content-Type names, which the server checks by its signature; it does not decode or convert it. The last of concurrent uploads wins.
+         * @description Stores the image as the torrent's poster, replacing any poster it had. The server never fetches images itself; a client with an image URL downloads it and uploads the bytes. The image is stored before this returns. It survives restarts for persisted torrents. Temporary torrents keep it in memory until deleted or promoted to persisted. The image is deleted with the torrent. Its bytes must match the type the Content-Type names, which the server checks by its signature; it does not decode or convert it. The last unconditional upload wins. Send If-None-Match with * to upload only if the torrent has no poster. The server checks this condition when it stores the image.
          */
         put: operations["setTorrentPoster"];
         post?: never;
         /**
          * Delete a torrent's poster
-         * @description Removes the poster, durably. The torrent itself is unchanged.
+         * @description Removes the poster. The torrent itself is unchanged.
          */
         delete: operations["deleteTorrentPoster"];
         options?: never;
@@ -1504,13 +1504,13 @@ export interface components {
          */
         CreationDesiredState: "started" | "paused";
         /**
-         * @description Whether the application keeps the torrent. A persisted torrent is stored and survives restarts. A temporary torrent lives in memory storage only: it is hidden from the listing by default and from the DLNA media server, takes no library members or poster, and is deleted once it has gone unwatched for the temporary_idle_seconds setting, or when the application restarts. Its files' progress is kept by its info hash for the temporary_progress_seconds setting. Changing it to persisted keeps the torrent with its ID; a persisted torrent cannot become temporary. Clients must handle values added later.
+         * @description Whether the application keeps the torrent. A persisted torrent is stored and survives restarts. A temporary torrent lives in memory storage only: it is hidden from the listing by default and from the DLNA media server, and is deleted with its library members and poster once it has gone unwatched for the temporary_idle_seconds setting, or when the application restarts. Its files' progress is kept by its info hash for the temporary_progress_seconds setting. Changing it to persisted keeps the torrent with its ID, library members, and poster. A persisted torrent cannot become temporary. Clients must handle values added later.
          * @example temporary
          * @enum {string}
          */
         Retention: "persisted" | "temporary";
         /**
-         * @description Whether the application keeps the new torrent, as Retention describes. It defaults to persisted. A temporary torrent must use memory storage and set no library members.
+         * @description Whether the application keeps the new torrent, as Retention describes. It defaults to persisted. A temporary torrent must use memory storage.
          * @default persisted
          * @example temporary
          * @enum {string}
@@ -1869,7 +1869,7 @@ export interface components {
                 torrent: string;
             };
         };
-        /** @description A JSON merge patch of a torrent's configuration. Omitted members keep their values. Setting retention to persisted keeps a temporary torrent; a temporary torrent takes no other change of storage mode or library member until then. A library member set to null takes its default: null, or an empty list for categories and genres. A list replaces the whole list, as RFC 7396 replaces arrays. */
+        /** @description A JSON merge patch of a torrent's configuration. Omitted members keep their values. Setting retention to persisted keeps a temporary torrent, including its library members and poster. Storage mode can change to disk only when the torrent is persisted. A library member set to null takes its default, which is an empty list for categories and genres and null for other library members. A list replaces the whole list, as RFC 7396 replaces arrays. */
         TorrentConfigurationPatch: {
             desired_state?: components["schemas"]["DesiredState"];
             storage_mode?: components["schemas"]["StorageMode"];
@@ -5037,7 +5037,13 @@ export interface operations {
     setTorrentPoster: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /**
+                 * @description Use * to require an absent poster, or a list of entity tags. A weak match to the existing poster returns 412.
+                 * @example *
+                 */
+                "If-None-Match"?: string;
+            };
             path: {
                 /**
                  * @description The torrent's ID.
@@ -5075,9 +5081,18 @@ export interface operations {
                 };
                 content?: never;
             };
+            400: components["responses"]["MalformedRequest"];
             404: components["responses"]["NotFound"];
             408: components["responses"]["RequestTimeout"];
-            409: components["responses"]["LifecycleConflict"];
+            /** @description If-None-Match matches the current poster. The poster is unchanged. */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             413: components["responses"]["ContentTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["UnprocessableImage"];

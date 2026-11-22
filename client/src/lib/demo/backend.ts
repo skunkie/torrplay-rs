@@ -230,6 +230,8 @@ export function demoBackend(now: () => number = Date.now): Backend {
   }
 
   function removeTorrent(id: string): void {
+    const poster = held.get(id)?.torrent.links.poster;
+    if (poster?.startsWith("blob:")) URL.revokeObjectURL(poster);
     held.delete(id);
     for (const [preloadId, preload] of preloads) {
       if (preload.torrentId === id) preloads.delete(preloadId);

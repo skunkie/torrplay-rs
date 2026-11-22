@@ -208,6 +208,7 @@ export const POSTER_BYTES = {
   "salt-and-copper": 19684,
   "dolgaya-zima": 11584,
   "small-engines": 20820,
+  "northbound-signal": 14394,
 };
 
 /** `fixture` with the poster called `name`. A torrent keeps its own poster link
@@ -228,7 +229,7 @@ function withPoster(fixture: Fixture, name: keyof typeof POSTER_BYTES): Fixture 
   };
 }
 
-/** The library the demo starts with, newest last: invented titles in every
+/** The torrents the demo starts with, newest last: invented titles in every
  * state a torrent can be seen in. Orchard Road has no poster, to show what a
  * torrent without one looks like. */
 export function fixtures(): Fixture[] {
@@ -280,10 +281,16 @@ export function fixtures(): Fixture[] {
       failure: { detail: "The disk that holds this torrent is full." },
       storage_mode: "disk",
     }),
-    movie(8, "Northbound.Signal.2024.1080p", 0.3, {
-      name: "Northbound Signal (2024)",
-      retention: "temporary",
-    }),
+    withPoster(
+      movie(8, "Northbound.Signal.2024.1080p", 0.3, {
+        name: "Northbound Signal (2024)",
+        title: "Northbound Signal",
+        year: 2024,
+        description: "A late train picks up a signal from a station that closed years ago.",
+        retention: "temporary",
+      }),
+      "northbound-signal",
+    ),
   ];
 }
 

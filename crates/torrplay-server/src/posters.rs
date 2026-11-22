@@ -3,27 +3,26 @@
 // SPDX-License-Identifier: MIT
 
 //! A torrent's poster: uploading, serving, and deleting its image. Posters
-//! live in the store and need no engine.
+//! live with their torrent and need no engine.
 
 use std::sync::Arc;
 use std::time::SystemTime;
 
 use axum::body::Body;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use torrplay_core::engine::Engine;
 use torrplay_core::image::ImageInfo;
 use torrplay_core::registry::TorrentRecord;
 use torrplay_store::StoreError;
 
-use torrplay_core::lifecycle::Retention;
-
 use crate::app::{App, store_failed};
+use crate::headers::EntityTags;
 use crate::images;
-use crate::problem::Problem;
-use crate::representation::torrent_path;
-use crate::torrents::{self, temporary_conflict};
+use crate::problem::{InvalidValue, Problem, ProblemType};
+use crate::representation::{image_etag, torrent_path};
+use crate::torrents;
 
 fn no_poster() -> Problem {
     Problem::not_found("The torrent has no poster.")
@@ -53,6 +52,9 @@ pub(crate) async fn get<E: Engine>(
     }
     // The headers follow the poster as read, which a replacement stored
     // since the record was read may have changed.
+    if let Some((poster, bytes)) = app.temporaries().poster(&record.id) {
+        return images::serve(&poster, bytes);
+    }
     let (poster, bytes) = app
         .store()
         .poster(&record.id)
@@ -80,29 +82,47 @@ pub(crate) async fn set<E: Engine>(
     request: HeaderMap,
     body: Body,
 ) -> Result<Response, Problem> {
-    let record = record(&app, &id)?;
+    record(&app, &id)?;
     app.require_running()?;
-    if record.configuration.retention() == Retention::Temporary {
-        return Err(temporary_conflict("upload its poster"));
-    }
+    let if_none_match = EntityTags::parse(&request, &header::IF_NONE_MATCH)
+        .transpose()
+        .map_err(|()| {
+            Problem::malformed(vec![InvalidValue::parameter(
+                "If-None-Match",
+                "Must be * or a list of entity tags.",
+            )])
+        })?;
     let (image_type, bytes) = images::read_upload(&app, &request, body).await?;
     let poster = ImageInfo::of(image_type, &bytes, SystemTime::now());
-    let replaced = {
+    let (torrent_id, replaced) = {
         let _lane = app.write_lane().await;
         let current = app.registry()?.get(&id).ok_or_else(torrents::not_found)?;
-        app.store()
-            .set_poster(&record.id, &poster, bytes.to_vec())
-            .await
-            .map_err(stored)?;
+        if let (Some(condition), Some(existing)) = (&if_none_match, &current.poster)
+            && condition.matches_weakly(image_etag(existing).opaque())
+        {
+            return Err(Problem::new(
+                ProblemType::PreconditionFailed,
+                "If-None-Match matches the current poster.",
+            ));
+        }
+        if !app
+            .temporaries()
+            .set_poster(&current.id, Some((poster.clone(), bytes.clone())))
+        {
+            app.store()
+                .set_poster(&current.id, &poster, bytes.to_vec())
+                .await
+                .map_err(stored)?;
+        }
         app.registry()?
             .set_poster(&id, Some(poster.clone()))
             .map_err(|_| torrents::not_found())?;
-        current.poster.is_some()
+        (current.id, current.poster.is_some())
     };
     images::uploaded(
         &poster,
         replaced,
-        format!("{}/poster", torrent_path(&record.id)),
+        format!("{}/poster", torrent_path(&torrent_id)),
     )
 }
 
@@ -117,10 +137,12 @@ pub(crate) async fn delete<E: Engine>(
     if current.poster.is_none() {
         return Err(no_poster());
     }
-    app.store()
-        .delete_poster(&current.id)
-        .await
-        .map_err(stored)?;
+    if !app.temporaries().set_poster(&current.id, None) {
+        app.store()
+            .delete_poster(&current.id)
+            .await
+            .map_err(stored)?;
+    }
     app.registry()?
         .set_poster(&id, None)
         .map_err(|_| torrents::not_found())?;

@@ -53,9 +53,9 @@ pub(crate) fn not_modified_or_acceptable(
 }
 
 /// Serves `image` and its bytes.
-pub(crate) fn serve(image: &ImageInfo, bytes: Vec<u8>) -> Result<Response, Problem> {
+pub(crate) fn serve(image: &ImageInfo, bytes: impl Into<Body>) -> Result<Response, Problem> {
     let (parts, _) = headers(image)?.into_parts();
-    Ok(Response::from_parts(parts, Body::from(bytes)))
+    Ok(Response::from_parts(parts, bytes.into()))
 }
 
 /// Reads an upload: an image of a type its `Content-Type` names, whose bytes

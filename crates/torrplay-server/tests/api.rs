@@ -3220,7 +3220,7 @@ mod scenario {
             );
         };
 
-        // TMP-03: what a temporary torrent cannot be created with.
+        // TMP-03: a temporary torrent cannot use disk storage.
         let small = catalog::single_small();
         let refused = server
             .send_unchecked(json_request(
@@ -3239,9 +3239,7 @@ mod scenario {
             StatusCode::UNPROCESSABLE_ENTITY,
             "validation-failed",
         );
-        let mut pointers = errors(&refused, "pointer");
-        pointers.sort();
-        assert_eq!(pointers, ["/storage_mode", "/title"]);
+        assert_eq!(errors(&refused, "pointer"), ["/storage_mode"]);
 
         // TMP-01: it plays like any torrent.
         let created = create_temporary(&server, &small).await;
@@ -3274,22 +3272,16 @@ mod scenario {
             "persisted"
         );
 
-        // TMP-03: and what it cannot take later.
+        // TMP-03: it cannot switch to disk while temporary.
         let config_path = format!("{path}/configuration");
         let tag = etag(&configuration);
-        for patch in [
-            json!({ "title": "Kept" }),
-            json!({ "storage_mode": "disk" }),
-        ] {
-            assert_problem(
-                &server.send(merge_patch(&config_path, &tag, &patch)).await,
-                StatusCode::CONFLICT,
-                "lifecycle-conflict",
-            );
-        }
         assert_problem(
             &server
-                .send(put_poster(&format!("{path}/poster"), "image/png", PNG))
+                .send(merge_patch(
+                    &config_path,
+                    &tag,
+                    &json!({ "storage_mode": "disk" }),
+                ))
                 .await,
             StatusCode::CONFLICT,
             "lifecycle-conflict",
@@ -3411,6 +3403,130 @@ mod scenario {
         let restored = server.get(&watched_path).await.json();
         assert_eq!(restored["retention"], "persisted");
         assert_eq!(restored["title"], "Kept");
+        server.stop().await;
+    }
+
+    /// TMP-13: artwork and library fields stay with the torrent when promoted.
+    pub async fn temporary_artwork() {
+        let server = TestServer::start().await;
+        let created = server
+            .send(json_request(
+                Method::POST,
+                "/api/v1/torrents",
+                &json!({
+                    "magnet_uri": magnet(&catalog::single_small()),
+                    "retention": "temporary",
+                    "title": "Harbor Lights",
+                    "kind": "movie",
+                    "year": 2024,
+                    "genres": ["Drama"],
+                }),
+            ))
+            .await;
+        assert_eq!(created.status, StatusCode::CREATED);
+        let torrent = created.json();
+        let path = torrent["links"]["self"].as_str().unwrap();
+        let configuration = format!("{path}/configuration");
+        let poster = format!("{path}/poster");
+        let conditional_upload = |media_type: &str, bytes: &[u8], condition: &str| {
+            let mut upload = put_poster(&poster, media_type, bytes);
+            upload
+                .headers_mut()
+                .insert(header::IF_NONE_MATCH, condition.parse().unwrap());
+            upload
+        };
+        let initial = server.get(&configuration).await;
+        let edited = server
+            .send(merge_patch(
+                &configuration,
+                initial.header(header::ETAG).unwrap(),
+                &json!({"description": "An overnight ferry."}),
+            ))
+            .await;
+        assert_eq!(edited.status, StatusCode::OK);
+        let tag = edited.header(header::ETAG).unwrap();
+
+        assert_problem(
+            &server
+                .send_unchecked(conditional_upload("image/jpeg", JPEG, "bad-tag"))
+                .await,
+            StatusCode::BAD_REQUEST,
+            "malformed-request",
+        );
+        let first = server
+            .send(conditional_upload("image/jpeg", JPEG, "*"))
+            .await;
+        assert_eq!(first.status, StatusCode::CREATED);
+        assert_eq!(
+            server.send(empty(Method::DELETE, &poster)).await.status,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(server.get(&poster).await.status, StatusCode::NOT_FOUND);
+        let uploaded = server.send(put_poster(&poster, "image/png", PNG)).await;
+        assert_eq!(uploaded.status, StatusCode::CREATED);
+        let image_tag = uploaded.header(header::ETAG).unwrap();
+        assert_problem(
+            &server
+                .send(conditional_upload(
+                    "image/jpeg",
+                    JPEG,
+                    &format!("W/{image_tag}"),
+                ))
+                .await,
+            StatusCode::PRECONDITION_FAILED,
+            "precondition-failed",
+        );
+        let listed = server
+            .get("/api/v1/torrents?retention=temporary")
+            .await
+            .json();
+        assert_eq!(listed["items"][0]["title"], "Harbor Lights");
+        assert_eq!(listed["items"][0]["poster"]["media_type"], "image/png");
+        assert_eq!(server.get(&poster).await.body, PNG);
+        assert_eq!(listed_len(&server).await, 0);
+
+        server.app.store().fail_writes(true);
+        let keep = json!({ "retention": "persisted" });
+        assert_eq!(
+            server
+                .send(merge_patch(&configuration, tag, &keep))
+                .await
+                .status,
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            server.get(&configuration).await.json()["retention"],
+            "temporary"
+        );
+        assert_eq!(server.get(&poster).await.body, PNG);
+        server.app.store().fail_writes(false);
+        assert_eq!(
+            server
+                .send(merge_patch(&configuration, tag, &keep))
+                .await
+                .status,
+            StatusCode::OK
+        );
+
+        assert_problem(
+            &server
+                .send(conditional_upload("image/jpeg", JPEG, "*"))
+                .await,
+            StatusCode::PRECONDITION_FAILED,
+            "precondition-failed",
+        );
+
+        let server = server.restart().await;
+        let restored = server.get(path).await.json();
+        assert_eq!(restored["id"], torrent["id"]);
+        assert_eq!(restored["retention"], "persisted");
+        assert_eq!(restored["title"], "Harbor Lights");
+        assert_eq!(restored["year"], 2024);
+        assert_eq!(restored["genres"], json!(["Drama"]));
+        assert_eq!(restored["description"], "An overnight ferry.");
+        let served = server.get(&poster).await;
+        assert_eq!(served.body, PNG);
+        assert_eq!(served.header(header::ETAG), Some(image_tag));
         server.stop().await;
     }
 
@@ -8112,6 +8228,7 @@ scenarios!(
     restores_need_the_engine_and_a_write,
     restored_settings_apply_at_once,
     temporary_torrents,
+    temporary_artwork,
     named_dht_and_log_settings,
     api_reference,
     api_catalog,

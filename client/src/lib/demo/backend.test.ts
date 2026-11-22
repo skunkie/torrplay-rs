@@ -1077,7 +1077,9 @@ describe("backup", () => {
 describe("the posters", () => {
   it("are files the demo serves, of the sizes it reports", async () => {
     const { backend } = start();
-    const posters = (await listedTorrents(backend)).filter((torrent) => torrent.poster);
+    const posters = (await listedTorrents(backend, { retention: "any" })).filter(
+      (torrent) => torrent.poster,
+    );
 
     expect(posters).toHaveLength(Object.keys(POSTER_BYTES).length);
     for (const { links, poster } of posters) {

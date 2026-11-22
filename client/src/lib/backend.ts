@@ -384,17 +384,21 @@ export function httpBackend(http: Http): Backend {
     },
 
     async keepTorrent(torrentId, storageMode) {
-      const { data, etag } = await getConfiguration(torrentId);
-      if (data.retention !== "temporary") return;
-      await updateConfiguration(
-        torrentId,
-        {
-          retention: "persisted",
-          // A temporary torrent is in memory, so only disk is a change.
-          ...(storageMode === "disk" ? { storage_mode: storageMode } : {}),
-        },
-        etag,
-      );
+      const patch: TorrentConfigurationPatch = {
+        retention: "persisted",
+        // A temporary torrent is in memory, so only disk is a change.
+        ...(storageMode === "disk" ? { storage_mode: storageMode } : {}),
+      };
+      for (const mayRetry of [true, false]) {
+        const { data, etag } = await getConfiguration(torrentId);
+        if (data.retention !== "temporary") return;
+        try {
+          await updateConfiguration(torrentId, patch, etag);
+          return;
+        } catch (failure) {
+          if (!mayRetry || !(failure instanceof ApiError) || failure.status !== 412) throw failure;
+        }
+      }
     },
 
     async deleteTorrent(torrentId) {

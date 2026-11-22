@@ -252,10 +252,12 @@ the tokens.
   between **Up next** and **Recently added**. The row appears when there are
   temporary torrents. **See all** opens **Temporary torrents** when more
   exist. Both views refresh as torrents expire or are kept. Open a torrent
-  to use **Add to library** in its **Download** panel. Keeping it preserves
-  its ID and moves it into the Library. Browsing a temporary torrent list
-  does not keep a torrent alive. The demo checks for expiry on access and counts
-  idle time from creation, the most recent preload, or the end of playback.
+  to use **Add to library** in its **Download** panel. If a client supplied
+  a title and poster, the rows show them. Keeping the torrent preserves its
+  ID, metadata, and poster and moves it into the Library. Browsing a temporary
+  torrent list does not keep a torrent alive. The demo checks for expiry on
+  access and counts idle time from creation, the most recent preload, or the
+  end of playback.
   Re-adding an expired temporary torrent in the demo restores its playback
   progress until the temporary progress retention period passes. The demo
   matches magnets by decoded info hash and uploaded files by a fingerprint

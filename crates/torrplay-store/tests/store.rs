@@ -1020,10 +1020,7 @@ async fn temporary_progress_is_kept_by_info_hash() {
     expected.sort_by(|a, b| a.file.cmp(&b.file));
     assert_eq!(temporary, expected);
 
-    store
-        .promote(promoted.clone(), promoted.info_hash)
-        .await
-        .unwrap();
+    store.promote(promoted.clone(), None).await.unwrap();
     store.expire_temporary_progress(at(15)).await.unwrap();
     drop(store);
     let (_store, contents) = Store::open(dir.path()).unwrap();

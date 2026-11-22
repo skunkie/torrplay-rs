@@ -521,15 +521,6 @@ pub(crate) async fn create<E: Engine>(
     Ok(response)
 }
 
-/// The conflict of a change a temporary torrent cannot take, such as
-/// "upload its poster".
-pub(crate) fn temporary_conflict(change: &str) -> Problem {
-    Problem::new(
-        ProblemType::LifecycleConflict,
-        format!("The torrent is temporary; set its retention to persisted to {change}."),
-    )
-}
-
 /// Deletes the temporary torrent idle longest while the temporary torrents
 /// are at their limit, or fails with too-many-temporary-torrents when every
 /// one is active.
@@ -694,27 +685,16 @@ fn parse_retention(value: &Value, errors: &mut Vec<InvalidValue>) -> Option<Rete
     retention
 }
 
-/// Refuses what a temporary torrent cannot have: disk storage and library
-/// members, named by `library`.
-fn check_temporary<'a>(
+/// Refuses disk storage for a temporary torrent.
+fn check_temporary(
     retention: Retention,
     storage_mode: StorageMode,
-    library: impl Iterator<Item = &'a str>,
     errors: &mut Vec<InvalidValue>,
 ) {
-    if retention != Retention::Temporary {
-        return;
-    }
-    if storage_mode == StorageMode::Disk {
+    if retention == Retention::Temporary && storage_mode == StorageMode::Disk {
         errors.push(InvalidValue::pointer(
             "/storage_mode",
             "Must be memory for a temporary torrent.",
-        ));
-    }
-    for member in library {
-        errors.push(InvalidValue::pointer(
-            pointer(member),
-            "Must be absent for a temporary torrent; persist it to set its library members.",
         ));
     }
 }
@@ -771,15 +751,7 @@ fn creation_from_json(bytes: &Bytes) -> Result<Creation, Problem> {
     if !members.contains_key("magnet_uri") {
         errors.push(InvalidValue::pointer("/magnet_uri", "Is required."));
     }
-    check_temporary(
-        retention,
-        storage_mode,
-        members
-            .keys()
-            .map(String::as_str)
-            .filter(|member| library::is_member(member)),
-        &mut errors,
-    );
+    check_temporary(retention, storage_mode, &mut errors);
     match magnet_uri {
         Some(uri) if errors.is_empty() => Ok(Creation {
             source: Source::MagnetUri(uri),
@@ -866,12 +838,7 @@ fn creation_from_form(bytes: &Bytes, boundary: &str) -> Result<Creation, Problem
     }
     let retention = retention.unwrap_or(Retention::Persisted);
     let storage_mode = storage_mode.unwrap_or(StorageMode::Memory);
-    check_temporary(
-        retention,
-        storage_mode,
-        library_members.keys().map(String::as_str),
-        &mut errors,
-    );
+    check_temporary(retention, storage_mode, &mut errors);
     match metainfo {
         Some(file) if errors.is_empty() => Ok(Creation {
             source: Source::Metainfo(file.to_vec()),
@@ -1009,15 +976,10 @@ pub(crate) async fn update_configuration<E: Engine>(
         )]));
     }
     let persist = temporary && patch.retention == Some(Retention::Persisted);
-    if temporary
-        && !persist
-        && (patch.library != LibraryPatch::default()
-            || patch
-                .storage_mode
-                .is_some_and(|mode| mode != record.configuration.storage_mode()))
-    {
-        return Err(temporary_conflict(
-            "change its storage mode or library members",
+    if temporary && !persist && patch.storage_mode == Some(StorageMode::Disk) {
+        return Err(Problem::new(
+            ProblemType::LifecycleConflict,
+            "The torrent is temporary; set its retention to persisted to use disk storage.",
         ));
     }
     // Library members need no engine, so they change in any lifecycle
@@ -1163,20 +1125,24 @@ async fn store_configuration<E: Engine>(
     if change.persist {
         changed |= configuration.persist();
     }
-    let temporary = app.temporaries().source(&current.id);
     if changed {
-        match (temporary, change.persist) {
-            // Persisting stores the whole torrent, with the source it was
-            // created from or the torrent file of its recorded metadata.
-            (Some(source), true) => {
+        if current.configuration.retention() == Retention::Temporary {
+            if change.persist {
+                let source = app
+                    .temporaries()
+                    .source(&current.id)
+                    .ok_or(Stored::Registry(ConfigurationError::NotFound))?;
                 let record = TorrentRecord {
                     configuration: configuration.clone(),
                     ..current.clone()
                 };
-                // Its progress, kept by info hash, becomes the persisted
-                // torrent's in the same write.
+                let poster = app
+                    .temporaries()
+                    .poster(&current.id)
+                    .map(|(image, bytes)| (image, bytes.to_vec()));
+                // Keep the poster and transfer progress from the info hash in the same write.
                 app.store()
-                    .promote(stored(&record, &source), current.info_hash)
+                    .promote(stored(&record, &source), poster)
                     .await
                     .map_err(|error| Stored::Failed(store_failed(error)))?;
                 app.temporaries().remove(&current.id);
@@ -1184,13 +1150,11 @@ async fn store_configuration<E: Engine>(
                     viewing.adopt_temporary_progress(&current.info_hash, &current.id);
                 }
             }
-            // A temporary torrent is not stored.
-            (Some(_), false) => {}
-            (None, _) => app
-                .store()
+        } else {
+            app.store()
                 .set_configuration(&current.id, &configuration)
                 .await
-                .map_err(|error| Stored::Failed(store_failed(error)))?,
+                .map_err(|error| Stored::Failed(store_failed(error)))?;
         }
         registry
             .set_configuration(id, configuration.clone())
