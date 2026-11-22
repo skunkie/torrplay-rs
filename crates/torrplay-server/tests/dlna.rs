@@ -295,7 +295,7 @@ async fn the_media_server_answers_only_while_on() {
 }
 
 /// TMP-08: a temporary torrent is never shown to televisions, and its media
-/// URL answers as an unknown one does.
+/// and poster URLs answer as unknown ones do.
 #[tokio::test]
 async fn temporary_torrents_stay_off_the_media_server() {
     let server = TestServer::start().await;
@@ -337,7 +337,44 @@ async fn temporary_torrents_stay_off_the_media_server() {
         )
         .await;
     assert_eq!(media.status, StatusCode::NOT_FOUND);
+
+    let poster = format!("/api/v1/torrents/{id}/poster");
+    let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x01\0\0\0\x01";
+    let uploaded = server
+        .send(
+            request(Method::PUT, &poster)
+                .header(header::CONTENT_TYPE, "image/png")
+                .body(png.to_vec())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(uploaded.status, StatusCode::CREATED);
+    assert_eq!(server.get(&poster).await.body, png);
+
+    let dlna_poster = format!("/dlna/posters/{id}");
+    let read_poster =
+        |method| server.send_raw(request(method, &dlna_poster).body(Vec::new()).unwrap());
+    let temporary_get = read_poster(Method::GET).await;
+    let temporary_head = read_poster(Method::HEAD).await;
+    configure(&server, &id, json!({ "retention": "persisted" })).await;
+    let persisted_get = read_poster(Method::GET).await;
+    let persisted_head = read_poster(Method::HEAD).await;
     server.stop().await;
+
+    assert_eq!(temporary_get.status, StatusCode::NOT_FOUND, "GET");
+    assert_eq!(temporary_head.status, StatusCode::NOT_FOUND, "HEAD");
+    assert_eq!(persisted_get.status, StatusCode::OK, "GET after promotion");
+    assert_eq!(persisted_get.body, png);
+    assert_eq!(
+        persisted_head.status,
+        StatusCode::OK,
+        "HEAD after promotion"
+    );
+    assert_eq!(
+        persisted_head.header(header::ETAG),
+        uploaded.header(header::ETAG)
+    );
+    assert!(persisted_head.body.is_empty());
 }
 
 /// DLNA-03 to DLNA-05 and DLNA-18: browsing the root, a container, a

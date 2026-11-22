@@ -533,6 +533,14 @@ async fn media<E: Engine>(
     Ok(response)
 }
 
+fn require_persisted_torrent<E: Engine>(app: &App<E>, id: &str) -> Result<(), Problem> {
+    app.registry()?
+        .get(id)
+        .filter(|record| record.configuration.retention() == Retention::Persisted)
+        .ok_or_else(|| Problem::not_found("The media server has no such torrent."))?;
+    Ok(())
+}
+
 pub(crate) async fn get_poster<E: Engine>(
     State(app): State<Arc<App<E>>>,
     client: Option<Extension<ConnectInfo<SocketAddr>>>,
@@ -540,6 +548,7 @@ pub(crate) async fn get_poster<E: Engine>(
     headers: HeaderMap,
 ) -> Result<Response, Problem> {
     gate(&app, client)?;
+    require_persisted_torrent(&app, &path.0)?;
     posters::get(State(app), path, headers).await
 }
 
@@ -550,6 +559,7 @@ pub(crate) async fn head_poster<E: Engine>(
     headers: HeaderMap,
 ) -> Result<Response, Problem> {
     gate(&app, client)?;
+    require_persisted_torrent(&app, &path.0)?;
     posters::head(State(app), path, headers).await
 }
 

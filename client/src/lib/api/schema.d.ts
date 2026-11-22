@@ -207,7 +207,7 @@ export interface paths {
         head?: never;
         /**
          * Change a torrent's configuration
-         * @description Applies a JSON merge patch to the configuration. The request must carry If-Match with the configuration's current ETag. The change is stored before this returns, and the configuration and its ETag survive restarts. Pausing closes the torrent's peer connections and cancels its streams; pausing and then starting a failed torrent restarts it. The observed state follows once the engine applies the change. A change of storage_mode starts a storage mode transition, which the torrent resource's storage_transition shows; streams continue across it. A transition that fails returns storage_mode to the storage mode in effect, with a new ETag, and the torrent resource's storage_failure says why. Changing storage_mode during a transition is lifecycle-conflict. The library members, title through genres, need no engine and change only the configuration and the torrent's representation; docs/lifecycle.md describes how they are normalized.
+         * @description Applies a JSON merge patch to the configuration. The request must carry If-Match with the configuration's current ETag. If the resulting torrent is persisted, the change is stored before this returns, and the configuration and its ETag survive restarts. A temporary torrent's configuration and ETag are kept in memory and discarded with the torrent. Once the server begins storing the change, it can finish even if the client disconnects. Pausing closes the torrent's peer connections and cancels its streams; pausing and then starting a failed torrent restarts it. The observed state follows once the engine applies the change. A change of storage_mode starts a storage mode transition, which the torrent resource's storage_transition shows; streams continue across it. A transition that fails returns storage_mode to the storage mode in effect, with a new ETag, and the torrent resource's storage_failure says why. Changing storage_mode during a transition is lifecycle-conflict. The library members, title through genres, need no engine and change only the configuration and the torrent's representation; docs/lifecycle.md describes how they are normalized.
          */
         patch: operations["updateTorrentConfiguration"];
         trace?: never;
@@ -227,18 +227,18 @@ export interface paths {
         };
         /**
          * Read a torrent's poster
-         * @description Returns the poster image as it was uploaded, with its media type. The request is not-found while the torrent has no poster. A Range header is ignored. The poster is read from the database, so it needs no engine and works before metadata is available.
+         * @description Returns the poster image as it was uploaded, with its media type. The request is not-found while the torrent has no poster. A Range header is ignored. A persisted torrent's poster is read from the database. A temporary torrent's poster is read from memory. Neither requires the engine or torrent metadata.
          */
         get: operations["getTorrentPoster"];
         /**
          * Upload a torrent's poster
-         * @description Stores the image as the torrent's poster, replacing any poster it had. The server never fetches images itself; a client with an image URL downloads it and uploads the bytes. The image is stored before this returns. It survives restarts for persisted torrents. Temporary torrents keep it in memory until deleted or promoted to persisted. The image is deleted with the torrent. Its bytes must match the type the Content-Type names, which the server checks by its signature; it does not decode or convert it. The last unconditional upload wins. Send If-None-Match with * to upload only if the torrent has no poster. The server checks this condition when it stores the image.
+         * @description Stores the image as the torrent's poster, replacing any poster it had. The server never fetches images itself; a client with an image URL downloads it and uploads the bytes. The image is stored before this returns. It survives restarts for persisted torrents. Temporary torrents keep it in memory until deleted or promoted to persisted. The image is deleted with the torrent. Its bytes must match the type the Content-Type names, which the server checks by its signature; it does not decode or convert it. The last unconditional upload wins. Send If-None-Match with * to upload only if the torrent has no poster. The server checks this condition when it stores the image. Once the server begins applying the upload, it can finish even if the client disconnects.
          */
         put: operations["setTorrentPoster"];
         post?: never;
         /**
          * Delete a torrent's poster
-         * @description Removes the poster. The torrent itself is unchanged.
+         * @description Removes the poster. Once the server begins applying the deletion, it can finish even if the client disconnects.
          */
         delete: operations["deleteTorrentPoster"];
         options?: never;

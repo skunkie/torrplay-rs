@@ -100,9 +100,10 @@ at any moment. Clients must handle observed states added later.
 
 ## Desired state changes
 
-A PATCH of the configuration changes the desired state. The response
-returns once the configuration is stored durably; the observed state follows
-when the engine has applied the change.
+A PATCH of the configuration can change the desired state. Before returning,
+the server stores the configuration in the database for a persisted torrent
+or in memory for a temporary torrent. The observed state follows when the
+engine has applied the change.
 
 - Setting the current value again changes nothing, and the configuration's
   ETag stays the same.
@@ -920,10 +921,12 @@ local filesystem, as [ADR 8](adr/0008-database.md) requires.
 - It records whether the application last shut down cleanly. A disk
   torrent's resume bitfield, the record of its verified pieces, lives in the
   download directory beside its files rather than in the database.
-- Creation, configuration changes, poster changes, recorded metadata, and
-  deletion are each stored in one transaction before their response, so an
-  interrupted write leaves either the state before it or the state after
-  it.
+- For persisted torrents, creation, configuration changes, poster changes,
+  recorded metadata, and deletion each use one database transaction.
+  Promotion stores the temporary torrent and its poster in one transaction
+  too. Each transaction commits before the response. Once the server begins
+  applying a configuration change or poster write, it can finish even if
+  the client disconnects.
 - A write that fails is an `internal-error`, and nothing changes: the
   application's own records change only after the database's.
 - Observed state, failures, statistics, readers, and the piece cache are not

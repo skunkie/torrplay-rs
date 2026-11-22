@@ -89,11 +89,13 @@ ContentDirectory and ConnectionManager services.
 | `/dlna/connection-manager/control` | POST | ConnectionManager's SOAP actions |
 | `/dlna/connection-manager/events` | SUBSCRIBE, UNSUBSCRIBE | ConnectionManager's events |
 | `/dlna/media/{torrent_id}/{file_id}/{file_name}` | GET, HEAD | A file's content |
-| `/dlna/posters/{torrent_id}` | GET, HEAD | A torrent's poster |
+| `/dlna/posters/{torrent_id}` | GET, HEAD | A persisted torrent's poster |
 | `/dlna/icons/{icon}` | GET, HEAD | One of the device's icons |
 
 Descriptions are `text/xml; charset="utf-8"`. The device description
 declares `dlna:X_DLNADOC` `DMS-1.50`.
+
+Poster requests for temporary torrents return `404 Not Found`.
 
 The device description lists four icons, which televisions show beside
 its name, in the order DLNA's icon profiles list them:
