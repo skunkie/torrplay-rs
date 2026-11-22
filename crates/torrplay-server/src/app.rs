@@ -14,13 +14,14 @@
 //! wherever their order allows.
 
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime};
 
 use tokio::sync::MutexGuard as LaneGuard;
-use tokio::sync::watch;
+use tokio::sync::{OwnedMutexGuard, watch};
 use torrplay_core::credentials::{AllowedHosts, AttemptLimiter, Credentials};
 use torrplay_core::engine::{CacheStatistics, Engine, EngineError, Source};
 use torrplay_core::id::{FileId, ProfileId, TorrentId, random_torrent_id_bytes};
@@ -38,6 +39,7 @@ use torrplay_store::{
     ImageReader, Replacement, Store, StoreError, StoredCredentials, StoredDismissal,
     StoredProgress, StoredSettings, StoredTemporaryProgress, StoredTitleProgress, StoredTorrent,
 };
+use tracing::Instrument;
 
 use crate::inference::{Due, EngineSource, INDEX_TIMEOUT, Inference, PendingIndex};
 use crate::problem::Problem;
@@ -66,7 +68,7 @@ pub struct App<E> {
     viewing: Viewing,
     store: Store,
     /// Serializes mutations; see the [module documentation](self).
-    writes: tokio::sync::Mutex<()>,
+    writes: Arc<tokio::sync::Mutex<()>>,
     /// Serializes writing backups, so one temporary archive exists at a
     /// time.
     backup_writes: tokio::sync::Mutex<()>,
@@ -181,7 +183,7 @@ impl<E: Engine> App<E> {
             registry,
             viewing: Viewing::default(),
             store,
-            writes: tokio::sync::Mutex::new(()),
+            writes: Arc::new(tokio::sync::Mutex::new(())),
             backup_writes: tokio::sync::Mutex::new(()),
             data_free_bytes: Mutex::new(None),
             body_timeout: BODY_TIMEOUT_DEFAULT,
@@ -971,6 +973,27 @@ impl<E: Engine> App<E> {
     /// Takes the write lane; see the [module documentation](self).
     pub(crate) async fn write_lane(&self) -> LaneGuard<'_, ()> {
         self.writes.lock().await
+    }
+
+    /// Once admitted to the write lane, finish both the store and registry
+    /// updates even if the request is canceled. Closing the store also takes
+    /// this lane, so shutdown waits for the write.
+    pub(crate) async fn complete_write<T, F>(
+        self: &Arc<Self>,
+        write: impl FnOnce(Arc<Self>, OwnedMutexGuard<()>) -> F + Send,
+    ) -> Result<T, Problem>
+    where
+        T: Send + 'static,
+        F: Future<Output = Result<T, Problem>> + Send + 'static,
+    {
+        let lane = Arc::clone(&self.writes).lock_owned().await;
+        self.require_running()?;
+        tokio::spawn(write(Arc::clone(self), lane).in_current_span())
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, "a write task did not finish");
+                Problem::internal()
+            })?
     }
 
     /// Takes the lane of backups being written.

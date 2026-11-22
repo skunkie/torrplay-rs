@@ -1030,9 +1030,8 @@ pub(crate) async fn update_configuration<E: Engine>(
             .set_desired_state(&record.id, desired_state)
             .await?;
     }
-    let stored = {
-        let _lane = app.write_lane().await;
-        store_configuration(
+    app.complete_write(move |app, lane| async move {
+        let update = match store_configuration(
             &app,
             &id,
             Change {
@@ -1044,41 +1043,46 @@ pub(crate) async fn update_configuration<E: Engine>(
             &record.configuration.etag(),
         )
         .await
-    };
-    let update = match stored {
-        Ok(update) => update,
-        Err(error) => {
-            // A concurrent change won or the store failed; the engine
-            // follows the stored value.
-            if let Ok(registry) = app.registry()
-                && let Some(current) = registry.get(&id)
-            {
-                let _ = app
-                    .engine()
-                    .set_desired_state(&record.id, current.configuration.desired_state())
-                    .await;
+        {
+            Ok(update) => update,
+            Err(error) => {
+                drop(lane);
+                // Restore the engine state if this request changed it before
+                // a concurrent write won or the store failed.
+                if desired_state != previous
+                    && let Ok(registry) = app.registry()
+                    && let Some(current) = registry.get(&id)
+                {
+                    let _ = app
+                        .engine()
+                        .set_desired_state(&record.id, current.configuration.desired_state())
+                        .await;
+                }
+                return Err(match error {
+                    Stored::Registry(ConfigurationError::NotFound) => not_found(),
+                    Stored::Registry(ConfigurationError::PreconditionFailed { .. }) => stale(),
+                    Stored::Failed(problem) => problem,
+                });
             }
-            return Err(match error {
-                Stored::Registry(ConfigurationError::NotFound) => not_found(),
-                Stored::Registry(ConfigurationError::PreconditionFailed { .. }) => stale(),
-                Stored::Failed(problem) => problem,
-            });
+        };
+        if update.changed
+            && previous == DesiredState::Paused
+            && desired_state == DesiredState::Started
+        {
+            app.clear_metadata_failure(&record.id);
         }
-    };
-    if update.changed && previous == DesiredState::Paused && desired_state == DesiredState::Started
-    {
-        app.clear_metadata_failure(&record.id);
-    }
-    if let Some(mode) = new_storage_mode
-        && update.configuration.storage_mode() == mode
-    {
-        app.start_transition(record.id.clone(), mode);
-    }
-    let body = representation::configuration(&record.id, &update.configuration);
-    with_etag(
-        json(StatusCode::OK, &body)?,
-        &configuration_etag(&update.configuration),
-    )
+        if let Some(mode) = new_storage_mode
+            && update.configuration.storage_mode() == mode
+        {
+            app.start_transition(record.id.clone(), mode);
+        }
+        let body = representation::configuration(&record.id, &update.configuration);
+        with_etag(
+            json(StatusCode::OK, &body)?,
+            &configuration_etag(&update.configuration),
+        )
+    })
+    .await
 }
 
 /// Why a desired state was not stored.
@@ -1269,7 +1273,13 @@ pub(crate) async fn get_cache_statistics<E: Engine>(
 
 #[cfg(test)]
 mod tests {
+    use std::pin::pin;
+    use std::task::{Context, Waker};
+    use std::time::Duration;
+
     use serde_json::json;
+    use torrplay_core::fake::FakeEngine;
+    use torrplay_store::Store;
 
     use super::*;
 
@@ -1279,6 +1289,105 @@ mod tests {
 
     fn bytes(value: Value) -> Bytes {
         Bytes::from(serde_json::to_vec(&value).unwrap())
+    }
+
+    #[tokio::test]
+    async fn canceled_promotion_persists_later_poster_updates_and_starts_the_transition() {
+        let directory = tempfile::tempdir().unwrap();
+        let (store, contents) = Store::open(directory.path()).unwrap();
+        let engine = Arc::new(FakeEngine::with_catalog());
+        let app = Arc::new(App::new(Arc::clone(&engine), store));
+        app.restore(contents.torrents).await.unwrap();
+        let fixture = torrplay_fixtures::catalog::single_small();
+        let magnet_uri = fixture.magnet_uri(&fixture.metainfo().info_hash);
+        let content_type = |value| {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(value));
+            headers
+        };
+        let created = create(
+            State(Arc::clone(&app)),
+            content_type(JSON),
+            Body::from(bytes(
+                json!({ "magnet_uri": magnet_uri, "retention": "temporary" }),
+            )),
+        )
+        .await
+        .unwrap();
+        let (_, id) = created.headers()[header::LOCATION]
+            .to_str()
+            .unwrap()
+            .rsplit_once('/')
+            .unwrap();
+        let upload = |media_type, body| {
+            crate::posters::set(
+                State(Arc::clone(&app)),
+                Path(id.to_owned()),
+                content_type(media_type),
+                Body::from(body),
+            )
+        };
+        let png = b"\x89PNG\r\n\x1a\n".as_slice();
+        let jpeg = b"\xff\xd8\xff\xd9".as_slice();
+        assert_eq!(
+            upload("image/png", png).await.unwrap().status(),
+            StatusCode::CREATED
+        );
+        let record = app.registry().unwrap().get(id).unwrap();
+        let mut headers = content_type(MERGE_PATCH);
+        headers.insert(
+            header::IF_MATCH,
+            configuration_etag(&record.configuration)
+                .to_string()
+                .parse()
+                .unwrap(),
+        );
+        let transition = engine.hold_transitions();
+        {
+            let mut request = pin!(update_configuration(
+                State(Arc::clone(&app)),
+                Path(id.to_owned()),
+                headers,
+                Body::from(bytes(
+                    json!({ "retention": "persisted", "storage_mode": "disk" })
+                )),
+            ));
+            // Simulate a disconnect while the handler is waiting for the write.
+            assert!(
+                request
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop()))
+                    .is_pending()
+            );
+        }
+        assert_eq!(
+            upload("image/jpeg", jpeg).await.unwrap().status(),
+            StatusCode::NO_CONTENT
+        );
+        let transition_started = app.in_transition(&record.id);
+        transition.notify_one();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while app.in_transition(&record.id) {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+        app.close_store().await.unwrap();
+
+        let (store, contents) = Store::open(directory.path()).unwrap();
+        let restored = App::new(Arc::new(FakeEngine::with_catalog()), store);
+        restored.restore(contents.torrents).await.unwrap();
+        let torrent = restored.registry().unwrap().get(id).unwrap();
+        let poster = restored.store().poster(&torrent.id).await.unwrap().unwrap();
+        restored.close_store().await.unwrap();
+        assert_eq!(poster.1, jpeg, "the poster replacement survives restart");
+        assert!(
+            transition_started,
+            "promotion started the bundled transition"
+        );
+        assert_eq!(torrent.configuration.retention(), Retention::Persisted);
+        assert_eq!(torrent.storage_mode, StorageMode::Disk);
     }
 
     #[test]
