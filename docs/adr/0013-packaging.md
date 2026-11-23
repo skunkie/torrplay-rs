@@ -91,6 +91,8 @@ manifest chooses between two.
   welcome and finish pages.
   Like the service edition's MSI, it shows TorrPlay's MIT license, which the
   user accepts to go on; a quiet install, as the updater's, shows none.
+  On a fresh interactive install, it offers a download directory and extra
+  allowed hostnames, saved in the current user's startup settings file.
 - On Linux, a `.deb` named `torrplay`, which apt updates, and an AppImage,
   which the updater does. One build makes both, so on Linux the application
   asks the updater only when it runs as an AppImage, which sets `APPIMAGE`;
@@ -189,7 +191,9 @@ manifest chooses between two.
     for them fails on a restart action: it opens the service without the
     right to start it, which Windows asks for then;
   - it installs `packaging/windows/torrplay.env` only when there is none,
-    and removal keeps `%ProgramData%\TorrPlay`, with the settings and data;
+    and removal keeps `%ProgramData%\TorrPlay`, with the settings and data.
+    On a fresh interactive install, the wizard can set the download directory
+    and extra allowed hostnames before starting the service;
   - it adds inbound firewall rules for `torrplay.exe` on private and domain
     networks, one for each, as WiX's firewall extension makes them, which
     cover the API, the peer port, and SSDP, since a service gets no prompt
@@ -325,13 +329,14 @@ manifest chooses between two.
   macOS come with it once they are available, as the signing decision
   above describes.
 - The Windows package smoke tests install, start, and remove both
-  editions on x64 and arm64. The MSI tests also upgrade the service and
-  check the preshutdown timeout, data directory permissions, and firewall
-  rules. The macOS smoke test checks both architecture slices and runs the
-  CLI installed by `bundle.externalBin` in `Contents/MacOS`.
+  editions on x64 and arm64 and exercise the settings pages in both wizards.
+  The MSI tests also upgrade the service and check the preshutdown timeout,
+  data directory permissions, and firewall rules. The macOS smoke test
+  checks both architecture slices and runs the CLI installed by
+  `bundle.externalBin` in `Contents/MacOS`.
 - Two checks still need interactive sessions:
   - The [Windows 11 manual install test](../development.md#windows-11-manual-install)
-    covers the installer dialogs and OS prompts that silent CI installs skip.
+    checks wizard layout, installation as a standard user, and OS prompts.
   - The [macOS update test](../development.md#macos-unnotarized-updates) checks
     whether Gatekeeper asks for **Open Anyway** again after the built-in
     updater replaces an unnotarized application. It requires a build with

@@ -10,7 +10,8 @@
         "dialogImagePath": "icons/wix-dialog.bmp",
         "template": "../packaging/windows/main.wxs",
         "fragmentPaths": [
-          "../packaging/windows/service.wxs"
+          "../packaging/windows/service.wxs",
+          "../packaging/windows/startup-settings.wxs"
         ],
         "componentGroupRefs": [
           "TorrPlayLicenseFiles"
@@ -18,6 +19,7 @@
         "componentRefs": [
           "TorrPlayService",
           "TorrPlayData",
+          "TorrPlayRetainedInstall",
           "TorrPlaySettings"
         ]
       }

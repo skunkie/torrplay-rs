@@ -668,14 +668,7 @@ impl LibrqbitEngine {
         let mut deleted = Vec::new();
         for entry in entries {
             let entry = entry?;
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else {
-                continue;
-            };
-            let stem = name
-                .strip_suffix(&format!(".{}", bitfield::EXTENSION))
-                .unwrap_or(name);
-            let Some(id) = TorrentId::from_stored(stem) else {
+            let Some(id) = crate::disk::download_entry_torrent_id(&entry.file_name()) else {
                 continue;
             };
             if keep.contains(&id) {

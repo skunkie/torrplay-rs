@@ -6,8 +6,8 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: Apache-2.0 OR MIT
 
 The service edition's MSI template, which desktop/tauri.service.conf.json
-names: tauri-bundler 2.10.4's src/bundle/windows/msi/main.wxs, changed only so
-the client is a feature the installer may leave out, as ADR 13 decides. A
+names: tauri-bundler 2.10.4's src/bundle/windows/msi/main.wxs, adapted for
+the optional client feature and the service settings page. A
 service feature, which the installer requires, holds what
 packaging/windows/service.wxs installs, and a client feature within it holds
 the client, its shortcuts, its deep links, and its updater task. The
@@ -132,6 +132,7 @@ the bundler's when the Tauri CLI is upgraded.
         </UI>
 
         <UIRef Id="WixUI_FeatureTree" />
+        <UIRef Id="TorrPlayStartupSettings" />
 
         <Directory Id="TARGETDIR" Name="SourceDir">
             <Directory Id="DesktopFolder" Name="Desktop">

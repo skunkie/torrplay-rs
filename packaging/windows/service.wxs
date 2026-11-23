@@ -89,8 +89,11 @@ runs candle with the rest of its environment cleared.
                     <ServiceConfig OnInstall="yes" OnReinstall="yes" PreShutdownDelay="45000"
                         FailureActionsWhen="failedToStop" />
                 </ServiceInstall>
-                <ServiceControl Id="TorrPlayServiceControl" Name="torrplay" Start="install" Stop="both"
-                    Remove="uninstall" Wait="yes" />
+                <ServiceControl Id="TorrPlayServiceControl" Name="torrplay" Stop="both" Remove="uninstall" Wait="yes" />
+                <!-- The deferred startup check handles readiness and a reported failure. -->
+                <ServiceControl Id="TorrPlayServiceStart" Name="torrplay" Start="install" Wait="no">
+                    <ServiceArgument>[TorrPlayCheckSetupDirectory]</ServiceArgument>
+                </ServiceControl>
             </Component>
         </DirectoryRef>
 
@@ -104,6 +107,12 @@ runs candle with the rest of its environment cleared.
                 <CreateFolder>
                     <PermissionEx Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;S-1-5-80-2828507108-2845588903-360128926-4130653692-64400780)" />
                 </CreateFolder>
+            </Component>
+            <!-- Windows Installer rolls this marker back on failure and
+                 keeps it with the data directory on uninstall. -->
+            <Component Id="TorrPlayRetainedInstall" Guid="34F848A8-ED07-4171-8ACB-0AF07585D63E" Permanent="yes" Win64="$(var.Win64)">
+                <RegistryValue Root="HKLM" Key="Software\TorrPlay\Setup" Name="ServiceInstalled"
+                    Type="integer" Value="1" KeyPath="yes" />
             </Component>
             <Component Id="TorrPlaySettings" Guid="4D8150CE-2536-42E3-BE75-20EDE9B5578B" Permanent="yes" NeverOverwrite="yes">
                 <File Id="TorrPlaySettings" Name="torrplay.env" Source="$(env.TAURI_TORRPLAY_SETTINGS_TEMPLATE)" KeyPath="yes">

@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 TorrPlay
+
+SPDX-License-Identifier: MIT
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+    <Fragment>
+        <?define FreshInstall = "NOT Installed AND NOT WIX_UPGRADE_DETECTED AND NOT TORRPLAY_EXISTING_SETTINGS AND NOT (TORRPLAY_RETAINED_INSTALL AND TORRPLAY_EXISTING_DATA)" ?>
+        <?define SaveSettings = "$(var.FreshInstall) AND UILevel = 5 AND TORRPLAY_SETUP_PAGE" ?>
+        <?define WriteSettings = "$(var.SaveSettings) AND (TORRPLAY_SETUP_DOWNLOAD_DIR OR TORRPLAY_SETUP_ALLOWED_HOSTS)" ?>
+
+        <!-- An aborted service start can leave logs and a database.
+             Directory existence alone does not mean setup completed. -->
+        <Property Id="TORRPLAY_EXISTING_DATA" Secure="yes">
+            <DirectorySearch Id="FindTorrPlayData" Path="[CommonAppDataFolder]TorrPlay" Depth="0" />
+        </Property>
+        <Property Id="TORRPLAY_RETAINED_INSTALL" Secure="yes">
+            <RegistrySearch Id="FindTorrPlayRetainedInstall" Root="HKLM" Key="Software\TorrPlay\Setup"
+                Name="ServiceInstalled" Type="raw" Win64="yes" />
+        </Property>
+        <!-- Installs made before the registry marker may still have settings. -->
+        <Property Id="TORRPLAY_EXISTING_SETTINGS" Secure="yes">
+            <DirectorySearch Id="FindTorrPlaySettingsDirectory" Path="[CommonAppDataFolder]TorrPlay" Depth="0">
+                <FileSearch Name="torrplay.env" />
+            </DirectorySearch>
+        </Property>
+        <Property Id="TORRPLAY_SETUP_PAGE" Secure="yes" />
+        <Property Id="TORRPLAY_SETUP_DOWNLOAD_DIR" Secure="yes" />
+        <Property Id="TORRPLAY_SETUP_ALLOWED_HOSTS" Secure="yes" />
+
+        <Binary Id="TorrPlaySettingsCA" SourceFile="$(env.TAURI_TORRPLAY_SETTINGS_ACTION)" />
+        <CustomAction Id="ValidateTorrPlaySettings" BinaryKey="TorrPlaySettingsCA"
+            DllEntry="ValidateTorrPlaySettings" Execute="immediate" Return="check" />
+        <CustomAction Id="CheckTorrPlayServiceStarted" BinaryKey="TorrPlaySettingsCA"
+            DllEntry="CheckTorrPlayServiceStarted" Execute="deferred" Impersonate="no" Return="check" />
+
+        <CustomAction Id="SetTorrPlaySettingsData" Property="RollbackTorrPlaySettings"
+            Value="[#TorrPlaySettings]|[TORRPLAY_SETUP_DOWNLOAD_DIR]|[TORRPLAY_SETUP_ALLOWED_HOSTS]" />
+        <CustomAction Id="SetTorrPlaySettingsWrite" Property="WriteTorrPlaySettings"
+            Value="[RollbackTorrPlaySettings]" />
+        <CustomAction Id="RollbackTorrPlaySettings" BinaryKey="TorrPlaySettingsCA"
+            DllEntry="RollbackTorrPlaySettings" Execute="rollback" Impersonate="no" Return="check" />
+        <CustomAction Id="WriteTorrPlaySettings" BinaryKey="TorrPlaySettingsCA"
+            DllEntry="WriteTorrPlaySettings" Execute="deferred" Impersonate="no" Return="check" />
+
+        <CustomAction Id="SetTorrPlaySettingsCheck" Property="CheckTorrPlaySettings"
+            Value="&quot;[#TorrPlayExe]&quot; validate-installer-settings &quot;[TorrPlayDataDirectory]torrplay.env&quot;" />
+        <CustomAction Id="CheckTorrPlaySettings" BinaryKey="WixCA" DllEntry="WixQuietExec64"
+            Execute="deferred" Impersonate="yes" Return="check" />
+        <CustomAction Id="RequestTorrPlayDirectoryProbe" Property="TorrPlayCheckSetupDirectory"
+            Value="--check-setup-download-directory" />
+        <InstallExecuteSequence>
+            <Custom Action="SetTorrPlaySettingsData" After="InstallFiles">$(var.WriteSettings)</Custom>
+            <Custom Action="SetTorrPlaySettingsWrite" After="SetTorrPlaySettingsData">$(var.WriteSettings)</Custom>
+            <Custom Action="RollbackTorrPlaySettings" After="SetTorrPlaySettingsWrite">$(var.WriteSettings)</Custom>
+            <Custom Action="WriteTorrPlaySettings" After="RollbackTorrPlaySettings">$(var.WriteSettings)</Custom>
+            <Custom Action="SetTorrPlaySettingsCheck" Before="CheckTorrPlaySettings">
+                $(var.WriteSettings)
+            </Custom>
+            <Custom Action="CheckTorrPlaySettings" Before="StartServices">
+                $(var.WriteSettings)
+            </Custom>
+            <Custom Action="CheckTorrPlayServiceStarted" After="StartServices">$TorrPlayService = 3</Custom>
+            <!-- Check the resolved download path, including the default,
+                 on a fresh interactive installation. -->
+            <Custom Action="RequestTorrPlayDirectoryProbe" Before="CheckTorrPlaySettings">
+                $(var.SaveSettings)
+            </Custom>
+        </InstallExecuteSequence>
+
+        <!-- Start the picker at the target drive root. This directory is only
+             a property for the picker and has no installed files to remove. -->
+        <DirectoryRef Id="TARGETDIR">
+            <Directory Id="TorrPlayBrowseDirectory" Name="." />
+        </DirectoryRef>
+
+        <UI Id="TorrPlayStartupSettings">
+            <!-- Windows Installer uses the highest-order eligible transition,
+                 leaving WixUI_FeatureTree's normal route for other installs. -->
+            <Publish Dialog="CustomizeDlg" Control="Next" Event="NewDialog" Value="TorrPlaySettingsDlg" Order="3">
+                $(var.FreshInstall)
+            </Publish>
+            <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="TorrPlaySettingsDlg" Order="4">
+                $(var.FreshInstall)
+            </Publish>
+
+            <Dialog Id="TorrPlaySettingsDlg" Width="370" Height="270" Title="[ProductName] Setup">
+                <Control Id="Banner" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="yes" Text="WixUI_Bmp_Banner" />
+                <Control Id="Title" Type="Text" X="15" Y="6" Width="300" Height="13" Transparent="yes"
+                    Text="{\WixUI_Font_Title}TorrPlay service settings" />
+                <Control Id="Description" Type="Text" X="25" Y="23" Width="300" Height="13" Transparent="yes"
+                    Text="Both fields are optional." />
+                <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+                <Control Id="FolderLabel" Type="Text" X="24" Y="59" Width="320" Height="12" TabSkip="no" Text="Download directory" />
+                <Control Id="Folder" Type="Edit" X="24" Y="73" Width="256" Height="17"
+                    Property="TORRPLAY_SETUP_DOWNLOAD_DIR" Text="{1023}" />
+                <Control Id="Browse" Type="PushButton" X="288" Y="73" Width="58" Height="17" Text="Browse...">
+                    <Publish Event="NewDialog" Value="TorrPlayBrowseDlg">1</Publish>
+                </Control>
+                <Control Id="FolderHelp" Type="Text" X="24" Y="96" Width="320" Height="34"
+                    Text="Use a local folder with no existing TorrPlay data and write access for NT SERVICE\torrplay. The default is %ProgramData%\TorrPlay\downloads." />
+                <Control Id="HostsLabel" Type="Text" X="24" Y="134" Width="320" Height="12" TabSkip="no" Text="Allowed hostnames" />
+                <Control Id="Hosts" Type="Edit" X="24" Y="148" Width="322" Height="17"
+                    Property="TORRPLAY_SETUP_ALLOWED_HOSTS" Text="{1023}" />
+                <Control Id="HostsHelp" Type="Text" X="24" Y="172" Width="320" Height="30"
+                    Text="Enter the hostnames you use to open TorrPlay. Separate names with commas. Use *.home.arpa to allow names like nas.home.arpa." />
+                <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+                <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)">
+                    <Publish Event="NewDialog" Value="CustomizeDlg">1</Publish>
+                </Control>
+                <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)">
+                    <!-- The immediate action returns a message on invalid input.
+                         The deferred action still checks what was written. -->
+                    <Publish Property="TORRPLAY_SETUP_PAGE" Value="{}" Order="1">1</Publish>
+                    <Publish Event="DoAction" Value="ValidateTorrPlaySettings" Order="2">1</Publish>
+                    <Publish Event="SpawnDialog" Value="TorrPlaySettingsErrorDlg" Order="3">TorrPlaySettingsError</Publish>
+                    <Publish Property="TORRPLAY_SETUP_PAGE" Value="1" Order="4">NOT TorrPlaySettingsError</Publish>
+                    <Publish Event="NewDialog" Value="VerifyReadyDlg" Order="5">NOT TorrPlaySettingsError</Publish>
+                </Control>
+                <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+                    <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+                </Control>
+            </Dialog>
+
+            <Dialog Id="TorrPlaySettingsErrorDlg" Width="290" Height="125" Title="Check TorrPlay service settings">
+                <Control Id="Message" Type="Text" X="15" Y="14" Width="260" Height="76" Text="[TorrPlaySettingsError]" />
+                <Control Id="OK" Type="PushButton" X="117" Y="99" Width="56" Height="17" Default="yes" Cancel="yes" Text="!(loc.WixUIOK)">
+                    <Publish Event="EndDialog" Value="Return">1</Publish>
+                </Control>
+            </Dialog>
+
+            <Dialog Id="TorrPlayBrowseDlg" Width="340" Height="220" Title="Choose Download Directory">
+                <Control Id="DriveLabel" Type="Text" X="16" Y="14" Width="300" Height="12" TabSkip="no" Text="Look in" />
+                <Control Id="Drive" Type="DirectoryCombo" X="16" Y="29" Width="308" Height="75"
+                    Property="TorrPlayBrowseDirectory" Fixed="yes" Removable="yes" />
+                <Control Id="Folders" Type="DirectoryList" X="16" Y="52" Width="308" Height="91"
+                    Property="TorrPlayBrowseDirectory" Sunken="yes" TabSkip="no" />
+                <Control Id="PathLabel" Type="Text" X="16" Y="153" Width="300" Height="12" TabSkip="no" Text="Folder" />
+                <Control Id="Path" Type="PathEdit" X="16" Y="168" Width="308" Height="17" Property="TorrPlayBrowseDirectory" />
+                <Control Id="OK" Type="PushButton" X="204" Y="194" Width="56" Height="17" Default="yes" Text="!(loc.WixUIOK)">
+                    <Publish Event="SetTargetPath" Value="TorrPlayBrowseDirectory" Order="1">1</Publish>
+                    <Publish Property="TORRPLAY_SETUP_DOWNLOAD_DIR" Value="[TorrPlayBrowseDirectory]" Order="2">1</Publish>
+                    <Publish Event="NewDialog" Value="TorrPlaySettingsDlg" Order="3">1</Publish>
+                </Control>
+                <Control Id="Cancel" Type="PushButton" X="268" Y="194" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+                    <Publish Event="Reset" Value="0" Order="1">1</Publish>
+                    <Publish Event="NewDialog" Value="TorrPlaySettingsDlg" Order="2">1</Publish>
+                </Control>
+            </Dialog>
+        </UI>
+    </Fragment>
+</Wix>

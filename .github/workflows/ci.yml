@@ -382,7 +382,7 @@ jobs:
       # application on it.
       - name: Install, run, and uninstall the application
         shell: pwsh
-        run: scripts/test-application-nsis.ps1 target/nsis/torrplay-setup.exe
+        run: scripts/test-application-nsis.ps1 target/nsis/torrplay-setup.exe -Wizard
       - name: Upload the tested installer
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -459,7 +459,7 @@ jobs:
       # edition on it.
       - name: Install, upgrade, and remove the service edition
         shell: pwsh
-        run: scripts/test-windows-service.ps1 -Package target/msi/torrplay-service.msi -Upgrade target/msi/torrplay-service-next.msi
+        run: scripts/test-windows-service.ps1 -Package target/msi/torrplay-service.msi -Upgrade target/msi/torrplay-service-next.msi -Wizard
       - name: Upload the tested installer
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

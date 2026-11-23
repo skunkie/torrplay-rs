@@ -3676,6 +3676,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "windows-service",
+ "windows-sys 0.61.2",
  "zip",
 ]
 
@@ -3816,6 +3817,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "torrplay-msi"
+version = "0.1.0"
+dependencies = [
+ "torrplay",
+ "windows-service",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "torrplay-server"
 version = "0.1.0"
 dependencies = [
@@ -3857,6 +3867,7 @@ name = "torrplay-settings-file"
 version = "0.1.0"
 dependencies = [
  "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

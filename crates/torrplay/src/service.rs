@@ -58,6 +58,8 @@ mod windows {
     /// the process's exit.
     const STOP_WAIT: Duration = Duration::from_secs(35);
 
+    const SETUP_DIRECTORY_REJECTED: u8 = 3;
+
     /// What the service runs, decided before the service manager calls it: the
     /// configuration and log format, or why the command line or settings are not
     /// valid. The service manager's entry point takes no context of its own.
@@ -149,12 +151,20 @@ mod windows {
         Ok((config, format))
     }
 
-    fn service_main(_arguments: Vec<OsString>) {
+    fn service_main(arguments: Vec<OsString>) {
         let prepared = match PREPARED.lock() {
             Ok(mut slot) => slot.take(),
             Err(poisoned) => poisoned.into_inner().take(),
         };
-        let code = run(prepared.unwrap_or_else(|| Err("the service was not prepared".to_owned())));
+        // The SCM passes start arguments separately from the saved command line.
+        let check_download_directory = arguments
+            .iter()
+            .skip(1)
+            .any(|argument| argument == "--check-setup-download-directory");
+        let code = run(
+            prepared.unwrap_or_else(|| Err("the service was not prepared".to_owned())),
+            check_download_directory,
+        );
         EXIT.store(code, Ordering::SeqCst);
     }
 
@@ -183,12 +193,8 @@ mod windows {
         }
     }
 
-    /// Runs the service and returns its exit code: 0, 1 when the application
-    /// failed, or 2 for a usage error.
-    fn run(prepared: Result<(Config, LogFormat), String>) -> u8 {
-        // Before anything can fail, so every failure is logged where the service
-        // logs: standard error, which a service has nowhere, would lose it.
-        let startup = match &prepared {
+    fn start_logging(prepared: &Result<(Config, LogFormat), String>) -> torrplay::Startup {
+        match prepared {
             Ok((config, format)) => torrplay::start_logging(config, *format),
             Err(_) => {
                 let config = Config {
@@ -197,8 +203,10 @@ mod windows {
                 };
                 torrplay::start_logging(&config, LogFormat::Json)
             }
-        };
-        let log = startup.log.clone();
+        }
+    }
+
+    fn run(prepared: Result<(Config, LogFormat), String>, check_download_directory: bool) -> u8 {
         let (stopping, mut stops) = tokio::sync::mpsc::unbounded_channel();
         let handler = move |control| match control {
             ServiceControl::Stop | ServiceControl::Preshutdown => {
@@ -213,13 +221,52 @@ mod windows {
             Err(error) => {
                 // With no handle to report a state, the process ends unreported,
                 // which the service manager counts as a crash and restarts.
+                let startup = start_logging(&prepared);
                 tracing::error!(%error, "the service could not register with the service manager");
-                log.flush();
+                startup.log.flush();
                 return 1;
             }
         };
         let none = ServiceControlAccept::empty();
         report(status, ServiceState::StartPending, none, 0, START_WAIT);
+        // prepare supplies the service data directory even when no path
+        // was chosen in the wizard.
+        let setup_directory = prepared
+            .as_ref()
+            .ok()
+            .filter(|_| check_download_directory)
+            .and_then(|(config, _)| {
+                config.data_dir.as_deref().map(|data| {
+                    (
+                        config.download_dir(data),
+                        config.download_dir.is_none().then_some(data),
+                    )
+                })
+            });
+        if let Some((path, data)) = &setup_directory
+            && let Err(error) = if let Some(data) = data {
+                torrplay::installer_settings::probe_default_download_directory(path, data)
+            } else {
+                torrplay::installer_settings::probe_download_directory(path)
+            }
+        {
+            // Avoid creating log files before this check. They would prevent
+            // MSI from rolling back a fresh data directory on failure.
+            report_setup_directory_error(path, &error);
+            report(
+                status,
+                ServiceState::Stopped,
+                none,
+                SETUP_DIRECTORY_REJECTED,
+                Duration::ZERO,
+            );
+            return SETUP_DIRECTORY_REJECTED;
+        }
+        let startup = start_logging(&prepared);
+        let log = startup.log.clone();
+        if let Some((path, _)) = setup_directory {
+            tracing::info!(path = %path.display(), "the service can write to the setup download directory");
+        }
         let config = match prepared {
             Ok((config, _)) => config,
             Err(message) => {
@@ -271,5 +318,43 @@ mod windows {
         log.flush();
         report(status, ServiceState::Stopped, none, code, Duration::ZERO);
         code
+    }
+
+    #[allow(unsafe_code)]
+    fn report_setup_directory_error(path: &std::path::Path, error: &std::io::Error) {
+        use std::ptr::{null, null_mut};
+        use windows_sys::Win32::System::EventLog::{
+            DeregisterEventSource, EVENTLOG_ERROR_TYPE, RegisterEventSourceW, ReportEventW,
+        };
+
+        // An unregistered source writes to the Application log. The message
+        // is available as event data even without an installed message DLL.
+        let source: Vec<_> = "TorrPlay".encode_utf16().chain([0]).collect();
+        let message: Vec<_> = format!(
+            "TorrPlay setup could not use the download directory {}: {error}",
+            path.display()
+        )
+        .encode_utf16()
+        .chain([0])
+        .collect();
+        // The source and message are NUL-terminated, and the array and its
+        // sole string stay alive through the synchronous call.
+        unsafe {
+            let handle = RegisterEventSourceW(null(), source.as_ptr());
+            if !handle.is_null() {
+                ReportEventW(
+                    handle,
+                    EVENTLOG_ERROR_TYPE,
+                    0,
+                    1001,
+                    null_mut(),
+                    1,
+                    0,
+                    [message.as_ptr()].as_ptr(),
+                    null(),
+                );
+                DeregisterEventSource(handle);
+            }
+        }
     }
 }

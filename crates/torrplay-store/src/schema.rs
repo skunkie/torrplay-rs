@@ -10,11 +10,11 @@
 //! database from a newer schema is refused rather than opened. Names follow
 //! ADR 8's schema conventions.
 
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use rusqlite::{Connection, ErrorCode, OptionalExtension, TransactionBehavior};
-use std::collections::HashMap;
+use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension, TransactionBehavior};
 
 use torrplay_core::id::{InfoHashV1, TorrentId};
 use torrplay_core::library::{self, Kind, Library};
@@ -353,6 +353,23 @@ fn migrate(connection: &mut Connection, path: &Path) -> Result<(), StoreError> {
         transaction.commit()?;
     }
     Ok(())
+}
+
+/// Reads the IDs of torrents that use disk storage or are switching to or from it.
+pub(crate) fn existing_disk_torrent_ids(path: &Path) -> Result<HashSet<TorrentId>, StoreError> {
+    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    connection.busy_timeout(Duration::ZERO)?;
+    let mut statement = connection.prepare(
+        "SELECT id FROM torrents WHERE storage_mode = 'disk' OR desired_storage_mode = 'disk'",
+    )?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+    let mut ids = HashSet::new();
+    for row in rows {
+        if let Some(id) = TorrentId::from_stored(&row?) {
+            ids.insert(id);
+        }
+    }
+    Ok(ids)
 }
 
 /// Reads every stored torrent in creation order, in one transaction.

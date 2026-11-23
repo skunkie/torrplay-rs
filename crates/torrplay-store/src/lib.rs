@@ -21,6 +21,7 @@
 //! second application on the same data directory fails to open it instead of
 //! interleaving its writes.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 #[cfg(feature = "test-support")]
 use std::sync::Arc;
@@ -272,6 +273,22 @@ pub struct Store {
 }
 
 impl Store {
+    /// Lists torrents whose disk data startup keeps, without creating or
+    /// migrating a library. Used when setup checks an existing download folder.
+    pub fn existing_disk_torrent_ids(directory: &Path) -> Result<HashSet<TorrentId>, StoreError> {
+        let path = directory.join(FILE_NAME);
+        if !path
+            .try_exists()
+            .map_err(|source| StoreError::DataDirectory {
+                path: directory.to_owned(),
+                source,
+            })?
+        {
+            return Ok(HashSet::new());
+        }
+        schema::existing_disk_torrent_ids(&path)
+    }
+
     /// Opens or creates the database in `directory`, migrating it to the
     /// current schema after copying a database an earlier release wrote, and
     /// returns it with what it holds. Blocks on disk I/O, so async callers run it on a blocking

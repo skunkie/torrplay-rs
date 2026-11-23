@@ -245,12 +245,11 @@ fn read_startup_settings(
     Ok(SettingsFile::read(&path)?.unwrap_or_default())
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(windows, target_os = "macos", test))]
 fn with_startup_settings(
     mut config: Config,
-    directory: &std::path::Path,
+    settings: &torrplay_settings_file::SettingsFile,
 ) -> anyhow::Result<Config> {
-    let settings = read_startup_settings(directory)?;
     if let Some(value) = settings.get(torrplay::ALLOWED_HOSTS_VARIABLE) {
         config.add_allowed_hosts(value)?;
     }
@@ -315,10 +314,9 @@ pub fn main() -> ExitCode {
         eprintln!("torrplay-desktop: {error}\n\n{}", torrplay::USAGE);
         return ExitCode::from(2);
     }
-    if let Err(error) =
-        config.apply_download_dir_variable(std::env::var_os(torrplay::DOWNLOAD_DIR_VARIABLE))
-    {
-        eprintln!("torrplay-desktop: {error}\n\n{}", torrplay::USAGE);
+    let download_dir_variable = std::env::var_os(torrplay::DOWNLOAD_DIR_VARIABLE);
+    if let Err(error) = config.apply_download_dir_variable(download_dir_variable) {
+        eprintln!("torrplay-desktop: {error:#}\n\n{}", torrplay::USAGE);
         return ExitCode::from(2);
     }
     if let Some(value) = std::env::var_os(torrplay::LOG_FORMAT_VARIABLE) {
@@ -374,13 +372,19 @@ fn run(config: Config, options: Vec<String>, requests: Vec<Request>) -> anyhow::
             // The window opens from here once the server listens.
             std::thread::spawn(move || {
                 let result = catching_panic(|| {
-                    #[cfg(target_os = "macos")]
+                    #[cfg(any(windows, target_os = "macos"))]
                     let config = {
                         let directory = handle.path().app_config_dir()?;
-                        with_startup_settings(config, &directory).with_context(|| {
-                            let path = directory.join(torrplay_settings_file::FILE_NAME);
-                            format!("loading {}", path.display())
-                        })?
+                        let path = directory.join(torrplay_settings_file::FILE_NAME);
+                        let load = || {
+                            #[cfg(target_os = "macos")]
+                            let settings = read_startup_settings(&directory)?;
+                            #[cfg(windows)]
+                            let settings = torrplay_settings_file::SettingsFile::read(&path)?
+                                .unwrap_or_default();
+                            with_startup_settings(config, &settings)
+                        };
+                        load().with_context(|| format!("loading {}", path.display()))?
                     };
                     let format = torrplay::log_format(
                         config.log_format,
@@ -471,7 +475,8 @@ mod tests {
                       TORRPLAY_LISTEN=127.0.0.1:8643\nTORRPLAY_LOG_FORMAT=text\n\
                       TORRPLAY_DOWNLOAD_DIR=\"/Volumes/Media/TorrPlay Downloads\"\n";
         std::fs::write(&path, edited)?;
-        let config = with_startup_settings(Config::default(), &directory)?;
+        let settings = read_startup_settings(&directory)?;
+        let config = with_startup_settings(Config::default(), &settings)?;
         assert_eq!(config.allowed_hosts, ["torrplay", "*.home.arpa"]);
         assert_eq!(config.listen, Some("127.0.0.1:8643".parse()?));
         assert_eq!(config.log_format, Some(LogFormat::Text));
@@ -488,7 +493,7 @@ mod tests {
             log_format: Some(LogFormat::Json),
             ..Config::default()
         };
-        let config = with_startup_settings(overrides, &directory)?;
+        let config = with_startup_settings(overrides, &settings)?;
         assert_eq!(config.allowed_hosts, ["nas.lan", "torrplay", "*.home.arpa"]);
         assert_eq!(config.listen, Some(address));
         assert_eq!(config.log_format, Some(LogFormat::Json));

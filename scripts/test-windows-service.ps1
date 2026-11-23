@@ -21,6 +21,10 @@ an elevated PowerShell 7 and nothing listening on ports 8642 and 8643:
 
   scripts\test-windows-service.ps1 target\release\torrplay.exe
   scripts\test-windows-service.ps1 -Package target\msi\torrplay-service.msi -Upgrade target\msi\torrplay-service-next.msi
+
+Add -Wizard to supply startup settings through MSI properties and verify that
+the wizard displays them. This mode requires a logged-in English-language
+desktop with no retained service data.
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'Binary')]
@@ -30,7 +34,9 @@ param(
     [Parameter(Mandatory, ParameterSetName = 'Package')]
     [string] $Package,
     [Parameter(Mandatory, ParameterSetName = 'Package')]
-    [string] $Upgrade
+    [string] $Upgrade,
+    [Parameter(ParameterSetName = 'Package')]
+    [switch] $Wizard
 )
 
 $ErrorActionPreference = 'Stop'
@@ -46,6 +52,7 @@ $programDirectory = Join-Path $env:ProgramFiles ($packaged ? 'TorrPlay Client' :
 $executable = Join-Path $programDirectory 'torrplay.exe'
 $applicationKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\TorrPlay'
 $holder = $null
+$wizardDownloads = $null
 if ($packaged) {
     $Package = (Resolve-Path -Path $Package).Path
     $Upgrade = (Resolve-Path -Path $Upgrade).Path
@@ -111,10 +118,55 @@ function Set-Listen([string] $Address) {
     Set-Content -Path $settings -Value "TORRPLAY_LISTEN=$Address" -Encoding utf8NoBOM
 }
 
+function Get-SettingsHash {
+    if (Test-Path -LiteralPath $settings) {
+        (Get-FileHash -LiteralPath $settings).Hash
+    }
+}
+
+function Assert-SilentSettings([string] $PreviousHash) {
+    if ($PreviousHash) {
+        if ((Get-SettingsHash) -ne $PreviousHash) { Fail 'the silent installer changed the retained settings' }
+    } elseif (Select-String -LiteralPath $settings -Pattern '^TORRPLAY_(DOWNLOAD_DIR|ALLOWED_HOSTS)=' -Quiet) {
+        Fail 'the silent installer wrote settings that should come from the interactive wizard'
+    }
+}
+
 # How many log records hold $Text.
 function Get-Logged([string] $Text) {
     $files = @(Get-ChildItem -Path (Join-Path $dataDirectory 'logs') -Recurse -File)
     @($files | Select-String -Pattern $Text -SimpleMatch).Count
+}
+
+function Test-DownloadDirectory([string] $Directory) {
+    $files = @(Get-ChildItem -LiteralPath (Join-Path $dataDirectory 'logs') -Filter 'torrplay*.jsonl' -File)
+    foreach ($match in ($files | Select-String -SimpleMatch '"message":"the download directory"')) {
+        try {
+            $record = ConvertFrom-Json -InputObject $match.Line -AsHashtable
+        } catch {
+            # A record may still be getting written. The caller polls again.
+            continue
+        }
+        if ($record['message'] -ceq 'the download directory' -and
+            ([string] $record['fields']['path']).TrimEnd('\') -eq $Directory.TrimEnd('\')) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Assert-DownloadDirectory([string] $Directory) {
+    if (-not (Wait-Until { Test-DownloadDirectory $Directory } 5)) {
+        Fail "the service runtime did not log $Directory as its download directory"
+    }
+}
+
+function Assert-Hostname([int] $Port, [string] $Hostname, [string] $Expected) {
+    $status = & curl.exe -sS -o NUL -w '%{http_code}' --max-time 2 `
+        -H "Host: ${Hostname}:$Port" "http://127.0.0.1:$Port/api/v1"
+    if ($LASTEXITCODE -ne 0 -or $status -ne $Expected) {
+        Fail "the service returned $status for $Hostname, expected $Expected"
+    }
 }
 
 # Starts the service, which is to fail with the service-specific exit code
@@ -170,6 +222,34 @@ function Get-FirewallProfiles {
     @(Get-NetFirewallApplicationFilter -Program $executable -ErrorAction SilentlyContinue |
         Get-NetFirewallRule | Where-Object { $_.Direction -eq 'Inbound' -and $_.Action -eq 'Allow' } |
         ForEach-Object { $_.Profile.ToString() -split ', ' } | Sort-Object -Unique)
+}
+
+function Assert-FailedWizardInstall {
+    if (Get-Service -Name $name -ErrorAction SilentlyContinue) { Fail 'the failed MSI left the service registered' }
+    if (Test-Path -LiteralPath $programDirectory) { Fail 'the failed MSI left the program directory' }
+    if (Test-Path -LiteralPath $settings) { Fail 'the failed MSI left service settings' }
+    if (Test-Path -Path (Get-ServiceEditionKey)) { Fail 'the failed MSI left the upgrade code registered' }
+    if (@(Get-FirewallProfiles).Count -ne 0) { Fail 'the failed MSI left firewall rules' }
+    if (Get-ItemProperty -Path 'HKLM:\Software\TorrPlay\Setup' -Name ServiceInstalled -ErrorAction SilentlyContinue) {
+        Fail 'the failed MSI left its completed-install marker'
+    }
+}
+
+function Assert-RejectedDirectoryEvent([string] $Directory, [datetime] $Started, [string] $Reason = '.+') {
+    # The MSI folder picker may preserve a trailing backslash.
+    $expectedMessage = '^TorrPlay setup could not use the download directory ' +
+        [regex]::Escape($Directory) + '\\?: ' + $Reason
+    if (-not (Wait-Until {
+        $events = @(Get-WinEvent -FilterHashtable @{
+            LogName = 'Application'; Id = 1001; StartTime = $Started
+        } -ErrorAction SilentlyContinue | Where-Object {
+            $_.ProviderName -eq 'TorrPlay' -and $_.Properties.Count -gt 0 -and
+            $_.Properties[0].Value -match $expectedMessage
+        })
+        $events.Count -gt 0
+    } 10)) {
+        Fail 'the service did not record the failed download directory probe in the Application event log'
+    }
 }
 
 # A text's printable words, without the byte order marks, carriage returns,
@@ -234,23 +314,125 @@ try {
 
         Write-Host '== the service alone, which an upgrade keeps alone'
         $client = Join-Path $programDirectory 'torrplay-client.exe'
-        $code = Invoke-Msi @('/i', "`"$Package`"", 'ADDLOCAL=Service')
-        if ($code -notin @(0, 3010)) { Fail "installing the service alone exited with $code" }
+        if ($Wizard) {
+            if (Test-Path -LiteralPath $dataDirectory) { Fail "the wizard requires a fresh install without $dataDirectory" }
+            $directory = Join-Path $env:ProgramData "TorrPlay Test Downloads $PID"
+            $wizardDownloads = (New-Item -ItemType Directory -Path $directory).FullName
+            # The virtual account's SID is available before the service is registered.
+            $identity = [System.Security.Principal.SecurityIdentifier]::new(
+                'S-1-5-80-2828507108-2845588903-360128926-4130653692-64400780')
+            $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+                $identity, 'Modify', 'ContainerInherit, ObjectInherit', 'None', 'Allow')
+            $acl = Get-Acl -LiteralPath $wizardDownloads
+            $acl.AddAccessRule($rule)
+            Set-Acl -LiteralPath $wizardDownloads -AclObject $acl
+
+            $wizardScript = Join-Path $PSScriptRoot 'test-windows-installer-wizard.ps1'
+            $wizardArguments = @{ Edition = 'Service'; Installer = $Package; AllowedHosts = 'torrplay,*.home.arpa' }
+            Write-Host '== a fresh MSI rolls back when the service cannot write to the chosen folder'
+            $lockedDownloads = (New-Item -ItemType Directory -Path (Join-Path $wizardDownloads 'Read Only')).FullName
+            # Deny files in the root only. Inherited Modify still allows
+            # creating torrent directories and writing files inside them.
+            $denyWrite = [System.Security.AccessControl.FileSystemAccessRule]::new($identity, 'CreateFiles', 'Deny')
+            $acl = Get-Acl -LiteralPath $lockedDownloads
+            $acl.AddAccessRule($denyWrite)
+            Set-Acl -LiteralPath $lockedDownloads -AclObject $acl
+            $probeStarted = Get-Date
+            & $wizardScript @wizardArguments -DownloadDirectory $lockedDownloads -ExpectServiceStartFailure
+            Assert-FailedWizardInstall
+            if (Test-Path -LiteralPath $dataDirectory) { Fail 'the failed folder probe left the service data directory' }
+            Assert-RejectedDirectoryEvent $lockedDownloads $probeStarted
+
+            Write-Host '== blank wizard fields preserve existing TorrPlay downloads in the default directory'
+            $otherDownloads = (New-Item -ItemType Directory -Path (Join-Path $dataDirectory 'downloads')).FullName
+            $acl = Get-Acl -LiteralPath $otherDownloads
+            $acl.AddAccessRule($rule)
+            Set-Acl -LiteralPath $otherDownloads -AclObject $acl
+            $otherTorrent = (New-Item -ItemType Directory -Path (Join-Path $otherDownloads 'trr_aaaaaaaaaaaaaaaaaaaaaaaaaa')).FullName
+            $otherPayload = Join-Path $otherTorrent 'example.txt'
+            Set-Content -LiteralPath $otherPayload -Value 'existing torrent data'
+            $probeStarted = Get-Date
+            & $wizardScript @wizardArguments -DownloadDirectory $otherDownloads -UseDefaults -ExpectServiceStartFailure
+            Assert-FailedWizardInstall
+            Assert-RejectedDirectoryEvent $otherDownloads $probeStarted 'The download directory contains existing TorrPlay data\.'
+            if ((Get-Content -LiteralPath $otherPayload) -cne 'existing torrent data') {
+                Fail 'setup changed existing torrent data'
+            }
+            Remove-Item -LiteralPath $otherPayload
+            [IO.Directory]::Delete($otherTorrent)
+            [IO.Directory]::Delete($otherDownloads)
+            [IO.Directory]::Delete($dataDirectory)
+
+            Write-Host '== a fresh MSI rolls back when the API port is occupied'
+            $bindDownloads = (New-Item -ItemType Directory -Path (Join-Path $wizardDownloads 'Bind Failure')).FullName
+            $holder = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::IPv6Any, 8642)
+            $holder.Server.DualMode = $true
+            $holder.Start()
+            try {
+                & $wizardScript @wizardArguments -DownloadDirectory $bindDownloads -ExpectServiceStartFailure
+                Assert-FailedWizardInstall
+                if ((Get-Logged 'binding the API listener') -eq 0) { Fail 'the service did not report the bind failure' }
+            } finally {
+                $holder.Stop()
+                $holder = $null
+            }
+
+            Write-Host '== retry with a folder writable by the service and unreadable by the installer user'
+            $serviceDownloads = (New-Item -ItemType Directory -Path (Join-Path $wizardDownloads 'Média 雪 Service Only')).FullName
+            $originalAcl = Get-Acl -LiteralPath $serviceDownloads
+            $acl = Get-Acl -LiteralPath $serviceDownloads
+            $installerUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+            $denyRead = [System.Security.AccessControl.FileSystemAccessRule]::new($installerUser, 'ReadAndExecute', 'Deny')
+            $acl.AddAccessRule($denyRead)
+            Set-Acl -LiteralPath $serviceDownloads -AclObject $acl
+            try {
+                & $wizardScript @wizardArguments -DownloadDirectory $serviceDownloads
+            } finally {
+                Set-Acl -LiteralPath $serviceDownloads -AclObject $originalAcl
+            }
+            if (-not (Test-Path -LiteralPath $settings)) { Fail 'the wizard did not write service startup settings' }
+            $settingsLines = [IO.File]::ReadAllLines($settings)
+            foreach ($line in $settingsLines) {
+                if ($line -cnotmatch '^\s*(?:$|#|[A-Z_][A-Z0-9_]*=)') {
+                    Fail "unexpected line in the wizard's settings file: $line"
+                }
+            }
+            $wizardSettingsHash = (Get-FileHash -LiteralPath $settings).Hash
+        } else {
+            $previousSettingsHash = Get-SettingsHash
+            $code = Invoke-Msi @('/i', "`"$Package`"", 'ADDLOCAL=Service')
+            if ($code -notin @(0, 3010)) { Fail "installing the service alone exited with $code" }
+            Assert-SilentSettings $previousSettingsHash
+        }
         if (-not (Wait-Until { Test-Ready 8642 } 60)) { Fail 'the service alone did not become ready' }
         if (Test-Path -Path $client) { Fail 'the service alone came with the client' }
         Assert-InstalledNotices $Package
+        if ($Wizard) {
+            Assert-DownloadDirectory $serviceDownloads
+            if ((Get-Logged 'the service can write to the setup download directory') -eq 0) {
+                Fail 'the MSI did not request a write-access check from the service'
+            }
+            Assert-Hostname 8642 'torrplay' '200'
+            Assert-Hostname 8642 'nas.home.arpa' '200'
+            Assert-Hostname 8642 'other.example' '421'
+        }
         Install-TorrPlay $Upgrade
         if (-not (Wait-Until { Test-Ready 8642 } 60)) { Fail 'the upgraded service did not become ready' }
         if (Test-Path -Path $client) { Fail 'the upgrade added the client left out' }
         Assert-InstalledNotices $Upgrade
+        if ($Wizard -and (Get-FileHash -LiteralPath $settings).Hash -ne $wizardSettingsHash) {
+            Fail 'the upgrade changed the wizard settings'
+        }
         $code = Invoke-Msi @('/x', "`"$Upgrade`"")
         if ($code -notin @(0, 3010)) { Fail "removing the service alone exited with $code" }
         if (Get-Service -Name $name -ErrorAction SilentlyContinue) { Fail 'removal left the service registered' }
     }
 
     Write-Host '== install'
+    $previousSettingsHash = Get-SettingsHash
     Install-TorrPlay ($packaged ? $Package : $Binary)
     if (-not (Wait-Until { Test-Ready 8642 } 60)) { Fail 'the service did not become ready' }
+    Assert-SilentSettings ($Wizard ? $wizardSettingsHash : $previousSettingsHash)
     if ($packaged) {
         if (-not (Test-Path -Path $client)) { Fail 'the MSI installed no client by default' }
         Assert-InstalledNotices $Package
@@ -311,17 +493,10 @@ try {
     if (-not (Wait-Until { Test-Ready 8643 } 60)) { Fail 'the service did not listen at the kept address' }
     if ((Get-TorrPlay).ProcessId -eq $before) { Fail 'installing again did not restart the service' }
     if ($packaged) { Assert-InstalledNotices $Upgrade }
-    $downloadPathField = '"path":' + (ConvertTo-Json -InputObject $downloadDir -Compress)
-    if (-not (Wait-Until { (Get-Logged $downloadPathField) -gt 0 } 5)) {
-        Fail 'the service did not use the configured download directory'
-    }
-    foreach ($hostname in @('torrplay', 'nas.home.arpa', 'other.example')) {
-        $code = & curl.exe -sS -o NUL -w '%{http_code}' --max-time 2 -H "Host: ${hostname}:8643" http://127.0.0.1:8643/api/v1
-        $expected = $hostname -eq 'other.example' ? '421' : '200'
-        if ($LASTEXITCODE -ne 0 -or $code -ne $expected) {
-            Fail "the service returned $code for $hostname, expected $expected"
-        }
-    }
+    Assert-DownloadDirectory $downloadDir
+    Assert-Hostname 8643 'torrplay' '200'
+    Assert-Hostname 8643 'nas.home.arpa' '200'
+    Assert-Hostname 8643 'other.example' '421'
     Set-Listen '[::]:8642'
     Restart-Service -Name $name
     if (-not (Wait-Until { Test-Ready 8642 } 60)) { Fail 'the service did not return to port 8642' }
@@ -392,5 +567,8 @@ try {
 } finally {
     if ($holder) {
         $holder.Stop()
+    }
+    if ($wizardDownloads) {
+        Remove-Item -LiteralPath $wizardDownloads -Recurse -Force
     }
 }

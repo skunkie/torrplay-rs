@@ -12,8 +12,9 @@ crate built with its client feature, with desktop\tauri.client.conf.json and
 desktop\tauri.service.conf.json merged over desktop\tauri.conf.json. The
 latter adds packaging\windows\service.wxs, which installs torrplay.exe as the
 torrplay service. Run it from the repository root once the web client is built
-(pnpm build in client), with the Tauri CLI and cargo-about installed. Out
-is the MSI to write. A copy of its third-party notices is written beside
+(pnpm build in client), with the Tauri CLI installed. Generating notices
+requires cargo-about and Python 3.11 or later available as python on PATH.
+Out is the MSI to write. A copy of its third-party notices is written beside
 it with .notices.txt appended to the MSI's name.
 Version, when given, replaces the version the MSI carries, so a test can
 build a later package to upgrade to. Notices, when given, supplies the
@@ -45,7 +46,7 @@ $repository = (Get-Location).Path
 # The variables this sets, which a script shares with the session that runs
 # it, so they are put back as they were.
 $variables = @('CARGO_TARGET_DIR', 'TAURI_TORRPLAY_SERVICE_EXE', 'TAURI_TORRPLAY_SETTINGS_TEMPLATE',
-    'TAURI_TORRPLAY_LICENSE', 'TAURI_TORRPLAY_NOTICES')
+    'TAURI_TORRPLAY_SETTINGS_ACTION', 'TAURI_TORRPLAY_LICENSE', 'TAURI_TORRPLAY_NOTICES')
 $saved = @{}
 foreach ($variable in $variables) {
     $saved[$variable] = [Environment]::GetEnvironmentVariable($variable)
@@ -53,7 +54,7 @@ foreach ($variable in $variables) {
 $noticePath = (New-TemporaryFile).FullName
 try {
     Remove-Item -Path Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
-    Invoke-Checked cargo @('build', '--release', '--locked', '-p', 'torrplay')
+    Invoke-Checked cargo @('build', '--release', '--locked', '-p', 'torrplay', '-p', 'torrplay-msi')
     if ($Notices) {
         Copy-Item -LiteralPath $Notices -Destination $noticePath
     } else {
@@ -62,9 +63,10 @@ try {
     # The fragment's sources, which candle reads from the environment; the
     # bundler passes it only variables whose names start with TAURI.
     $env:TAURI_TORRPLAY_SERVICE_EXE = Join-Path $repository 'target/release/torrplay.exe'
-    $env:TAURI_TORRPLAY_SETTINGS_TEMPLATE = Join-Path $repository 'packaging/windows/torrplay.env'
+    $env:TAURI_TORRPLAY_SETTINGS_ACTION = Join-Path $repository 'target/release/torrplay_msi.dll'
     $env:TAURI_TORRPLAY_LICENSE = Join-Path $repository 'LICENSES/MIT.txt'
     $env:TAURI_TORRPLAY_NOTICES = $noticePath
+    $env:TAURI_TORRPLAY_SETTINGS_TEMPLATE = Join-Path $repository 'packaging/windows/torrplay.env'
 
     # Beside the application's build, which writes torrplay-desktop too.
     $env:CARGO_TARGET_DIR = Join-Path $repository 'desktop/target/client'
