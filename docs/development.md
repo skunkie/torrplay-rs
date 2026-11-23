@@ -109,8 +109,8 @@ target/logo-venv/bin/python scripts/render-logo.py
 
 ## Third-party notices
 
-The Linux packages and the Windows NSIS installer install TorrPlay's license,
-`LICENSES/MIT.txt`, and `THIRD-PARTY-NOTICES.txt`, which
+Every package installs TorrPlay's license, `LICENSES/MIT.txt`, and
+`THIRD-PARTY-NOTICES.txt`, which
 `scripts/build-notices.py` writes while the package is built. It lists the
 licenses, and where to find the source, of the Rust crates built into
 `torrplay` and the desktop application and client, with cargo-about 0.9.2 and
@@ -124,16 +124,16 @@ decoder modules' SHA-256 digests and includes the LGPL text from their
 packages. It includes the notices for the embedded Scalar API reference,
 which `scripts/update-scalar.sh` collects from the pinned bundle's source
 map. A dependency with an unapproved license or unavailable license text
-fails the build. From the repository root, once `pnpm install` has run in
-`client`:
+fails the build. The generator requires Python 3.11 or later. From the
+repository root, once `pnpm install` has run in `client`:
 
 ```bash
 cargo install cargo-about --version 0.9.2 --locked --features cli
 python3 scripts/build-notices.py target/notices/THIRD-PARTY-NOTICES.txt
 ```
 
-The packaging jobs for these formats run it, and their tests check that the
-license and the notices are installed. The lockfiles and vendored bundle pin
+The packaging jobs run it, and their tests check that the license and
+notices are installed. The lockfiles and vendored bundle pin
 the common notices. For AppImage builds, linuxdeploy's output hook also writes
 `NATIVE-NOTICES.txt` from ELF files in the assembled image directory. It checks
 their build IDs against the installed originals and copies the matching Debian
@@ -392,10 +392,12 @@ edition is installed for the computer, which they find by the upgrade code in
 `desktop/tauri.client.conf.json` that its MSI registers; the hooks hold that
 code in Windows Installer's packed form, so a change to one is a change to
 both. The bundler downloads NSIS itself. From the repository root in
-PowerShell 7, once the web client is built:
+PowerShell 7, once the web client is built and `python` on PATH is Python
+3.11 or later:
 
 ```powershell
 cargo install tauri-cli --version 2.12.4 --locked
+cargo install cargo-about --version 0.9.2 --locked --features cli
 scripts\build-application-nsis.ps1 target\nsis\torrplay-setup.exe
 scripts\test-application-nsis.ps1 target\nsis\torrplay-setup.exe
 ```
@@ -687,28 +689,40 @@ upgrade. The MSI
 refuses while the application is installed for the user running it. Its
 ACLs name the service's account by SID, which follows from the service's
 name; the fragment says how, should the name change. The bundler downloads
-WiX itself. From the repository root in PowerShell 7, once the web client is
-built:
+WiX itself. From the repository root in elevated PowerShell 7, once the web
+client is built and `python` on PATH is Python 3.11 or later:
 
 ```powershell
 cargo install tauri-cli --version 2.12.4 --locked
+cargo install cargo-about --version 0.9.2 --locked --features cli
 scripts\build-service-msi.ps1 target\msi\torrplay-service.msi
-scripts\build-service-msi.ps1 target\msi\torrplay-service-next.msi -Version NEXT
-scripts\test-windows-service.ps1 -Package target\msi\torrplay-service.msi -Upgrade target\msi\torrplay-service-next.msi
+
+$version = [version](Get-Content -Raw desktop/tauri.conf.json | ConvertFrom-Json).version
+$next = "$($version.Major).$($version.Minor).$($version.Build + 1)"
+$originalNotices = 'target/msi/torrplay-service.msi.notices.txt'
+$fixture = 'target/msi/upgrade-notice-fixture.txt'
+Copy-Item -LiteralPath $originalNotices -Destination $fixture
+Add-Content -LiteralPath $fixture -Value "MSI upgrade test fixture." -Encoding utf8NoBOM
+$upgrade = 'target/msi/torrplay-service-next.msi'
+scripts/build-service-msi.ps1 $upgrade -Version $next -Notices $fixture
+if ((Get-FileHash "$upgrade.notices.txt").Hash -eq (Get-FileHash $originalNotices).Hash) {
+    throw 'The upgrade test requires different notices in the two packages'
+}
+scripts/test-windows-service.ps1 -Package target/msi/torrplay-service.msi -Upgrade $upgrade
 ```
 
-NEXT is a version later than `desktop/tauri.conf.json`'s. With `-Package`, the
-service test installs the MSI instead of a build, and upgrades it to the
-`-Upgrade` MSI as its second install.
+With `-Package`, the service test installs the MSI and uses `-Upgrade`
+for the upgrade.
 It also checks the client, the firewall rules and the upgrade code the
 application's installer looks for, which removal must delete, that the MSI
 refuses beside a stand-in for the application, that its license dialog shows
 `LICENSES/MIT.txt`, and that the service installed alone stays alone through
-an upgrade. Nothing checks the NSIS installer's license page,
-which a silent install skips. CI builds
-both MSIs, the second with the next patch version, and runs the test on
-disposable `windows-latest` and `windows-11-arm` runners, in the service
-installer jobs.
+an upgrade. It compares the installed license with `LICENSES/MIT.txt` and
+the installed notices with the `.notices.txt` file saved alongside each MSI
+before and after both kinds of upgrade. CI builds the upgrade MSI with the
+next patch version and a distinct notice fixture to verify replacement.
+The service installer jobs test both packages on disposable `windows-latest`
+and `windows-11-arm` runners.
 
 ### Downloading CI packages
 
@@ -731,16 +745,60 @@ chmod +x appimage/torrplay.AppImage
 ```
 
 The macOS disk image contains an ad hoc signed application and CLI. CI mounts
-the image, checks both architecture slices, verifies the app signature and
-icons, and runs the bundled CLI. Run the following commands from the
-repository root on macOS with Xcode 26 to build the image locally.
+the image, compares the license and notices in `TorrPlay.app/Contents/Resources`
+with the source files, checks both architecture slices, verifies the app
+signature and icons, and runs the bundled CLI. Run the following commands
+from the repository root on macOS with Xcode 26 and Python 3.11 or later
+available as `python3` on PATH to build the image locally.
 
 ```sh
 (cd client && pnpm install --frozen-lockfile && pnpm build)
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
 cargo install tauri-cli --version 2.12.4 --locked
+cargo install cargo-about --version 0.9.2 --locked --features cli
 scripts/build-application-macos.sh target/dmg/TorrPlay.dmg
 ```
+
+### Windows 11 manual install
+
+Use a clean Windows 11 machine or VM for each target architecture. Download
+the NSIS installer and MSI in a browser to exercise the prompts users see.
+Record the OS build, architecture, Smart App Control state, and any prompts or
+blocks. If Windows blocks an installer or executable, record where it
+stopped.
+
+1. Run the NSIS installer as a standard user. Verify the MIT license page
+   and finish the install without elevation. Launch TorrPlay from Start,
+   check that it opens the library, and record the firewall prompt if shown.
+   Verify both notice files beside the application in `%LOCALAPPDATA%\TorrPlay`.
+   Uninstall from Settings before testing the service edition.
+2. Run the MSI interactively. Verify the MIT license page, elevation, and
+   the Custom Setup page. Install with the client selected, open it from
+   Start, and confirm it connects to the running service. Verify both notice
+   files in `%ProgramFiles%\TorrPlay Client`.
+3. Uninstall the MSI. Verify that the client, service, program files, and
+   firewall rules are removed, and that `%ProgramData%\TorrPlay` remains.
+   Repeat from a clean snapshot with the client deselected. Verify the
+   service starts and both notice files are present in the service-only install.
+
+### macOS unnotarized updates
+
+This test requires the built-in updater and two consecutive ad hoc signed,
+unnotarized builds of the same app. The earlier build needs a test update
+endpoint and public key that match the manifest and updater signature for
+the later build. The current disk-image build has no enabled updater.
+
+1. Download the earlier DMG in a browser on a clean Mac with Gatekeeper
+   enabled. Drag the app to Applications, open it from Finder, and record
+   any prompt. If needed, approve this build with **Open Anyway** in
+   Privacy & Security. Confirm it starts and note its version.
+2. Install the later build through the app's update flow. Record whether it
+   relaunches and reports the new version, and whether macOS asks for
+   **Open Anyway** again. Quit the app and open it again from Finder to
+   check that launch separately. Keep Gatekeeper enabled throughout.
+3. Record the macOS version, architecture, both build versions, and any
+   prompts. Report results separately for the initial launch, the updater
+   relaunch, and the next Finder launch.
 
 ## Benchmarks
 

@@ -13,12 +13,12 @@ SPDX-License-Identifier: MIT
 
 [ADR 12](0012-editions.md) decides on two editions: the application on
 Linux, Windows, and macOS, and on Windows and Linux a service edition, the
-`torrplay` service with a client that has no engine. Each is built today
-only by hand: `cargo build`, then `scripts/linux-service.sh` or
-`scripts/windows-service.ps1` for the service. Release automation follows
-only once the supported platforms and the packaging are documented, as
-[the repository's rules](../../AGENTS.md#ci-and-releases) require. This
-decides both.
+`torrplay` service with a client that has no engine. Before this decision,
+both editions were built by hand with `cargo build`. The service was
+installed using `scripts/linux-service.sh` or `scripts/windows-service.ps1`.
+The [repository's rules](../../AGENTS.md#ci-and-releases) require documenting
+supported platforms and packaging before adding release automation. This
+decision defines both.
 
 The desktop shell uses Tauri 2, whose bundler builds `.deb`, `.rpm`, and
 AppImage packages on Linux, NSIS and MSI (WiX 3) installers on Windows, and
@@ -74,9 +74,9 @@ architecture. Linux packages build on Ubuntu 24.04, the oldest supported
 system, since a binary needs the C library and WebKitGTK it was linked
 against or newer, which Debian 13 also has; the rest of CI keeps its newer
 runners. Windows packages build on `windows-latest`, Windows Server, for
-x86_64, which has no hosted Windows 11 image, and on `windows-11-arm` for
-arm64; their tests run there too, and Windows 11 itself is tested by hand
-until a runner offers it.
+x86_64, and on `windows-11-arm` for arm64. Automated tests run on those
+same images. Interactive validation of the installer and OS prompts on
+Windows 11 is still pending.
 macOS gets one universal `.app`, for both architectures, in one `.dmg` and
 one updater archive, so neither the download page nor the updater's
 manifest chooses between two.
@@ -104,9 +104,9 @@ manifest chooses between two.
 - It ships `torrplay` beside `torrplay-desktop`: the window runs its own
   server, but MCP clients reach a running application through `torrplay
   mcp`, and a library moves to the service edition through `torrplay
-  backup`. The `.deb` puts it in `/usr/bin`, the NSIS installer beside the
-  application, and the `.app` in `Contents/MacOS`, which MCP clients name by
-  path.
+  backup`. The `.deb` and AppImage put it in `/usr/bin`, the NSIS installer
+  puts it beside the application, and the `.app` puts it in `Contents/MacOS`,
+  which MCP clients name by path.
 - Windows asks whether the application may accept connections the first
   time it listens, which a standard user cannot allow on private networks
   without an administrator, and its installer, which has no administrator
@@ -233,8 +233,7 @@ manifest chooses between two.
 
 ### Licenses
 
-- The Linux packages and NSIS installer install TorrPlay's MIT license and
-  third-party notices,
+- Every package installs TorrPlay's MIT license and third-party notices,
   `THIRD-PARTY-NOTICES.txt`, which `scripts/build-notices.py` writes when
   the packages are built: the licenses, and where to find the source, of
   the Rust crates built into the executables, which cargo-about lists with
@@ -253,9 +252,10 @@ manifest chooses between two.
   those modules.
 - The `.deb`s install the license as `/usr/share/doc/<package>/copyright`,
   as Debian asks, with the notices beside it, and the AppImage holds both
-  at the same paths. The NSIS installer puts `LICENSE.txt` and
-  `THIRD-PARTY-NOTICES.txt` beside the application. Installing those files
-  beside the MSI and `.app` executables is pending.
+  at the same paths. The Windows installers put `LICENSE.txt` and
+  `THIRD-PARTY-NOTICES.txt` beside the executables, including in a
+  service-only MSI installation. The macOS app bundles them in
+  `TorrPlay.app/Contents/Resources`.
 - The AppImage also installs `NATIVE-NOTICES.txt` beside the common notices.
   It records the distribution package and source version for the native
   libraries copied into the image, including GStreamer and its plugins, and
@@ -270,19 +270,17 @@ manifest chooses between two.
   which Tauri's updater installs nothing, and the apt repository's GPG
   key.
 - On macOS, the build signs the `.app` ad hoc, which Apple silicon requires
-  to run it. Without notarization, macOS refuses to open a downloaded
-  `.dmg`'s application until the user allows it in System Settings,
-  Privacy & Security, with **Open Anyway**, again for each download.
-  Updates the updater installs are not downloaded by a browser, so they
-  are expected not to ask again; that is checked when the updater is built.
+  to run it. Gatekeeper may block the first launch from a downloaded
+  `.dmg`. Users can approve the app with **Open Anyway** in System Settings
+  under Privacy & Security. Testing whether macOS asks again after a
+  built-in update requires an updater-enabled build.
 - On Windows, SmartScreen warns about an unsigned installer until the user
   chooses **More info** and **Run anyway**. Smart App Control, which some
-  Windows 11 installations turn on, may block unsigned programs with no
-  such choice, short of turning Smart App Control off, which Windows does
-  not let the user undo without reinstalling: the installers, and also what
-  they install, `torrplay-desktop.exe`, `torrplay-client.exe`, and the
-  service's `torrplay.exe`, which then fails to start at boot with nothing
-  on screen to say why.
+  Windows 11 installations turn on, may block the unsigned installers and
+  installed executables. Windows offers no per-app override for Smart App
+  Control. If it blocks the service's `torrplay.exe`, the service can fail
+  to start at boot without an on-screen prompt.
+  [Microsoft's Smart App Control FAQ](https://support.microsoft.com/en-gb/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions)
 - The download page and the user documentation say all of this, for each
   platform.
 - The project applies to SignPath Foundation, which signs open-source
@@ -326,22 +324,15 @@ manifest chooses between two.
   artifacts, and the apt repository. Signing on Windows and notarization on
   macOS come with it once they are available, as the signing decision
   above describes.
-- The packages need smoke tests of their own: install, start, the client
-  against the service where there is one, upgrade, and removal, on each
-  platform, replacing the hand install in the service tests.
-- These are unverified and are checked when the packaging is built, with
-  this ADR amended if one fails:
-  - that WiX 3 sets the preshutdown timeout, the data directory's
-    permissions, and the firewall rules, or else which custom action does;
-  - that Tauri's bundler makes the MSI for `aarch64-pc-windows-msvc`, and
-    that the WiX fragment and the firewall extension work in it;
-  - where `bundle.externalBin` installs `torrplay` in the `.app`, which
-    Tauri does not document;
-  - that macOS opens an update of an application it was not notarized for,
-    which the updater downloads, without asking for **Open Anyway** again.
-
-  The packages built since have settled the rest: cargo-deb's maintainer
-  scripts enable the unit and apply the sysusers entry; `bundle.externalBin`
-  puts `torrplay` in `/usr/bin` in the `.deb` and the AppImage and beside the
-  application in the NSIS installer; and the engine's C dependencies build
-  for Windows on arm64, where Tauri's bundler makes the NSIS installer.
+- The Windows package smoke tests install, start, and remove both
+  editions on x64 and arm64. The MSI tests also upgrade the service and
+  check the preshutdown timeout, data directory permissions, and firewall
+  rules. The macOS smoke test checks both architecture slices and runs the
+  CLI installed by `bundle.externalBin` in `Contents/MacOS`.
+- Two checks still need interactive sessions:
+  - The [Windows 11 manual install test](../development.md#windows-11-manual-install)
+    covers the installer dialogs and OS prompts that silent CI installs skip.
+  - The [macOS update test](../development.md#macos-unnotarized-updates) checks
+    whether Gatekeeper asks for **Open Anyway** again after the built-in
+    updater replaces an unnotarized application. It requires a build with
+    the updater enabled.

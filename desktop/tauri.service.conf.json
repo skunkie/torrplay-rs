@@ -12,6 +12,9 @@
         "fragmentPaths": [
           "../packaging/windows/service.wxs"
         ],
+        "componentGroupRefs": [
+          "TorrPlayLicenseFiles"
+        ],
         "componentRefs": [
           "TorrPlayService",
           "TorrPlayData",
