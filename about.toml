@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MIT
 
-# cargo-about's configuration, from which scripts/build-notices.sh lists the
+# cargo-about's configuration, from which scripts/build-notices.py lists the
 # crates the packages ship and their licenses, for both Cargo workspaces. The
 # accepted licenses are deny.toml's, which decides them; keep the two lists
 # the same.

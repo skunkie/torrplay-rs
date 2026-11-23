@@ -12,10 +12,13 @@ crate built with its client feature, with desktop\tauri.client.conf.json and
 desktop\tauri.service.conf.json merged over desktop\tauri.conf.json. The
 latter adds packaging\windows\service.wxs, which installs torrplay.exe as the
 torrplay service. Run it from the repository root once the web client is built
-(pnpm build in client), with the Tauri CLI installed; Out is the MSI to write.
+(pnpm build in client), with the Tauri CLI and cargo-about installed. Out
+is the MSI to write. A copy of its third-party notices is written beside
+it with .notices.txt appended to the MSI's name.
 Version, when given, replaces the version the MSI carries, so a test can
-build a later package to upgrade to. The bundler downloads WiX itself and
-checks it against the hash it carries.
+build a later package to upgrade to. Notices, when given, supplies the
+notice file to bundle instead of generating it. The bundler downloads
+WiX itself and checks it against the hash it carries.
 
   scripts\build-service-msi.ps1 target\msi\torrplay-service.msi
 #>
@@ -23,7 +26,8 @@ checks it against the hash it carries.
 param(
     [Parameter(Mandatory)]
     [string] $Out,
-    [string] $Version
+    [string] $Version,
+    [string] $Notices
 )
 
 $ErrorActionPreference = 'Stop'
@@ -40,18 +44,27 @@ if (-not (Test-Path -Path 'client/dist/index.html')) {
 $repository = (Get-Location).Path
 # The variables this sets, which a script shares with the session that runs
 # it, so they are put back as they were.
-$variables = @('CARGO_TARGET_DIR', 'TAURI_TORRPLAY_SERVICE_EXE', 'TAURI_TORRPLAY_SETTINGS_TEMPLATE')
+$variables = @('CARGO_TARGET_DIR', 'TAURI_TORRPLAY_SERVICE_EXE', 'TAURI_TORRPLAY_SETTINGS_TEMPLATE',
+    'TAURI_TORRPLAY_LICENSE', 'TAURI_TORRPLAY_NOTICES')
 $saved = @{}
 foreach ($variable in $variables) {
     $saved[$variable] = [Environment]::GetEnvironmentVariable($variable)
 }
+$noticePath = (New-TemporaryFile).FullName
 try {
     Remove-Item -Path Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
     Invoke-Checked cargo @('build', '--release', '--locked', '-p', 'torrplay')
+    if ($Notices) {
+        Copy-Item -LiteralPath $Notices -Destination $noticePath
+    } else {
+        Invoke-Checked python @('scripts/build-notices.py', $noticePath)
+    }
     # The fragment's sources, which candle reads from the environment; the
     # bundler passes it only variables whose names start with TAURI.
     $env:TAURI_TORRPLAY_SERVICE_EXE = Join-Path $repository 'target/release/torrplay.exe'
     $env:TAURI_TORRPLAY_SETTINGS_TEMPLATE = Join-Path $repository 'packaging/windows/torrplay.env'
+    $env:TAURI_TORRPLAY_LICENSE = Join-Path $repository 'LICENSES/MIT.txt'
+    $env:TAURI_TORRPLAY_NOTICES = $noticePath
 
     # Beside the application's build, which writes torrplay-desktop too.
     $env:CARGO_TARGET_DIR = Join-Path $repository 'desktop/target/client'
@@ -76,12 +89,15 @@ try {
     }
     $built = @(Get-ChildItem -Path $bundles -Filter '*.msi' -File)
     if ($built.Count -ne 1) { throw "the bundler did not make one MSI in ${bundles}: $built" }
+
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Out) | Out-Null
+    Copy-Item -Path $built[0].FullName -Destination $Out
+    Copy-Item -LiteralPath $noticePath -Destination "$Out.notices.txt"
 } finally {
     foreach ($variable in $variables) {
         [Environment]::SetEnvironmentVariable($variable, $saved[$variable])
     }
+    Remove-Item -LiteralPath $noticePath
 }
 
-New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Out) | Out-Null
-Copy-Item -Path $built[0].FullName -Destination $Out
 Write-Output $Out

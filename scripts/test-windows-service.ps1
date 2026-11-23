@@ -12,9 +12,9 @@ shutdown, installing again, and removal.
 Given a torrplay build, it installs that with scripts\windows-service.ps1.
 Given -Package, the service edition's MSI, it installs that instead, upgrades
 it to -Upgrade, a later version's MSI, as installing again, and also checks
-what only the MSI does: its license agreement, the client beside the service
-unless left out, the firewall rules, and that it refuses while the
-application is installed for the user.
+the license agreement, bundled notices, optional client, firewall rules,
+and refusal to install when the application is installed for the user.
+Keep each MSI's .notices.txt file beside the MSI.
 
 It changes the system it runs on, so CI runs it on a disposable runner. It needs
 an elevated PowerShell 7 and nothing listening on ports 8642 and 8643:
@@ -49,6 +49,11 @@ $holder = $null
 if ($packaged) {
     $Package = (Resolve-Path -Path $Package).Path
     $Upgrade = (Resolve-Path -Path $Upgrade).Path
+    foreach ($msi in @($Package, $Upgrade)) {
+        if (-not (Test-Path -LiteralPath "$msi.notices.txt" -PathType Leaf)) {
+            throw "Missing expected notices for ${msi}: $msi.notices.txt"
+        }
+    }
 }
 
 . (Join-Path $PSScriptRoot 'windows-service-config.ps1')
@@ -56,6 +61,21 @@ if ($packaged) {
 
 function Fail([string] $Message) {
     throw "FAIL: $Message"
+}
+
+function Assert-InstalledNotices([string] $Msi) {
+    $sources = @{
+        'LICENSE.txt' = Join-Path $PSScriptRoot '../LICENSES/MIT.txt'
+        'THIRD-PARTY-NOTICES.txt' = "$Msi.notices.txt"
+    }
+    foreach ($file in $sources.Keys) {
+        $installed = Join-Path $programDirectory $file
+        if (-not (Test-Path -LiteralPath $installed -PathType Leaf)) { Fail "the MSI did not install $file" }
+        $source = $sources[$file]
+        if ((Get-FileHash -LiteralPath $installed).Hash -ne (Get-FileHash -LiteralPath $source).Hash) {
+            Fail "the installed $file differs from $source"
+        }
+    }
 }
 
 function Wait-Until([scriptblock] $Condition, [int] $Seconds) {
@@ -218,9 +238,11 @@ try {
         if ($code -notin @(0, 3010)) { Fail "installing the service alone exited with $code" }
         if (-not (Wait-Until { Test-Ready 8642 } 60)) { Fail 'the service alone did not become ready' }
         if (Test-Path -Path $client) { Fail 'the service alone came with the client' }
+        Assert-InstalledNotices $Package
         Install-TorrPlay $Upgrade
         if (-not (Wait-Until { Test-Ready 8642 } 60)) { Fail 'the upgraded service did not become ready' }
         if (Test-Path -Path $client) { Fail 'the upgrade added the client left out' }
+        Assert-InstalledNotices $Upgrade
         $code = Invoke-Msi @('/x', "`"$Upgrade`"")
         if ($code -notin @(0, 3010)) { Fail "removing the service alone exited with $code" }
         if (Get-Service -Name $name -ErrorAction SilentlyContinue) { Fail 'removal left the service registered' }
@@ -231,6 +253,7 @@ try {
     if (-not (Wait-Until { Test-Ready 8642 } 60)) { Fail 'the service did not become ready' }
     if ($packaged) {
         if (-not (Test-Path -Path $client)) { Fail 'the MSI installed no client by default' }
+        Assert-InstalledNotices $Package
         if ((Get-TorrPlay).PathName -ne "`"$executable`" service") {
             Fail "the service runs $((Get-TorrPlay).PathName)"
         }
@@ -287,6 +310,7 @@ try {
     Install-TorrPlay ($packaged ? $Upgrade : $Binary)
     if (-not (Wait-Until { Test-Ready 8643 } 60)) { Fail 'the service did not listen at the kept address' }
     if ((Get-TorrPlay).ProcessId -eq $before) { Fail 'installing again did not restart the service' }
+    if ($packaged) { Assert-InstalledNotices $Upgrade }
     $downloadPathField = '"path":' + (ConvertTo-Json -InputObject $downloadDir -Compress)
     if (-not (Wait-Until { (Get-Logged $downloadPathField) -gt 0 } 5)) {
         Fail 'the service did not use the configured download directory'

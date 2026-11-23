@@ -21,10 +21,9 @@ account they name does not exist until the service does: a service's SID is
 S-1-5-80- and the SHA-1 of its name in capitals, so NT SERVICE\torrplay is
 S-1-5-80-2828507108-2845588903-360128926-4130653692-64400780 on every computer.
 
-scripts/build-service-msi.ps1 sets TAURI_TORRPLAY_SERVICE_EXE and
-TAURI_TORRPLAY_SETTINGS_TEMPLATE to the files it installs. The names start
-with TAURI because the bundler runs candle with the rest of its environment
-cleared.
+scripts/build-service-msi.ps1 sets the TAURI_TORRPLAY_* variables to the
+files this fragment installs. The names start with TAURI because the bundler
+runs candle with the rest of its environment cleared.
 -->
 <?if $(sys.BUILDARCH)="x64" or $(sys.BUILDARCH)="arm64"?>
     <?define Win64 = "yes" ?>
@@ -58,6 +57,15 @@ cleared.
         <Condition Message="TorrPlay, the application, is installed for you, and a computer runs one edition. To install the service edition instead, uninstall TorrPlay in Settings, Apps, first.">
             <![CDATA[Installed OR NOT TORRPLAYAPPLICATION]]>
         </Condition>
+
+        <ComponentGroup Id="TorrPlayLicenseFiles" Directory="INSTALLDIR">
+            <Component Id="TorrPlayLicense" Guid="*" Win64="$(var.Win64)">
+                <File Id="TorrPlayLicenseFile" Name="LICENSE.txt" Source="$(env.TAURI_TORRPLAY_LICENSE)" KeyPath="yes" />
+            </Component>
+            <Component Id="TorrPlayNotices" Guid="*" Win64="$(var.Win64)">
+                <File Id="TorrPlayNoticesFile" Name="THIRD-PARTY-NOTICES.txt" Source="$(env.TAURI_TORRPLAY_NOTICES)" KeyPath="yes" />
+            </Component>
+        </ComponentGroup>
 
         <DirectoryRef Id="INSTALLDIR">
             <Component Id="TorrPlayService" Guid="07FE7E62-DEB3-4B80-8C9F-7E046D18FF87" Win64="$(var.Win64)">
