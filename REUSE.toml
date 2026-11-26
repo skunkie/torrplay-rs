@@ -107,8 +107,8 @@ path = [
 SPDX-FileCopyrightText = "2026 TorrPlay"
 SPDX-License-Identifier = "MIT"
 
-# The MIT license as the Windows installers show it, each paragraph on one
-# line for the dialogs to wrap, which a header would appear in.
+# The MIT license as NSIS shows it, with each paragraph on one line for the
+# dialog to wrap. A header would appear in the dialog.
 [[annotations]]
 path = "packaging/windows/license.txt"
 SPDX-FileCopyrightText = "2026 TorrPlay"

@@ -46,12 +46,13 @@ $repository = (Get-Location).Path
 # The variables this sets, which a script shares with the session that runs
 # it, so they are put back as they were.
 $variables = @('CARGO_TARGET_DIR', 'TAURI_TORRPLAY_SERVICE_EXE', 'TAURI_TORRPLAY_SETTINGS_TEMPLATE',
-    'TAURI_TORRPLAY_SETTINGS_ACTION', 'TAURI_TORRPLAY_LICENSE', 'TAURI_TORRPLAY_NOTICES')
+    'TAURI_TORRPLAY_SETTINGS_ACTION', 'TAURI_TORRPLAY_LICENSE', 'TAURI_TORRPLAY_LICENSE_RTF', 'TAURI_TORRPLAY_NOTICES')
 $saved = @{}
 foreach ($variable in $variables) {
     $saved[$variable] = [Environment]::GetEnvironmentVariable($variable)
 }
 $noticePath = (New-TemporaryFile).FullName
+$licenseRtf = "$noticePath.rtf"
 try {
     Remove-Item -Path Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
     Invoke-Checked cargo @('build', '--release', '--locked', '-p', 'torrplay', '-p', 'torrplay-msi')
@@ -67,6 +68,16 @@ try {
     $env:TAURI_TORRPLAY_LICENSE = Join-Path $repository 'LICENSES/MIT.txt'
     $env:TAURI_TORRPLAY_NOTICES = $noticePath
     $env:TAURI_TORRPLAY_SETTINGS_TEMPLATE = Join-Path $repository 'packaging/windows/torrplay.env'
+
+    # Give WiX the RTF directly so Tauri does not convert it as plain text.
+    $license = [IO.File]::ReadAllText($env:TAURI_TORRPLAY_LICENSE)
+    $paragraphs = ($license.Trim() -split '\r?\n[ \t]*\r?\n+') | ForEach-Object {
+        ($_ -replace '\s+', ' ') -replace '[\\{}]', '\$0'
+    }
+    $rtf = '{\rtf1\ansi\deff0{\fonttbl{\f0\fswiss Segoe UI;}}\pard\ql\sa120\f0\fs18 ' +
+        ($paragraphs -join "\par`r`n") + '}'
+    [IO.File]::WriteAllText($licenseRtf, $rtf)
+    $env:TAURI_TORRPLAY_LICENSE_RTF = $licenseRtf
 
     # Beside the application's build, which writes torrplay-desktop too.
     $env:CARGO_TARGET_DIR = Join-Path $repository 'desktop/target/client'
@@ -100,6 +111,7 @@ try {
         [Environment]::SetEnvironmentVariable($variable, $saved[$variable])
     }
     Remove-Item -LiteralPath $noticePath
+    if (Test-Path -LiteralPath $licenseRtf) { Remove-Item -LiteralPath $licenseRtf }
 }
 
 Write-Output $Out
