@@ -7,8 +7,9 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 
 The service edition's MSI template, which desktop/tauri.service.conf.json
 names: tauri-bundler 2.10.4's src/bundle/windows/msi/main.wxs, adapted for
-the optional client feature and the service settings page. A
-service feature, which the installer requires, holds what
+the optional client feature and the service settings page. The MSI product
+name identifies the edition. The client configuration names the app and
+its shortcuts. The required service feature holds what
 packaging/windows/service.wxs installs, and a client feature within it holds
 the client, its shortcuts, its deep links, and its updater task. The
 installer shows WixUI_FeatureTree, whose Custom Setup page offers the
@@ -19,6 +20,7 @@ ADDLOCAL=Service installs the service alone from the command line. The
 template's PATH feature, which set no variable, is gone. Compare it with
 the bundler's when the Tauri CLI is upgraded.
 -->
+<?define TorrPlayMsiName = "TorrPlay Service"?>
 <?if $(sys.BUILDARCH)="x86"?>
     <?define Win64 = "no" ?>
     <?define PlatformProgramFilesFolder = "ProgramFilesFolder" ?>
@@ -35,7 +37,7 @@ the bundler's when the Tauri CLI is upgraded.
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
     <Product
             Id="*"
-            Name="{{product_name}}"
+            Name="$(var.TorrPlayMsiName)"
             UpgradeCode="{{upgrade_code}}"
             Language="!(loc.TauriLanguage)"
             Manufacturer="{{manufacturer}}"
@@ -203,8 +205,8 @@ the bundler's when the Tauri CLI is upgraded.
             <Component Id="CMP_UninstallShortcut" Guid="*">
 
                 <Shortcut Id="UninstallShortcut"
-						  Name="Uninstall {{product_name}}"
-						  Description="Uninstalls {{product_name}}"
+						  Name="Uninstall $(var.TorrPlayMsiName)"
+						  Description="Uninstalls $(var.TorrPlayMsiName)"
 						  Target="[System64Folder]msiexec.exe"
 						  Arguments="/x [ProductCode]" />
 

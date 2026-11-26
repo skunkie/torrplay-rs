@@ -336,11 +336,12 @@ try {
         Set-Checkbox '^Run TorrPlay$' $false
     } else {
         Click-Button $next $page
+        $readyPage = '^Ready to install TorrPlay Service$'
         if ($ExpectServiceStartFailure) {
-            $installButton = Wait-Control $buttonType '^Install$' '^Ready to install TorrPlay Client$'
+            $installButton = Wait-Control $buttonType '^Install$' $readyPage
             Post-ButtonClick $installButton
             $startupError = "Service 'TorrPlay Service' \(torrplay\) failed to start"
-            $failedPage = '^TorrPlay Client Setup Wizard (ended prematurely|was interrupted)$'
+            $failedPage = '^TorrPlay Service Setup Wizard (ended prematurely|was interrupted)$'
             $failure = Wait-Control $buttonType '^(Abort|Cancel|OK|Finish)$' "$startupError|$failedPage" 90
             if (($failure.Current.Name -replace '&', '') -ne 'Finish') {
                 $failure.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
@@ -352,8 +353,8 @@ try {
             }
             return
         }
-        Click-Button '^Install$' '^Ready to install TorrPlay Client$'
-        $finishPage = '^Completed the TorrPlay Client Setup Wizard$'
+        Click-Button '^Install$' $readyPage
+        $finishPage = '^Completed the TorrPlay Service Setup Wizard$'
     }
     Click-Button '^Finish$' $finishPage 90
     if (-not $setup.WaitForExit(30000)) { throw 'The installer did not exit after Finish.' }

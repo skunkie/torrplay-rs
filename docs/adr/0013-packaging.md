@@ -165,9 +165,11 @@ manifest chooses between two.
   the client as `torrplay-client.exe`, which the overlay's `mainBinaryName`
   names, with an upgrade code of its own, which the updater then installs as
   ADR 12 describes. It is installed for the computer, with administrator
-  rights, in `%ProgramFiles%\TorrPlay Client`, which Tauri's template names
-  after the product:
+  rights, in `%ProgramFiles%\TorrPlay Client`, which the template names
+  after the client configuration:
   - the client shortcut and installed product entry use TorrPlay's icon.
+    The wizard and installed product entry are named **TorrPlay Service**.
+    The optional app and its shortcut are named **TorrPlay Client**.
     File Explorer uses the system's Windows Installer icon for `.msi` files.
     The setup wizard uses a TorrPlay banner and welcome and finish artwork.
   - the client is a feature of its own, installed unless the user leaves
@@ -175,7 +177,7 @@ manifest chooses between two.
     `ADDLOCAL=Service`, for a computer only reached over the network; an
     upgrade keeps that choice. Tauri's template has no features to choose
     from, so the MSI uses a copy of it, `packaging/windows/main.wxs`,
-    changed for that alone;
+    adapted for the service edition;
   - a WiX fragment, `packaging/windows/service.wxs`, installs `torrplay.exe`
     and registers it as `scripts/windows-service.ps1` does: `torrplay.exe
     service` as `NT SERVICE\torrplay`, starting at boot, restarted after
@@ -300,12 +302,11 @@ manifest chooses between two.
 
 - Every package takes the workspace's version, and the service edition's
   packages also take it for the client.
-- Installed names follow the editions: `TorrPlay` for the application and
-  `TorrPlay Client` for the client, `TorrPlay Service` for the Windows
-  service, whose name is `torrplay`, and on Linux the packages `torrplay`,
-  `torrplay-service`, and `torrplay-client`. They change with the product's
-  name, before the first release, and none of them is published under this
-  one.
+- The application is **TorrPlay**, and the optional client is **TorrPlay
+  Client**. The MSI wizard, its entry in Windows Settings, and the Windows
+  service display name are **TorrPlay Service**. The Windows service name
+  is `torrplay`. The Linux packages are `torrplay`, `torrplay-service`, and
+  `torrplay-client`.
 
 ## Consequences
 

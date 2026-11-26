@@ -384,6 +384,8 @@ cannot play its format would pass.
 On Windows, the same overlay makes the application's NSIS installer, which
 installs for the current user, without administrator rights, in
 `%LOCALAPPDATA%\TorrPlay`, with `torrplay.exe` beside `torrplay-desktop.exe`.
+The desktop app runs its own server. The separate executable provides CLI
+commands such as `torrplay mcp` and `torrplay backup`.
 It, and the service edition's MSI, ask the user to accept the MIT license in
 `packaging/windows/license.txt`, which `desktop/tauri.conf.json` names: the text
 of `LICENSES/MIT.txt` with each paragraph on one line, for the dialogs to wrap.
@@ -699,8 +701,9 @@ which adds `packaging/windows/service.wxs`. That WiX fragment installs
 `torrplay.exe` and does what `scripts/windows-service.ps1` does, through
 Windows Installer, which rolls an install back when it fails, and also adds
 inbound firewall rules for the service on private and domain networks. The
-client and the service go in `%ProgramFiles%\TorrPlay Client`. The client is a
-feature the installer's Custom Setup page can leave out, as `ADDLOCAL=Service`
+wizard and installed product entry use the name **TorrPlay Service**.
+The client and service go in `%ProgramFiles%\TorrPlay Client`. The client is
+a feature the installer's Custom Setup page can leave out, as `ADDLOCAL=Service`
 does from the command line, which `packaging/windows/main.wxs`, a copy of the
 bundler's template, adds; compare it with the bundler's own on a Tauri CLI
 upgrade. The MSI
@@ -858,8 +861,9 @@ stopped.
    settings in `%ProgramData%\TorrPlay\torrplay.env`. Open the client from
    Start and confirm that it connects to the service. Verify both notice
    files in `%ProgramFiles%\TorrPlay Client`.
-3. Uninstall the MSI. Verify that the client, service, program files, and
-   firewall rules are removed, and that `%ProgramData%\TorrPlay` remains.
+3. In **Settings → Apps**, uninstall **TorrPlay Service**. Verify that the
+   client, service, program files, and firewall rules are removed, and that
+   `%ProgramData%\TorrPlay` remains.
    Repeat from a clean snapshot with the client deselected. Verify the
    service starts and both notice files are present in the service-only install.
 

@@ -4,9 +4,9 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 
 SPDX-License-Identifier: MIT
 
-The service edition's WiX fragment, which desktop/tauri.service.conf.json adds
-to the client's MSI, as ADR 13 decides. It installs torrplay.exe as the
-torrplay service, as scripts/windows-service.ps1 does by hand: run by its
+desktop/tauri.service.conf.json includes this WiX fragment in the MSI.
+It installs torrplay.exe as the torrplay service, as ADR 13 describes and
+scripts/windows-service.ps1 does by hand. The service runs under its
 virtual account, NT SERVICE\torrplay, from boot, restarted after a crash but
 not after a failure it reports, and given 45 seconds at shutdown. Windows
 Installer stops it before an upgrade or removal replaces its files and
