@@ -273,8 +273,9 @@ engine.
 
 ## 4. Implement bounded memory storage and streaming
 
-- Enforce one global cache capacity across torrents, counting pending
-  allocations and retained reusable buffers in cache usage.
+- Enforce one global cache capacity across torrents. Count pending allocations,
+  resident piece buffers, retained reusable buffers, and detached buffers
+  awaiting teardown in cache usage.
 - Define behavior when cache capacity cannot hold a piece. Account for
   temporary hashing, network, HTTP, and metadata allocations separately; cache
   capacity is not a whole-process RSS limit.

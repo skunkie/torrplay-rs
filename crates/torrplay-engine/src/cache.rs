@@ -13,10 +13,11 @@
 //! which removes each piece from the cache as it marks it missing, and then
 //! readmits waiting pieces in piece priority order across torrents, and in
 //! the order they started waiting among equals. While any piece waits, a new
-//! reservation joins the queue instead of taking room ahead of it. A write
-//! to a piece nobody reserved still reserves it on the spot and evicts from
-//! the write path. Partial pieces are never evicted; one that goes back to
-//! the engine's queue unverified is released.
+//! reservation joins the queue instead of taking room ahead of it. An
+//! unreserved write can claim available space or evict for a shortfall that
+//! pending teardown cannot cover. Storage drops the block for a later fetch
+//! if the cache still cannot hold it. Partial pieces are protected from
+//! eviction and stay resident until verified or discarded.
 //!
 //! Cache capacity can change while the cache runs. Growing it lets waiting
 //! reservations in; shrinking it below cache usage makes the evictor evict
@@ -34,13 +35,30 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::ops::{Deref, DerefMut};
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak};
+use std::time::Duration;
 
 use tokio::sync::Notify;
+use tokio::time::Instant;
 
 /// The most freed piece buffers the cache retains for reuse, as ADR 5's
 /// milestone 4 defaults fix it.
 pub const RETAINED_BUFFER_LIMIT: usize = 4;
+// A notified peer may disappear or never select an admitted piece.
+const ADMISSION_TIMEOUT: Duration = Duration::from_secs(1);
+// A detached piece may still be in use by an in-flight copy.
+const TEARDOWN_RETRY: Duration = Duration::from_millis(10);
+
+/// Small buffers stay on the heap to avoid a mapping per small piece.
+#[cfg(target_os = "linux")]
+const MAPPED_PIECE_MIN_BYTES: usize = 1 << 20;
+
+/// Leaves room for the rest of the process below Linux's default VMA limit.
+#[cfg(target_os = "linux")]
+static AVAILABLE_PIECE_MAPPINGS: AtomicUsize = AtomicUsize::new(4096);
 
 /// Identifies one torrent's pieces in the cache.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -97,13 +115,22 @@ pub enum CacheError {
         /// The length the write assumed.
         requested: usize,
     },
-    /// The running total disagrees with the buffers it counts.
-    #[error("cache usage is {counted} bytes, but resident buffers hold {resident}")]
+    /// Linux could not allocate the piece buffer.
+    #[cfg(target_os = "linux")]
+    #[error("allocating a {length}-byte piece buffer failed: {kind}")]
+    AllocationFailed {
+        /// The piece buffer's length.
+        length: usize,
+        /// The allocation error.
+        kind: std::io::ErrorKind,
+    },
+    /// The running total disagrees with the recomputed cache usage.
+    #[error("cache usage mismatch with {counted} bytes tracked and {recomputed} bytes recomputed")]
     AccountingMismatch {
         /// The running total.
         counted: u64,
-        /// The sum of resident buffer lengths.
-        resident: u64,
+        /// The sum of pending allocations and all charged buffers.
+        recomputed: u64,
     },
     /// Cache usage rose above capacity at some point.
     #[error("cache usage rose to {peak_bytes} bytes, above the capacity of {capacity_bytes}")]
@@ -143,8 +170,8 @@ pub struct CacheStats {
     /// The cache capacity in effect.
     pub capacity_bytes: u64,
     /// The bytes counted against capacity: pending allocations, resident
-    /// piece buffers, and retained reusable buffers. Only a capacity that
-    /// shrank leaves it above capacity.
+    /// piece buffers, retained reusable buffers, and buffers being freed.
+    /// Only a capacity that shrank leaves it above capacity.
     pub usage_bytes: u64,
     /// The highest cache usage since the cache was created.
     pub peak_usage_bytes: u64,
@@ -156,7 +183,7 @@ pub struct CacheStats {
     pub verified_pieces: u64,
     /// The full length of every resident piece some reader pins, each once.
     pub pinned_bytes: u64,
-    /// The bytes of freed buffers retained for reuse.
+    /// The bytes of reusable buffers, including those being released.
     pub retained_bytes: u64,
     /// Pieces evicted since the cache was created.
     pub eviction_count: u64,
@@ -172,7 +199,7 @@ pub enum Reservation {
     /// The cache is full, or other pieces wait ahead of this one; the
     /// evictor makes room and wakes the torrent.
     Waiting,
-    /// The piece is longer than the cache capacity and can never be stored.
+    /// The piece is longer than the current cache capacity.
     TooLarge,
 }
 
@@ -199,7 +226,126 @@ pub(crate) struct EvictionBatch {
 
 /// A piece buffer, locked on its own so that copies never hold the cache
 /// lock.
-type Buffer = Arc<Mutex<Box<[u8]>>>;
+type Buffer = Arc<PieceBuffer>;
+
+struct PieceBuffer {
+    bytes: Mutex<PieceBytes>,
+    // Field order frees the bytes before returning their charge.
+    shutdown_charge: OnceLock<ShutdownCharge>,
+}
+
+struct ShutdownCharge {
+    cache: Weak<PieceCache>,
+    length: u64,
+}
+
+impl Drop for ShutdownCharge {
+    fn drop(&mut self) {
+        if let Some(cache) = self.cache.upgrade()
+            && let Ok(mut state) = cache.lock()
+        {
+            cache.finish_teardown(&mut state, self.length);
+        }
+    }
+}
+
+enum PieceBytes {
+    Heap(Box<[u8]>),
+    #[cfg(target_os = "linux")]
+    Mapped(MappedPiece),
+}
+
+#[cfg(target_os = "linux")]
+struct MappedPiece {
+    bytes: memmap2::MmapMut,
+    // Drop the mapping before returning its budget slot.
+    _permit: MappingPermit,
+}
+
+#[cfg(target_os = "linux")]
+struct MappingPermit(&'static AtomicUsize);
+
+#[cfg(target_os = "linux")]
+impl MappingPermit {
+    fn acquire(available: &'static AtomicUsize) -> Option<Self> {
+        available
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+                count.checked_sub(1)
+            })
+            .ok()?;
+        Some(Self(available))
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for MappingPermit {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+impl PieceBytes {
+    fn allocate(length: usize) -> Result<Self, CacheError> {
+        #[cfg(target_os = "linux")]
+        if length >= MAPPED_PIECE_MIN_BYTES {
+            return Self::allocate_large(
+                length,
+                &AVAILABLE_PIECE_MAPPINGS,
+                memmap2::MmapMut::map_anon,
+            );
+        }
+        Ok(Self::Heap(vec![0; length].into_boxed_slice()))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn allocate_large(
+        length: usize,
+        available: &'static AtomicUsize,
+        map: impl FnOnce(usize) -> std::io::Result<memmap2::MmapMut>,
+    ) -> Result<Self, CacheError> {
+        if let Some(permit) = MappingPermit::acquire(available) {
+            // The general-purpose heap can keep freed piece buffers resident.
+            if let Ok(bytes) = map(length) {
+                return Ok(Self::Mapped(MappedPiece {
+                    bytes,
+                    _permit: permit,
+                }));
+            }
+            // The kernel's mapping limit also includes other allocations.
+        }
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(length)
+            .map_err(|_| CacheError::AllocationFailed {
+                length,
+                kind: std::io::ErrorKind::OutOfMemory,
+            })?;
+        bytes.resize(length, 0);
+        Ok(Self::Heap(bytes.into_boxed_slice()))
+    }
+}
+
+impl Deref for PieceBytes {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        match self {
+            Self::Heap(bytes) => bytes,
+            #[cfg(target_os = "linux")]
+            Self::Mapped(piece) => &piece.bytes,
+        }
+    }
+}
+
+impl DerefMut for PieceBytes {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        match self {
+            Self::Heap(bytes) => bytes,
+            #[cfg(target_os = "linux")]
+            Self::Mapped(piece) => &mut piece.bytes,
+        }
+    }
+}
 
 struct Slot {
     length: usize,
@@ -208,6 +354,12 @@ struct Slot {
     verified: bool,
     // The cache clock at the piece's last read or verification.
     last_use: u64,
+}
+
+struct DetachedPiece {
+    length: usize,
+    copying: Option<Buffer>,
+    owned: Option<PieceBytes>,
 }
 
 struct TorrentEntry {
@@ -226,6 +378,14 @@ struct Waiting {
     length: usize,
     // When the piece first started waiting, kept across readmissions.
     since: u64,
+    // Keep its place while the notified peers decide whether they still need it.
+    rescan_deadline: Option<Instant>,
+}
+
+struct Retry {
+    since: u64,
+    // An admission holds a pending slot until claimed or canceled.
+    deadline: Option<Instant>,
 }
 
 struct State {
@@ -242,11 +402,17 @@ struct State {
     slots: HashMap<(TorrentKey, u32), Slot>,
     // Reservations that found no room.
     waiting: HashMap<(TorrentKey, u32), Waiting>,
-    // Pieces readmitted from the queue, with the time they started waiting,
-    // until the torrent reserves them again.
-    admitted: HashMap<(TorrentKey, u32), u64>,
+    // Readmitted pieces keep their original wait time until claimed.
+    retry: HashMap<(TorrentKey, u32), Retry>,
     // Freed buffers kept for reuse, counted in usage.
-    retained: Vec<Box<[u8]>>,
+    retained: Vec<PieceBytes>,
+    // Detached retained buffers stay charged until their teardown finishes.
+    releasing_retained_bytes: u64,
+    // Detached piece buffers waiting for the eviction worker.
+    teardown: Vec<DetachedPiece>,
+    teardown_bytes: u64,
+    // Once the evictor stops, late releases clean up on the releasing thread.
+    teardown_after_shutdown: Option<Weak<PieceCache>>,
 }
 
 impl State {
@@ -282,26 +448,93 @@ impl State {
     }
 
     fn retained_bytes(&self) -> u64 {
-        self.retained.iter().map(|buffer| buffer.len() as u64).sum()
+        self.retained
+            .iter()
+            .map(|buffer| buffer.len() as u64)
+            .sum::<u64>()
+            + self.releasing_retained_bytes
     }
 
-    /// Releases retained buffers until `needed_bytes` fit, and returns them
-    /// for the caller to drop after unlocking.
-    fn release_retained(&mut self, needed_bytes: u64) -> Vec<Box<[u8]>> {
-        let mut released = Vec::new();
-        while self.shortfall(needed_bytes) > 0 {
+    fn wait_order(&self, key: (TorrentKey, u32), waiting: &Waiting) -> (u32, u64) {
+        let rank = self
+            .torrents
+            .get(&key.0)
+            .and_then(|entry| entry.ranks.get(&key.1))
+            .copied()
+            .unwrap_or(u32::MAX);
+        (rank, waiting.since)
+    }
+
+    fn waiting_bytes(&self) -> u64 {
+        let first_rescan = self
+            .waiting
+            .iter()
+            .filter(|(_, waiting)| waiting.rescan_deadline.is_some())
+            .map(|(&key, waiting)| self.wait_order(key, waiting))
+            .min();
+        self.waiting
+            .iter()
+            .filter(|&(&key, waiting)| {
+                first_rescan.is_none_or(|first| self.wait_order(key, waiting) < first)
+            })
+            .map(|(_, waiting)| waiting.length as u64)
+            .sum()
+    }
+
+    fn shortfall_after_teardown(&self, needed_bytes: u64) -> u64 {
+        self.shortfall(needed_bytes)
+            .saturating_sub(self.releasing_retained_bytes + self.teardown_bytes)
+    }
+
+    fn cancel_retry(&mut self, key: (TorrentKey, u32)) {
+        if self
+            .retry
+            .remove(&key)
+            .is_some_and(|retry| retry.deadline.is_some())
+            && let Some(slot) = self.slots.remove(&key)
+        {
+            self.usage_bytes -= slot.length as u64;
+        }
+    }
+
+    fn add_pending(&mut self, key: (TorrentKey, u32), length: usize) {
+        self.add(length);
+        self.slots.insert(
+            key,
+            Slot {
+                length,
+                bytes: None,
+                verified: false,
+                last_use: 0,
+            },
+        );
+    }
+
+    /// Detaches only buffers whose release would help cover the shortfall.
+    fn detach_retained(
+        &mut self,
+        needed_bytes: u64,
+        deferred_teardown_bytes: u64,
+    ) -> (Vec<PieceBytes>, u64) {
+        let shortfall = self
+            .shortfall(needed_bytes)
+            .saturating_sub(self.releasing_retained_bytes + deferred_teardown_bytes);
+        let mut buffers = Vec::new();
+        let mut detached_bytes = 0;
+        while detached_bytes < shortfall {
             let Some(buffer) = self.retained.pop() else {
                 break;
             };
-            self.usage_bytes -= buffer.len() as u64;
-            released.push(buffer);
+            detached_bytes += buffer.len() as u64;
+            buffers.push(buffer);
         }
-        released
+        self.releasing_retained_bytes += detached_bytes;
+        (buffers, detached_bytes)
     }
 
     /// Takes a retained buffer of exactly `length` bytes, which leaves the
     /// usage it counted to the slot it moves into.
-    fn take_retained(&mut self, length: usize) -> Option<Box<[u8]>> {
+    fn take_retained(&mut self, length: usize) -> Option<PieceBytes> {
         let index = self
             .retained
             .iter()
@@ -311,37 +544,56 @@ impl State {
         Some(buffer)
     }
 
-    /// Removes a slot and returns its bytes to the capacity. Its buffer is
+    /// Removes a slot. A pending allocation returns its bytes immediately.
+    /// A buffer stays charged while retained or detached. It is
     /// retained when nothing waits for room, the pool has space, usage is
     /// within capacity, and no copy still holds it; otherwise it is returned
-    /// to drop after unlocking.
-    fn remove_slot(&mut self, key: (TorrentKey, u32)) -> Option<(Slot, Option<Box<[u8]>>)> {
-        let mut slot = self.slots.remove(&key)?;
-        self.usage_bytes -= slot.length as u64;
-        let mut freed = None;
-        if let Some(buffer) = slot.bytes.take() {
-            match Arc::try_unwrap(buffer).map(Mutex::into_inner) {
-                Ok(Ok(bytes))
-                    if self.waiting.is_empty()
-                        && self.retained.len() < RETAINED_BUFFER_LIMIT
-                        && self.shortfall(bytes.len() as u64) == 0 =>
-                {
-                    self.add(bytes.len());
-                    self.retained.push(bytes);
-                }
-                Ok(Ok(bytes)) => freed = Some(bytes),
-                // A copy in progress holds it, or a panic poisoned it; it is
-                // freed when the last holder drops it.
-                _ => {}
+    /// to be dropped after unlocking.
+    fn remove_slot(&mut self, key: (TorrentKey, u32)) -> Option<DetachedPiece> {
+        let Slot { length, bytes, .. } = self.slots.remove(&key)?;
+        let Some(buffer) = bytes else {
+            self.usage_bytes -= length as u64;
+            return None;
+        };
+        let (owned, copying) = match Arc::try_unwrap(buffer).map(|buffer| buffer.bytes.into_inner())
+        {
+            Ok(Ok(bytes))
+                if self.waiting.is_empty()
+                    && self.retained.len() < RETAINED_BUFFER_LIMIT
+                    && self.shortfall(0) == 0 =>
+            {
+                self.retained.push(bytes);
+                return None;
             }
-        }
-        Some((slot, freed))
+            Ok(Ok(bytes)) => (Some(bytes), None),
+            Ok(Err(error)) => (Some(error.into_inner()), None),
+            Err(buffer) => (None, Some(buffer)),
+        };
+        self.teardown_bytes += length as u64;
+        Some(DetachedPiece {
+            length,
+            copying,
+            owned,
+        })
+    }
+
+    /// Removes a slot, keeping any detached buffer charged until teardown.
+    fn defer_slot_release(&mut self, key: (TorrentKey, u32)) -> bool {
+        let Some(detached) = self.remove_slot(key) else {
+            return false;
+        };
+        self.teardown.push(detached);
+        true
     }
 }
 
 /// The piece cache shared by every torrent in memory storage mode.
 pub struct PieceCache {
     state: Mutex<State>,
+    // An unreserved write can wait for retained buffers to be released.
+    retained_released: Condvar,
+    // Storage transitions wait asynchronously for detached buffers.
+    seed_room_changed: Notify,
     // Wakes the evictor when a reservation waits or room may have appeared.
     room_wanted: Notify,
 }
@@ -361,15 +613,223 @@ impl PieceCache {
                 torrents: HashMap::new(),
                 slots: HashMap::new(),
                 waiting: HashMap::new(),
-                admitted: HashMap::new(),
+                retry: HashMap::new(),
                 retained: Vec::new(),
+                releasing_retained_bytes: 0,
+                teardown: Vec::new(),
+                teardown_bytes: 0,
+                teardown_after_shutdown: None,
             }),
+            retained_released: Condvar::new(),
+            seed_room_changed: Notify::new(),
             room_wanted: Notify::new(),
         })
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, State>, CacheError> {
         self.state.lock().map_err(|_| CacheError::Poisoned)
+    }
+
+    fn lock_reclaiming_retained(
+        &self,
+        needed: impl Fn(&State) -> Option<u64>,
+        wait_for_release: bool,
+    ) -> Result<MutexGuard<'_, State>, CacheError> {
+        let mut state = self.lock()?;
+        loop {
+            if state.retained.is_empty()
+                && (!wait_for_release || state.releasing_retained_bytes == 0)
+            {
+                return Ok(state);
+            }
+            let Some(needed_bytes) = needed(&state) else {
+                return Ok(state);
+            };
+            // The evictor retries after piece buffer teardown. A writer only
+            // waits for releases already in progress from the retained pool.
+            let deferred_teardown_bytes = if wait_for_release {
+                0
+            } else {
+                state.teardown_bytes
+            };
+            let (buffers, detached_bytes) =
+                state.detach_retained(needed_bytes, deferred_teardown_bytes);
+            if buffers.is_empty() {
+                if !wait_for_release
+                    || state.releasing_retained_bytes == 0
+                    || state.shortfall(needed_bytes) == 0
+                {
+                    return Ok(state);
+                }
+                state = self
+                    .retained_released
+                    .wait(state)
+                    .map_err(|_| CacheError::Poisoned)?;
+                continue;
+            }
+            drop(state);
+            drop(buffers);
+            state = self.finish_retained_release(detached_bytes)?;
+        }
+    }
+
+    fn finish_retained_release(&self, bytes: u64) -> Result<MutexGuard<'_, State>, CacheError> {
+        let mut state = self.lock()?;
+        state.releasing_retained_bytes -= bytes;
+        state.usage_bytes -= bytes;
+        self.retained_released.notify_all();
+        self.room_may_have_changed(&state);
+        Ok(state)
+    }
+
+    /// Waits only when detached buffers account for the cache shortfall
+    /// after reclaiming reusable buffers. Returns false if the wait expires.
+    /// Returns true when seeding can proceed to its own capacity check,
+    /// including when teardown cannot cover the shortfall.
+    pub(crate) async fn wait_for_seed_room(
+        &self,
+        seed_bytes: u64,
+        timeout: Duration,
+    ) -> Result<bool, CacheError> {
+        if seed_bytes == 0 {
+            return Ok(true);
+        }
+        let wait = async {
+            loop {
+                let room_changed = self.seed_room_changed.notified();
+                // Register before reading the accounting so a concurrent
+                // release cannot slip between the check and the wait.
+                tokio::pin!(room_changed);
+                room_changed.as_mut().enable();
+                {
+                    let state = self.lock()?;
+                    let shortfall = state
+                        .shortfall(seed_bytes)
+                        .saturating_sub(state.retained_bytes());
+                    if shortfall == 0 || shortfall > state.teardown_bytes {
+                        return Ok(true);
+                    }
+                }
+                room_changed.await;
+            }
+        };
+        tokio::time::timeout(timeout, wait)
+            .await
+            .unwrap_or(Ok(false))
+    }
+
+    pub(crate) fn maintenance_deadline(&self) -> Result<Option<Instant>, CacheError> {
+        let state = self.lock()?;
+        Ok(state
+            .retry
+            .values()
+            .filter_map(|retry| retry.deadline)
+            .chain(
+                state
+                    .waiting
+                    .values()
+                    .filter_map(|waiting| waiting.rescan_deadline),
+            )
+            .chain((!state.teardown.is_empty()).then(|| Instant::now() + TEARDOWN_RETRY))
+            .min())
+    }
+
+    pub(crate) fn expire_reservations(&self, now: Instant) -> Result<(), CacheError> {
+        let mut state = self.lock()?;
+        let previous_usage = state.usage_bytes;
+        let state = &mut *state;
+        state.waiting.retain(|_, waiting| {
+            waiting
+                .rescan_deadline
+                .is_none_or(|deadline| deadline > now)
+        });
+        for (key, retry) in &mut state.retry {
+            if retry.deadline.is_some_and(|deadline| deadline <= now) {
+                retry.deadline = None;
+                if let Some(slot) = state.slots.remove(key) {
+                    state.usage_bytes -= slot.length as u64;
+                }
+            }
+        }
+        if state.usage_bytes < previous_usage {
+            self.notify_seed_waiters(state);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn stop_teardown_worker(self: &Arc<Self>) -> Result<(), CacheError> {
+        self.lock()?.teardown_after_shutdown = Some(Arc::downgrade(self));
+        self.drain_teardown()
+    }
+
+    fn schedule_teardown(&self, state: MutexGuard<'_, State>) -> Result<(), CacheError> {
+        if state.teardown_after_shutdown.is_some() {
+            drop(state);
+            self.drain_teardown()
+        } else {
+            self.room_wanted.notify_one();
+            Ok(())
+        }
+    }
+
+    pub(crate) fn drain_teardown(&self) -> Result<(), CacheError> {
+        let (pieces, after_shutdown) = {
+            let mut state = self.lock()?;
+            (
+                std::mem::take(&mut state.teardown),
+                state.teardown_after_shutdown.clone(),
+            )
+        };
+        if pieces.is_empty() {
+            return Ok(());
+        }
+        let mut busy = Vec::new();
+        let mut released = 0;
+        for piece in pieces {
+            // Once detached, only copies which already hold a reference can
+            // share this buffer. Keep its last reference on the worker
+            // until shutdown hands cleanup to the remaining copies.
+            if let Some(buffer) = piece
+                .copying
+                .as_ref()
+                .filter(|buffer| Arc::strong_count(buffer) > 1)
+            {
+                if let Some(cache) = &after_shutdown {
+                    // The last copy now owns cleanup, even after the worker
+                    // has returned. The queue's reference keeps the buffer
+                    // alive while the charge is attached.
+                    buffer.shutdown_charge.get_or_init(|| ShutdownCharge {
+                        cache: cache.clone(),
+                        length: piece.length as u64,
+                    });
+                } else {
+                    busy.push(piece);
+                }
+            } else {
+                released += piece.length as u64;
+                drop(piece);
+            }
+        }
+        let mut state = self.lock()?;
+        state.teardown.append(&mut busy);
+        self.finish_teardown(&mut state, released);
+        Ok(())
+    }
+
+    fn finish_teardown(&self, state: &mut State, released: u64) {
+        if released > 0 {
+            state.teardown_bytes -= released;
+            state.usage_bytes -= released;
+            self.seed_room_changed.notify_waiters();
+        }
+    }
+
+    fn notify_seed_waiters(&self, state: &State) {
+        // A transition can only be asleep while detached buffers are
+        // charged. Completing teardown wakes it even after the last drop.
+        if state.teardown_bytes > 0 {
+            self.seed_room_changed.notify_waiters();
+        }
     }
 
     // Called after a change that may let a waiting reservation proceed, or
@@ -409,6 +869,7 @@ impl PieceCache {
         }
         state.capacity_bytes = capacity_bytes;
         self.room_wanted.notify_one();
+        self.seed_room_changed.notify_waiters();
         Ok(())
     }
 
@@ -446,21 +907,22 @@ impl PieceCache {
     }
 
     /// Recomputes cache usage from pending allocations, resident buffers,
-    /// and retained buffers, and checks that it matches the running total
+    /// retained and detached buffers, and checks it against the running total
     /// and that nothing ever added to it beyond capacity.
     pub fn audit(&self) -> Result<CacheStats, CacheError> {
         let state = self.lock()?;
         let stats = self.snapshot(&state);
-        let resident: u64 = state
+        let recomputed: u64 = state
             .slots
             .values()
             .map(|slot| slot.length as u64)
             .sum::<u64>()
-            + stats.retained_bytes;
-        if resident != stats.usage_bytes {
+            + stats.retained_bytes
+            + state.teardown_bytes;
+        if recomputed != stats.usage_bytes {
             return Err(CacheError::AccountingMismatch {
                 counted: stats.usage_bytes,
-                resident,
+                recomputed,
             });
         }
         if let Some((peak_bytes, capacity_bytes)) = state.exceeded {
@@ -528,8 +990,20 @@ impl PieceCache {
             .ok_or(CacheError::UnknownTorrent(torrent))?;
         entry.started = started;
         if !started {
+            let previous_usage = state.usage_bytes;
             state.waiting.retain(|(key, _), _| *key != torrent);
-            state.admitted.retain(|(key, _), _| *key != torrent);
+            let retries: Vec<_> = state
+                .retry
+                .keys()
+                .copied()
+                .filter(|(key, _)| *key == torrent)
+                .collect();
+            for key in retries {
+                state.cancel_retry(key);
+            }
+            if state.usage_bytes < previous_usage {
+                self.notify_seed_waiters(&state);
+            }
             self.room_wanted.notify_one();
         }
         Ok(())
@@ -560,69 +1034,65 @@ impl PieceCache {
         let dropped: Vec<(TorrentKey, u32)> = state
             .waiting
             .keys()
-            .chain(state.admitted.keys())
+            .chain(state.retry.keys())
             .filter(|(key, piece)| *key == torrent && !planned.contains(piece))
             .copied()
             .collect();
+        let previous_usage = state.usage_bytes;
         for key in dropped {
             state.waiting.remove(&key);
-            state.admitted.remove(&key);
+            state.cancel_retry(key);
+        }
+        if state.usage_bytes < previous_usage {
+            self.notify_seed_waiters(&state);
         }
         self.room_wanted.notify_one();
         Ok(())
     }
 
     /// Reserves room for a piece of `length` bytes before the engine
-    /// requests it. A reservation that does not fit, or that would pass
-    /// pieces already waiting, is recorded as waiting, and the evictor makes
-    /// room for it.
+    /// requests it. A reservation that does not fit, including one that
+    /// needs retained-buffer reclamation, or would pass pieces already
+    /// waiting, is queued for the evictor.
     pub(crate) fn reserve(
         &self,
         torrent: TorrentKey,
         piece: u32,
         length: usize,
     ) -> Result<Reservation, CacheError> {
+        let key = (torrent, piece);
         let mut state = self.lock()?;
-        let state = &mut *state;
         if length as u64 > state.capacity_bytes {
             return Ok(Reservation::TooLarge);
         }
         if !state.torrents.contains_key(&torrent) {
             return Err(CacheError::UnknownTorrent(torrent));
         }
-        let key = (torrent, piece);
         if state.slots.contains_key(&key) {
+            state.retry.remove(&key);
             return Ok(Reservation::Reserved);
         }
-        if state.waiting.contains_key(&key) {
-            // Still queued; only readmission takes it out.
+        if let Some(waiting) = state.waiting.get_mut(&key) {
+            if waiting.rescan_deadline.take().is_some() {
+                self.room_wanted.notify_one();
+            }
             return Ok(Reservation::Waiting);
         }
-        let admitted = state.admitted.remove(&key);
-        let queue_ahead = admitted.is_none() && !state.waiting.is_empty();
-        let released = if queue_ahead {
-            Vec::new()
-        } else {
-            state.release_retained(length as u64)
-        };
-        if queue_ahead || state.shortfall(length as u64) > 0 {
-            let since = admitted.unwrap_or_else(|| state.tick());
-            state.waiting.insert(key, Waiting { length, since });
+        let retry = state.retry.remove(&key);
+        if !state.waiting.is_empty() || state.shortfall(length as u64) > 0 {
+            let since = retry.map_or_else(|| state.tick(), |retry| retry.since);
+            state.waiting.insert(
+                key,
+                Waiting {
+                    length,
+                    since,
+                    rescan_deadline: None,
+                },
+            );
             self.room_wanted.notify_one();
-            drop(released);
             return Ok(Reservation::Waiting);
         }
-        state.add(length);
-        state.slots.insert(
-            key,
-            Slot {
-                length,
-                bytes: None,
-                verified: false,
-                last_use: 0,
-            },
-        );
-        drop(released);
+        state.add_pending(key, length);
         Ok(Reservation::Reserved)
     }
 
@@ -633,84 +1103,99 @@ impl PieceCache {
         torrent: TorrentKey,
         piece: u32,
     ) -> Result<(), CacheError> {
-        let freed = {
-            let mut state = self.lock()?;
-            let unverified = state
-                .slots
-                .get(&(torrent, piece))
-                .is_some_and(|slot| !slot.verified);
-            let freed = if unverified {
-                state.remove_slot((torrent, piece))
+        let key = (torrent, piece);
+        let mut state = self.lock()?;
+        if state.slots.get(&key).is_some_and(|slot| !slot.verified) {
+            state.retry.remove(&key);
+            if state.defer_slot_release(key) {
+                return self.schedule_teardown(state);
             } else {
-                None
-            };
-            self.room_may_have_changed(&state);
-            freed
-        };
-        drop(freed);
+                self.notify_seed_waiters(&state);
+            }
+        }
+        self.room_may_have_changed(&state);
         Ok(())
     }
 
-    /// Returns the bytes eviction must make room for, for
-    /// [`eviction_candidates`](Self::eviction_candidates): those the waiting
-    /// reservations need, together with any usage above a capacity that
-    /// shrank, after releasing retained buffers toward them, or zero when
-    /// everything fits.
+    /// Reclaims retained buffers and returns the shortfall that eviction
+    /// still needs to cover, crediting the space already being released.
     pub(crate) fn room_needed(&self) -> Result<u64, CacheError> {
-        let (needed, released) = {
-            let mut state = self.lock()?;
-            let needed: u64 = state
-                .waiting
-                .values()
-                .map(|waiting| waiting.length as u64)
-                .sum();
-            let released = state.release_retained(needed);
-            let excess = state.usage_bytes.saturating_sub(state.capacity_bytes);
-            let room = if state.shortfall(needed) > 0 {
-                needed + excess
-            } else {
-                0
-            };
-            (room, released)
-        };
-        drop(released);
-        Ok(needed)
+        let state = self.lock_reclaiming_retained(|state| Some(state.waiting_bytes()), false)?;
+        Ok(state.shortfall_after_teardown(state.waiting_bytes()))
     }
 
     /// Readmits waiting reservations as far as the free capacity goes, in
     /// piece priority order across torrents and, among equal places, in the
     /// order they started waiting. Readmission stops at the first piece that
     /// does not fit, so smaller pieces never pass it indefinitely. Returns
-    /// the torrents to wake, which reserve their pieces again when they
-    /// select them.
+    /// the torrents to wake. Each admitted piece holds a pending allocation
+    /// until claimed, canceled, or expired.
     pub(crate) fn take_admissible(&self) -> Result<Vec<Arc<dyn EngineTorrent>>, CacheError> {
+        self.readmit_waiting(false)
+    }
+
+    /// Admits the prefix that already fits. Torrents woken here will scan
+    /// again, so any later pieces they queued in the same scan must ask
+    /// again before the evictor makes room for them. They keep their place
+    /// until asked for again or the rescan deadline expires.
+    pub(crate) fn take_admissible_before_eviction(
+        &self,
+    ) -> Result<Vec<Arc<dyn EngineTorrent>>, CacheError> {
+        self.readmit_waiting(true)
+    }
+
+    fn readmit_waiting(&self, rescan: bool) -> Result<Vec<Arc<dyn EngineTorrent>>, CacheError> {
         let mut state = self.lock()?;
         let state = &mut *state;
-        let mut queue: Vec<(u32, u64, (TorrentKey, u32), usize)> = state
+        let mut free = state.free_bytes();
+        if state.usage_bytes > state.capacity_bytes
+            || (free == 0 && state.waiting.values().all(|waiting| waiting.length > 0))
+        {
+            return Ok(Vec::new());
+        }
+        let mut queue: Vec<_> = state
             .waiting
             .iter()
             .map(|(&key, waiting)| {
-                let rank = state
-                    .torrents
-                    .get(&key.0)
-                    .and_then(|entry| entry.ranks.get(&key.1))
-                    .copied()
-                    .unwrap_or(u32::MAX);
-                (rank, waiting.since, key, waiting.length)
+                (
+                    state.wait_order(key, waiting),
+                    key,
+                    waiting.length,
+                    waiting.rescan_deadline.is_some(),
+                )
             })
             .collect();
         queue.sort_unstable();
-        let mut free = state.free_bytes();
         let mut torrents: Vec<TorrentKey> = Vec::new();
-        for (_, since, key, length) in queue {
-            if length as u64 > free {
+        let deadline = Instant::now() + ADMISSION_TIMEOUT;
+        for ((_, since), key, length, awaiting_rescan) in queue {
+            if awaiting_rescan || length as u64 > free {
                 break;
             }
             free -= length as u64;
             state.waiting.remove(&key);
-            state.admitted.insert(key, since);
+            state.add_pending(key, length);
+            state.retry.insert(
+                key,
+                Retry {
+                    since,
+                    deadline: Some(deadline),
+                },
+            );
             if !torrents.contains(&key.0) {
                 torrents.push(key.0);
+            }
+        }
+        if rescan && !torrents.is_empty() {
+            for (&(key, _), waiting) in &mut state.waiting {
+                if torrents.contains(&key)
+                    && state
+                        .torrents
+                        .get(&key)
+                        .is_some_and(|entry| entry.engine.is_some())
+                {
+                    waiting.rescan_deadline.get_or_insert(deadline);
+                }
             }
         }
         Ok(torrents
@@ -719,17 +1204,33 @@ impl PieceCache {
             .collect())
     }
 
-    /// Returns verified, unpinned pieces whose eviction would free at least
-    /// `needed_bytes` beyond the capacity left, grouped by torrent: pieces of
-    /// paused and failed torrents first, then those of started torrents, the
-    /// least recently used first within each class. It may return fewer when
-    /// not enough pieces are evictable.
-    pub(crate) fn eviction_candidates(
+    /// Selects verified, unpinned pieces to make room for an unreserved
+    /// write, accounting for buffers already being freed.
+    pub(crate) fn write_eviction_candidates(
         &self,
         needed_bytes: u64,
     ) -> Result<Vec<EvictionBatch>, CacheError> {
         let state = self.lock()?;
-        let mut shortfall = needed_bytes.saturating_sub(state.free_bytes());
+        let shortfall = state.shortfall_after_teardown(needed_bytes);
+        Ok(Self::select_eviction_candidates(&state, shortfall))
+    }
+
+    /// Selects eviction candidates using the current queue and teardown
+    /// accounting. Returns None when no eviction or fallback is needed.
+    pub(crate) fn waiting_eviction_candidates(
+        &self,
+    ) -> Result<Option<Vec<EvictionBatch>>, CacheError> {
+        let state = self.lock()?;
+        let shortfall = state.shortfall_after_teardown(state.waiting_bytes());
+        Ok((shortfall > 0).then(|| Self::select_eviction_candidates(&state, shortfall)))
+    }
+
+    /// Orders eligible pieces by whether their torrent is started, then by
+    /// least recent use, and groups the selected pieces by torrent.
+    fn select_eviction_candidates(state: &State, mut shortfall: u64) -> Vec<EvictionBatch> {
+        if shortfall == 0 {
+            return Vec::new();
+        }
         let mut candidates: Vec<_> = state
             .slots
             .iter()
@@ -768,12 +1269,11 @@ impl PieceCache {
                 }
             }
         }
-        Ok(batches.into_iter().map(|(_, batch)| batch).collect())
+        batches.into_iter().map(|(_, batch)| batch).collect()
     }
 
-    /// Removes a verified piece and returns its bytes to the capacity. The
-    /// engine calls it during completion invalidation, while readers cannot
-    /// observe the piece as complete.
+    /// Removes a verified piece during completion invalidation. Its buffer
+    /// stays charged until it is freed, or remains charged for reuse.
     pub(crate) fn evict(&self, torrent: TorrentKey, piece: u32) -> Result<(), CacheError> {
         let freed = {
             let mut state = self.lock()?;
@@ -784,12 +1284,23 @@ impl PieceCache {
                 }
                 Some(_) => {}
             }
-            let freed = state.remove_slot((torrent, piece));
             state.eviction_count += 1;
-            self.room_may_have_changed(&state);
-            freed
+            let Some(detached) = state.remove_slot((torrent, piece)) else {
+                self.room_may_have_changed(&state);
+                self.notify_seed_waiters(&state);
+                return Ok(());
+            };
+            if detached.copying.is_some() {
+                state.teardown.push(detached);
+                return self.schedule_teardown(state);
+            }
+            detached
         };
-        drop(freed);
+        let released = freed.length as u64;
+        drop(freed.owned);
+        let mut state = self.lock()?;
+        self.finish_teardown(&mut state, released);
+        self.room_may_have_changed(&state);
         Ok(())
     }
 
@@ -801,18 +1312,23 @@ impl PieceCache {
         torrent: TorrentKey,
         piece: u32,
         piece_length: usize,
-        provided: &mut Option<Box<[u8]>>,
+        provided: &mut Option<PieceBytes>,
     ) -> Result<Option<Buffer>, CacheError> {
-        let mut state = self.lock()?;
-        let state = &mut *state;
+        let mut state = self.lock_reclaiming_retained(
+            |state| {
+                (state.shortfall(piece_length as u64) > 0
+                    && state.torrents.contains_key(&torrent)
+                    && !state.slots.contains_key(&(torrent, piece)))
+                .then_some(piece_length as u64)
+            },
+            true,
+        )?;
         if !state.torrents.contains_key(&torrent) {
             return Err(CacheError::UnknownTorrent(torrent));
         }
-        if !state.slots.contains_key(&(torrent, piece)) {
+        let key = (torrent, piece);
+        if !state.slots.contains_key(&key) {
             let needed_bytes = piece_length as u64;
-            // Retained buffers go first; a reused one returns its usage here.
-            let released = state.release_retained(needed_bytes);
-            drop(released);
             if state.shortfall(needed_bytes) > 0 {
                 return Err(CacheError::CapacityExceeded {
                     needed_bytes,
@@ -820,26 +1336,22 @@ impl PieceCache {
                     capacity_bytes: state.capacity_bytes,
                 });
             }
-            state.add(piece_length);
-            state.slots.insert(
-                (torrent, piece),
-                Slot {
-                    length: piece_length,
-                    bytes: None,
-                    verified: false,
-                    last_use: 0,
-                },
-            );
+            state.add_pending(key, piece_length);
+            if state.waiting.remove(&key).is_some() {
+                self.room_may_have_changed(&state);
+            }
         }
-        let reused = match state.slots.get(&(torrent, piece)) {
-            Some(slot) if slot.bytes.is_none() && provided.is_none() => {
+        let reused = match state.slots.get(&key) {
+            Some(slot)
+                if slot.length == piece_length && slot.bytes.is_none() && provided.is_none() =>
+            {
                 state.take_retained(piece_length)
             }
             _ => None,
         };
         let slot = state
             .slots
-            .get_mut(&(torrent, piece))
+            .get(&key)
             .ok_or(CacheError::PieceMissing { torrent, piece })?;
         if slot.length != piece_length {
             return Err(CacheError::LengthMismatch {
@@ -848,10 +1360,18 @@ impl PieceCache {
                 requested: piece_length,
             });
         }
+        state.retry.remove(&key);
+        let slot = state
+            .slots
+            .get_mut(&key)
+            .ok_or(CacheError::PieceMissing { torrent, piece })?;
         if slot.bytes.is_none()
             && let Some(bytes) = reused.or_else(|| provided.take())
         {
-            slot.bytes = Some(Arc::new(Mutex::new(bytes)));
+            slot.bytes = Some(Arc::new(PieceBuffer {
+                bytes: Mutex::new(bytes),
+                shutdown_charge: OnceLock::new(),
+            }));
         }
         Ok(slot.bytes.clone())
     }
@@ -885,12 +1405,12 @@ impl PieceCache {
             {
                 break buffer;
             }
-            provided = Some(vec![0; piece_length].into_boxed_slice());
+            provided = Some(PieceBytes::allocate(piece_length)?);
         };
         // A buffer allocated for a slot that got one meanwhile is dropped
         // here, outside the cache lock.
         drop(provided);
-        let mut bytes = buffer.lock().map_err(|_| CacheError::Poisoned)?;
+        let mut bytes = buffer.bytes.lock().map_err(|_| CacheError::Poisoned)?;
         bytes[offset..end].copy_from_slice(data);
         Ok(())
     }
@@ -945,7 +1465,7 @@ impl PieceCache {
             (buffer, slot.length)
         };
         let end = offset + buf.len();
-        let bytes = buffer.lock().map_err(|_| CacheError::Poisoned)?;
+        let bytes = buffer.bytes.lock().map_err(|_| CacheError::Poisoned)?;
         let source = bytes.get(offset..end).ok_or(CacheError::OutOfBounds {
             piece,
             offset,
@@ -997,28 +1517,28 @@ impl PieceCache {
         Ok(())
     }
 
-    /// Releases every piece of a torrent and returns their bytes to the
-    /// capacity.
+    /// Detaches every piece of a torrent. The evictor frees discarded
+    /// buffers before their bytes become available for new allocations.
     pub(crate) fn release_torrent(&self, torrent: TorrentKey) -> Result<(), CacheError> {
-        let freed: Vec<_> = {
-            let mut state = self.lock()?;
-            state.torrents.remove(&torrent);
-            state.waiting.retain(|(key, _), _| *key != torrent);
-            state.admitted.retain(|(key, _), _| *key != torrent);
-            let keys: Vec<_> = state
-                .slots
-                .keys()
-                .filter(|(key, _)| *key == torrent)
-                .copied()
-                .collect();
-            let freed = keys
-                .into_iter()
-                .filter_map(|key| state.remove_slot(key))
-                .collect();
-            self.room_may_have_changed(&state);
-            freed
-        };
-        drop(freed);
+        let mut state = self.lock()?;
+        state.torrents.remove(&torrent);
+        state.waiting.retain(|(key, _), _| *key != torrent);
+        state.retry.retain(|(key, _), _| *key != torrent);
+        let keys: Vec<_> = state
+            .slots
+            .keys()
+            .filter(|(key, _)| *key == torrent)
+            .copied()
+            .collect();
+        let mut scheduled = false;
+        for key in keys {
+            scheduled |= state.defer_slot_release(key);
+        }
+        self.notify_seed_waiters(&state);
+        if scheduled {
+            return self.schedule_teardown(state);
+        }
+        self.room_may_have_changed(&state);
         Ok(())
     }
 }
@@ -1026,6 +1546,119 @@ impl PieceCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn large_piece_uses_a_zero_initialized_mapping() {
+        let length = MAPPED_PIECE_MIN_BYTES;
+        let cache = PieceCache::new(length as u64);
+        let torrent = cache.register_torrent(length as u32).unwrap();
+        cache.write(torrent, 0, length, length - 2, &[7]).unwrap();
+
+        let mut tail = [255; 4];
+        cache
+            .read(torrent, 0, length - tail.len(), &mut tail)
+            .unwrap();
+        assert_eq!(tail, [0, 0, 7, 0]);
+        let piece = cache.lock().unwrap().slots[&(torrent, 0)]
+            .bytes
+            .clone()
+            .unwrap();
+        assert!(matches!(
+            *piece.bytes.lock().unwrap(),
+            PieceBytes::Mapped(_)
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn large_pieces_fall_back_to_the_heap_until_a_mapping_is_released() {
+        static AVAILABLE: AtomicUsize = AtomicUsize::new(1);
+        let length = MAPPED_PIECE_MIN_BYTES;
+        let mapped =
+            PieceBytes::allocate_large(length, &AVAILABLE, memmap2::MmapMut::map_anon).unwrap();
+        assert!(matches!(mapped, PieceBytes::Mapped(_)));
+
+        let mut heap = PieceBytes::allocate_large(length, &AVAILABLE, |_| {
+            panic!("the exhausted budget should skip mmap")
+        })
+        .unwrap();
+        assert!(matches!(heap, PieceBytes::Heap(_)));
+        assert_eq!(heap[length - 1], 0);
+        heap[length - 1] = 7;
+
+        drop(mapped);
+        let oversized = isize::MAX as usize + 1;
+        assert!(matches!(
+            PieceBytes::allocate_large(oversized, &AVAILABLE, memmap2::MmapMut::map_anon),
+            Err(CacheError::AllocationFailed { .. })
+        ));
+        let mapped =
+            PieceBytes::allocate_large(length, &AVAILABLE, memmap2::MmapMut::map_anon).unwrap();
+        assert!(matches!(mapped, PieceBytes::Mapped(_)));
+        assert_eq!(heap[length - 1], 7);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn refused_mapping_uses_a_zeroed_heap_buffer_and_returns_its_permit() {
+        static AVAILABLE: AtomicUsize = AtomicUsize::new(1);
+        let length = MAPPED_PIECE_MIN_BYTES;
+        let heap = PieceBytes::allocate_large(length, &AVAILABLE, |_| {
+            Err(std::io::ErrorKind::OutOfMemory.into())
+        })
+        .unwrap();
+        assert!(matches!(heap, PieceBytes::Heap(_)));
+        assert_eq!(heap[length - 1], 0);
+        let mapped =
+            PieceBytes::allocate_large(length, &AVAILABLE, memmap2::MmapMut::map_anon).unwrap();
+        assert!(matches!(mapped, PieceBytes::Mapped(_)));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn failed_piece_allocation_leaves_only_a_releasable_reservation() {
+        // The mapping library rejects lengths that cannot be Rust slices.
+        let length = isize::MAX as usize + 1;
+        let cache = PieceCache::new(length as u64);
+        let torrent = cache.register_torrent(1).unwrap();
+
+        assert!(matches!(
+            cache.write(torrent, 0, length, 0, &[7]),
+            Err(CacheError::AllocationFailed { .. })
+        ));
+        let stats = cache.audit().unwrap();
+        assert_eq!((stats.pending_pieces, stats.resident_pieces), (1, 0));
+        cache.release_unverified(torrent, 0).unwrap();
+        assert_eq!(cache.audit().unwrap().usage_bytes, 0);
+        cache.seed(torrent, 0, &[7]).unwrap();
+        assert_eq!(cache.audit().unwrap().usage_bytes, 1);
+    }
+
+    #[test]
+    fn retained_buffers_stay_charged_during_teardown() {
+        let cache = PieceCache::new(80);
+        let torrent = cache.register_torrent(80).unwrap();
+        cache.seed(torrent, 0, &[7; 80]).unwrap();
+        cache.evict(torrent, 0).unwrap();
+        let (buffers, bytes) = cache.lock().unwrap().detach_retained(80, 0);
+
+        let stats = cache.audit().unwrap();
+        assert_eq!((stats.usage_bytes, stats.retained_bytes), (80, 80));
+        assert_eq!(cache.reserve(torrent, 1, 80).unwrap(), Reservation::Waiting);
+        assert!(cache.take_admissible().unwrap().is_empty());
+        assert_eq!(cache.audit().unwrap().waiting_pieces, 1);
+        assert_eq!(cache.room_needed().unwrap(), 0);
+
+        drop(buffers);
+        drop(cache.finish_retained_release(bytes).unwrap());
+        assert_eq!(cache.audit().unwrap().usage_bytes, 0);
+        cache.take_admissible().unwrap();
+        assert_eq!(
+            cache.reserve(torrent, 1, 80).unwrap(),
+            Reservation::Reserved
+        );
+    }
 
     struct NoEngine;
 
@@ -1050,7 +1683,7 @@ mod tests {
 
     fn candidates(cache: &PieceCache, needed_bytes: u64) -> Vec<Vec<u32>> {
         cache
-            .eviction_candidates(needed_bytes)
+            .write_eviction_candidates(needed_bytes)
             .unwrap()
             .into_iter()
             .map(|batch| batch.pieces)
@@ -1110,7 +1743,7 @@ mod tests {
     }
 
     #[test]
-    fn evicting_returns_the_bytes_and_counts_the_eviction() {
+    fn eviction_counts_and_retains_a_reusable_buffer() {
         let cache = PieceCache::new(100);
         let torrent = evictable(&cache);
         verified(&cache, torrent, 0, 60);
@@ -1124,7 +1757,7 @@ mod tests {
                 stats.resident_pieces
             ),
             (60, 60, 0),
-            "the freed buffer is retained and still counted"
+            "the evicted buffer is retained and still counted"
         );
         assert_eq!(
             cache.evict(torrent, 0),
@@ -1215,6 +1848,119 @@ mod tests {
     }
 
     #[test]
+    fn bulk_removal_keeps_discarded_buffers_charged_until_teardown() {
+        let cache = PieceCache::new(100);
+        let removed = evictable(&cache);
+        let remaining = evictable(&cache);
+        verified(&cache, removed, 0, 30);
+        verified(&cache, removed, 1, 30);
+        reserved(&cache, removed, 2, 20);
+        reserved(&cache, remaining, 0, 20);
+        let copy = cache.lock().unwrap().slots[&(removed, 0)]
+            .bytes
+            .clone()
+            .unwrap();
+        assert_eq!(
+            cache.reserve(remaining, 1, 60).unwrap(),
+            Reservation::Waiting
+        );
+
+        cache.release_torrent(removed).unwrap();
+        let stats = cache.audit().unwrap();
+        assert_eq!((stats.usage_bytes, stats.resident_pieces), (80, 0));
+        assert!(cache.take_admissible().unwrap().is_empty());
+        cache.drain_teardown().unwrap();
+        assert_eq!(cache.audit().unwrap().usage_bytes, 50);
+        assert!(cache.take_admissible().unwrap().is_empty());
+
+        drop(copy);
+        cache.drain_teardown().unwrap();
+        assert_eq!(cache.audit().unwrap().usage_bytes, 20);
+        assert_eq!(cache.take_admissible().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn seed_room_waits_for_removed_buffers_to_be_released() {
+        let cache = PieceCache::new(160);
+        let removed = evictable(&cache);
+        let target = evictable(&cache);
+        for piece in 0..16 {
+            verified(&cache, removed, piece, 10);
+        }
+        cache.release_torrent(removed).unwrap();
+        assert_eq!(cache.audit().unwrap().retained_bytes, 40);
+
+        let wait = cache.wait_for_seed_room(50, Duration::from_secs(1));
+        tokio::pin!(wait);
+        tokio::select! {
+            biased;
+            result = &mut wait => panic!("the seed batch still needs detached capacity: {result:?}"),
+            () = std::future::ready(()) => {}
+        }
+        cache.drain_teardown().unwrap();
+        assert!(wait.await.unwrap());
+        for piece in 0..5 {
+            cache.seed(target, piece, &[7; 10]).unwrap();
+        }
+        assert_eq!(cache.verified_pieces(target).unwrap(), [0, 1, 2, 3, 4]);
+        assert_eq!(cache.audit().unwrap().usage_bytes, 50);
+    }
+
+    #[tokio::test]
+    async fn seed_room_wakes_when_a_pending_reservation_is_released() {
+        let cache = PieceCache::new(100);
+        let removed = evictable(&cache);
+        let active = evictable(&cache);
+        reserved(&cache, active, 0, 60);
+        verified(&cache, removed, 0, 40);
+        let copy = cache.lock().unwrap().slots[&(removed, 0)]
+            .bytes
+            .clone()
+            .unwrap();
+        cache.release_torrent(removed).unwrap();
+
+        let wait = cache.wait_for_seed_room(40, Duration::from_secs(1));
+        tokio::pin!(wait);
+        tokio::select! {
+            biased;
+            result = &mut wait => panic!("seed capacity is still occupied: {result:?}"),
+            () = std::future::ready(()) => {}
+        }
+
+        cache.release_unverified(active, 0).unwrap();
+        tokio::select! {
+            biased;
+            result = &mut wait => assert!(result.unwrap()),
+            () = std::future::ready(()) => panic!("releasing the reservation did not wake the seed wait"),
+        }
+        assert_eq!(cache.audit().unwrap().usage_bytes, 40);
+        cache.seed(active, 1, &[7; 40]).unwrap();
+        drop(copy);
+        cache.drain_teardown().unwrap();
+        assert_eq!(cache.audit().unwrap().usage_bytes, 40);
+    }
+
+    #[tokio::test]
+    async fn seed_room_wait_is_bounded_and_skips_unrecoverable_shortfalls() {
+        let cache = PieceCache::new(100);
+        let removed = evictable(&cache);
+        let active = evictable(&cache);
+        reserved(&cache, active, 0, 60);
+        verified(&cache, removed, 0, 40);
+        let copy = cache.lock().unwrap().slots[&(removed, 0)]
+            .bytes
+            .clone()
+            .unwrap();
+        cache.release_torrent(removed).unwrap();
+
+        assert!(!cache.wait_for_seed_room(40, Duration::ZERO).await.unwrap());
+        assert!(cache.wait_for_seed_room(41, Duration::ZERO).await.unwrap());
+        assert!(cache.wait_for_seed_room(0, Duration::ZERO).await.unwrap());
+        drop(copy);
+        cache.drain_teardown().unwrap();
+    }
+
+    #[test]
     fn writes_past_the_piece_or_with_another_length_fail() {
         let cache = PieceCache::new(100);
         let torrent = cache.register_torrent(0).unwrap();
@@ -1270,6 +2016,7 @@ mod tests {
             "the first write uses the reservation"
         );
         cache.release_unverified(torrent, 0).unwrap();
+        cache.drain_teardown().unwrap();
         assert_eq!(cache.audit().unwrap().usage_bytes, 0);
         assert_eq!(
             cache.take_admissible().unwrap().len(),
@@ -1288,11 +2035,120 @@ mod tests {
         verified(&cache, small, 1, 30);
         assert_eq!(cache.room_needed().unwrap(), 0, "nothing waits");
         assert_eq!(cache.reserve(large, 0, 50).unwrap(), Reservation::Waiting);
+        assert_eq!(cache.room_needed().unwrap(), 10);
         assert_eq!(
-            candidates(&cache, cache.room_needed().unwrap()),
-            vec![vec![0]],
+            cache.waiting_eviction_candidates().unwrap().unwrap()[0].pieces,
+            [0],
             "40 bytes are free, so one 30-byte piece makes room for 50"
         );
+    }
+
+    #[test]
+    fn eviction_covers_the_shortfall_while_a_detached_buffer_is_held() {
+        let cache = PieceCache::new(100);
+        let torrent = evictable(&cache);
+        verified(&cache, torrent, 0, 30);
+        verified(&cache, torrent, 1, 30);
+        reserved(&cache, torrent, 2, 30);
+        cache.write(torrent, 3, 10, 0, &[1]).unwrap();
+        let copy = cache.lock().unwrap().slots[&(torrent, 3)]
+            .bytes
+            .clone()
+            .unwrap();
+        cache.release_unverified(torrent, 3).unwrap();
+        assert_eq!(cache.reserve(torrent, 4, 40).unwrap(), Reservation::Waiting);
+        cache.drain_teardown().unwrap();
+        assert_eq!(cache.audit().unwrap().usage_bytes, 100);
+
+        assert_eq!(cache.room_needed().unwrap(), 30);
+        let batches = cache.waiting_eviction_candidates().unwrap().unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].pieces, [0]);
+        cache.evict(torrent, 0).unwrap();
+        assert!(cache.is_resident(torrent, 1).unwrap());
+        assert_eq!(cache.audit().unwrap().usage_bytes, 70);
+        assert_eq!(cache.room_needed().unwrap(), 0);
+        assert!(cache.waiting_eviction_candidates().unwrap().is_none());
+        assert!(cache.take_admissible().unwrap().is_empty());
+
+        drop(copy);
+        cache.drain_teardown().unwrap();
+        assert_eq!(cache.take_admissible().unwrap().len(), 1);
+        assert_eq!(cache.audit().unwrap().usage_bytes, 100);
+    }
+
+    #[test]
+    fn verified_eviction_keeps_capacity_charged_during_an_in_flight_read() {
+        let cache = PieceCache::new(40);
+        let original = evictable(&cache);
+        let waiting = evictable(&cache);
+        cache.seed(original, 0, &[7; 40]).unwrap();
+
+        std::thread::scope(|scope| {
+            let buffer = cache.lock().unwrap().slots[&(original, 0)]
+                .bytes
+                .clone()
+                .unwrap();
+            let locked = buffer.bytes.lock().unwrap();
+            let read = scope.spawn(|| {
+                let mut bytes = [0; 40];
+                cache.read_verified(original, 0, &mut bytes).unwrap();
+                bytes
+            });
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while Arc::strong_count(&buffer) < 3 {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the reader did not acquire the buffer"
+                );
+                std::thread::yield_now();
+            }
+
+            cache.evict(original, 0).unwrap();
+            let resident = cache.is_resident(original, 0).unwrap();
+            cache.drain_teardown().unwrap();
+            let usage = cache.audit().unwrap().usage_bytes;
+            let reservation = cache.reserve(waiting, 0, 40).unwrap();
+            let admitted = cache.take_admissible().unwrap();
+
+            drop(locked);
+            drop(buffer);
+            assert_eq!(read.join().unwrap(), [7; 40]);
+            assert!(!resident);
+            assert_eq!(usage, 40);
+            assert_eq!(reservation, Reservation::Waiting);
+            assert!(admitted.is_empty());
+        });
+
+        cache.drain_teardown().unwrap();
+        assert_eq!(cache.audit().unwrap().usage_bytes, 0);
+        assert_eq!(cache.take_admissible().unwrap().len(), 1);
+        reserved(&cache, waiting, 0, 40);
+    }
+
+    #[tokio::test]
+    async fn detached_buffers_release_capacity_after_the_evictor_stops() {
+        let cache = PieceCache::new(80);
+        let torrent = evictable(&cache);
+        cache.seed(torrent, 0, &[7; 40]).unwrap();
+        cache.seed(torrent, 1, &[8; 40]).unwrap();
+        let (first, second) = {
+            let state = cache.lock().unwrap();
+            (
+                state.slots[&(torrent, 0)].bytes.clone().unwrap(),
+                state.slots[&(torrent, 1)].bytes.clone().unwrap(),
+            )
+        };
+        let evictor = crate::evictor::Evictor::spawn(cache.clone());
+        cache.evict(torrent, 0).unwrap();
+        evictor.shutdown().await.unwrap();
+        cache.release_torrent(torrent).unwrap();
+        assert_eq!(cache.audit().unwrap().usage_bytes, 80);
+
+        drop(first);
+        assert_eq!(cache.audit().unwrap().usage_bytes, 40);
+        drop(second);
+        assert_eq!(cache.audit().unwrap().usage_bytes, 0);
     }
 
     #[test]
@@ -1315,7 +2171,9 @@ mod tests {
             200,
             "the 150 bytes above capacity and the waiting 50"
         );
-        assert_eq!(candidates(&cache, 200), vec![vec![0, 1]]);
+        let batches = cache.waiting_eviction_candidates().unwrap().unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].pieces, [0, 1]);
         cache.evict(torrent, 0).unwrap();
         cache.evict(torrent, 1).unwrap();
         let stats = cache.audit().unwrap();
@@ -1337,7 +2195,9 @@ mod tests {
         cache.write(torrent, 1, 100, 0, &[0]).unwrap();
         cache.set_capacity(100).unwrap();
         assert_eq!(cache.room_needed().unwrap(), 100);
-        assert_eq!(candidates(&cache, 100), vec![vec![0]]);
+        let batches = cache.waiting_eviction_candidates().unwrap().unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].pieces, [0]);
         cache.evict(torrent, 0).unwrap();
         assert_eq!(
             cache.room_needed().unwrap(),
@@ -1499,11 +2359,20 @@ mod tests {
     }
 
     #[test]
-    fn retained_buffers_give_way_to_reservations() {
+    fn reservations_leave_retained_buffers_for_the_evictor() {
         let cache = PieceCache::new(100);
         let torrent = evictable(&cache);
         verified(&cache, torrent, 0, 60);
         cache.evict(torrent, 0).unwrap();
+        assert_eq!(cache.reserve(torrent, 1, 80).unwrap(), Reservation::Waiting);
+        let stats = cache.audit().unwrap();
+        assert_eq!((stats.usage_bytes, stats.retained_bytes), (60, 60));
+        assert_eq!(
+            cache.room_needed().unwrap(),
+            0,
+            "reclamation made enough room"
+        );
+        assert_eq!(cache.take_admissible().unwrap().len(), 1);
         reserved(&cache, torrent, 1, 80);
         let stats = cache.audit().unwrap();
         assert_eq!((stats.usage_bytes, stats.retained_bytes), (80, 0));
@@ -1520,7 +2389,7 @@ mod tests {
     }
 
     #[test]
-    fn nothing_is_retained_while_reservations_wait() {
+    fn eviction_skips_retention_while_a_reservation_waits() {
         let cache = PieceCache::new(100);
         let torrent = evictable(&cache);
         verified(&cache, torrent, 0, 60);
@@ -1588,6 +2457,146 @@ mod tests {
         cache.release_unverified(filler, 1).unwrap();
         cache.take_admissible().unwrap();
         assert_eq!(cache.stats().unwrap().waiting_pieces, 0);
+    }
+
+    #[test]
+    fn an_admission_holds_room_before_the_peer_claims_it() {
+        let cache = PieceCache::new(20);
+        let first = evictable(&cache);
+        let second = evictable(&cache);
+        let filler = evictable(&cache);
+        reserved(&cache, filler, 0, 20);
+        for (torrent, piece) in [(first, 0), (first, 1), (second, 0)] {
+            assert_eq!(
+                cache.reserve(torrent, piece, 20).unwrap(),
+                Reservation::Waiting
+            );
+        }
+        cache.release_unverified(filler, 0).unwrap();
+        assert_eq!(cache.take_admissible_before_eviction().unwrap().len(), 1);
+        assert_eq!(cache.audit().unwrap().usage_bytes, 20);
+        assert!(cache.take_admissible().unwrap().is_empty());
+        assert_eq!(cache.reserve(first, 1, 20).unwrap(), Reservation::Waiting);
+        reserved(&cache, first, 0, 20);
+        assert_eq!(cache.audit().unwrap().usage_bytes, 20);
+    }
+
+    #[test]
+    fn unclaimed_admissions_release_room_on_plan_change_or_expiry() {
+        let cache = PieceCache::new(20);
+        let torrent = evictable(&cache);
+        let filler = evictable(&cache);
+        reserved(&cache, filler, 0, 20);
+        cache.set_plan(torrent, HashSet::new(), &[0, 1]).unwrap();
+        for piece in 0..2 {
+            assert_eq!(
+                cache.reserve(torrent, piece, 20).unwrap(),
+                Reservation::Waiting
+            );
+        }
+        cache.release_unverified(filler, 0).unwrap();
+        assert_eq!(cache.take_admissible().unwrap().len(), 1);
+        cache.set_plan(torrent, HashSet::new(), &[1]).unwrap();
+        assert_eq!(cache.audit().unwrap().usage_bytes, 0);
+        assert_eq!(cache.take_admissible().unwrap().len(), 1);
+        cache
+            .expire_reservations(cache.maintenance_deadline().unwrap().unwrap())
+            .unwrap();
+        assert_eq!(cache.audit().unwrap().usage_bytes, 0);
+        assert!(cache.take_admissible().unwrap().is_empty());
+    }
+
+    #[test]
+    fn discarded_partial_buffers_stay_charged_until_the_worker_can_free_them() {
+        let cache = PieceCache::new(100);
+        let torrent = evictable(&cache);
+        reserved(&cache, torrent, 0, 80);
+        cache.write(torrent, 0, 80, 0, &[1]).unwrap();
+        let copy = cache.lock().unwrap().slots[&(torrent, 0)]
+            .bytes
+            .clone()
+            .unwrap();
+        assert_eq!(cache.reserve(torrent, 1, 40).unwrap(), Reservation::Waiting);
+        cache.release_unverified(torrent, 0).unwrap();
+        assert_eq!(cache.audit().unwrap().usage_bytes, 80);
+        cache.drain_teardown().unwrap();
+        assert_eq!(cache.audit().unwrap().usage_bytes, 80);
+        assert!(cache.take_admissible().unwrap().is_empty());
+
+        drop(copy);
+        cache.drain_teardown().unwrap();
+        assert_eq!(cache.audit().unwrap().usage_bytes, 0);
+        assert_eq!(cache.take_admissible().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_late_write_claims_a_waiting_piece_before_readmission() {
+        let cache = PieceCache::new(100);
+        let torrent = evictable(&cache);
+        let filler = evictable(&cache);
+        reserved(&cache, filler, 0, 80);
+        assert_eq!(cache.reserve(torrent, 0, 30).unwrap(), Reservation::Waiting);
+        cache.release_unverified(filler, 0).unwrap();
+
+        cache.write(torrent, 0, 30, 0, &[7]).unwrap();
+        assert!(cache.take_admissible().unwrap().is_empty());
+        let mut data = [0];
+        cache.read(torrent, 0, 0, &mut data).unwrap();
+        assert_eq!(data, [7]);
+        assert_eq!(cache.audit().unwrap().usage_bytes, 30);
+    }
+
+    #[test]
+    fn an_unreserved_write_reclaims_retained_room_during_partial_teardown() {
+        let cache = PieceCache::new(100);
+        let torrent = evictable(&cache);
+        verified(&cache, torrent, 0, 40);
+        cache.evict(torrent, 0).unwrap();
+        cache.write(torrent, 1, 60, 0, &[1]).unwrap();
+        let copy = cache.lock().unwrap().slots[&(torrent, 1)]
+            .bytes
+            .clone()
+            .unwrap();
+        cache.release_unverified(torrent, 1).unwrap();
+        assert_eq!(cache.audit().unwrap().retained_bytes, 40);
+
+        cache.write(torrent, 2, 30, 0, &[2]).unwrap();
+        let stats = cache.audit().unwrap();
+        assert_eq!((stats.usage_bytes, stats.retained_bytes), (90, 0));
+        drop(copy);
+        cache.drain_teardown().unwrap();
+        assert_eq!(cache.audit().unwrap().usage_bytes, 30);
+    }
+
+    #[test]
+    fn rescanned_requests_keep_their_place_among_equally_ranked_torrents() {
+        let cache = PieceCache::new(100);
+        let first = evictable(&cache);
+        let second = evictable(&cache);
+        let filler = evictable(&cache);
+        reserved(&cache, filler, 0, 60);
+        reserved(&cache, filler, 1, 20);
+        verified(&cache, filler, 2, 20);
+        cache.evict(filler, 2).unwrap();
+        cache.set_plan(first, HashSet::new(), &[0, 1]).unwrap();
+        cache.set_plan(second, HashSet::new(), &[0, 1]).unwrap();
+        for (torrent, piece) in [(first, 0), (first, 1), (second, 1)] {
+            assert_eq!(
+                cache.reserve(torrent, piece, 20).unwrap(),
+                Reservation::Waiting
+            );
+        }
+
+        cache.room_needed().unwrap();
+        assert_eq!(cache.take_admissible_before_eviction().unwrap().len(), 1);
+        assert_eq!(cache.stats().unwrap().waiting_pieces, 2);
+        reserved(&cache, first, 0, 20);
+        assert_eq!(cache.reserve(first, 1, 20).unwrap(), Reservation::Waiting);
+        cache.release_unverified(filler, 1).unwrap();
+        assert_eq!(cache.take_admissible().unwrap().len(), 1);
+
+        assert_eq!(cache.reserve(second, 1, 20).unwrap(), Reservation::Waiting);
+        reserved(&cache, first, 1, 20);
     }
 
     #[test]

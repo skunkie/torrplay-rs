@@ -303,9 +303,10 @@ only until the application restarts.
 - A preload fails, with a `failure` that says why, when its torrent is
   paused or fails, when no data of its ranges arrives within the piece
   wait bound while it is downloading, when a newer preload reclaims it, or
-  when the piece cache's bounded fallback needs its pins. The fallback ends preloads, newest first, one
-  at a time, after it releases idle readers, refining
-  [ADR 5](adr/0005-storage.md)'s order.
+  when the piece cache's bounded fallback needs its pins. When no idle
+  reader can be released, the fallback ends the newest preload that pins
+  cache pieces, one at a time, as [ADR 5](adr/0005-storage.md#bounded-fallback)
+  describes.
 - `DELETE` cancels a preload: it is removed at once, and later requests for
   it are `not-found`. Expiry, failure, and cancellation release the
   preload's pins and piece priorities at once.
@@ -324,10 +325,11 @@ only until the application restarts.
 
 ## Cache behavior
 
-- Verified pieces of a torrent count toward cache usage until they are
-  evicted or the torrent is deleted, whatever its state. Partial pieces stay
-  resident only while their torrent is started; pausing, failure, and
-  deletion discard them and release their reservations.
+- Verified pieces count toward cache usage in every torrent state. A
+  partial piece can remain resident only while its torrent is started.
+  Pausing, failure, and deletion discard partial pieces and end their
+  reservations. Buffers kept for reuse or detached for teardown stay
+  charged until freed.
 - Unpinned pieces of paused and failed torrents are evicted before unpinned
   pieces of started torrents.
 - Torrents in memory storage do not upload, as
@@ -343,9 +345,10 @@ only until the application restarts.
   until a [backup](#backup-and-restore) that holds it is restored.
 - Streams in progress are canceled, readers released, metadata retrieval
   stopped, and peer connections closed.
-- Partial pieces are discarded and their reservations released. Verified
-  pieces are released in the background without counting as evictions;
-  `/api/v1/cache/statistics` shows cache usage falling as they are.
+- Partial and verified pieces are removed from the torrent's cache slots
+  without counting as evictions. Pending allocations are released at once.
+  `/api/v1/cache/statistics` reflects the remaining charges for buffers kept
+  for reuse or awaiting background teardown.
 - Deleting a torrent in disk storage, or in a transition to or from it,
   deletes its directory in the download directory, files included, after
   the deletion is stored. Nothing else deletes disk data, except a
@@ -1117,12 +1120,12 @@ log level. Overrides follow one rule:
   pieces waiting for room. Shrinking it evicts verified, unpinned pieces in
   [ADR 5](adr/0005-storage.md)'s eviction order down to the new capacity,
   releasing the oldest idle readers when nothing else can be evicted, as its
-  bounded fallback does. Partial pieces and active readers' current pieces
-  stay, so cache usage may remain above the capacity until they complete or
-  their readers move on; meanwhile no new piece is admitted, and streams stay
-  byte-correct. A torrent added or retrieving metadata while the capacity
-  shrinks is checked against the new capacity, as
-  [Creation](#creation) describes for pieces longer than the cache.
+  bounded fallback does. Cache usage can remain above the new capacity while
+  buffers await teardown, partial pieces are in progress, or active readers
+  pin their current pieces. No new piece is admitted while usage exceeds
+  capacity, and streams stay byte-correct. A torrent added or retrieving
+  metadata while the capacity shrinks is checked against the new capacity,
+  as [Creation](#creation) describes for pieces longer than the cache.
 - The temporary torrents' idle time and progress retention apply at the
   next check for unwatched torrents and expired progress, within 10
   seconds. The temporary torrent limit applies to the next creation of a

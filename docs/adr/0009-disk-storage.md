@@ -235,9 +235,10 @@ no transition rereads data it already knows.
 
 1. Create the torrent's directory and its files, sized as the metadata
    says, without writing data, so the files stay sparse.
-2. Copy every verified piece the piece cache holds for the torrent into the
-   files, while readers keep reading from memory. A piece evicted during
-   the copy is skipped.
+2. Copy the torrent's verified pieces into the files while readers keep
+   reading from memory. Skip a piece if its verified buffer is unavailable
+   when the copy tries to acquire it. A copy that already holds the buffer
+   can finish after eviction.
 3. Write the resume bitfield of the copied pieces, and flush the files and
    the bitfield to stable storage.
 4. Delete the torrent from the session, and add it again with disk storage
@@ -246,12 +247,14 @@ no transition rereads data it already knows.
 
 **Disk to memory:**
 
-1. Copy the verified pieces that the torrent's readers pin, and the rest of
-   their readahead windows as far as the readahead budget allows, from the
-   files into the piece cache.
-2. Delete the torrent from the session, and add it again with memory
-   storage and the bitfield of the pieces now in the cache. Its peer
-   connections close before any piece can be evicted, and it stops
+1. Read the verified pieces that the torrent's readers pin, and the rest of
+   their readahead windows as far as the readahead budget allows. Stage those
+   bytes while the torrent is still in disk storage. If detached buffers
+   being freed would cover the shortfall, wait up to five seconds for cache
+   capacity. If the wait expires, the torrent stays in disk storage.
+2. Delete the torrent from the session, closing its peer connections. Add
+   it again with memory storage, seed the cache with the staged pieces
+   during initialization, and use their bitfield. The torrent stops
    uploading.
 3. Record the storage mode in effect as `memory`.
 4. Close and delete the torrent's directory.

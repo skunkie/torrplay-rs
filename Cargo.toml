@@ -92,6 +92,8 @@ jsonschema = { version = "0.59", default-features = false }
 librqbit = { git = "https://github.com/skunkie/rqbit", rev = "fb2e14e94e59aa66b40e2039e1154978fd59e883", default-features = false, features = ["rust-tls"] }
 librqbit-core = { git = "https://github.com/skunkie/rqbit", rev = "fb2e14e94e59aa66b40e2039e1154978fd59e883", default-features = false }
 memchr = "2"
+# Anonymous Linux piece buffers, already in the tree through librqbit.
+memmap2 = "0.9.11"
 # Listing the addresses the application may be reached at; librqbit already uses it.
 network-interface = "2"
 # Reading the DLNA media server's SOAP requests; librqbit already depends on

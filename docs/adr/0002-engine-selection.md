@@ -115,9 +115,10 @@ data, the engine still believes the piece is complete:
 - `write_to_disk` in `live/mod.rs` reads the piece back through
   `FileOps::check_piece` for hashing. If the storage evicted a partial piece
   before verification, the hash fails, the piece is requeued, and the peer
-  that delivered it is disconnected as bogus. Partial pieces must therefore
-  stay resident until verified, and count as pending allocations in cache
-  usage.
+  that delivered it is disconnected as bogus. This is why the cache protects
+  partial pieces from eviction. [ADR 5](0005-storage.md#cache-usage)
+  distinguishes pending allocations from allocated partial buffers, which
+  count as resident at full length.
 - A failed `pwrite_all` calls `on_fatal_error` and moves the whole torrent to
   the error state. Storage cannot refuse a write when the cache is full; it
   must evict or wait, and waiting blocks a thread inside `block_in_place`.
@@ -372,13 +373,12 @@ builds; librqbit accepts their metainfo and reports the same info hashes.
 
 ### E2: memory storage without eviction
 
-`crates/torrplay-engine` adds the piece cache, with one cache capacity for
-every torrent in memory storage mode, and a `TorrentStorage` over it.
-Reads and writes are translated from file offsets to pieces and split at
-piece boundaries. A piece's whole buffer is reserved when its first block
-arrives, so partial pieces count in full toward cache usage. Tests audit
-the accountant after each phase: cache usage must equal the bytes of the
-resident buffers and never exceed capacity.
+E2 added a piece cache shared by all torrents in memory storage mode
+and a `TorrentStorage` over it in `crates/torrplay-engine`. Reads and writes
+were translated from file offsets and split at piece boundaries. A piece's
+whole buffer was reserved when its first block arrived, so partial pieces
+counted in full toward cache usage. Tests audited after each phase that
+usage equaled the bytes of resident buffers and stayed within capacity.
 
 - **Storing and serving pieces from the cache works.** Streams are
   byte-accurate, every piece is resident once, and `on_piece_completed`
@@ -390,8 +390,9 @@ resident buffers and never exceed capacity.
   usage stays within capacity. The cache must therefore make room before
   the engine requests a piece, as ADR 5's bounded fallback requires; it
   cannot refuse a write.
-- **Deleting a torrent releases its cache usage.** librqbit drops the
-  torrent's storage, and only that torrent's bytes return to capacity.
+- **Deleting a torrent releases its cache usage.** In E2, librqbit dropped
+  the torrent's storage, and only that torrent's bytes returned to capacity.
+  [ADR 5](0005-storage.md#cache-usage) describes current teardown accounting.
 - **Pausing keeps cached pieces.** librqbit's `take` moves the storage into
   the paused state intact, and after resuming, every file reads correctly
   from the cache with the seeder stopped. This supports the lifecycle's rule
@@ -452,9 +453,11 @@ number of rounds and fails when nothing is evictable.
 - **A deleted torrent's pieces outlive the deletion.** librqbit drops a
   deleted torrent's storage only when its last peer task ends, and until
   then its pieces hold capacity that nothing can evict: on a slow CI runner
-  the next torrent in CAC-09 failed for lack of room. The adapter releases
-  a torrent's cache usage as soon as librqbit has deleted it, and later
-  reads and writes of the deleted torrent fail.
+  the next torrent in CAC-09 failed for lack of room. In E3, the adapter
+  released the torrent's cache usage once librqbit deleted it, and later
+  reads and writes of the deleted torrent failed. The current adapter
+  detaches the torrent's buffers at that point and keeps them charged
+  through teardown, as [ADR 5](0005-storage.md#cache-usage) describes.
 - **A torrent must be attached before it starts.** The cache can evict a
   torrent's pieces only once the adapter has attached the engine handle,
   which exists only after `add_torrent` returns. A torrent added started

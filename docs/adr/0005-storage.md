@@ -11,8 +11,9 @@ SPDX-License-Identifier: MIT
   records. Milestone 4 decided how torrents with pieces longer than the
   cache are reported, fixed the defaults, and implemented the record; its
   end-to-end scenarios and exit-criterion test pass the memory streaming
-  gate. Milestone 5's benchmarks answer the [open questions](#open-questions)
-  and may tune the defaults. One deviation remains, as ADR 2's gaps record:
+  gate. [ADR 7](0007-feasibility-decision.md) records the milestone 5
+  benchmarks and the readahead change they prompted. One deviation remains,
+  as ADR 2's gaps record:
   librqbit drops a failed torrent's storage, so its verified pieces leave
   the cache instead of staying as eviction candidates. Milestone 6 made
   cache capacity a setting, decided how it changes at runtime, and
@@ -21,12 +22,13 @@ SPDX-License-Identifier: MIT
 
 ## Context
 
-The prototype streams torrents without writing their content to disk. It
-must keep memory bounded while several readers seek through files larger
+Memory storage streams torrents without writing their content to disk.
+It must keep memory bounded while several readers seek through files larger
 than the memory available, and it must stay byte-correct when pieces leave
 memory and are downloaded again. The implementation plan makes this the
 feasibility gate: byte-correct streams must progress under sustained
 eviction while cache usage stays within cache capacity.
+[ADR 9](0009-disk-storage.md) defines disk storage for persisted torrents.
 
 Earlier records constrain the design:
 
@@ -46,8 +48,8 @@ Earlier records constrain the design:
   wait bound, pausing, deletion, and the rule that unpinned pieces of paused
   and failed torrents are evicted first.
 - `api/openapi.yaml` reports `capacity_bytes`, `usage_bytes`,
-  `pinned_bytes`, and `eviction_count` in the cache statistics, and fixes
-  the storage mode at `memory`.
+  `pinned_bytes`, and `eviction_count` in the cache statistics and defines
+  the `memory` and `disk` storage modes.
 
 ## Decision
 
@@ -65,10 +67,17 @@ piece's length, and is the storage that librqbit reads and writes through
 from the same piece buffers, so a piece is held in memory once however many
 readers need it.
 
+On Linux, piece buffers of 1 MiB or larger can use anonymous mappings.
+Releasing a mapping returns its pages directly to the kernel. TorrPlay
+allows up to 4,096 piece mappings per process, including mappings in the
+reusable pool. Larger buffers use the heap once that budget is full or if
+Linux refuses a mapping. Smaller buffers always use the heap. The cache
+releases detached reusable buffers outside its lock and counts their bytes
+until teardown completes.
+
 ### Cache usage
 
-Cache usage is the sum of three parts, all counted in bytes against cache
-capacity:
+Cache usage counts these bytes against cache capacity:
 
 - **Pending allocations.** Capacity reserved for a piece whose piece buffer
   does not exist yet. A piece's full length is reserved before the engine
@@ -77,23 +86,37 @@ capacity:
   verified or partial, counted at the piece's full length.
 - **Retained reusable buffers.** Freed piece buffers kept for reuse to avoid
   repeated allocation of large blocks. The pool is bounded, and it is
-  emptied before any piece is evicted to make room.
+  emptied before any piece is evicted to make room. Buffers removed from
+  the pool stay charged until their memory is released.
+- **Detached piece buffers.** Buffers removed from their slots after
+  eviction, peer disconnect, or torrent removal. They stay charged until
+  freed. The blocking worker frees them once no copy holds them. During
+  shutdown, the worker hands off buffers still in use so the last holder
+  frees each buffer and releases its charge.
 
-A piece's full length is counted exactly once from its reservation: as a
-pending allocation until its piece buffer exists, and as a resident piece
-buffer afterward. Bytes not yet written to a partial piece are not counted a
-second time.
+A piece's full length is counted exactly once from its reservation through
+allocation, use, and teardown. The charge moves with a buffer that is kept
+for reuse. Bytes yet to be written to a partial piece are included in the
+full length already charged.
 
-The cache reserves capacity when the engine selects a piece to request, not
-when blocks are written. A reservation that would exceed cache capacity first
-releases retained reusable buffers, then evicts, and otherwise leaves the
-piece unrequested as described under [bounded fallback](#bounded-fallback);
-writes never wait for room. Cache usage therefore stays within cache
-capacity at every moment, not only on average. The engine asks for the
-reservation under its torrent state lock, where eviction cannot run, so a
-reservation that needs eviction leaves the piece unrequested while an
-evictor task, holding no lock, evicts and then asks the torrent to select
-pieces again.
+The cache reserves capacity when the engine selects a piece to request.
+The engine asks under its torrent state lock. If the reservation needs
+more room, it queues the piece and wakes the evictor without reclaiming
+any buffers on the peer task. The evictor releases retained buffers on a
+blocking worker and admits the pieces that now fit before evicting.
+The worker credits buffers already being freed toward the shortfall and
+evicts to cover any remaining deficit. Those buffers stay charged until
+teardown finishes.
+An admission counts as a pending allocation until the peer claims it,
+the request is canceled, or one second passes without a claim.
+Those torrents select pieces again. Their remaining requests keep their
+queue positions, so lower-priority requests wait until the peers renew
+them or one second passes. A renewed request keeps its original wait
+time for ordering among pieces with equal priority. The
+[bounded fallback](#bounded-fallback) covers pieces that still need room.
+Shutdown waits for any running pass to finish. A write without a
+reservation can wait for concurrent retained-buffer teardown if it needs
+that capacity. The wait releases the cache lock.
 
 Cache capacity does not bound the process. Hash verification, peer
 connections, HTTP responses, metadata, and engine bookkeeping allocate
@@ -112,11 +135,12 @@ the piece again only after a new reservation, like any other piece.
 A partial piece that can no longer complete is discarded rather than kept:
 when its torrent is paused, fails, or is deleted, the engine stops writing
 to it, marks its blocks missing in its piece completion records, and the
-cache releases its piece buffer and reservation. Starting the torrent again
-requests the piece from the start. A partial piece of a started torrent that
-receives no block for the piece wait bound, for example because its peers
-left, is discarded the same way, so stalled pieces cannot hold capacity
-indefinitely. Other partial pieces of started torrents stay resident.
+cache ends its reservation. Detached partial buffers, including those from
+a peer disconnect, stay charged until they are freed. Starting the torrent
+again requests the piece from the start. A partial piece of a started
+torrent that receives no block for the piece wait bound, for example because
+its peers left, is discarded the same way, so stalled pieces cannot hold
+capacity indefinitely. Other partial pieces of started torrents stay resident.
 
 ### Pinning
 
@@ -166,15 +190,17 @@ or reused. A reader whose read finds the piece gone therefore finds it
 missing when it checks again, and no write for the piece can begin until it
 is requeued. The cache never holds its own lock while it takes the engine's
 torrent state lock, so the lock order is always torrent state, then cache,
-as the E3 findings in ADR 2 confirm. Background downloads, once they exist,
-never pin; their pieces are ordinary eviction candidates.
+as the E3 findings in ADR 2 confirm.
+[Background downloads](../lifecycle.md#background-downloads) run only in
+disk storage and do not use the piece cache.
 
 ### Bounded fallback
 
-Pinned ranges and partial pieces can exceed cache capacity, for example
-with many concurrent readers, large pieces, or a small capacity. Cache usage
-must stay within capacity, and readers must still make progress where
-possible.
+Demand from pinned ranges and partial pieces can exceed cache capacity,
+for example with many concurrent readers, large pieces, or a small
+capacity. The cache still enforces the capacity bound described under
+[capacity changes](#capacity-changes) while allowing readers to make
+progress where possible.
 
 Readahead pins are bounded ahead of time, as [pinning](#pinning)
 describes: each torrent's pins stay within its readahead budget except for
@@ -183,28 +209,26 @@ file-boundary pieces do. Every pinned piece beyond the budget is therefore
 a reader's current piece, which an active reader can read and leave and an
 idle reader gives up through the first step below, so pins cannot deadlock
 the cache; the spike showed it with six active readers whose current
-pieces alone needed more than the capacity. When a reservation still finds
-no evictable piece, the cache reduces other pins in this order:
+pieces alone needed more than the capacity. When a shortfall remains after
+crediting buffers already being freed and there are no evictable pieces,
+the cache reduces other pins in this order.
 
 1. Release the oldest idle readers, with their pins, as the idle reader
    limits already do. This is a third release condition beside the idle
    timeout and the idle reader limits, as the lifecycle states. The evictor
-   releases one idle reader at a time whenever a waiting reservation finds
-   no evictable piece, including when the reservation is for the idle
-   reader's own readahead.
-2. Once preloads exist, shrink each preload's pinned range to its first
-   piece. The preload contract in milestone 6 refined this: the
-   [lifecycle](../lifecycle.md#preloads) ends preloads instead, newest
-   first, one at a time.
+   releases one idle reader at a time, including when the reservation is
+   for the idle reader's own readahead.
+2. When there is no idle reader to release, end the newest preload that
+   pins cache pieces. End one at a time, as the
+   [lifecycle](../lifecycle.md#preloads) describes.
 
 If the current pieces of active readers and the partial pieces still
 exceed capacity, the cache admits no new piece, and the engine does not
 request pieces it cannot store. A reader whose piece cannot be stored waits
 like any reader for a missing piece and is canceled when the piece wait
-bound expires. Restored room, from a canceled reader or a reader leaving
-its current piece, readmits waiting pieces in piece priority order, and
-among pieces of equal priority in the order they started waiting, so no
-reader waits behind others indefinitely.
+bound expires. When capacity becomes available, the cache readmits waiting
+pieces in priority order. Among pieces of equal priority, it uses the order
+in which they started waiting.
 
 ### Capacity changes
 
@@ -218,16 +242,15 @@ readahead window and pins are rebalanced to the new budget.
   then treats the excess like a waiting reservation: it releases retained
   reusable buffers, evicts verified, unpinned pieces in eviction order, and
   releases the oldest idle readers when nothing is evictable, until usage is
-  within capacity. Freed buffers are not retained while usage exceeds
-  capacity. Partial pieces and active readers' current pieces are never
-  evicted for a shrink, so usage can stay above capacity until they are
-  verified or their readers move on, which the evictor waits for. Meanwhile
-  no reservation is admitted, so usage only falls.
+  within capacity. Buffers detached while usage exceeds capacity are
+  freed instead of retained. Partial pieces and active readers' current pieces
+  stay resident during a shrink. Usage can remain above capacity while buffers
+  await teardown, partial pieces are in progress, or active readers pin their
+  current pieces. No reservation is admitted while usage exceeds capacity.
 
-Usage above capacity after a shrink is therefore expected and bounded by
-the usage at the moment of the change. Usage never rises above capacity:
-every reservation, write, and retained buffer is still checked against the
-capacity in effect.
+Usage above capacity after a shrink is bounded by the usage at the moment
+of the change. The cache checks each new charge against the capacity in
+effect.
 
 A capacity below the piece length of a torrent the engine holds is
 refused, so a shrink never leaves a torrent that cannot hold one of its
@@ -246,9 +269,10 @@ Settings section describes.
 The cache never answers a write it cannot hold with a failure, because a
 failed write fails the whole torrent. Instead, capacity is reserved before the
 engine requests the piece, so the engine never receives blocks it cannot
-store. A write to a piece without a reservation evicts what it can, and if
-that frees too little, the write is dropped and logged rather than failed: the
-piece then fails its hash check and is fetched again with a reservation. Patch
+store. A write to a piece without a reservation credits buffers already
+being freed and evicts to cover any remaining shortfall. If capacity is
+still unavailable, the write is dropped and logged rather than failed.
+The piece then fails its hash check and is fetched again with a reservation. Patch
 P12 keeps the engine from requesting a piece while its hash is checked, the
 race that once left a peer writing to an unreserved piece and, with the cache
 full, stopped a stream. A torrent whose piece length exceeds cache capacity
@@ -277,14 +301,14 @@ length is refused, as [capacity changes](#capacity-changes) describes.
 
 ### Milestone 4 defaults
 
-Until settings exist, the following are fixed constants. Milestone 5's
-benchmarks may tune them, and milestone 6 makes them settings.
+The table records the defaults set in milestone 4. Runtime settings can
+override the values described in the [lifecycle](../lifecycle.md#settings).
 
 | Parameter | Default | Notes |
 |---|---|---|
 | Cache capacity | 256 MiB | One global capacity for every torrent in memory storage |
 | Readahead budget | Half of cache capacity | Shared by every reader of every torrent; pins beyond each reader's current piece stay within it |
-| Retained reusable buffers | At most 4 | Retained only while no reservation waits; counted in cache usage and released before anything is evicted |
+| Retained reusable buffers | At most 4 | Added to the pool only when no reservation waits. Counted in cache usage and released before eviction when more room is needed |
 | Piece wait bound | 60 seconds | A reader canceled after it; a peer that delivers none of its requested chunks for this long disconnected, which discards its partial pieces |
 | Idle timeout | 30 seconds | As the lifecycle defines |
 | Idle reader limits | 4 per torrent, 16 in total | As the lifecycle defines |
@@ -292,20 +316,13 @@ benchmarks may tune them, and milestone 6 makes them settings.
 
 ### Storage modes
 
-- **Memory.** The prototype supports only the `memory` storage mode, backed by
-  the piece cache. A read of a piece the cache does not hold returns an
-  error, never zeros. Fastresume is a session-wide librqbit option. Because
-  every torrent in the prototype uses memory storage, which has nothing to
-  resume, the prototype disables it, so after a restart every piece counts
-  as missing, matching the empty piece cache. Once disk torrents share the
-  session and fastresume is enabled for them, the read-error rule is what
-  keeps memory torrents correct: it makes librqbit discard their stale
-  saved bitfields.
-- **Disk.** Milestone 6 adds the `disk` storage mode for persisted torrents
-  only. Disk storage keeps verified pieces in files and does not evict, so it
-  does not count toward cache usage. [ADR 9](0009-disk-storage.md) decides
-  its data ownership, retention, transitions with rollback and active
-  readers, and recovery.
+- **Memory.** The piece cache backs `memory` storage. Reads of missing pieces
+  return an error. After a restart, the cache starts empty and every piece
+  counts as missing.
+- **Disk.** Persisted torrents can use `disk` storage. Verified pieces stay
+  in files outside the piece cache. The shared session disables librqbit's
+  fastresume. Disk storage manages its own resume bitfield, as
+  [ADR 9](0009-disk-storage.md) describes.
 
 ### Upload
 
@@ -331,8 +348,8 @@ the first eviction.
 - Paused torrents keep their verified pieces until the cache needs the
   room, so starting a paused torrent again can resume from memory.
 - Capacity changes at runtime follow the same eviction order and fallback
-  when capacity shrinks below usage, and usage reported right after a shrink
-  can exceed capacity until partial pieces and current pieces leave.
+  when capacity shrinks below usage. See [capacity changes](#capacity-changes)
+  for the charges that can keep usage above the new limit.
 
 ## Spike findings
 
@@ -378,10 +395,11 @@ which become part of the decision.
 - **A torrent must be attached to the cache before it starts** (E3), or its
   first writes can fill the cache before any of its pieces are evictable.
 
-## Open questions
+## Questions from the original design
 
-Milestone 5's benchmarks answer these, and may change the
-[milestone 4 defaults](#milestone-4-defaults):
+These questions guided the milestone 4 defaults and the milestone 5
+measurements. [ADR 7](0007-feasibility-decision.md) records the feasibility
+decision and the resulting readahead change.
 
 - How large should file-boundary ranges be for common containers, and does
   pinning the first and last piece suffice for Matroska and MP4 indexes?

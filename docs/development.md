@@ -922,11 +922,14 @@ the later build. The current disk-image build has no enabled updater.
 `crates/torrplay-bench` is the milestone 5 harness for the benchmark
 protocol in `docs/acceptance.md`, and `bench/traces` holds its access traces.
 Peers reach the seeders only through a local tracker named in the
-benchmark's torrent files and magnet URIs, so both implementations find them
-the same way. On one machine, without network shaping:
+benchmark's torrent files and magnet URIs. On one machine with unshaped
+loopback, build the server from a clean checkout without the embedded web
+client. Save the source revision alongside the binary for the local harness.
 
 ```bash
-cargo build --release -p torrplay -p torrplay-bench
+build_revision=$(git rev-parse HEAD) &&
+  cargo build --locked --release -p torrplay -p torrplay-bench --no-default-features &&
+  printf '%s\n' "$build_revision" > target/release/torrplay.revision
 ```
 
 ```bash
@@ -942,7 +945,11 @@ target/release/torrplay-bench tracker --listen 127.0.0.1:6969 --peer 127.0.0.1:7
 ```
 
 ```bash
-target/release/torrplay-bench run --trace bench/traces/cold-start.jsonl --dir target/bench --torrplay target/release/torrplay --out cold-start-1.json --label commit=$(git rev-parse --short HEAD)
+build_revision=$(cat target/release/torrplay.revision) &&
+  test -n "$build_revision" &&
+  target/release/torrplay-bench run --trace bench/traces/cold-start.jsonl \
+    --dir target/bench --torrplay target/release/torrplay --out cold-start-1.json \
+    --label "revision=$build_revision"
 ```
 
 `fixtures` writes about 4 GiB of generated content once; `seed` and `tracker`
@@ -953,20 +960,23 @@ torrents, process and cache samples, and summary as JSON. Sampling reads
 `/proc`, so runs need Linux. Each run also records its environment as the
 protocol lists it, detected rather than given: the OS, kernel, CPU, memory,
 frequency governor, and virtualization; the workspace's Rust toolchain and
-librqbit revision; the Go toolchain and commit a Go TorrPlay binary embeds;
-the seeder count, asked of the tracker that `fixtures` recorded; and the
-namespace's queueing disciplines, which show the shaping.
+librqbit revision; the seeder count, asked of the tracker that `fixtures`
+recorded; and the namespace's queueing disciplines, which show the shaping.
 
-The baseline runs the same way with `--go-torrplay` and a Go TorrPlay binary,
-built from its repository with `go build -o go-torrplay ./cmd/torrplay`. Each
-run gives it a fresh data directory and then sets its cache size, which Go
-TorrPlay calls `max_memory`, to the trace's cache capacity, and turns its DHT
-off; it seeds nothing by default. Its creation request answers once metadata
-has arrived, and it reports no eviction count. Label each run with what
-distinguishes it, such as the commit and the network profile:
+Build the Rust base and candidate with matching profiles and features. Use
+the same fixtures, tracker, verified seeders, and network profile for both
+binaries, and alternate their runs when collecting a sample. Keep raw files
+for both revisions. Set `before_commit` and `after_commit` to the full
+commits used to build the binaries. Label each run with its commit and
+network profile so the summaries group each build.
 
 ```bash
-target/release/torrplay-bench run --trace bench/traces/far-seeks.jsonl --dir target/bench --go-torrplay go-torrplay --out far-seeks-go-1.json --label commit=84412a1 --label profile=fast
+target/release/torrplay-bench run --trace bench/traces/far-seeks.jsonl \
+  --dir target/bench --torrplay /path/to/torrplay-before \
+  --out far-seeks-before-1.json --label "revision=$before_commit" --label profile=loopback
+target/release/torrplay-bench run --trace bench/traces/far-seeks.jsonl \
+  --dir target/bench --torrplay /path/to/torrplay-after \
+  --out far-seeks-after-1.json --label "revision=$after_commit" --label profile=loopback
 ```
 
 `summarize` groups runs by trace, implementation, and labels, and reports
@@ -977,15 +987,10 @@ and as Markdown:
 target/release/torrplay-bench summarize --out summary.json far-seeks-*.json
 ```
 
-`compare` checks a candidate implementation's runs against a baseline's by
-the thresholds in `docs/acceptance.md`, by network profile and trace, and
-prints every check, misses first. It tells cached reads by whether earlier
-requests of the run covered their range, and reads the traces from
-`bench/traces` to skip stall checks of traces with no consumption limit:
-
-```bash
-target/release/torrplay-bench compare --baseline go-torrplay --candidate torrplay --out compare.json target/bench-results/*/*.json
-```
+Record the two commits and compare each trace's latency, stalls, CPU, RSS,
+cache usage, transferred bytes, and throughput. The harness's Go adapter
+and `compare` command can reproduce the
+[milestone 5 feasibility results](adr/0007-feasibility-decision.md).
 
 The protocol's shaped network needs root. `scripts/bench-netns.sh up fast`
 or `up slow` creates a client namespace and three seeder namespaces, seeder
@@ -1003,7 +1008,12 @@ sudo ip netns exec tpb-client runuser -u "$USER" -- target/release/torrplay-benc
 ```
 
 ```bash
-sudo ip netns exec tpb-client runuser -u "$USER" -- target/release/torrplay-bench run --trace bench/traces/cold-start.jsonl --dir target/bench --torrplay target/release/torrplay --out cold-start-1.json --label profile=fast
+build_revision=$(cat target/release/torrplay.revision) &&
+  test -n "$build_revision" &&
+  sudo ip netns exec tpb-client runuser -u "$USER" -- \
+    target/release/torrplay-bench run --trace bench/traces/cold-start.jsonl \
+    --dir target/bench --torrplay target/release/torrplay --out cold-start-1.json \
+    --label "revision=$build_revision" --label profile=fast
 ```
 
 `scripts/bench-matrix.sh` runs a whole matrix this way: for each profile it
@@ -1014,11 +1024,16 @@ It writes `target/bench-results/<profile>/`, skips runs whose files exist so
 an interrupted matrix resumes, and keeps a failed run's log without its
 result. Benchmark commands run as the user who invoked sudo, or under `su` as
 the checkout's owner. `PROFILES`, `RUNS`, `TRACES`, `DIR`, `OUT`, `BENCH`,
-`BENCH_USER`, and `COMMIT` override its defaults, and `DRY_RUN=1` prints its
-commands without root. The Go baseline takes about three hours:
+and `BENCH_USER` override its defaults. `DRY_RUN=1` prints its commands
+without root. Rust matrices require `COMMIT` to identify the source
+revision of the supplied binary. Use a separate output path for each
+revision and resume a matrix with the same binary. Set `before_commit`
+and `after_commit` to the revisions used to build the binaries. Use a new
+output path when switching from the old `commit` label to `revision`.
 
 ```bash
-sudo scripts/bench-matrix.sh go-torrplay target/go-torrplay
+sudo env OUT=target/bench-results/before COMMIT="$before_commit" scripts/bench-matrix.sh torrplay /path/to/torrplay-before
+sudo env OUT=target/bench-results/after COMMIT="$after_commit" scripts/bench-matrix.sh torrplay /path/to/torrplay-after
 ```
 
 To pause a matrix, run `sudo scripts/bench-matrix.sh stop`: it stops the
@@ -1034,7 +1049,7 @@ chunk claims, and received chunks per peer. Tracing slows the server, so
 such runs diagnose rather than measure; keep them in their own `OUT`:
 
 ```bash
-sudo env SERVER_LOG_FILTER=torrplay_engine=debug,librqbit::torrent_state::live=trace OUT=target/bench-debug PROFILES=slow RUNS=1 TRACES=concurrent scripts/bench-matrix.sh torrplay target/release/torrplay
+sudo env COMMIT="$after_commit" SERVER_LOG_FILTER=torrplay_engine=debug,librqbit::torrent_state::live=trace OUT=target/bench-debug PROFILES=slow RUNS=1 TRACES=concurrent scripts/bench-matrix.sh torrplay /path/to/torrplay-after
 ```
 
 ## Rust checks

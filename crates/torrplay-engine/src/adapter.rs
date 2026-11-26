@@ -120,6 +120,9 @@ const FIRST_RETRIEVAL_DELAY: Duration = Duration::from_secs(1);
 /// The longest delay between metadata retrieval attempts.
 const RETRIEVAL_DELAY_MAX: Duration = Duration::from_secs(60);
 
+/// How long a move to memory can wait for already discarded piece buffers.
+const SEED_TEARDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// The failure detail of a torrent librqbit stopped with an error.
 const ENGINE_FAILURE: &str = "The torrent engine stopped the torrent after an error.";
 
@@ -1080,8 +1083,8 @@ impl LibrqbitEngine {
         self.leave_session(running, live).await
     }
 
-    /// Deletes a live torrent from the session, releasing its cache usage
-    /// and closing its files, but keeps its scheduler and readers, for a
+    /// Deletes a live torrent from the session, detaching its cached pieces
+    /// and closing its files, while keeping its scheduler and readers for a
     /// transition that adds it again.
     async fn leave_session(&self, running: &Running, live: Live) -> anyhow::Result<()> {
         let result = running
@@ -1136,8 +1139,8 @@ impl LibrqbitEngine {
                                 continue;
                             };
                             let mut buf = vec![0; length];
-                            // A piece evicted meanwhile, even one requested
-                            // again since, is downloaded again.
+                            // Copy only pieces whose buffers are still
+                            // verified when the read acquires them.
                             if cache.read_verified(key, piece, &mut buf).is_ok() {
                                 files.write_piece(&layout, piece, &buf)?;
                             }
@@ -1251,7 +1254,29 @@ impl LibrqbitEngine {
         for (piece, _) in &seeds {
             bits[(*piece / 8) as usize] |= 0x80 >> (piece % 8);
         }
-        running.factory.seed(info_hash, seeds).map_err(internal)?;
+        let seed_bytes = seeds.iter().map(|(_, bytes)| bytes.len() as u64).sum();
+        // Leave the disk torrent available while waiting. If the operation
+        // is canceled, the live handle is still in its original state.
+        torrent.state().live = Some(live);
+        if !running
+            .cache
+            .wait_for_seed_room(seed_bytes, SEED_TEARDOWN_TIMEOUT)
+            .await
+            .map_err(internal)?
+        {
+            return Err(EngineError::TransitionFailed {
+                detail: "The memory cache is still releasing discarded piece buffers.".into(),
+            });
+        }
+        let live = torrent
+            .state()
+            .live
+            .take()
+            .ok_or_else(|| internal(anyhow::anyhow!("the disk torrent is no longer live")))?;
+        if let Err(error) = running.factory.seed(info_hash, seeds) {
+            torrent.state().live = Some(live);
+            return Err(internal(error));
+        }
         drop(files);
         let directory = torrent.directory.clone();
         let result = self

@@ -278,8 +278,8 @@ pub struct TorrentStatistics {
 pub struct CacheStatistics {
     /// The configured cache capacity.
     pub capacity_bytes: u64,
-    /// The bytes counted against capacity, including pending allocations
-    /// and retained reusable buffers.
+    /// Cache usage includes pending allocations, resident piece buffers,
+    /// retained reusable buffers, and detached buffers awaiting teardown.
     pub usage_bytes: u64,
     /// The full length of each resident piece covered by at least one
     /// pinned range, counted once.
@@ -474,12 +474,11 @@ pub trait Engine: Send + Sync + 'static {
         desired_state: DesiredState,
     ) -> impl Future<Output = Result<(), EngineError>> + Send;
 
-    /// Removes a torrent: cancels its readers, stops metadata retrieval,
-    /// closes its peer connections, and releases its cache usage, partial
-    /// and verified pieces alike, without counting evictions. The release
-    /// happens before this returns, not when the engine's own tasks end, as
-    /// ADR 5 requires. A torrent in disk storage also loses its directory
-    /// and resume bitfield, once its files are closed.
+    /// Removes a torrent, cancels its readers, stops metadata retrieval,
+    /// closes its peer connections, and detaches its cached pieces without
+    /// counting evictions. Detached buffers stay charged until background
+    /// teardown frees them. A torrent in disk storage also loses its
+    /// directory and resume bitfield once its files are closed.
     fn remove(&self, id: &TorrentId) -> impl Future<Output = Result<(), EngineError>> + Send;
 
     /// Removes every torrent, as [`remove`](Self::remove) does, except that

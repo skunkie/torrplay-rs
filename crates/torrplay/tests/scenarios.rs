@@ -603,8 +603,9 @@ async fn range_requests_continue_one_reader_until_it_expires() -> anyhow::Result
     Ok(())
 }
 
-/// CAC-09: opening and removing 100 torrents with streams leaves cache
-/// usage, readers, peer connections, and tasks at their starting levels.
+/// CAC-09: after 100 stream and removal cycles, only reusable buffers
+/// remain charged, readers and peers are gone, and tasks settle to the
+/// warmed baseline or below.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_hundred_torrents_opened_and_removed_leave_nothing_behind() -> anyhow::Result<()> {
     let spec = catalog::single_small();
@@ -623,33 +624,37 @@ async fn a_hundred_torrents_opened_and_removed_leave_nothing_behind() -> anyhow:
         assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
         Ok(())
     };
-    let settled = async || -> anyhow::Result<(usize, u64)> {
-        eventually("the seeder losing its peer", async || {
-            let peers = seeder
-                .handle
-                .stats()
-                .live
-                .map_or(0, |live| live.snapshot.peer_stats.live);
-            Ok((peers == 0 && running.playback().readers == 0).then_some(()))
-        })
-        .await?;
-        let cache = running.engine.cache().expect("a started cache").audit()?;
-        Ok((alive_tasks(), cache.usage_bytes - cache.retained_bytes))
+    let settled = async || -> anyhow::Result<usize> {
+        let cache = running.engine.cache().expect("a started cache");
+        eventually(
+            "peers, readers, and discarded cache buffers being released",
+            async || {
+                let peers = seeder
+                    .handle
+                    .stats()
+                    .live
+                    .map_or(0, |live| live.snapshot.peer_stats.live);
+                let stats = cache.audit()?;
+                Ok((peers == 0
+                    && running.playback().readers == 0
+                    && stats.usage_bytes == stats.retained_bytes)
+                    .then_some(alive_tasks()))
+            },
+        )
+        .await
     };
     // A first cycle starts what lives as long as the application. Each
     // phase drops its client, whose pooled connections hold tasks on both
     // ends.
     cycle(&Client::new()).await?;
-    let (tasks, usage) = settled().await?;
-    assert_eq!(usage, 0);
+    let tasks = settled().await?;
     let started = Instant::now();
     let client = Client::new();
     for _ in 0..100 {
         cycle(&client).await?;
     }
     drop(client);
-    let (_, usage) = settled().await?;
-    assert_eq!(usage, 0, "cache usage returns to zero");
+    settled().await?;
     eventually("the tasks ending", async || {
         Ok((alive_tasks() <= tasks).then_some(()))
     })
