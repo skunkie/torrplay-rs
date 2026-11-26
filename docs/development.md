@@ -246,6 +246,36 @@ the server without the client. While developing, `pnpm dev` serves the client wi
 passes `/api`, `/livez`, and `/readyz` to a running TorrPlay at
 `TORRPLAY_URL`, by default `http://127.0.0.1:8642`.
 
+### Deploy the demo to Vercel
+
+Import the repository into Vercel, set the project's Root Directory to
+`client`, and set `ENABLE_EXPERIMENTAL_COREPACK=1` in the project's Preview
+and Production environments. Vercel uses the Node.js 24.x engine and pnpm
+version specified in `client/package.json`. The project reads its Vite build
+and routing settings from `client/vercel.json`. The demo uses its simulated
+backend and bundled media, so it needs no running TorrPlay server.
+
+Open the preview in a browser and authenticate if Deployment Protection
+prompts you. Visit `/` and confirm it redirects to `/demo`. Open
+`/demo/library` directly, reload it, and play a sample video.
+
+For HTTP smoke checks, sign in to the Vercel CLI with `vercel login` and use
+[`vercel curl`](https://vercel.com/docs/cli/curl) with the full preview URL.
+The CLI can authenticate requests to protected deployments. If it cannot
+retrieve a bypass token, ask a project administrator to configure Protection
+Bypass for Automation and supply the secret in the local
+`VERCEL_AUTOMATION_BYPASS_SECRET` environment variable.
+
+```sh
+preview_url=https://your-preview.vercel.app
+vercel curl "$preview_url/demo-media/sample.webm" -- --range 0-15 --dump-header - --output /dev/null
+vercel curl "$preview_url/demo-media/missing.webm" -- --dump-header - --output /dev/null
+vercel curl "$preview_url/api/v1/torrents" -- --dump-header - --output /dev/null
+```
+
+The first request should return `206 Partial Content` with a `Content-Range`
+header for bytes 0 through 15. The other two requests should return `404`.
+
 ## Desktop application
 
 `desktop/` is a Tauri application around the server. It has its own Cargo workspace
