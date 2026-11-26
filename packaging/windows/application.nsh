@@ -175,8 +175,8 @@ FunctionEnd
   Push $1
   EnumRegValue $0 HKLM "${TORRPLAY_SERVICE_UPGRADE_KEY}" 0
   ${If} $0 != ""
-    MessageBox MB_ICONSTOP|MB_OK "The service edition of TorrPlay, TorrPlay Client, is installed on this computer, and a computer runs one edition. To install the application instead, an administrator must first uninstall TorrPlay Client in Settings, Apps." /SD IDOK
-    Abort "TorrPlay Client, the service edition, is installed on this computer."
+    MessageBox MB_ICONSTOP|MB_OK "TorrPlay Service is installed on this computer. To install the desktop application, an administrator must first uninstall TorrPlay Service in Settings, Apps." /SD IDOK
+    Abort "TorrPlay Service is installed on this computer."
   ${EndIf}
 
   ; Keep a failed write retryable as a fresh install. The helper leaves an
