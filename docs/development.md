@@ -386,10 +386,11 @@ installs for the current user, without administrator rights, in
 `%LOCALAPPDATA%\TorrPlay`, with `torrplay.exe` beside `torrplay-desktop.exe`.
 The desktop app runs its own server. The separate executable provides CLI
 commands such as `torrplay mcp` and `torrplay backup`.
-It, and the service edition's MSI, ask the user to accept the MIT license in
-`packaging/windows/license.txt`, which `desktop/tauri.conf.json` names: the text
-of `LICENSES/MIT.txt` with each paragraph on one line, for the dialogs to wrap.
-Its hooks, `packaging/windows/application.nsh`, refuse while the service
+Both Windows installers ask the user to accept the MIT license. NSIS reads
+`packaging/windows/license.txt`, with each paragraph on one line for the dialog
+to wrap. The service MSI build converts `LICENSES/MIT.txt` to RTF so the
+wizard wraps each paragraph and leaves space between them.
+The NSIS hooks in `packaging/windows/application.nsh` refuse while the service
 edition is installed for the computer, which they find by the upgrade code in
 `desktop/tauri.client.conf.json` that its MSI registers; the hooks hold that
 code in Windows Installer's packed form, so a change to one is a change to

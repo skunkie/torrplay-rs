@@ -1,6 +1,7 @@
 {
   "bundle": {
     "active": true,
+    "licenseFile": null,
     "targets": [
       "msi"
     ],

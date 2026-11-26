@@ -252,15 +252,8 @@ function Assert-RejectedDirectoryEvent([string] $Directory, [datetime] $Started,
     }
 }
 
-# A text's printable words, without the byte order marks, carriage returns,
-# and other invisible characters that files and RTF carry around them.
-function Get-Words([string] $Text) {
-    @(($Text -replace '[^\x21-\x7E]', ' ') -split ' ' | Where-Object { $_ })
-}
-
-# The words of the license agreement the MSI shows, which the bundler writes as
-# RTF after a header of its own, with \par for each line break.
-function Get-LicenseWords([string] $Msi) {
+# The license paragraphs stored in the MSI dialog, separated by RTF \par.
+function Get-LicenseParagraphs([string] $Msi) {
     $installer = New-Object -ComObject WindowsInstaller.Installer
     $database = $installer.OpenDatabase($Msi, 0)
     $view = $database.OpenView(
@@ -272,8 +265,8 @@ function Get-LicenseWords([string] $Msi) {
         $record = $view.Fetch()
         [void] $view.Close()
         if (-not $record) { return @() }
-        $text = $record.StringData(1) -replace '(?s)^.*?\\lang9 ', '' -replace '\\par\b', ' ' -replace '[{}]', ''
-        Get-Words $text
+        $text = $record.StringData(1) -replace '(?s)^.*?\\fs\d+ ', '' -replace '}\s*$', ''
+        ($text -split '\\par\b') | ForEach-Object { $_.Trim() -replace '\\([\\{}])', '$1' }
     } finally {
         # Released now, not when the collector runs, since msiexec opens the
         # same file next.
@@ -286,17 +279,16 @@ function Get-LicenseWords([string] $Msi) {
 try {
     if ($packaged) {
         Write-Host '== the license agreement'
-        $expected = Get-Words (Get-Content -Raw -Path (Join-Path $PSScriptRoot '../LICENSES/MIT.txt'))
-        $shown = Get-LicenseWords $Package
-        if ($shown.Count -eq 0) { Fail 'the MSI shows no license agreement' }
-        # Strict mode makes an index past an array's end an error.
-        for ($index = 0; $index -lt [Math]::Min($shown.Count, $expected.Count); $index++) {
-            if ($shown[$index] -cne $expected[$index]) {
-                Fail "the MSI's license agreement differs from LICENSES/MIT.txt at word $($index + 1): '$($shown[$index])', not '$($expected[$index])'"
-            }
-        }
+        $license = Get-Content -Raw -Path (Join-Path $PSScriptRoot '../LICENSES/MIT.txt')
+        $expected = @($license.Trim() -split '(?:\r?\n){2,}' | ForEach-Object { $_ -replace '\s+', ' ' })
+        $shown = @(Get-LicenseParagraphs $Package)
         if ($shown.Count -ne $expected.Count) {
-            Fail "the MSI's license agreement has $($shown.Count) words, and LICENSES/MIT.txt $($expected.Count)"
+            Fail "the MSI's license agreement has $($shown.Count) paragraphs, expected $($expected.Count)"
+        }
+        for ($index = 0; $index -lt $expected.Count; $index++) {
+            if ($shown[$index] -cne $expected[$index]) {
+                Fail "the MSI's license agreement differs from LICENSES/MIT.txt at paragraph $($index + 1)"
+            }
         }
 
         Write-Host '== refusal while the application is installed'

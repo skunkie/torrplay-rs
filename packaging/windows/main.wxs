@@ -78,9 +78,7 @@ the bundler's when the Tauri CLI is upgraded.
         {{#if dialog_image_path}}
         <WixVariable Id="WixUIDialogBmp" Value="{{dialog_image_path}}" />
         {{/if}}
-        {{#if license}}
-        <WixVariable Id="WixUILicenseRtf" Value="{{license}}" />
-        {{/if}}
+        <WixVariable Id="WixUILicenseRtf" Value="$(env.TAURI_TORRPLAY_LICENSE_RTF)" />
 
         <Icon Id="ProductIcon" SourceFile="{{icon_path}}"/>
         <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
@@ -117,20 +115,6 @@ the bundler's when the Tauri CLI is upgraded.
         <UI>
             <!-- launch app checkbox -->
             <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed and &amp;Client = 3</Publish>
-
-            {{#unless license}}
-            <!-- Skip license dialog -->
-            <Publish Dialog="WelcomeDlg"
-                     Control="Next"
-                     Event="NewDialog"
-                     Value="CustomizeDlg"
-                     Order="2">NOT Installed</Publish>
-            <Publish Dialog="CustomizeDlg"
-                     Control="Back"
-                     Event="NewDialog"
-                     Value="WelcomeDlg"
-                     Order="2">NOT Installed</Publish>
-            {{/unless}}
         </UI>
 
         <UIRef Id="WixUI_FeatureTree" />
