@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "torrplay-msi"
+version = "0.1.0"
+description = "Native Windows Installer actions for the TorrPlay service"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[lints.rust]
+# The custom action is a Win32 FFI adapter.
+unsafe_code = "deny"
+
+[target.'cfg(windows)'.dependencies]
+torrplay = { path = "../torrplay", default-features = false }
+windows-service.workspace = true
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_ApplicationInstallationAndServicing",
+    "Win32_System_WindowsProgramming",
+] }

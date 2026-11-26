@@ -268,6 +268,11 @@ purging the package:
 **2**
 :   The command line or the environment is not valid.
 
+**3**
+:   During MSI setup, the Windows service rejected the download directory
+    it would use. The path and reason appear in event 1001 from TorrPlay in
+    the Windows Application log.
+
 # SEE ALSO
 
 **torrplay-client**(1), **torrplay.env**(5), **systemctl**(1),

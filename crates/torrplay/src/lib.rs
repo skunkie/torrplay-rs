@@ -37,6 +37,8 @@ use url::Url;
 #[cfg(feature = "client")]
 mod client;
 mod connections;
+#[doc(hidden)]
+pub mod installer_settings;
 mod logging;
 mod media_server;
 use connections::ClosableListener;

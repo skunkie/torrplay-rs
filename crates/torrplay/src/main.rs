@@ -14,6 +14,8 @@ use std::io::IsTerminal;
 use std::process::ExitCode;
 
 mod service;
+#[cfg(any(windows, test))]
+mod windows_setup;
 
 use torrplay::{
     BackupAction, Command, Config, LogLevel, McpConfig, PasswordChange, PasswordChanged, USAGE,
@@ -24,6 +26,12 @@ fn main() -> ExitCode {
     // file rather than the environment, and reports a usage error to the service
     // manager rather than on standard error.
     let arguments: Vec<String> = std::env::args().skip(1).collect();
+    #[cfg(windows)]
+    if let [command, rest @ ..] = arguments.as_slice()
+        && command == "validate-installer-settings"
+    {
+        return windows_setup::validate(rest);
+    }
     if arguments.first().map(String::as_str) == Some("service") {
         // Help and the version print as for any command, run by anyone.
         match torrplay::parse_args(arguments.iter().cloned(), None) {

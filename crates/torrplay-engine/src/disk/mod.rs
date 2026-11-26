@@ -21,6 +21,7 @@ mod io;
 pub mod paths;
 
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -30,12 +31,23 @@ use librqbit::storage::{BoxStorageFactory, StorageFactory, StorageFactoryExt, To
 use librqbit::{ManagedTorrentShared, TorrentMetadata};
 use librqbit_core::hash_id::Id20;
 use librqbit_core::lengths::ValidPieceIndex;
+use torrplay_core::id::TorrentId;
 use torrplay_core::metadata::ReportedMetadata;
 
 use self::bitfield::ResumeBitfield;
 use self::io::FileAt;
 use crate::inspect;
 use crate::storage::Layout;
+
+/// Identifies download directory entries that TorrPlay treats as its data.
+pub fn download_entry_torrent_id(name: &OsStr) -> Option<TorrentId> {
+    let name = name.to_str()?;
+    let stem = match name.rsplit_once('.') {
+        Some((stem, bitfield::EXTENSION)) => stem,
+        _ => name,
+    };
+    TorrentId::from_stored(stem)
+}
 
 /// Why a torrent cannot use disk storage where it would go.
 #[derive(Debug, thiserror::Error)]

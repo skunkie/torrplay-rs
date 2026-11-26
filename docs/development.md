@@ -391,9 +391,25 @@ Its hooks, `packaging/windows/application.nsh`, refuse while the service
 edition is installed for the computer, which they find by the upgrade code in
 `desktop/tauri.client.conf.json` that its MSI registers; the hooks hold that
 code in Windows Installer's packed form, so a change to one is a change to
-both. The bundler downloads NSIS itself. From the repository root in
-PowerShell 7, once the web client is built and `python` on PATH is Python
-3.11 or later:
+both. On a fresh interactive install, the TorrPlay settings page follows
+the installation folder page. It checks that your account can write to the
+chosen download directory, rejects folders containing existing TorrPlay data,
+and accepts a comma-separated list of extra allowed hostnames. Setup also
+checks the folder named by `TORRPLAY_DOWNLOAD_DIR` if the variable is set
+and points to a different path. During fresh interactive setup, set that
+variable to an absolute path or unset it. The Windows desktop app resolves
+relative values from its working directory at startup. If neither source supplies
+a path, setup checks the default folder and accepts existing torrents that
+belong to the retained library. The installer saves supplied values in
+`%APPDATA%\org.torrplay.desktop\torrplay.env`, which the application reads at
+startup. The command line and process environment take precedence for the
+download directory. Allowed hostnames from all three sources are combined.
+Upgrades, silent installs, and installs that find an existing settings file
+preserve it. The wizard saves settings before copying the application
+files so a failed write can be retried as a fresh install. If a later
+installation step fails, setup removes the unchanged settings it created.
+The bundler downloads NSIS itself. From the repository root in PowerShell
+7, once the web client is built and `python` on PATH is Python 3.11 or later:
 
 ```powershell
 cargo install tauri-cli --version 2.12.4 --locked
@@ -404,10 +420,12 @@ scripts\test-application-nsis.ps1 target\nsis\torrplay-setup.exe
 
 `scripts\test-application-nsis.ps1` stands in for the service edition in the
 machine's registry and checks that the installer refuses, then installs the
-application, checks its files, versions, and shortcuts, starts it and waits for
-its API, and uninstalls it. It changes the system and needs an elevated
-PowerShell, so CI runs it on disposable `windows-latest` and `windows-11-arm`
-runners, in the application installer jobs.
+application, checks its files, versions, and shortcuts, verifies that a
+silent install leaves the startup settings alone, and starts the application
+with a configured download directory and hostname before uninstalling it.
+It changes the system and needs an elevated PowerShell, so CI runs it on
+disposable `windows-latest` and `windows-11-arm` runners, in the application
+installer jobs.
 
 ## Running TorrPlay
 
@@ -625,22 +643,22 @@ sudo systemctl start torrplay
 
 `torrplay service` runs the application as the service edition's Windows
 service, which the service manager starts; anywhere else, or started by
-hand, it says so and exits with status 2. The service manager gives a
-service no environment of its own, so it reads its `TORRPLAY_` variables
-from `%ProgramData%\TorrPlay\torrplay.env`, whose template is
-`packaging/windows/torrplay.env`, and keeps its data, and its logs in
-`logs`, in that directory unless `--data-dir` names another.
+hand, it says so and exits with status 2. The service reads its startup
+settings from `%ProgramData%\TorrPlay\torrplay.env`, whose template is
+`packaging/windows/torrplay.env`. For keys absent from the file, it falls
+back to the process environment. The service keeps its data and its
+`logs` subdirectory there unless `--data-dir` names another directory.
 `TORRPLAY_DOWNLOAD_DIR` in the settings file can select a separate
 download directory. The service account needs write access to it. The service
 reports itself running once the API listens. Its stop control and the system's
 shutdown begin the shutdown sequence; the service manager refuses controls
 while a service stops, so a second stop cannot hurry it as a second signal
 does. A usage error, such as an invalid `TORRPLAY_LISTEN`, stops it with
-the service-specific exit code 2, which it logs, and a failure once started,
-such as a taken port, with 1.
+the service-specific exit code 2. An application failure, such as a port
+already in use during startup, uses exit code 1. The service logs both.
 
-`scripts/windows-service.ps1`, in an elevated PowerShell 7, installs a build
-by hand and removes it, until the installer does:
+For manual development installs and removal, use
+`scripts/windows-service.ps1` in elevated PowerShell 7:
 
 ```powershell
 cargo build --release -p torrplay
@@ -688,9 +706,25 @@ bundler's template, adds; compare it with the bundler's own on a Tauri CLI
 upgrade. The MSI
 refuses while the application is installed for the user running it. Its
 ACLs name the service's account by SID, which follows from the service's
-name; the fragment says how, should the name change. The bundler downloads
-WiX itself. From the repository root in elevated PowerShell 7, once the web
-client is built and `python` on PATH is Python 3.11 or later:
+name; the fragment says how, should the name change.
+`packaging/windows/startup-settings.wxs` adds a service settings page after
+Custom Setup on a fresh interactive install. The page offers the download
+directory and extra allowed hostnames. It saves supplied values in
+`%ProgramData%\TorrPlay\torrplay.env` before starting the service. The service
+account must be able to write to the chosen folder on a local drive. Setup
+validates the path syntax and hostnames on the settings page. Before starting,
+the service checks write access to the download folder under its own account.
+If the download field is blank, the service checks the folder named by
+`TORRPLAY_DOWNLOAD_DIR` in its environment, or the built-in default if the
+variable is unset. A custom folder must be free of TorrPlay data. In the
+built-in default folder, the service accepts data owned by the retained
+library. A failed check reports service-specific exit code 3. In Event Viewer,
+open **Windows Logs → Application** and check the details of event 1001 from
+TorrPlay for the folder and reason. Silent installs, upgrades, and installs
+that find an existing settings file or a data directory from a completed
+installation preserve existing settings. The bundler downloads WiX itself.
+From the repository root in elevated PowerShell 7, once the web client is
+built and `python` on PATH is Python 3.11 or later:
 
 ```powershell
 cargo install tauri-cli --version 2.12.4 --locked
@@ -708,7 +742,6 @@ scripts/build-service-msi.ps1 $upgrade -Version $next -Notices $fixture
 if ((Get-FileHash "$upgrade.notices.txt").Hash -eq (Get-FileHash $originalNotices).Hash) {
     throw 'The upgrade test requires different notices in the two packages'
 }
-scripts/test-windows-service.ps1 -Package target/msi/torrplay-service.msi -Upgrade $upgrade
 ```
 
 With `-Package`, the service test installs the MSI and uses `-Upgrade`
@@ -723,6 +756,36 @@ before and after both kinds of upgrade. CI builds the upgrade MSI with the
 next patch version and a distinct notice fixture to verify replacement.
 The service installer jobs test both packages on disposable `windows-latest`
 and `windows-11-arm` runners.
+
+The Windows packaging jobs run the smoke tests with `-Wizard`. To run them
+locally, use elevated PowerShell 7 on a clean Windows VM with a logged-in
+English-language desktop. Choose the wizard mode before running the MSI
+test. The MSI test retains service data, so restore a clean snapshot before
+running another wizard test on the same VM.
+
+```powershell
+scripts\test-application-nsis.ps1 target\nsis\torrplay-setup.exe -Wizard
+scripts\test-windows-service.ps1 -Package target\msi\torrplay-service.msi -Upgrade target\msi\torrplay-service-next.msi -Wizard
+```
+
+Omit `-Wizard` to use the silent smoke checks.
+
+Each wizard test opens the folder picker, configures extra allowed hostnames
+and a download directory with spaces and non-ASCII characters in its name,
+and checks the startup log and HTTP responses. The MSI smoke test supplies
+the values through public MSI properties and checks that the wizard shows
+them. The NSIS test leaves both fields
+blank, checks that setup rejects untracked data in the default download
+folder, then removes the fixture and completes setup without saving settings.
+It also checks that setup validates an absolute environment override, the
+installed app accepts a relative override from another working directory,
+and setup can retry after a failed application copy. It tests a failed
+settings write when the settings directory is absent at the start. The MSI
+test checks that a fresh install rolls back if the
+default download folder contains existing TorrPlay data, if direct file
+writes are denied, or if the API port is busy. It retries successfully with a
+writable folder and a free port, then checks that an upgrade and a silent
+reinstall preserve the settings file.
 
 ### Downloading CI packages
 
@@ -768,13 +831,32 @@ blocks. If Windows blocks an installer or executable, record where it
 stopped.
 
 1. Run the NSIS installer as a standard user. Verify the MIT license page
-   and finish the install without elevation. Launch TorrPlay from Start,
-   check that it opens the library, and record the firewall prompt if shown.
+   and the TorrPlay settings page after choosing the installation folder.
+   Check that the help text fits, choose a writable download directory with
+   no existing TorrPlay data, and enter an extra hostname. Finish without
+   elevation and verify both values
+   in `%APPDATA%\org.torrplay.desktop\torrplay.env`. Launch TorrPlay from
+   Start, check that it opens the library, and record any firewall prompt.
    Verify both notice files beside the application in `%LOCALAPPDATA%\TorrPlay`.
    Uninstall from Settings before testing the service edition.
-2. Run the MSI interactively. Verify the MIT license page, elevation, and
-   the Custom Setup page. Install with the client selected, open it from
-   Start, and confirm it connects to the running service. Verify both notice
+2. Before running the MSI, create a new local folder and grant the TorrPlay
+   service account Modify access. In elevated PowerShell, use the account's
+   SID so the grant works before the service is registered, as the
+   [MSI smoke test](../scripts/test-windows-service.ps1) does.
+
+   ```powershell
+   $downloads = Join-Path $env:ProgramData 'TorrPlay Test Downloads'
+   New-Item -ItemType Directory -Path $downloads
+   $serviceSid = 'S-1-5-80-2828507108-2845588903-360128926-4130653692-64400780'
+   icacls.exe $downloads /grant "*${serviceSid}:(OI)(CI)M"
+   ```
+
+   Run the MSI interactively. Verify the MIT license page, elevation, and
+   the service settings page after Custom Setup. Check that the help text
+   fits, choose the folder you prepared, and enter an extra hostname.
+   Install with the client selected and verify both
+   settings in `%ProgramData%\TorrPlay\torrplay.env`. Open the client from
+   Start and confirm that it connects to the service. Verify both notice
    files in `%ProgramFiles%\TorrPlay Client`.
 3. Uninstall the MSI. Verify that the client, service, program files, and
    firewall rules are removed, and that `%ProgramData%\TorrPlay` remains.

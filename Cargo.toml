@@ -15,6 +15,7 @@ members = [
     "crates/torrplay-fixtures",
     "crates/torrplay-mcp",
     "crates/torrplay-media",
+    "crates/torrplay-msi",
     "crates/torrplay-stremio",
     "crates/torrplay-server",
     "crates/torrplay-settings-file",

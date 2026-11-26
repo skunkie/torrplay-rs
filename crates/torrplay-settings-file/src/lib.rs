@@ -5,12 +5,17 @@
 //! Startup files with one `TORRPLAY_` variable per line. systemd reads
 //! `/etc/torrplay/torrplay.env` into the service's environment. On Windows,
 //! the service reads `%ProgramData%\TorrPlay\torrplay.env` itself. The client
-//! reads the service's listen address, and the macOS application reads its
-//! own startup settings file. They share the template's format: `NAME=value`,
-//! optional single or double quotes around values, and `#` comments.
+//! reads the service's listen address, and the Windows and macOS desktop
+//! applications read their own startup settings files. They share a format
+//! with `NAME=value` lines, optional quotes around values, and `#` comments.
 
 use std::io;
 use std::path::{Path, PathBuf};
+
+#[cfg(windows)]
+mod rollback;
+#[cfg(windows)]
+pub use rollback::remove_if_contents_match;
 
 /// The startup settings file's name.
 pub const FILE_NAME: &str = "torrplay.env";
@@ -67,11 +72,32 @@ impl SettingsFile {
     /// but cannot be read is an error, since its settings would otherwise give
     /// way to the defaults unseen.
     pub fn read(path: &Path) -> io::Result<Option<Self>> {
-        match std::fs::read_to_string(path) {
-            Ok(contents) => Ok(Some(Self::parse(&contents))),
+        match std::fs::read(path) {
+            Ok(bytes) => Self::parse_bytes(&bytes).map(Some),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error),
         }
+    }
+
+    /// Parses UTF-8 settings or BOM-marked UTF-16LE, as written by the
+    /// Windows desktop installer.
+    pub fn parse_bytes(bytes: &[u8]) -> io::Result<Self> {
+        if let Some(bytes) = bytes.strip_prefix(&[0xff, 0xfe]) {
+            let (words, remainder) = bytes.as_chunks::<2>();
+            if !remainder.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "truncated UTF-16",
+                ));
+            }
+            let units: Vec<_> = words.iter().copied().map(u16::from_le_bytes).collect();
+            return String::from_utf16(&units)
+                .map(|contents| Self::parse(&contents))
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error));
+        }
+        std::str::from_utf8(bytes)
+            .map(Self::parse)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
     }
 
     /// The value of `name`: that of its last line, as a later assignment
@@ -110,6 +136,32 @@ mod tests {
         );
         assert_eq!(file.get("TORRPLAY_LISTEN"), Some("[::]:9000"));
         assert_eq!(file.get("TORRPLAY_LOG_FORMAT"), Some("text"));
+    }
+
+    #[test]
+    fn legacy_windows_service_settings_with_section_header_preserve_unicode_paths() -> io::Result<()>
+    {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join(FILE_NAME);
+        let text = "# Installer settings\r\n[TorrPlay]\r\nTORRPLAY_DOWNLOAD_DIR=D:\\Média 雪\r\n\
+                    TORRPLAY_ALLOWED_HOSTS=torrplay,*.home.arpa\r\n";
+        let bytes: Vec<_> = std::iter::once(0xfeff)
+            .chain(text.encode_utf16())
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        std::fs::write(&path, &bytes)?;
+        let settings = SettingsFile::read(&path)?.unwrap();
+        assert_eq!(settings.get("TORRPLAY_DOWNLOAD_DIR"), Some(r"D:\Média 雪"));
+        assert_eq!(
+            settings.get("TORRPLAY_ALLOWED_HOSTS"),
+            Some("torrplay,*.home.arpa")
+        );
+        std::fs::write(&path, &bytes[..bytes.len() - 1])?;
+        assert_eq!(
+            SettingsFile::read(&path).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        Ok(())
     }
 
     #[test]

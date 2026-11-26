@@ -12,8 +12,12 @@ publish.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
-[lints]
-workspace = true
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+expect_used = "warn"
+unwrap_used = "warn"
 
 [features]
 default = ["client"]
@@ -97,12 +101,14 @@ url.workspace = true
 # The service edition's Windows service and its settings file.
 torrplay-settings-file.workspace = true
 windows-service.workspace = true
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_EventLog"] }
 
 [dev-dependencies]
 h2.workspace = true
 reqwest = { workspace = true, features = ["http2"] }
 torrplay-engine = { workspace = true, features = ["faults", "test-support"] }
 torrplay-fixtures.workspace = true
+torrplay-settings-file.workspace = true
 # The MCP scenario runs the executable.
 tokio = { workspace = true, features = ["process"] }
 # The backup scenario edits an archive the application wrote.

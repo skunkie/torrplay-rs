@@ -12,9 +12,9 @@ torrplay-desktop.exe with torrplay.exe beside it, from desktop\tauri.conf.json
 with desktop\tauri.bundle.conf.json merged over it, and TorrPlay's license
 and the third-party notices beside it, from desktop\tauri.notices.conf.json. Run
 it from the repository root once the web client is built (pnpm build in
-client), with the Tauri CLI and cargo-about installed; Out is the installer to
-write. The bundler downloads NSIS itself and checks it against the hash it
-carries.
+client), with the Tauri CLI and cargo-about installed and Python 3.11 or
+later available as python on PATH. Out is the installer to write. The
+bundler downloads NSIS itself and checks it against the hash it carries.
 
   scripts\build-application-nsis.ps1 target\nsis\torrplay-setup.exe
 #>
@@ -48,11 +48,15 @@ Copy-Item -Path 'target/release/torrplay.exe' -Destination "desktop/binaries/tor
 
 $bundles = 'desktop/target/release/bundle/nsis'
 Remove-Item -Recurse -Force -Path $bundles -ErrorAction SilentlyContinue
+$settingsCheckVariable = 'TAURI_TORRPLAY_SETTINGS_CHECK_EXE'
+$savedSettingsCheck = [Environment]::GetEnvironmentVariable($settingsCheckVariable)
 Push-Location desktop
 try {
+    $env:TAURI_TORRPLAY_SETTINGS_CHECK_EXE = (Resolve-Path '../target/release/torrplay.exe').Path
     Invoke-Checked cargo @('tauri', 'build', '--bundles', 'nsis', '--config', 'tauri.bundle.conf.json',
         '--config', 'tauri.notices.conf.json', '--', '--locked')
 } finally {
+    [Environment]::SetEnvironmentVariable($settingsCheckVariable, $savedSettingsCheck)
     Pop-Location
 }
 $built = @(Get-ChildItem -Path $bundles -Filter '*.exe' -File)

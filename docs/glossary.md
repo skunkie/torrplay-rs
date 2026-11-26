@@ -241,11 +241,13 @@ of each.
   ([ADR 12](adr/0012-editions.md)).
 
 **Settings file**
-: The service edition's `TORRPLAY_` variables, one `NAME=value` per line:
-  `/etc/torrplay/torrplay.env`, which systemd reads as the service's
-  environment, or `%ProgramData%\TorrPlay\torrplay.env`, which the Windows
-  service reads itself. The client reads the listen address there. Not the
-  **settings** of the API, which the store keeps.
+: A `torrplay.env` file with startup variables, one `NAME=value` per line.
+  For the service edition, systemd reads `/etc/torrplay/torrplay.env` on
+  Linux, and the Windows service reads `%ProgramData%\TorrPlay\torrplay.env`.
+  The service edition's client reads the listen address from the same file.
+  The desktop application reads `%APPDATA%\org.torrplay.desktop\torrplay.env`
+  on Windows or `~/Library/Application Support/org.torrplay.desktop/torrplay.env`
+  on macOS. The store keeps the **settings** of the API separately.
 
 **Storage mode**
 : Where a torrent keeps piece data: `memory` (the piece cache, subject to
