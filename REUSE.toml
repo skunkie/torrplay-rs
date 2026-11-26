@@ -78,6 +78,7 @@ path = [
   "client/package.json",
   "client/pnpm-lock.yaml",
   "client/tsconfig.json",
+  "client/vercel.json",
 ]
 SPDX-FileCopyrightText = "2026 TorrPlay"
 SPDX-License-Identifier = "MIT"
