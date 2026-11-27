@@ -6,9 +6,10 @@ from pathlib import Path
 
 # dmgbuild provides defines from the -D arguments.
 app = Path(defines["app"])
+# Hiding the extension adds Finder information to the signed app and breaks
+# strict signature verification.
 files = [str(app)]
 symlinks = {"Applications": "/Applications"}
-hide_extensions = [app.name]
 icon = "desktop/icons/icon.icns"
 license = {"licenses": {"en_US": "LICENSES/MIT.txt"}}
 format = "UDZO"
