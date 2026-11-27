@@ -17,6 +17,8 @@ use std::time::Duration;
 use anyhow::Context;
 use tauri::{AppHandle, Manager, Url};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+#[cfg(target_os = "linux")]
+use tauri_plugin_shell::ShellExt;
 use torrplay_settings_file::SettingsFile;
 
 use crate::opening::{self, Request};
@@ -39,6 +41,9 @@ const ANSWER_TIMEOUT: Duration = Duration::from_secs(2);
 /// The client's name in its messages: its executable's in the packages, which ADR 13
 /// decides, whatever a development build's file is called.
 const NAME: &str = "torrplay-client";
+
+#[cfg(target_os = "linux")]
+pub(crate) const HELP_PATH: &str = "/usr/share/doc/torrplay-client/help/index.html";
 
 const USAGE: &str = "\
 Usage: torrplay-client [TORRENT_FILE | MAGNET_URI]...
@@ -296,6 +301,124 @@ pub fn main() -> ExitCode {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn help_labels(locale: Option<&str>) -> (&'static str, &'static str) {
+    if locale.is_some_and(|locale| locale.starts_with("ru")) {
+        ("Справка", "Справка по клиенту TorrPlay")
+    } else {
+        ("Help", "TorrPlay Client Help")
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn help_error_message(path: &Path, locale: Option<&str>) -> String {
+    let russian = locale.is_some_and(|locale| locale.starts_with("ru"));
+    if !path.is_file() {
+        return if russian {
+            "Справка по клиенту TorrPlay недоступна."
+        } else {
+            "TorrPlay Client Help is unavailable."
+        }
+        .to_owned();
+    }
+    let message = if russian {
+        "Не удалось открыть справку TorrPlay. Откройте этот файл в браузере:"
+    } else {
+        "Could not open TorrPlay Client Help. Open this file in your browser:"
+    };
+    format!("{message}\n\n{}", path.display())
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn install_help_header(window: &tauri::WebviewWindow) -> anyhow::Result<()> {
+    use gtk::prelude::*;
+
+    let native = window.gtk_window()?;
+    let app = window.app_handle();
+    let locale = sys_locale::get_locale();
+    let (title, label) = help_labels(locale.as_deref());
+    let header = gtk::HeaderBar::builder()
+        .title(&app.package_info().name)
+        .has_subtitle(false)
+        .show_close_button(true)
+        .build();
+    if let Some(screen) = gtk::prelude::GtkWindowExt::screen(&native) {
+        let style = gtk::CssProvider::new();
+        style.load_from_data(
+            b"headerbar.torrplay-client-header {
+                  min-height: 32px;
+                  padding-top: 2px;
+                  padding-bottom: 2px;
+              }
+              headerbar.torrplay-client-header button {
+                  min-height: 24px;
+                  padding-top: 0;
+                  padding-bottom: 0;
+              }",
+        )?;
+        gtk::StyleContext::add_provider_for_screen(
+            &screen,
+            &style,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+        header.style_context().add_class("torrplay-client-header");
+    }
+    let help = gtk::Button::with_label(title);
+    help.set_tooltip_text(Some(label));
+    help.style_context().add_class("flat");
+    let app = app.clone();
+    help.connect_clicked(move |_| open_help(&app));
+    header.pack_start(&help);
+    native.set_titlebar(Some(&header));
+    header.show_all();
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+async fn launch_help<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    opener: &Path,
+    path: &Path,
+) -> anyhow::Result<()> {
+    // The shell plugin pipes standard streams. Disconnect the command and its
+    // browser from those pipes so termination does not depend on browser I/O.
+    let status = app
+        .shell()
+        .command("/bin/sh")
+        .args(["-c", "exec \"$1\" \"$2\" </dev/null >/dev/null 2>&1", "sh"])
+        .arg(opener)
+        .arg(path)
+        .status()
+        .await
+        .context("launching xdg-open")?;
+    anyhow::ensure!(
+        status.success(),
+        "xdg-open failed with exit code {:?}",
+        status.code()
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn open_help(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        // Use the same launcher as the desktop entry and wait asynchronously for
+        // its exit status. It can stay running until the HTML handler exits.
+        let path = Path::new(HELP_PATH);
+        if let Err(error) = launch_help(&app, Path::new("xdg-open"), path).await {
+            tracing::warn!(%error, path = HELP_PATH, "could not open TorrPlay Client Help");
+            let locale = sys_locale::get_locale();
+            let (_, label) = help_labels(locale.as_deref());
+            app.dialog()
+                .message(help_error_message(path, locale.as_deref()))
+                .title(label)
+                .kind(MessageDialogKind::Error)
+                .show(|_| {});
+        }
+    });
+}
+
 fn run(requests: Vec<Request>) -> anyhow::Result<()> {
     let app = tauri::Builder::default()
         // First, so a second launch ends before the rest of it starts anything.
@@ -315,7 +438,10 @@ fn run(requests: Vec<Request>) -> anyhow::Result<()> {
             },
         ))
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_opener::init());
+    #[cfg(target_os = "linux")]
+    let app = app.plugin(tauri_plugin_shell::init());
+    let app = app
         .manage(Pages::default())
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -347,6 +473,62 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_help_button_and_applications_launcher_share_packaged_help() {
+        let entry = include_str!("../../packaging/linux/org.torrplay.client.help.desktop");
+        let command = format!("Exec=xdg-open {HELP_PATH}");
+        assert!(entry.lines().any(|line| line == command));
+        for (locale, field) in [("en-US", "Name"), ("ru-RU", "Name[ru]")] {
+            let (_, label) = help_labels(Some(locale));
+            let name = format!("{field}={label}");
+            assert!(entry.lines().any(|line| line == name));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn removed_help_is_reported_as_unavailable() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let help = directory.path().join("index.html");
+        std::fs::write(&help, "offline help")?;
+        for locale in ["en-US", "ru-RU"] {
+            assert!(help_error_message(&help, Some(locale)).ends_with(&help.display().to_string()));
+        }
+        std::fs::remove_file(&help)?;
+        assert_eq!(
+            help_error_message(&help, Some("en-US")),
+            "TorrPlay Client Help is unavailable."
+        );
+        assert_eq!(
+            help_error_message(&help, Some("ru-RU")),
+            "Справка по клиенту TorrPlay недоступна."
+        );
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_delayed_help_launcher_failure_is_reported() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir()?;
+        let help = directory.path().join("client help.html");
+        std::fs::write(&help, "offline help")?;
+        let launcher = directory.path().join("test launcher");
+        std::fs::write(
+            &launcher,
+            "#!/bin/sh\ntest -f \"$1\" || exit 8\nsleep 0.4\nexit 7\n",
+        )?;
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700))?;
+        let app = tauri::test::mock_builder()
+            .plugin(tauri_plugin_shell::init())
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))?;
+        let result = tauri::async_runtime::block_on(launch_help(app.handle(), &launcher, &help));
+        assert!(matches!(result, Err(error) if error.to_string().contains("Some(7)")));
+        Ok(())
+    }
 
     fn strings(values: &[&str]) -> Vec<String> {
         values.iter().map(ToString::to_string).collect()

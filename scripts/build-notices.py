@@ -27,8 +27,12 @@ import tempfile
 import tomllib
 from pathlib import Path
 
-# The crates whose executables the packages ship.
-MANIFESTS = ["crates/torrplay/Cargo.toml", "desktop/Cargo.toml"]
+# The crates whose executables the packages ship. Collect both desktop editions
+# in one dependency graph because they share the same notices file.
+MANIFESTS = [
+    ("crates/torrplay/Cargo.toml", []),
+    ("desktop/Cargo.toml", ["--all-features"]),
+]
 LICENSE_FILES = ("LICENSE", "LICENCE", "COPYING")
 RULE = "=" * 78
 
@@ -65,14 +69,14 @@ def crates():
     own, which its license covers."""
     groups = {}
     with tempfile.TemporaryDirectory() as directory:
-        for manifest in MANIFESTS:
+        for manifest, features in MANIFESTS:
             output = Path(directory) / "about.json"
             # cargo-about reads the crates offline, from where cargo puts them.
             subprocess.run([command("cargo"), "fetch", "--locked", "--manifest-path", manifest], check=True)
             subprocess.run(
                 [command("cargo"), "about", "generate", "--format", "json", "--locked",
                  "--offline", "--fail", "-c", "about.toml", "-m", manifest,
-                 "-o", str(output)],
+                 "-o", str(output), *features],
                 check=True,
             )
             for license in json.loads(output.read_text(encoding="utf-8"))["licenses"]:

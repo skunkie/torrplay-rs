@@ -113,6 +113,7 @@ English message.
 | Recently added | Недавно добавленные | |
 | Home | Главная | The page, in navigation |
 | Menu | Меню | The button holding profile, language, and sign-out |
+| Help | Справка | `Справка по клиенту TorrPlay` for the desktop help launcher |
 | Episodes (button) | Серии | Opens a series' title page |
 | Details (button) | Подробнее | Opens the title page of anything else |
 | Audio (button) | Звук | The player's menu button; the menu's items are audio tracks |

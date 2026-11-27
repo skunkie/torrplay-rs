@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+[Desktop Entry]
+Type=Application
+Name=TorrPlay Client Help
+Name[ru]=Справка по клиенту TorrPlay
+Exec=xdg-open /usr/share/doc/torrplay-client/help/index.html
+Icon=org.torrplay.client
+Terminal=false
+Categories=AudioVideo;Video;

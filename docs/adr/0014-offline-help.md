@@ -50,7 +50,7 @@ with a table of contents, section anchors, and browser find.
 | macOS application | **TorrPlay Help**, with macOS startup settings and CLI examples | **Help → TorrPlay Help** opens the app bundle resource |
 | Windows NSIS application | **TorrPlay Help**, with Windows desktop startup settings and CLI examples | **TorrPlay Help** in the user's Start menu |
 | Windows service MSI | **TorrPlay Service Help**, with service administration, startup settings, and optional client usage | An all-users **TorrPlay Service Help** shortcut in Start, including service-only installs |
-| Linux service client Debian and planned RPM packages | **TorrPlay Client Help**, with client commands, connection settings, and troubleshooting | **TorrPlay Client Help** in the applications menu |
+| Linux service client Debian and planned RPM packages | **TorrPlay Client Help**, with client commands, connection settings, and troubleshooting | **Help** in the client title bar and **TorrPlay Client Help** in the applications menu |
 
 On Windows, the console executable `torrplay.exe --help` in both installers
 prints the absolute reference path when the file exists. Resolve it relative
@@ -162,8 +162,8 @@ targets, dependencies, and service installation and removal.
    entry pointing to the installed reference. Verify that removing the
    client package removes the help file and its launcher. Apply the same
    help checks to the RPM once available.
-3. **Manual acceptance.** Open help from each entry point with networking
-   and TorrPlay unavailable. Verify section navigation, browser search,
+3. **Manual acceptance.** Open help from each entry point without internet
+   access. Verify section navigation, browser search,
    and copying commands. Check that the theme icon follows the system by
    default and cycles through themes using both pointer and keyboard. On
    narrow screens, verify the contents appear above the article and long
@@ -172,8 +172,8 @@ targets, dependencies, and service installation and removal.
    Verify help still opens after startup fails because of invalid settings
    or an occupied API port.
    On Windows, test a custom install directory with spaces and non-ASCII
-   characters. On Linux, open the client help before connecting the client
-   to a service.
+   characters. On Linux, open help from the client window while connected to
+   the service, then stop the service and open help from the applications menu.
 4. **Implementation order.** Build the shared content and generator first.
    Add the macOS, NSIS, and Linux Debian client packaging and entry points,
    then add the MSI service help and exercise service-only install, upgrade,
