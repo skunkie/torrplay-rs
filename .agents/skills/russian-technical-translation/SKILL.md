@@ -113,7 +113,7 @@ English message.
 | Recently added | Недавно добавленные | |
 | Home | Главная | The page, in navigation |
 | Menu | Меню | The button holding profile, language, and sign-out |
-| Help | Справка | `Справка TorrPlay` for the macOS menu item, `Справка по клиенту TorrPlay` for the Linux client launcher |
+| Help | Справка | `Справка TorrPlay` for the macOS menu item and Windows application shortcut, `Справка по клиенту TorrPlay` for the Linux client launcher |
 | Show Package Contents | Показать содержимое пакета | The Finder context menu item for opening the app bundle |
 | Episodes (button) | Серии | Opens a series' title page |
 | Details (button) | Подробнее | Opens the title page of anything else |

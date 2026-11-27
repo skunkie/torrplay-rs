@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "resources": {
+      "../target/reference/nsis/help/index.html": "help/index.html"
+    }
+  }
+}

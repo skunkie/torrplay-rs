@@ -36,7 +36,7 @@ fn main() -> ExitCode {
         // Help and the version print as for any command, run by anyone.
         match torrplay::parse_args(arguments.iter().cloned(), None) {
             Ok(Command::Help) => {
-                print!("{USAGE}");
+                print_help();
                 return ExitCode::SUCCESS;
             }
             Ok(Command::Version) => {
@@ -56,7 +56,7 @@ fn main() -> ExitCode {
         Ok(Command::Backup(action, config)) => return backup(action, &config),
         Ok(Command::Mcp(config)) => return mcp(config),
         Ok(Command::Help) => {
-            print!("{USAGE}");
+            print_help();
             return ExitCode::SUCCESS;
         }
         Ok(Command::Version) => {
@@ -115,6 +115,16 @@ fn main() -> ExitCode {
     };
     log.flush();
     code
+}
+
+fn print_help() {
+    print!("{USAGE}");
+    #[cfg(windows)]
+    if let Ok(executable) = std::env::current_exe()
+        && let Some(path) = torrplay::windows_help_path(&executable)
+    {
+        println!("\nOffline help: {}", path.display());
+    }
 }
 
 async fn run(config: &Config, startup: torrplay::Startup) -> anyhow::Result<()> {

@@ -23,6 +23,18 @@ use crate::opening::{self, Request};
 /// The label of the application's one window.
 pub const MAIN_WINDOW: &str = "main";
 
+#[cfg(all(windows, feature = "engine"))]
+const HELP_REQUEST_PATH: &str = "/__torrplay_desktop/help";
+
+#[cfg(all(windows, feature = "engine"))]
+fn help_shortcut_script(help_url: &Url) -> String {
+    format!(
+        "(() => {{\n{}\ninstallHelpShortcut({});\n}})();",
+        include_str!("help-shortcut.js"),
+        serde_json::json!(help_url.as_str()),
+    )
+}
+
 /// The address the window opens: the listener's port on loopback. It stays the same
 /// between runs, since the page's stored sign-in and language belong to its origin.
 pub fn window_url(listening: SocketAddr) -> anyhow::Result<Url> {
@@ -188,23 +200,35 @@ fn handle_drag(app: &AppHandle, window: &WebviewWindow, drag: &DragDropEvent) {
 pub fn open_window(app: &AppHandle, own: Url) -> anyhow::Result<()> {
     let opener = app.clone();
     let saver = app.clone();
+    #[cfg(all(windows, feature = "engine"))]
+    let help_url = own.join(HELP_REQUEST_PATH)?;
+    #[cfg(all(windows, feature = "engine"))]
+    let help_script = help_shortcut_script(&help_url);
     let builder = WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::External(own.clone()))
         // The product's name, so the client's window is named TorrPlay Client and the
         // application's TorrPlay.
         .title(&app.package_info().name)
         .inner_size(1280.0, 800.0)
         .min_inner_size(360.0, 480.0)
-        .on_navigation(move |url| match navigation(url, &own) {
-            Navigation::Stay => true,
-            Navigation::Outside => {
-                if let Err(error) = opener.opener().open_url(url.as_str(), None::<&str>) {
-                    tracing::warn!(%error, scheme = url.scheme(), "a link cannot be opened");
-                }
-                false
+        .on_navigation(move |url| {
+            // The window handles the help request without a server route or page load.
+            #[cfg(all(windows, feature = "engine"))]
+            if url == &help_url {
+                crate::application::open_help(&opener);
+                return false;
             }
-            Navigation::Refuse => {
-                tracing::warn!(scheme = url.scheme(), "a navigation was refused");
-                false
+            match navigation(url, &own) {
+                Navigation::Stay => true,
+                Navigation::Outside => {
+                    if let Err(error) = opener.opener().open_url(url.as_str(), None::<&str>) {
+                        tracing::warn!(%error, scheme = url.scheme(), "a link cannot be opened");
+                    }
+                    false
+                }
+                Navigation::Refuse => {
+                    tracing::warn!(scheme = url.scheme(), "a navigation was refused");
+                    false
+                }
             }
         })
         .on_download(move |_, event| handle_download(&saver, event))
@@ -213,6 +237,8 @@ pub fn open_window(app: &AppHandle, own: Url) -> anyhow::Result<()> {
             let loaded = matches!(payload.event(), PageLoadEvent::Finished);
             app.state::<Pages>().page_loaded(app, loaded);
         });
+    #[cfg(all(windows, feature = "engine"))]
+    let builder = builder.initialization_script(help_script);
     #[cfg(all(target_os = "linux", feature = "client"))]
     let (builder, has_help) = {
         let has_help = std::path::Path::new(crate::client::HELP_PATH).is_file();

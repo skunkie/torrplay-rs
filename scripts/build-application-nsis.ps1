@@ -10,11 +10,14 @@ Builds the application's Windows installer, as ADR 13 decides.
 The Tauri bundler makes an NSIS installer for the current user that installs
 torrplay-desktop.exe with torrplay.exe beside it, from desktop\tauri.conf.json
 with desktop\tauri.bundle.conf.json merged over it, and TorrPlay's license
-and the third-party notices beside it, from desktop\tauri.notices.conf.json. Run
-it from the repository root once the web client is built (pnpm build in
-client), with the Tauri CLI and cargo-about installed and Python 3.11 or
-later available as python on PATH. Out is the installer to write. The
-bundler downloads NSIS itself and checks it against the hash it carries.
+and the third-party notices beside it, from desktop\tauri.notices.conf.json.
+The staged offline help is bundled through desktop\tauri.nsis-help.conf.json.
+Stage the reference at target\reference\nsis using the command in
+docs/development.md or the nsis-reference CI artifact. Run the build from
+the repository root once the web client is built (pnpm build in client),
+with the Tauri CLI and cargo-about installed and Python 3.11 or later
+available as python on PATH. Out is the installer to write. The bundler
+downloads NSIS itself and checks it against the hash it carries.
 
   scripts\build-application-nsis.ps1 target\nsis\torrplay-setup.exe
 #>
@@ -35,6 +38,7 @@ function Invoke-Checked([string] $Command, [string[]] $Arguments) {
 if (-not (Test-Path -Path 'client/dist/index.html')) {
     throw 'the web client is not built: run pnpm build in client'
 }
+Invoke-Checked python @('scripts/check-reference.py', '--nsis-help', 'target/reference/nsis/help/index.html')
 
 # The bundler takes an extra executable named for the target, from beside the
 # configuration, and installs it without that suffix.
@@ -54,7 +58,7 @@ Push-Location desktop
 try {
     $env:TAURI_TORRPLAY_SETTINGS_CHECK_EXE = (Resolve-Path '../target/release/torrplay.exe').Path
     Invoke-Checked cargo @('tauri', 'build', '--bundles', 'nsis', '--config', 'tauri.bundle.conf.json',
-        '--config', 'tauri.notices.conf.json', '--', '--locked')
+        '--config', 'tauri.notices.conf.json', '--config', 'tauri.nsis-help.conf.json', '--', '--locked')
 } finally {
     [Environment]::SetEnvironmentVariable($settingsCheckVariable, $savedSettingsCheck)
     Pop-Location

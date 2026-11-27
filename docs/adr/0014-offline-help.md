@@ -48,15 +48,15 @@ with a table of contents, section anchors, and browser find.
 | Package | Reference | Entry point |
 | --- | --- | --- |
 | macOS application | **TorrPlay Help**, with macOS startup settings and CLI examples | **Help → TorrPlay Help** opens the app bundle resource |
-| Windows NSIS application | **TorrPlay Help**, with Windows desktop startup settings and CLI examples | **TorrPlay Help** in the user's Start menu |
+| Windows NSIS application | **TorrPlay Help**, with Windows desktop startup settings and CLI examples | **F1** in the application and **TorrPlay Help** in the user's Start menu |
 | Windows service MSI | **TorrPlay Service Help**, with service administration, startup settings, and optional client usage | An all-users **TorrPlay Service Help** shortcut in Start, including service-only installs |
 | Linux service client Debian and planned RPM packages | **TorrPlay Client Help**, with client commands, connection settings, and troubleshooting | **Help** in the client title bar and **TorrPlay Client Help** in the applications menu |
 
 On Windows, the console executable `torrplay.exe --help` in both installers
 prints the absolute reference path when the file exists. Resolve it relative
 to that executable so custom install directories work and loose binaries
-still print ordinary usage. Use the repository's localization rules for new
-app menu text.
+still print ordinary usage. Use the repository's localization rules for
+menu text and error messages.
 
 If the macOS app exits before its Help menu is usable, open the bundled
 reference directly in Finder. Choose **Show Package Contents** on
@@ -118,7 +118,8 @@ report it. The menu and recovery route use the same bundled file.
    the macOS app resources before signing. Resolve it relative to the
    running app bundle when the Help menu item is used. On Windows, install
    it under the selected program directory. Use a per-user NSIS Start
-   shortcut. Add WiX file and all-users Start shortcut components under
+   shortcut and open the same file with **F1** in the application window.
+   Add WiX file and all-users Start shortcut components under
    the required Service feature, using machine-scoped key paths. Let
    Windows Installer manage both. Install the Linux client
    reference at `/usr/share/doc/torrplay-client/help/index.html` through
