@@ -46,19 +46,21 @@ import {
 const DOWNLOAD_MS = 10 * 60 * 1000;
 /** How long a magnet link's metadata takes to arrive. */
 const METADATA_MS = 3000;
-/** How long a preload stays queued, and how long it then takes. */
-const PRELOAD_QUEUED_MS = 500;
-const PRELOAD_MS = 3000;
+/** Timing of a simulated download and the protection of its ready preload. */
+const PRELOAD_MS = 3500;
+const PRELOAD_PROTECTION_MS = 15_000;
+const PRELOAD_LIFETIME_MS = 120_000;
+const PRELOAD_ENDED_RETENTION_MS = 300_000;
 const PRELOAD_BYTES = 32 * 1024 * 1024;
-const PIECE_BYTES = 16 * 1024 * 1024;
-const DOWNLOAD_RATE = 4.2 * 1024 * 1024;
+const PRELOAD_TAIL_BYTES = 4 * 1024 * 1024;
+const PIECE_BYTES = 4 * 1024 * 1024;
+const DOWNLOAD_RATE = Math.round(4.2 * 1024 * 1024);
+const UPLOAD_RATE = Math.round(DOWNLOAD_RATE / 8);
+const READER_PIECE_MS = Math.ceil((PIECE_BYTES * 1000) / DOWNLOAD_RATE);
 const PEERS = 23;
 /** How long the demo's application pretends to have been running. */
 const RUNNING_MS = 2 * 24 * 60 * 60 * 1000 + 4 * 60 * 60 * 1000;
 const RESIDENT_MEMORY_BYTES = 412 * 1024 * 1024;
-const CACHE_USE_BYTES = 198 * 1024 * 1024;
-const CACHE_PINNED_BYTES = 64 * 1024 * 1024;
-const EVICTIONS = 1204;
 const LOG_PAGE_SIZE = 50;
 /** The share of a file played that marks it viewed, as the server's default. */
 const VIEWED_RATIO = 0.9;
@@ -97,12 +99,17 @@ interface Held {
   /** What the API reports as read-only is the backend's own to change. */
   torrent: { -readonly [Member in keyof Torrent]: Torrent[Member] };
   files: TorrentFile[];
-  /** The download as of `since`; it runs on from there while not paused. */
-  ratio: number;
-  since: number;
-  reading: boolean;
-  /** Active demo players and the most recent activity of a temporary torrent. */
-  players: number;
+  /** Time spent downloading in the background, plus the fixture's starting progress. */
+  backgroundDownloadMs: number;
+  downloadSince: number;
+  nextDownloadPiece: number;
+  downloadedBytes: number;
+  uploadedBytes: number;
+  reader?: DemoReader;
+  verifiedPieces: Map<number, number>;
+  /** Local browser sessions, separate from the clock-driven fixture reader. */
+  players: Set<DemoReader>;
+  /** The most recent activity of a temporary torrent. */
   idleSince: number;
   /** When a magnet link's metadata arrives, if it has yet to. */
   metadataAt: number | undefined;
@@ -117,6 +124,34 @@ interface Held {
   version: number;
 }
 
+interface DemoReader {
+  fileId: string;
+  fileStart: number;
+  lastPiece: number;
+  piece: number;
+  target: number;
+  /** Only the fixture reader advances without a browser event. */
+  advanceAt?: number;
+  fetch?: { deadline: number; readyAt?: number };
+}
+
+interface HeldPreload {
+  item: Held;
+  fileId: string;
+  at: number;
+  offset: number | null;
+  ranges: Preload["ranges"];
+  target: number;
+  pieces: { index: number; length: number }[];
+  pinBytes: number;
+  admittedAt?: number;
+  readyAt?: number;
+  firstReadyAt?: number;
+  endedAt?: number;
+  completedAtEnd?: number;
+  failure?: string;
+}
+
 function refused(status: number, name: string, detail: string, members: object = {}): ApiError {
   const problem: Problem = {
     type: `tag:skunkie.github.io,2026:torrplay/problems/${name}`,
@@ -126,6 +161,13 @@ function refused(status: number, name: string, detail: string, members: object =
     ...members,
   };
   return new ApiError(status, problem);
+}
+
+function invalidPreloadOffset(detail: string): ApiError {
+  return refused(422, "validation-failed", "The body is invalid.", {
+    title: "Validation failed",
+    errors: [{ pointer: "/offset_bytes", detail }],
+  });
 }
 
 function notFound(): ApiError {
@@ -163,6 +205,31 @@ function bitfield(count: number, isSet: (index: number) => boolean): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+/** Mirrors the engine's preload coverage using the demo's piece length. */
+function preloadPieces(
+  fileStart: number,
+  size: number,
+  offset: number | undefined,
+  budget: number,
+) {
+  const first = Math.floor(fileStart / PIECE_BYTES);
+  const last = Math.floor((fileStart + size - 1) / PIECE_BYTES);
+  const limit = Math.max(1, Math.floor(budget / PIECE_BYTES));
+  const sequence = (start: number, count: number) =>
+    Array.from({ length: count }, (_, index) => start + index);
+  const span = last - first + 1;
+  if (span <= limit) return sequence(first, span);
+  if (offset !== undefined && limit >= 3) {
+    const window = limit - 2;
+    const lead = Math.floor((window * PIECE_BYTES) / 8);
+    const firstAfterLead = Math.floor((fileStart + Math.max(0, offset - lead)) / PIECE_BYTES);
+    const start = Math.min(firstAfterLead, last + 1 - window);
+    return [...new Set([first, ...sequence(start, window), last])];
+  }
+  const tail = Math.min(Math.ceil(PRELOAD_TAIL_BYTES / PIECE_BYTES), limit - 1);
+  return [...sequence(first, limit - tail), ...sequence(last + 1 - tail, tail)];
+}
+
 /** The demo's backend: invented titles in memory, whose downloads and preloads
  * run on the clock. What it does to them lasts until the page reloads. */
 export function demoBackend(now: () => number = Date.now): Backend {
@@ -170,6 +237,7 @@ export function demoBackend(now: () => number = Date.now): Backend {
   const held = new Map<string, Held>(
     fixtures().map((fixture) => [fixture.torrent.id, adopt(fixture, started)]),
   );
+  let uploadedBytes = [...held.values()].reduce((total, item) => total + item.uploadedBytes, 0);
   const people = profileFixtures();
   /** Progress by profile, then file. */
   const progress = new Map<string, Map<string, { torrentId: string; progress: Progress }>>([
@@ -178,7 +246,9 @@ export function demoBackend(now: () => number = Date.now): Backend {
   /** Temporary progress uses the source identity and file index across torrent IDs. */
   const temporaryProgress = new Map<string, Map<string, Progress>>();
   const dismissed = new Set<string>();
-  const preloads = new Map<string, { torrentId: string; at: number; offset: number | null }>();
+  const preloads = new Map<string, HeldPreload>();
+  let transfersAt = started;
+  let evictions = 0;
   const defaults = settingsFixture();
   const settings = { ...defaults };
   let settingsVersion = 1;
@@ -190,23 +260,73 @@ export function demoBackend(now: () => number = Date.now): Backend {
   const logged = logFixtures(started);
   /** Version of the demo's Up next response. */
   let upNextVersion = 1;
+  reconcileTransfers(started);
 
   function adopt(fixture: Fixture, at: number): Held {
-    return {
-      torrent: structuredClone(fixture.torrent),
-      files: structuredClone(fixture.files),
-      ratio: fixture.ratio,
-      since: at,
-      reading: fixture.reading ?? false,
-      players: 0,
+    const { torrent, files, ratio } = fixture;
+    const size = torrent.size_bytes ?? 0;
+    const count = Math.ceil(size / PIECE_BYTES);
+    const frontier = Math.floor(count * ratio);
+    const downloadedBytes = Math.min(size, frontier * PIECE_BYTES);
+    const item: Held = {
+      torrent: structuredClone(torrent),
+      files: structuredClone(files),
+      backgroundDownloadMs: ratio * DOWNLOAD_MS,
+      downloadSince: at,
+      nextDownloadPiece: frontier,
+      downloadedBytes,
+      uploadedBytes: torrent.storage_mode === "disk" ? Math.floor(downloadedBytes / 5) : 0,
+      verifiedPieces: new Map(),
+      players: new Set(),
       idleSince: at,
       metadataAt: undefined,
       pending: undefined,
-      configuredKind: fixture.torrent.kind,
-      paused: fixture.torrent.observed_state === "paused",
-      identity: fixture.torrent.info_hashes[0]?.value ?? "",
+      configuredKind: torrent.kind,
+      paused: torrent.observed_state === "paused",
+      identity: torrent.info_hashes[0]?.value ?? "",
       version: 1,
     };
+    if (torrent.storage_mode === "disk") {
+      // A failed disk torrent still has its verified pieces when restarted.
+      for (let piece = 0; piece < frontier; piece++) item.verifiedPieces.set(piece, at);
+    } else if (torrent.observed_state !== "failed") {
+      // Start with representative warm ranges, within the shared cache.
+      // Insert the head last so eviction leaves the first read available longest.
+      const firstFile = files[0];
+      if (firstFile) {
+        for (const piece of preloadPieces(
+          0,
+          firstFile.size_bytes,
+          undefined,
+          PRELOAD_BYTES,
+        ).reverse()) {
+          if (piece < frontier) item.verifiedPieces.set(piece, at);
+        }
+      }
+    }
+    const readerFile =
+      fixture.reading && torrent.observed_state !== "failed" ? files[3] : undefined;
+    if (readerFile) {
+      const start = fileOffset(item, 3);
+      const first = Math.floor(start / PIECE_BYTES);
+      const last = Math.floor((start + readerFile.size_bytes - 1) / PIECE_BYTES);
+      const piece = Math.max(first, Math.min(last, frontier + 8));
+      item.reader = {
+        fileId: readerFile.id,
+        fileStart: start,
+        lastPiece: last,
+        piece,
+        target: piece,
+        advanceAt: at + READER_PIECE_MS,
+      };
+      for (const piece of preloadPieces(start, readerFile.size_bytes, undefined, PRELOAD_BYTES)) {
+        if (piece < frontier) item.verifiedPieces.set(piece, at);
+      }
+      for (let near = Math.max(first, piece - 2); near <= Math.min(last, piece + 2); near++) {
+        item.verifiedPieces.set(near, at);
+      }
+    }
+    return item;
   }
 
   /** Logs a message of the application's own, if the log level lets it. */
@@ -232,10 +352,13 @@ export function demoBackend(now: () => number = Date.now): Backend {
   function removeTorrent(id: string): void {
     const poster = held.get(id)?.torrent.links.poster;
     if (poster?.startsWith("blob:")) URL.revokeObjectURL(poster);
+    const at = now();
+    advanceTransfers(at);
     held.delete(id);
     for (const [preloadId, preload] of preloads) {
-      if (preload.torrentId === id) preloads.delete(preloadId);
+      if (preload.item.torrent.id === id) preloads.delete(preloadId);
     }
+    reconcileTransfers(at);
     for (const own of progress.values()) {
       for (const [fileId, entry] of own) {
         if (entry.torrentId === id) own.delete(fileId);
@@ -250,7 +373,7 @@ export function demoBackend(now: () => number = Date.now): Backend {
     if (needed <= 0) return;
 
     const idle = temporary
-      .filter((item) => !item.reading && item.players === 0)
+      .filter((item) => readersOf(item).length === 0)
       .sort((a, b) => a.idleSince - b.idleSince || a.torrent.id.localeCompare(b.torrent.id));
     // Like the server, evict idle torrents even if active ones still fill the limit.
     for (const item of idle.slice(0, needed)) removeTorrent(item.torrent.id);
@@ -267,8 +390,7 @@ export function demoBackend(now: () => number = Date.now): Backend {
   function expire(item: Held, at: number): boolean {
     if (
       item.torrent.retention !== "temporary" ||
-      item.reading ||
-      item.players > 0 ||
+      readersOf(item).length > 0 ||
       at - item.idleSince < settings.temporary_idle_seconds * 1000
     )
       return false;
@@ -280,27 +402,26 @@ export function demoBackend(now: () => number = Date.now): Backend {
     return true;
   }
 
-  /** The torrent with `id`, its metadata applied if that has arrived. */
   function read(id: string): Held {
-    const item = held.get(id);
     const at = now();
+    advanceTransfers(at);
+    const item = held.get(id);
     if (!item || expire(item, at)) throw notFound();
-    return withMetadata(item, at);
+    return item;
   }
 
-  function withMetadata(item: Held, at: number): Held {
-    if (item.metadataAt !== undefined && at >= item.metadataAt) {
-      Object.assign(item.torrent, item.pending?.torrent, {
-        kind: item.configuredKind ?? item.pending?.torrent.kind ?? null,
-        observed_state: item.paused ? "paused" : "downloading",
-      } satisfies Partial<Torrent>);
-      item.files = item.pending?.files ?? [];
-      item.metadataAt = undefined;
-      item.pending = undefined;
-      item.since = at;
-      changed(item);
-    }
-    return item;
+  function receiveMetadata(item: Held, at: number): void {
+    const { metadataAt, pending } = item;
+    if (metadataAt === undefined || metadataAt > at) return;
+    Object.assign(item.torrent, pending?.torrent, {
+      kind: item.configuredKind ?? pending?.torrent.kind ?? null,
+      observed_state: item.paused ? "paused" : "downloading",
+    } satisfies Partial<Torrent>);
+    item.files = pending?.files ?? [];
+    item.metadataAt = undefined;
+    item.pending = undefined;
+    item.downloadSince = metadataAt;
+    changed(item);
   }
 
   function changed(item: Held): void {
@@ -308,18 +429,11 @@ export function demoBackend(now: () => number = Date.now): Backend {
     upNextVersion += 1;
   }
 
-  function ratioOf(item: Held): number {
-    if (item.metadataAt !== undefined) return 0;
-    if (item.torrent.observed_state !== "downloading") return item.ratio;
-    return Math.min(1, item.ratio + (now() - item.since) / DOWNLOAD_MS);
-  }
-
   function all(): Held[] {
     const at = now();
+    advanceTransfers(at);
     pruneTemporaryProgress(at);
-    return [...held.values()]
-      .filter((item) => !expire(item, at))
-      .map((item) => withMetadata(item, at));
+    return [...held.values()].filter((item) => !expire(item, at));
   }
 
   function configurationOf(item: Held): TorrentConfiguration {
@@ -339,65 +453,545 @@ export function demoBackend(now: () => number = Date.now): Backend {
     };
   }
 
+  function preloadShare(): number {
+    return Math.floor(settings.cache_capacity_bytes / 4);
+  }
+
+  function pieceLength(item: Held, index: number): number {
+    return Math.min(PIECE_BYTES, (item.torrent.size_bytes ?? 0) - index * PIECE_BYTES);
+  }
+
+  function pins(preload: HeldPreload): boolean {
+    return (
+      preload.item.torrent.storage_mode === "memory" &&
+      preload.admittedAt !== undefined &&
+      preload.endedAt === undefined
+    );
+  }
+
+  function readersOf(item: Held): DemoReader[] {
+    if (item.torrent.observed_state !== "downloading") return [];
+    return item.reader ? [item.reader, ...item.players] : [...item.players];
+  }
+
+  function pinPiece(pinned: Map<Held, Set<number>>, item: Held, piece: number): void {
+    const pieces = pinned.get(item) ?? new Set<number>();
+    pieces.add(piece);
+    pinned.set(item, pieces);
+  }
+
+  function readerPins(): Map<Held, Set<number>> {
+    const pinned = new Map<Held, Set<number>>();
+    for (const item of held.values()) {
+      if (item.torrent.storage_mode !== "memory") continue;
+      for (const { piece, fetch } of readersOf(item)) {
+        if (item.verifiedPieces.has(piece) || fetch?.readyAt !== undefined) {
+          pinPiece(pinned, item, piece);
+        }
+      }
+    }
+    return pinned;
+  }
+
+  function pinBytes(pinned: Map<Held, Set<number>>): number {
+    let bytes = 0;
+    for (const [item, pieces] of pinned) {
+      for (const piece of pieces) bytes += pieceLength(item, piece);
+    }
+    return bytes;
+  }
+
+  function cachePins(preloadsToPin: HeldPreload[]): Map<Held, Set<number>> {
+    const pinned = readerPins();
+    for (const preload of preloadsToPin) {
+      for (const { index } of preload.pieces) pinPiece(pinned, preload.item, index);
+    }
+    return pinned;
+  }
+
+  function cacheUsage(pinned: Map<Held, Set<number>>) {
+    let usage = pinBytes(pinned);
+    let pinnedBytes = 0;
+    for (const item of held.values()) {
+      if (item.torrent.storage_mode !== "memory") continue;
+      for (const piece of item.verifiedPieces.keys()) {
+        if (pinned.get(item)?.has(piece)) pinnedBytes += pieceLength(item, piece);
+        else usage += pieceLength(item, piece);
+      }
+    }
+    return { usage, pinnedBytes };
+  }
+
+  function makeRoomForReaders(at: number): void {
+    const admitted = [...preloads.values()].filter(pins);
+    while (pinBytes(cachePins(admitted)) > settings.cache_capacity_bytes) {
+      const preload = admitted.pop();
+      if (!preload) break;
+      endPreload(preload, at, "The piece cache needed the preload's pins for active readers.");
+    }
+  }
+
+  function trimCache(): void {
+    const capacity = settings.cache_capacity_bytes;
+    const pinned = cachePins([...preloads.values()].filter(pins));
+    // A shrink can leave current reader pieces above capacity until a
+    // reader moves or leaves. These pieces stay pinned during eviction.
+    let excess = cacheUsage(pinned).usage - capacity;
+    if (excess <= 0) return;
+    const unpinned = [...held.values()]
+      .filter((item) => item.torrent.storage_mode === "memory")
+      .flatMap((item) =>
+        [...item.verifiedPieces].flatMap(([piece, touchedAt]) =>
+          pinned.get(item)?.has(piece) ? [] : [{ item, piece, touchedAt }],
+        ),
+      )
+      .sort(
+        (a, b) =>
+          Number(a.item.torrent.observed_state === "downloading") -
+            Number(b.item.torrent.observed_state === "downloading") || a.touchedAt - b.touchedAt,
+      );
+    for (const { item, piece } of unpinned) {
+      if (excess <= 0) break;
+      item.verifiedPieces.delete(piece);
+      excess -= pieceLength(item, piece);
+      evictions++;
+    }
+  }
+
+  /** Readers reserve first, then preloads can use the remaining room. */
+  function reconcileTransfers(at: number): void {
+    for (const item of held.values()) {
+      for (const reader of readersOf(item)) settleReader(item, reader, at);
+    }
+    for (const item of held.values()) {
+      for (const reader of readersOf(item)) reserveReaderPiece(item, reader, at);
+    }
+    makeRoomForReaders(at);
+    for (const preload of preloads.values()) {
+      if (preload.endedAt === undefined && preload.admittedAt !== undefined) {
+        updatePreloadReadiness(preload, at);
+      }
+    }
+    admitPreloads(at);
+    trimCache();
+  }
+
+  function verifiedPreloadBytes(preload: HeldPreload): number {
+    return preload.pieces.reduce(
+      (bytes, { index, length }) => bytes + (preload.item.verifiedPieces.has(index) ? length : 0),
+      0,
+    );
+  }
+
+  function completedPreloadBytes(preload: HeldPreload, at: number): number {
+    const verified = verifiedPreloadBytes(preload);
+    if (preload.admittedAt === undefined) return verified;
+    const ratio = Math.min(1, Math.max(0, at - preload.admittedAt) / PRELOAD_MS);
+    return verified + Math.floor(ratio * (preload.target - verified));
+  }
+
+  function endPreload(preload: HeldPreload, at: number, failure?: string): void {
+    preload.completedAtEnd = completedPreloadBytes(preload, at);
+    preload.endedAt = at;
+    if (failure !== undefined) preload.failure = failure;
+  }
+
+  function updatePreloadReadiness(preload: HeldPreload, at: number): void {
+    if (preload.readyAt === undefined && verifiedPreloadBytes(preload) === preload.target) {
+      preload.readyAt = at;
+      preload.firstReadyAt ??= at;
+    }
+  }
+
+  function startPreload(preload: HeldPreload, at: number): void {
+    const { item } = preload;
+    for (const { index } of preload.pieces) {
+      if (item.verifiedPieces.has(index)) item.verifiedPieces.set(index, at);
+    }
+    preload.admittedAt = at;
+    updatePreloadReadiness(preload, at);
+  }
+
+  function admitPreloads(at: number): void {
+    const entries = [...preloads.values()];
+    const queued = entries.filter(
+      (entry) => entry.admittedAt === undefined && entry.endedAt === undefined,
+    );
+    for (const entry of queued) {
+      if (entry.item.torrent.storage_mode === "disk") startPreload(entry, at);
+    }
+
+    const waiting = queued.filter((entry) => entry.admittedAt === undefined).reverse();
+    const admitted = entries.filter(pins);
+    const share = preloadShare();
+    const capacity = settings.cache_capacity_bytes;
+    const hasReader = (entry: HeldPreload) =>
+      readersOf(entry.item).some(({ fileId }) => entry.fileId === fileId);
+
+    for (const [index, preload] of waiting.entries()) {
+      const fits = (kept: HeldPreload[]) =>
+        (kept.length === 0 ||
+          preload.pinBytes + kept.reduce((bytes, entry) => bytes + entry.pinBytes, 0) <= share) &&
+        pinBytes(cachePins([...kept, preload])) <= capacity;
+      let kept = admitted;
+      if (!fits(kept)) {
+        if (index > 0) break;
+        const older = entries.slice(0, entries.indexOf(preload));
+        const reclaimable = admitted
+          .filter(
+            (entry) =>
+              older.includes(entry) &&
+              (hasReader(entry) ||
+                entry.firstReadyAt === undefined ||
+                at >= entry.firstReadyAt + PRELOAD_PROTECTION_MS),
+          )
+          .sort((a, b) => Number(hasReader(b)) - Number(hasReader(a)));
+        for (const entry of reclaimable) {
+          kept = kept.filter((candidate) => candidate !== entry);
+          if (fits(kept)) break;
+        }
+        if (!fits(kept)) break;
+        for (const entry of admitted) {
+          if (!kept.includes(entry)) {
+            endPreload(entry, at, "A newer preload needed the room this preload held.");
+          }
+        }
+        admitted.splice(0, admitted.length, ...kept);
+      }
+      startPreload(preload, at);
+      admitted.push(preload);
+    }
+  }
+
+  function verifyPiece(item: Held, piece: number, at: number): void {
+    if (!item.verifiedPieces.has(piece)) {
+      const bytes = pieceLength(item, piece);
+      item.downloadedBytes += bytes;
+      if (item.torrent.storage_mode === "disk") {
+        const uploaded = Math.floor(bytes / 5);
+        item.uploadedBytes += uploaded;
+        uploadedBytes += uploaded;
+      }
+    }
+    item.verifiedPieces.set(piece, at);
+  }
+
+  function backgroundDownloadsRunning(): boolean {
+    return (
+      settings.background_downloads_enabled &&
+      ![...held.values()].some((item) => readersOf(item).length > 0)
+    );
+  }
+
+  function nextMissingDiskPiece(item: Held, count: number): number {
+    let piece = item.nextDownloadPiece;
+    while (piece < count && item.verifiedPieces.has(piece)) piece++;
+    return piece;
+  }
+
+  function nextDiskPieceAt(item: Held): number {
+    if (item.backgroundDownloadMs >= DOWNLOAD_MS) return Infinity;
+    const count = Math.ceil((item.torrent.size_bytes ?? 0) / PIECE_BYTES);
+    const completed = Math.floor((item.backgroundDownloadMs * count) / DOWNLOAD_MS);
+    const remaining = ((completed + 1) * DOWNLOAD_MS) / count - item.backgroundDownloadMs;
+    return Math.max(transfersAt, item.downloadSince) + Math.max(1, Math.ceil(remaining));
+  }
+
+  function advanceDiskDownloads(at: number): void {
+    for (const item of held.values()) {
+      if (item.torrent.storage_mode !== "disk" || item.torrent.observed_state !== "downloading") {
+        continue;
+      }
+      const elapsed = at - Math.max(transfersAt, item.downloadSince);
+      if (elapsed <= 0) continue;
+      const count = Math.ceil((item.torrent.size_bytes ?? 0) / PIECE_BYTES);
+      const previous = Math.floor((item.backgroundDownloadMs * count) / DOWNLOAD_MS);
+      item.backgroundDownloadMs = Math.min(DOWNLOAD_MS, item.backgroundDownloadMs + elapsed);
+      let due = Math.floor((item.backgroundDownloadMs * count) / DOWNLOAD_MS) - previous;
+      item.nextDownloadPiece = nextMissingDiskPiece(item, count);
+      while (due > 0 && item.nextDownloadPiece < count) {
+        verifyPiece(item, item.nextDownloadPiece, at);
+        item.nextDownloadPiece = nextMissingDiskPiece(item, count);
+        due--;
+      }
+    }
+  }
+
+  function requestPiece(item: Held, reader: DemoReader, piece: number, at: number): void {
+    reader.piece = piece;
+    if (item.verifiedPieces.has(piece)) {
+      item.verifiedPieces.set(piece, at);
+      delete reader.fetch;
+    } else {
+      reader.fetch = { deadline: at + settings.piece_wait_seconds * 1000 };
+    }
+    if (item.reader === reader) reader.advanceAt = at + READER_PIECE_MS;
+  }
+
+  function releaseReader(item: Held, reader: DemoReader, at: number): void {
+    if (item.reader === reader) delete item.reader;
+    else item.players.delete(reader);
+    item.idleSince = at;
+  }
+
+  function settleReader(item: Held, reader: DemoReader, at: number): void {
+    const { fetch } = reader;
+    if (fetch) {
+      const ready = fetch.readyAt !== undefined && fetch.readyAt <= at;
+      if (ready) verifyPiece(item, reader.piece, at);
+      if (!item.verifiedPieces.has(reader.piece)) {
+        if (at < fetch.deadline) return;
+        // The bundled video keeps playing when a simulated piece wait expires.
+        if (item.reader === reader) {
+          releaseReader(item, reader, at);
+          return;
+        }
+      }
+      delete reader.fetch;
+      if (reader.target !== reader.piece) requestPiece(item, reader, reader.target, at);
+      else if (item.reader === reader) reader.advanceAt = at + READER_PIECE_MS;
+    } else if (reader.advanceAt !== undefined && reader.advanceAt <= at) {
+      if (reader.piece === reader.lastPiece) {
+        releaseReader(item, reader, at);
+        return;
+      }
+      reader.target = reader.piece + 1;
+      requestPiece(item, reader, reader.target, at);
+    }
+  }
+
+  function reserveReaderPiece(item: Held, reader: DemoReader, at: number): void {
+    const { fetch, piece } = reader;
+    if (!fetch || fetch.readyAt !== undefined) return;
+    // Overlapping requests reserve a piece once. Each reader keeps its
+    // own wait deadline even if it joins another reader's fetch.
+    const pending = readersOf(item).find(
+      (other) => other.piece === piece && other.fetch?.readyAt !== undefined,
+    )?.fetch?.readyAt;
+    const readyAt = pending ?? at + READER_PIECE_MS;
+    if (readyAt > fetch.deadline) return;
+    if (
+      pending !== undefined ||
+      item.torrent.storage_mode === "disk" ||
+      pinBytes(readerPins()) + pieceLength(item, piece) <= settings.cache_capacity_bytes
+    ) {
+      fetch.readyAt = readyAt;
+    }
+  }
+
+  /** Replay clock-driven transitions in order, including when nobody polled. */
+  function advanceTransfers(at: number): void {
+    while (transfersAt < at) {
+      let next = at;
+      const diskDownloading = backgroundDownloadsRunning();
+      for (const item of held.values()) {
+        if (item.metadataAt !== undefined) next = Math.min(next, item.metadataAt);
+        for (const reader of readersOf(item)) {
+          if (reader.fetch) {
+            next = Math.min(next, reader.fetch.readyAt ?? reader.fetch.deadline);
+          } else if (reader.advanceAt !== undefined) {
+            next = Math.min(next, reader.advanceAt);
+          }
+        }
+      }
+      for (const preload of preloads.values()) {
+        if (preload.endedAt !== undefined) continue;
+        const { admittedAt, readyAt, firstReadyAt } = preload;
+        // Background downloads can verify a disk preload before its own transfer ends.
+        if (
+          diskDownloading &&
+          preload.item.torrent.storage_mode === "disk" &&
+          admittedAt !== undefined &&
+          readyAt === undefined
+        ) {
+          next = Math.min(next, nextDiskPieceAt(preload.item));
+        }
+        const events = [
+          preload.at + PRELOAD_LIFETIME_MS,
+          readyAt === undefined && admittedAt !== undefined ? admittedAt + PRELOAD_MS : undefined,
+          firstReadyAt === undefined ? undefined : firstReadyAt + PRELOAD_PROTECTION_MS,
+        ];
+        for (const event of events) {
+          if (event !== undefined && event > transfersAt) next = Math.min(next, event);
+        }
+      }
+      if (diskDownloading) advanceDiskDownloads(next);
+      for (const item of held.values()) receiveMetadata(item, next);
+      for (const preload of preloads.values()) {
+        if (preload.endedAt !== undefined) continue;
+        if (next >= preload.at + PRELOAD_LIFETIME_MS) {
+          endPreload(preload, next);
+        } else if (
+          preload.readyAt === undefined &&
+          preload.admittedAt !== undefined &&
+          next >= preload.admittedAt + PRELOAD_MS
+        ) {
+          // When the pieces arrive together, retain the file's first reads longest.
+          for (const { index } of [...preload.pieces].reverse()) {
+            verifyPiece(preload.item, index, next);
+          }
+        }
+      }
+      reconcileTransfers(next);
+      transfersAt = next;
+    }
+    for (const [id, preload] of preloads) {
+      if (preload.endedAt !== undefined && at - preload.endedAt >= PRELOAD_ENDED_RETENTION_MS) {
+        preloads.delete(id);
+      }
+    }
+  }
+
+  function fileOffset(item: Held, file: number): number {
+    return item.files.slice(0, file).reduce((sum, entry) => sum + entry.size_bytes, 0);
+  }
+
+  function pieceAt(reader: DemoReader, offset: number): number {
+    const position = Number.isFinite(offset) ? Math.max(0, offset) : 0;
+    return Math.min(reader.lastPiece, Math.floor((reader.fileStart + position) / PIECE_BYTES));
+  }
+
+  /** Copies current reader pieces, then active preload ranges in admission order. */
+  function copyDiskPieces(item: Held, active: HeldPreload[], at: number): Map<number, number> {
+    const currentPieces = new Set(readersOf(item).map(({ piece }) => piece));
+    const priorities = new Set(currentPieces);
+    for (const preload of [...active].reverse()) {
+      if (preload.admittedAt === undefined) continue;
+      for (const { index } of preload.pieces) priorities.add(index);
+    }
+
+    const capacity = settings.cache_capacity_bytes;
+    const readerBudget = Math.max(0, capacity - pinBytes(readerPins()));
+    const preloadBudget = Math.min(readerBudget, Math.floor(capacity / 2));
+    let copiedBytes = 0;
+    const copied = new Map<number, number>();
+    for (const piece of priorities) {
+      const bytes = pieceLength(item, piece);
+      const budget = currentPieces.has(piece) ? readerBudget : preloadBudget;
+      if (!item.verifiedPieces.has(piece) || copiedBytes + bytes > budget) continue;
+      copied.set(piece, at);
+      copiedBytes += bytes;
+    }
+    return copied;
+  }
+
+  function changeStorageMode(item: Held, mode: Torrent["storage_mode"]): void {
+    if (mode === item.torrent.storage_mode) return;
+    const at = now();
+    advanceTransfers(at);
+    if (mode === "memory") {
+      const active = [...preloads.values()].filter(
+        (preload) => preload.item === item && preload.endedAt === undefined,
+      );
+      item.verifiedPieces = copyDiskPieces(item, active, at);
+      for (const preload of active) {
+        delete preload.admittedAt;
+        delete preload.readyAt;
+      }
+    }
+    item.torrent.storage_mode = mode;
+    item.nextDownloadPiece = 0;
+    item.backgroundDownloadMs = 0;
+    item.downloadSince = at;
+    for (const reader of readersOf(item)) {
+      if (reader.fetch) {
+        // Drop the old reservation while keeping the original wait deadline.
+        delete reader.fetch.readyAt;
+      } else {
+        requestPiece(item, reader, reader.piece, at);
+      }
+    }
+    reconcileTransfers(at);
+  }
+
+  function failPausedPreloads(item: Held, at: number): void {
+    for (const preload of preloads.values()) {
+      if (preload.item === item && preload.endedAt === undefined) {
+        endPreload(preload, at, "The torrent was paused.");
+      }
+    }
+    reconcileTransfers(at);
+  }
+
   function statisticsOf(item: Held): TorrentStatistics {
     const { torrent } = item;
-    const ratio = ratioOf(item);
-    const downloading = torrent.observed_state === "downloading" && ratio < 1;
+    advanceTransfers(now());
     const count = Math.ceil((torrent.size_bytes ?? 0) / PIECE_BYTES);
-    const frontier = Math.floor(ratio * count);
-    const reader = Math.min(frontier + 8, count - 1);
     const known = count > 0 && torrent.observed_state !== "failed";
+    const readers = readersOf(item);
+    const arrivingReader = readers.find(({ fetch }) => fetch?.readyAt !== undefined)?.piece;
+    const preload = [...preloads.values()].find(
+      (entry) =>
+        entry.item === item &&
+        entry.admittedAt !== undefined &&
+        entry.readyAt === undefined &&
+        entry.endedAt === undefined,
+    );
+    const background =
+      torrent.storage_mode === "disk" && backgroundDownloadsRunning()
+        ? nextMissingDiskPiece(item, count)
+        : count;
+    const arriving =
+      arrivingReader ??
+      preload?.pieces.find(({ index }) => !item.verifiedPieces.has(index))?.index ??
+      (background < count ? background : undefined);
+    const downloading = torrent.observed_state === "downloading" && arriving !== undefined;
     return {
-      downloaded_bytes: Math.floor(ratio * (torrent.size_bytes ?? 0)),
-      uploaded_bytes: Math.floor(ratio * (torrent.size_bytes ?? 0) * 0.2),
+      downloaded_bytes: item.downloadedBytes,
+      uploaded_bytes: torrent.storage_mode === "disk" ? item.uploadedBytes : 0,
       download_rate_bytes_per_second: downloading ? DOWNLOAD_RATE : 0,
-      upload_rate_bytes_per_second: downloading ? DOWNLOAD_RATE / 8 : 0,
+      upload_rate_bytes_per_second:
+        downloading && torrent.storage_mode === "disk" ? UPLOAD_RATE : 0,
       peer_count: downloading ? PEERS : 0,
-      completion_ratio: torrent.size_bytes === null ? null : ratio,
+      completion_ratio: count > 0 ? item.verifiedPieces.size / count : null,
       pieces: known
         ? {
             piece_count: count,
-            verified: bitfield(
+            verified: bitfield(count, (index) => item.verifiedPieces.has(index)),
+            partial: bitfield(
               count,
-              // What is read gets ahead of where the download has reached.
-              (index) => index < frontier || (item.reading && Math.abs(index - reader) <= 2),
+              (index) => downloading && index === arriving && !item.verifiedPieces.has(index),
             ),
-            partial: bitfield(count, (index) => downloading && index === frontier),
           }
         : null,
-      readers:
-        item.reading && known && item.files[3]
-          ? [
-              {
-                file_id: item.files[3].id,
-                offset_bytes: reader * PIECE_BYTES,
-                piece_index: reader,
-                state: "active",
-              },
-            ]
-          : [],
+      readers: readers.map(({ fileId, fileStart, piece }) => ({
+        file_id: fileId,
+        offset_bytes: Math.max(0, piece * PIECE_BYTES - fileStart),
+        piece_index: piece,
+        state: "active",
+      })),
       links: { self: torrent.links.statistics, torrent: torrent.links.self },
     };
   }
 
   function preloadOf(id: string): Preload {
+    const at = now();
+    advanceTransfers(at);
     const preload = preloads.get(id);
     if (!preload) throw notFound();
-    const elapsed = now() - preload.at;
-    const ratio = Math.min(1, Math.max(0, elapsed - PRELOAD_QUEUED_MS) / PRELOAD_MS);
+    const { admittedAt, readyAt, endedAt, failure } = preload;
+    const state =
+      endedAt !== undefined
+        ? failure === undefined
+          ? "expired"
+          : "failed"
+        : readyAt !== undefined
+          ? "ready"
+          : admittedAt === undefined
+            ? "queued"
+            : "downloading";
     const self = `/api/v1/preloads/${id}`;
-    const start = preload.offset ?? 0;
     return {
       id,
-      state: elapsed < PRELOAD_QUEUED_MS ? "queued" : ratio < 1 ? "downloading" : "ready",
+      state,
       offset_bytes: preload.offset,
-      ranges: [{ start_bytes: start, length_bytes: PRELOAD_BYTES }],
-      target_bytes: PRELOAD_BYTES,
-      completed_bytes: Math.floor(ratio * PRELOAD_BYTES),
+      ranges: structuredClone(preload.ranges),
+      target_bytes: preload.target,
+      completed_bytes: preload.completedAtEnd ?? completedPreloadBytes(preload, at),
       created_at: new Date(preload.at).toISOString(),
-      expires_at: new Date(preload.at + 120_000).toISOString(),
-      ended_at: null,
-      failure: null,
+      expires_at: new Date(preload.at + PRELOAD_LIFETIME_MS).toISOString(),
+      ended_at: endedAt === undefined ? null : new Date(endedAt).toISOString(),
+      failure: failure === undefined ? null : { detail: failure },
       links: { self, file: "", content: "", torrent: "" },
     };
   }
@@ -664,10 +1258,13 @@ export function demoBackend(now: () => number = Date.now): Backend {
       held.set(torrent.id, {
         torrent,
         files: file ? contents.files : [],
-        ratio: 0,
-        since: at,
-        reading: false,
-        players: 0,
+        backgroundDownloadMs: 0,
+        downloadSince: at,
+        nextDownloadPiece: 0,
+        downloadedBytes: 0,
+        uploadedBytes: 0,
+        verifiedPieces: new Map(),
+        players: new Set(),
         idleSince: at,
         metadataAt: file ? undefined : at + METADATA_MS,
         pending: file ? undefined : contents,
@@ -686,7 +1283,7 @@ export function demoBackend(now: () => number = Date.now): Backend {
       if (item.torrent.retention !== "temporary") return;
       promoteProgress(item);
       item.torrent.retention = "persisted";
-      item.torrent.storage_mode = storageMode;
+      changeStorageMode(item, storageMode);
       changed(item);
     },
 
@@ -734,12 +1331,16 @@ export function demoBackend(now: () => number = Date.now): Backend {
           paused: inState("paused"),
           failed: inState("failed"),
         },
-        active_reader_count: items.filter((item) => item.reading).length,
+        active_reader_count: sum((statistics) => statistics.readers.length),
         idle_reader_count: 0,
-        waiting_reader_count: 0,
+        waiting_reader_count: items.reduce(
+          (total, item) =>
+            total + readersOf(item).filter(({ fetch }) => fetch !== undefined).length,
+          0,
+        ),
         peer_count: sum((statistics) => statistics.peer_count),
         downloaded_bytes: sum((statistics) => statistics.downloaded_bytes),
-        uploaded_bytes: sum((statistics) => statistics.uploaded_bytes),
+        uploaded_bytes: uploadedBytes,
         streamed_bytes: Math.floor(sum((statistics) => statistics.downloaded_bytes) * 0.6),
         download_rate_bytes_per_second: sum(
           (statistics) => statistics.download_rate_bytes_per_second,
@@ -754,14 +1355,13 @@ export function demoBackend(now: () => number = Date.now): Backend {
     },
 
     async getCacheStatistics() {
-      const capacity = settings.cache_capacity_bytes;
-      const usage = Math.min(capacity, CACHE_USE_BYTES);
-      const reading = [...held.values()].some((item) => item.reading);
+      advanceTransfers(now());
+      const { usage, pinnedBytes } = cacheUsage(cachePins([...preloads.values()].filter(pins)));
       return {
-        capacity_bytes: capacity,
+        capacity_bytes: settings.cache_capacity_bytes,
         usage_bytes: usage,
-        pinned_bytes: reading ? Math.min(usage, CACHE_PINNED_BYTES) : 0,
-        eviction_count: EVICTIONS,
+        pinned_bytes: pinnedBytes,
+        eviction_count: evictions,
         links: { self: "/api/v1/cache/statistics" },
       };
     },
@@ -815,16 +1415,28 @@ export function demoBackend(now: () => number = Date.now): Backend {
       }
       const { torrent } = item;
       if (patch.desired_state) {
-        item.ratio = ratioOf(item);
-        item.since = now();
+        const at = now();
+        advanceTransfers(at);
+        item.downloadSince = at;
+        const wasStarted = torrent.observed_state === "downloading";
         torrent.failure = null;
         item.paused = patch.desired_state === "paused";
         // Without its metadata, it can only wait for that, paused or not.
         if (item.metadataAt === undefined) {
           torrent.observed_state = item.paused ? "paused" : "downloading";
         }
+        if (item.paused) {
+          if (item.players.size > 0) {
+            item.players.clear();
+            item.idleSince = at;
+          }
+          failPausedPreloads(item, at);
+        } else if (item.reader && !wasStarted) {
+          requestPiece(item, item.reader, item.reader.piece, at);
+          reconcileTransfers(at);
+        }
       }
-      if (patch.storage_mode) torrent.storage_mode = patch.storage_mode;
+      if (patch.storage_mode) changeStorageMode(item, patch.storage_mode);
       if (patch.retention) {
         if (torrent.retention === "temporary" && patch.retention === "persisted") {
           promoteProgress(item);
@@ -953,11 +1565,69 @@ export function demoBackend(now: () => number = Date.now): Backend {
     },
 
     async createPreload(torrentId, fileId, offset) {
+      if (offset !== undefined && (!Number.isSafeInteger(offset) || offset < 0)) {
+        throw invalidPreloadOffset("Must be a non-negative integer below the file's size.");
+      }
       const item = read(torrentId);
+      if (item.metadataAt !== undefined) {
+        throw refused(
+          409,
+          "lifecycle-conflict",
+          "The torrent's metadata is still being retrieved.",
+        );
+      }
+      const index = item.files.findIndex((file) => file.id === fileId);
+      const file = item.files[index];
+      if (!file) throw notFound();
+      if (item.paused || item.torrent.observed_state === "failed") {
+        throw refused(
+          409,
+          "lifecycle-conflict",
+          "The torrent is not started; start it to stream its files.",
+        );
+      }
+      if (offset !== undefined && offset >= file.size_bytes) {
+        throw invalidPreloadOffset("Must be below the file's size.");
+      }
+      if (file.size_bytes === 0) throw notFound();
+      const fileStart = fileOffset(item, index);
       const at = now();
+      advanceTransfers(at);
+      const budget =
+        item.torrent.storage_mode === "memory"
+          ? Math.min(PRELOAD_BYTES, preloadShare())
+          : PRELOAD_BYTES;
+      const ranges: Preload["ranges"] = [];
+      let target = 0;
+      let pinBytes = 0;
+      const pieces = preloadPieces(fileStart, file.size_bytes, offset, budget).map((piece) => {
+        const rangeStart = Math.max(fileStart, piece * PIECE_BYTES) - fileStart;
+        const rangeEnd =
+          Math.min(fileStart + file.size_bytes, (piece + 1) * PIECE_BYTES) - fileStart;
+        const length = rangeEnd - rangeStart;
+        const previous = ranges.at(-1);
+        if (previous && previous.start_bytes + previous.length_bytes === rangeStart) {
+          previous.length_bytes += length;
+        } else {
+          ranges.push({ start_bytes: rangeStart, length_bytes: length });
+        }
+        target += length;
+        pinBytes += pieceLength(item, piece);
+        return { index: piece, length };
+      });
       item.idleSince = at;
       const id = `prl_${String(nextId()).padStart(26, "a")}`;
-      preloads.set(id, { torrentId, at, offset: offset ?? null });
+      preloads.set(id, {
+        item,
+        fileId,
+        at,
+        offset: offset ?? null,
+        ranges,
+        target,
+        pieces,
+        pinBytes,
+      });
+      reconcileTransfers(at);
       return preloadOf(id);
     },
 
@@ -966,18 +1636,60 @@ export function demoBackend(now: () => number = Date.now): Backend {
       return preloadOf(preloadId);
     },
 
-    beginPlayback(torrentId) {
+    beginPlayback(torrentId, fileId, offset) {
       const item = read(torrentId);
-      if (item.torrent.retention !== "temporary") return;
-      item.players += 1;
-      return () => {
-        item.players -= 1;
-        item.idleSince = now();
+      const index = item.files.findIndex((file) => file.id === fileId);
+      const size = item.files[index]?.size_bytes;
+      if (!size) throw notFound();
+      if (item.torrent.observed_state !== "downloading") return;
+
+      const at = now();
+      advanceTransfers(at);
+      const fileStart = fileOffset(item, index);
+      const reader: DemoReader = {
+        fileId,
+        fileStart,
+        lastPiece: Math.floor((fileStart + size - 1) / PIECE_BYTES),
+        piece: 0,
+        target: 0,
+      };
+      reader.target = pieceAt(reader, offset ?? 0);
+      item.players.add(reader);
+      requestPiece(item, reader, reader.target, at);
+      reconcileTransfers(at);
+
+      return {
+        move(nextOffset, kind) {
+          if (held.get(torrentId) !== item || !item.players.has(reader)) return;
+          const next = pieceAt(reader, nextOffset);
+          const seeking = kind === "seek";
+          if (!seeking && next === reader.target) return;
+          const movedAt = now();
+          advanceTransfers(movedAt);
+          if (held.get(torrentId) !== item || !item.players.has(reader)) return;
+          reader.target = next;
+          const retry = seeking && !reader.fetch && !item.verifiedPieces.has(next);
+          if (retry || (next !== reader.piece && (seeking || !reader.fetch))) {
+            requestPiece(item, reader, next, movedAt);
+            reconcileTransfers(movedAt);
+          }
+        },
+        release() {
+          if (held.get(torrentId) !== item || !item.players.has(reader)) return;
+          const endedAt = now();
+          advanceTransfers(endedAt);
+          if (held.get(torrentId) !== item || !item.players.has(reader)) return;
+          releaseReader(item, reader, endedAt);
+          reconcileTransfers(endedAt);
+        },
       };
     },
 
     async deletePreload(_torrentId, _fileId, preloadId) {
+      const at = now();
+      advanceTransfers(at);
       preloads.delete(preloadId);
+      reconcileTransfers(at);
     },
 
     listProfiles: async () => structuredClone(people),
@@ -1054,9 +1766,15 @@ export function demoBackend(now: () => number = Date.now): Backend {
           "The settings have changed since they were read.",
         );
       }
+      const at = now();
+      advanceTransfers(at);
+      const before = settings.cache_capacity_bytes;
       for (const key of Object.keys(patch) as (keyof SettingsPatch)[]) {
         const value = patch[key];
         if (value !== undefined) Object.assign(settings, { [key]: value ?? defaults[key] });
+      }
+      if (settings.cache_capacity_bytes !== before) {
+        reconcileTransfers(at);
       }
       settingsVersion += 1;
       log("info", "torrplay_server::app", "the settings changed", {

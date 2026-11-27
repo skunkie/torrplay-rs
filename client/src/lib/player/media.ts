@@ -23,26 +23,38 @@ export function isPaused(media: HTMLMediaElement): boolean {
 /** Holds playback activity until the element pauses, ends, or is detached. */
 export function trackPlayback(
   media: HTMLMediaElement,
-  begin: () => (() => void) | undefined,
+  begin: (
+    sample: Sample,
+  ) =>
+    | { release: () => void; update: (sample: Sample, kind: "progress" | "seek") => void }
+    | undefined,
 ): () => void {
-  let release: (() => void) | undefined;
+  let session: ReturnType<typeof begin>;
   const start = () => {
-    release ??= begin();
+    session ??= begin(sampleOf(media));
   };
   const stop = () => {
-    release?.();
-    release = undefined;
+    session?.release();
+    session = undefined;
   };
+  const update = () => session?.update(sampleOf(media), "progress");
+  const seek = () => session?.update(sampleOf(media), "seek");
   media.addEventListener("play", start);
   media.addEventListener("pause", stop);
   media.addEventListener("ended", stop);
   media.addEventListener("emptied", stop);
+  media.addEventListener("timeupdate", update);
+  media.addEventListener("seeking", seek);
+  media.addEventListener("seeked", seek);
   if (!media.paused && !media.ended) start();
   return () => {
     media.removeEventListener("play", start);
     media.removeEventListener("pause", stop);
     media.removeEventListener("ended", stop);
     media.removeEventListener("emptied", stop);
+    media.removeEventListener("timeupdate", update);
+    media.removeEventListener("seeking", seek);
+    media.removeEventListener("seeked", seek);
     stop();
   };
 }

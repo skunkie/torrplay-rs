@@ -1459,10 +1459,12 @@ paths:
       description: >-
         Creates a preload of the file, which fetches its head and tail, or
         with offset_bytes its first and last pieces and a window around that
-        offset, before playback starts, and returns at once while it
-        downloads. docs/lifecycle.md describes what a preload covers, how
-        it queues, pins, and ranks against readers, and when it expires or
-        fails. The torrent must be started.
+        offset, before playback starts. An admitted preload can be returned
+        as ready immediately if all its pieces are already verified and, in
+        memory storage, the preload holds pins on them. docs/lifecycle.md
+        describes what a preload covers, how it queues, pins, and ranks
+        against readers, and when it expires or fails. The torrent must be
+        started.
       tags: [Preloads]
       requestBody:
         description: >-
@@ -1508,6 +1510,28 @@ paths:
                         length_bytes: 4194304
                     target_bytes: 33554432
                     completed_bytes: 0
+                    created_at: '2026-10-19T12:00:00Z'
+                    expires_at: '2026-10-19T12:02:00Z'
+                    ended_at: null
+                    failure: null
+                    links:
+                      self: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/preloads/prl_4qhvgmtq62qwv4xfuperelxpqa
+                      file: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4
+                      content: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula/files/fil_xfuperelxpqq4qhvgmtq62qwv4/content
+                      torrent: /api/v1/torrents/trr_7ndq4m2kzb6hxw3rjpt5yc4ula
+                ready:
+                  summary: A preload whose pieces are already verified
+                  value:
+                    id: prl_4qhvgmtq62qwv4xfuperelxpqa
+                    state: ready
+                    offset_bytes: null
+                    ranges:
+                      - start_bytes: 0
+                        length_bytes: 29360128
+                      - start_bytes: 1069546496
+                        length_bytes: 4194304
+                    target_bytes: 33554432
+                    completed_bytes: 33554432
                     created_at: '2026-10-19T12:00:00Z'
                     expires_at: '2026-10-19T12:02:00Z'
                     ended_at: null

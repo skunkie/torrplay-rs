@@ -5,8 +5,7 @@
 import type { Backend, Preload } from "../backend";
 import { poll } from "../poll";
 
-/** How often a preload's progress is read, which also bounds how long a
- * file already held waits before it plays. */
+/** How often the player checks a preload that has yet to finish. */
 const POLL_MS = 500;
 
 /** Where playback that resumes at `seconds` of `duration` seconds reads in a

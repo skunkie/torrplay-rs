@@ -398,7 +398,7 @@ export interface paths {
         put?: never;
         /**
          * Preload part of a file
-         * @description Creates a preload of the file, which fetches its head and tail, or with offset_bytes its first and last pieces and a window around that offset, before playback starts, and returns at once while it downloads. docs/lifecycle.md describes what a preload covers, how it queues, pins, and ranks against readers, and when it expires or fails. The torrent must be started.
+         * @description Creates a preload of the file, which fetches its head and tail, or with offset_bytes its first and last pieces and a window around that offset, before playback starts. An admitted preload can be returned as ready immediately if all its pieces are already verified and, in memory storage, the preload holds pins on them. docs/lifecycle.md describes what a preload covers, how it queues, pins, and ranks against readers, and when it expires or fails. The torrent must be started.
          */
         post: operations["createFilePreload"];
         delete?: never;

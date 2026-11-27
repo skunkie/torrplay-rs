@@ -114,6 +114,40 @@ async fn a_preload_pins_its_head_and_tail_until_canceled() -> anyhow::Result<()>
     Ok(())
 }
 
+/// PRL-11: reopening a cached file returns a ready preload immediately.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn reopening_a_cached_file_creates_a_ready_preload() -> anyhow::Result<()> {
+    let spec = catalog::single_small();
+    let seeder = Seeder::start(&spec, &spec.metainfo().bytes).await?;
+    let started = start(vec![seeder.addr], 16 * MIB, Duration::from_secs(2)).await?;
+    let engine = &started.engine;
+    let torrent = id(1);
+    let file = FileIndex(0);
+    engine
+        .add(&torrent, &upload(&spec), DesiredState::Started)
+        .await?;
+
+    let size = spec.files()[0].size_bytes;
+    let mut reader = engine.open_reader(&torrent, file, range(0, size)).await?;
+    let mut bytes = Vec::new();
+    bounded("reading the file before reopening it", async {
+        Ok(reader.read_to_end(&mut bytes).await?)
+    })
+    .await?;
+    drop(reader);
+    seeder.stop().await;
+
+    let reopened = engine
+        .create_preload(&torrent, file, preload_id(1), request(Some(size / 2)))
+        .await?;
+    engine.shutdown().await?;
+    assert!(bytes == expected(&spec, 0, 0, size));
+    assert_eq!(reopened.target_bytes, size);
+    assert_eq!(reopened.completed_bytes, size);
+    assert_eq!(reopened.state, PreloadState::Ready);
+    Ok(())
+}
+
 /// PRL-02: a preload at an offset covers the first and last pieces and a
 /// window there, which a stream then reads without a peer.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -318,7 +352,10 @@ async fn a_newer_preload_reclaims_one_still_downloading() -> anyhow::Result<()> 
     let created = engine
         .create_preload(&id(2), FileIndex(0), preload_id(2), request(None))
         .await?;
-    assert_eq!(created.state, PreloadState::Downloading);
+    assert!(matches!(
+        created.state,
+        PreloadState::Downloading | PreloadState::Ready
+    ));
     assert_eq!(status(engine, &id(1), 1).await?.state, PreloadState::Failed);
     let result = reaches(engine, &id(2), 2, PreloadState::Ready).await;
 
@@ -492,7 +529,13 @@ async fn a_disk_preload_pins_nothing_and_survives_a_transition() -> anyhow::Resu
         let created = engine
             .create_preload(&id(1), FileIndex(0), preload_id(n), request(None))
             .await?;
-        assert_eq!(created.state, PreloadState::Downloading, "it never queues");
+        assert!(
+            matches!(
+                created.state,
+                PreloadState::Downloading | PreloadState::Ready
+            ),
+            "it never queues"
+        );
     }
     reaches(engine, &id(1), 3, PreloadState::Ready).await?;
     assert_eq!(pinned_bytes(engine)?, 0, "disk storage pins nothing");

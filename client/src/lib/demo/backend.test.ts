@@ -58,6 +58,13 @@ async function torrentOf(backend: Backend, id: string): Promise<Torrent> {
   return read.data;
 }
 
+async function playFirstFile(backend: Backend, torrent: string): Promise<() => void> {
+  const [file] = await backend.listFiles(torrent);
+  const release = file && backend.beginPlayback?.(torrent, file.id);
+  if (!release) throw new Error("unable to start playback");
+  return release.release;
+}
+
 describe("the library", () => {
   it("lists persisted torrents, newest first, and not temporary ones", async () => {
     const { backend } = start();
@@ -162,9 +169,8 @@ describe("the library", () => {
   it("starts the idle countdown after the last active player releases the torrent", async () => {
     const { backend, advance } = start();
     const idle = (await backend.getSettings()).data.temporary_idle_seconds * 1000;
-    const releaseFirst = backend.beginPlayback?.(TEMPORARY);
-    const releaseLast = backend.beginPlayback?.(TEMPORARY);
-    if (!releaseFirst || !releaseLast) throw new Error("unable to start playback");
+    const releaseFirst = await playFirstFile(backend, TEMPORARY);
+    const releaseLast = await playFirstFile(backend, TEMPORARY);
     releaseFirst();
 
     advance(idle);
@@ -201,8 +207,7 @@ describe("the library", () => {
     const { backend } = start();
     const { etag } = await backend.getSettings();
     await backend.updateSettings({ temporary_torrent_limit: 1 }, etag);
-    const release = backend.beginPlayback?.(TEMPORARY);
-    if (!release) throw new Error("unable to start playback");
+    const release = await playFirstFile(backend, TEMPORARY);
     try {
       await expect(
         backend.createTorrent({ magnetUri: MAGNET }, { retention: "temporary" }),
@@ -223,8 +228,7 @@ describe("the library", () => {
   it("evicts idle torrents after lowering the limit even if the addition is refused", async () => {
     const { backend } = start();
     const idle = await backend.createTorrent({ magnetUri: MAGNET }, { retention: "temporary" });
-    const release = backend.beginPlayback?.(TEMPORARY);
-    if (!release) throw new Error("unable to start playback");
+    const release = await playFirstFile(backend, TEMPORARY);
     try {
       const { etag } = await backend.getSettings();
       await backend.updateSettings({ temporary_torrent_limit: 1 }, etag);
@@ -337,6 +341,28 @@ describe("adding a magnet link", () => {
 
     expect(await backend.listFiles(created.id)).toHaveLength(1);
     expect((await torrentOf(backend, created.id)).observed_state).toBe("downloading");
+  });
+
+  it("starts a disk magnet's download at metadata arrival regardless of polling", async () => {
+    async function progress(pollOnArrival: boolean) {
+      const { backend, advance } = start();
+      await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
+      const { id } = await backend.createTorrent(
+        { magnetUri: MAGNET },
+        { retention: "persisted", storageMode: "disk" },
+      );
+      advance(3000);
+      if (pollOnArrival) {
+        expect((await backend.getTorrentStatistics(id)).downloaded_bytes).toBe(0);
+      }
+      advance(60_000);
+      return backend.getTorrentStatistics(id);
+    }
+
+    const late = await progress(false);
+    const polled = await progress(true);
+    expect(late.downloaded_bytes).toBeGreaterThan(0);
+    expect(late).toEqual(polled);
   });
 
   it("refuses a torrent it already has, naming it", async () => {
@@ -511,45 +537,201 @@ describe("a torrent file", () => {
 });
 
 describe("a download", () => {
-  it("advances on the clock while running", async () => {
-    const { backend, advance } = start();
-    const before = (await backend.getTorrentStatistics(LIGHTHOUSE)).completion_ratio ?? 0;
+  async function diskDownload(backend: Backend): Promise<string> {
+    const torrent = await backend.createTorrent(
+      { file: upload("fixture", "Clock.torrent") },
+      { retention: "persisted", storageMode: "disk" },
+    );
+    return torrent.id;
+  }
 
+  it("pauses background downloads while the fixture reader is active", async () => {
+    const { backend, advance } = start();
+    const id = await diskDownload(backend);
     advance(60_000);
 
-    expect((await backend.getTorrentStatistics(LIGHTHOUSE)).completion_ratio).toBeGreaterThan(
-      before,
-    );
+    expect(await backend.getTorrentStatistics(id)).toMatchObject({
+      downloaded_bytes: 0,
+      download_rate_bytes_per_second: 0,
+    });
+
+    await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
+    const resumed = await backend.getTorrentStatistics(id);
+    expect(resumed.downloaded_bytes).toBe(0);
+    expect(resumed.download_rate_bytes_per_second).toBeGreaterThan(0);
+    expect(resumed.upload_rate_bytes_per_second).toBeGreaterThan(0);
+    expect(Number.isInteger(resumed.download_rate_bytes_per_second)).toBe(true);
+    expect(Number.isInteger(resumed.upload_rate_bytes_per_second)).toBe(true);
+    advance(60_000);
+    const after = await backend.getTorrentStatistics(id);
+    if (!after.pieces) throw new Error("the disk torrent has a piece map");
+    expect(pieceCounts(after.pieces).downloaded).toBe(Math.floor(after.pieces.piece_count / 10));
+  });
+
+  it("resumes disk downloads after the last local player releases playback", async () => {
+    const { backend, advance } = start();
+    await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
+    const id = await diskDownload(backend);
+    advance(60_000);
+    const releaseFirst = await playFirstFile(backend, GLASS_HARBOR);
+    const releaseLast = await playFirstFile(backend, TEMPORARY);
+
+    const before = await backend.getTorrentStatistics(id);
+    expect(before.downloaded_bytes).toBeGreaterThan(0);
+    advance(60_000);
+    releaseFirst();
+    advance(60_000);
+    expect(await backend.getTorrentStatistics(id)).toMatchObject({
+      downloaded_bytes: before.downloaded_bytes,
+      download_rate_bytes_per_second: 0,
+    });
+
+    releaseLast();
+    expect((await backend.getTorrentStatistics(id)).downloaded_bytes).toBe(before.downloaded_bytes);
+    advance(60_000);
+    const after = await backend.getTorrentStatistics(id);
+    if (!after.pieces) throw new Error("the disk torrent has a piece map");
+    expect(pieceCounts(after.pieces).downloaded).toBe(Math.floor(after.pieces.piece_count / 5));
+  });
+
+  it("releases a paused torrent's players without affecting later playback", async () => {
+    const { backend, advance } = start();
+    await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
+    const disk = await diskDownload(backend);
+    const playing = torrentId(2);
+    const oldRelease = await playFirstFile(backend, playing);
+    advance(60_000);
+    expect((await backend.getTorrentStatistics(disk)).downloaded_bytes).toBe(0);
+
+    await changeTorrent(backend, playing, { desired_state: "paused" });
+    advance(60_000);
+    const resumed = await backend.getTorrentStatistics(disk);
+    expect(resumed.downloaded_bytes).toBeGreaterThan(0);
+    expect(resumed.download_rate_bytes_per_second).toBeGreaterThan(0);
+
+    await changeTorrent(backend, playing, { desired_state: "started" });
+    const release = await playFirstFile(backend, playing);
+    oldRelease();
+    advance(60_000);
+    expect(await backend.getTorrentStatistics(disk)).toMatchObject({
+      downloaded_bytes: resumed.downloaded_bytes,
+      download_rate_bytes_per_second: 0,
+    });
+    release();
+  });
+
+  it("counts simulated uploads only in disk storage across storage switches", async () => {
+    const { backend, advance } = start();
+    const id = torrentId(2);
+    await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
+    const release = await playFirstFile(backend, id);
+    const before = await backend.getTorrentStatistics(id);
+    expect(before.downloaded_bytes).toBeGreaterThan(0);
+    expect(before.uploaded_bytes).toBe(0);
+
+    await changeTorrent(backend, id, { storage_mode: "disk" });
+    advance(5000);
+    expect(await backend.getTorrentStatistics(id)).toMatchObject({
+      downloaded_bytes: before.downloaded_bytes,
+      uploaded_bytes: 0,
+      upload_rate_bytes_per_second: 0,
+    });
+
+    release();
+    advance(5000);
+    const disk = await backend.getTorrentStatistics(id);
+    expect(disk.uploaded_bytes).toBeGreaterThan(0);
+    expect(disk.uploaded_bytes).toBeLessThan(disk.downloaded_bytes - before.downloaded_bytes);
+    const system = await backend.getStatistics();
+
+    await changeTorrent(backend, id, { storage_mode: "memory" });
+    expect(await backend.getTorrentStatistics(id)).toMatchObject({
+      uploaded_bytes: 0,
+      upload_rate_bytes_per_second: 0,
+    });
+    expect((await backend.getStatistics()).uploaded_bytes).toBe(system.uploaded_bytes);
+
+    await changeTorrent(backend, id, { storage_mode: "disk" });
+    expect((await backend.getTorrentStatistics(id)).uploaded_bytes).toBe(disk.uploaded_bytes);
+  });
+
+  it("does not count time spent with background downloads disabled", async () => {
+    const { backend, advance } = start();
+    await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
+    const id = await diskDownload(backend);
+    advance(30_000);
+
+    const before = await backend.getTorrentStatistics(id);
+    const settings = await backend.getSettings();
+    await backend.updateSettings({ background_downloads_enabled: false }, settings.etag);
+    advance(120_000);
+    expect(await backend.getTorrentStatistics(id)).toMatchObject({
+      downloaded_bytes: before.downloaded_bytes,
+      download_rate_bytes_per_second: 0,
+    });
+
+    const disabled = await backend.getSettings();
+    await backend.updateSettings({ background_downloads_enabled: true }, disabled.etag);
+    expect((await backend.getTorrentStatistics(id)).downloaded_bytes).toBe(before.downloaded_bytes);
+    advance(30_000);
+    const after = await backend.getTorrentStatistics(id);
+    if (!after.pieces) throw new Error("the disk torrent has a piece map");
+    expect(pieceCounts(after.pieces).downloaded).toBe(Math.floor(after.pieces.piece_count / 10));
   });
 
   it("stops while paused and goes on from there", async () => {
     const { backend, advance } = start();
     await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
-    const paused = await backend.getTorrentStatistics(LIGHTHOUSE);
+    const id = await diskDownload(backend);
+    await changeTorrent(backend, id, { desired_state: "paused" });
+    const paused = await backend.getTorrentStatistics(id);
 
     advance(60_000);
 
-    expect((await backend.getTorrentStatistics(LIGHTHOUSE)).completion_ratio).toBe(
-      paused.completion_ratio,
-    );
+    expect((await backend.getTorrentStatistics(id)).completion_ratio).toBe(paused.completion_ratio);
     expect(paused.peer_count).toBe(0);
 
-    await changeTorrent(backend, LIGHTHOUSE, { desired_state: "started" });
+    await changeTorrent(backend, id, { desired_state: "started" });
     advance(60_000);
 
-    expect((await backend.getTorrentStatistics(LIGHTHOUSE)).completion_ratio).toBeGreaterThan(
+    expect((await backend.getTorrentStatistics(id)).completion_ratio).toBeGreaterThan(
       paused.completion_ratio ?? 0,
     );
   });
 
   it("stops at the whole torrent", async () => {
     const { backend, advance } = start();
+    const id = await diskDownload(backend);
 
     advance(60 * 60 * 1000);
 
-    const finished = await backend.getTorrentStatistics(LIGHTHOUSE);
+    const finished = await backend.getTorrentStatistics(id);
     expect(finished.completion_ratio).toBe(1);
     expect(finished.download_rate_bytes_per_second).toBe(0);
+  });
+
+  it("stops reporting background transfers when a preload completes the disk torrent", async () => {
+    const { backend, advance } = start();
+    await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
+    const id = await diskDownload(backend);
+    const [file] = await backend.listFiles(id);
+    if (!file) throw new Error("the disk torrent has a file");
+
+    advance(599_000);
+    const initial = await backend.getSettings();
+    await backend.updateSettings({ background_downloads_enabled: false }, initial.etag);
+    expect((await backend.getTorrentStatistics(id)).completion_ratio).toBeLessThan(1);
+    const tail = await backend.createPreload(id, file.id, file.size_bytes - 1);
+    advance(3500);
+    expect((await backend.getPreload(id, file.id, tail.id)).state).toBe("ready");
+
+    const stopped = await backend.getSettings();
+    await backend.updateSettings({ background_downloads_enabled: true }, stopped.etag);
+    expect(await backend.getTorrentStatistics(id)).toMatchObject({
+      completion_ratio: 1,
+      download_rate_bytes_per_second: 0,
+      peer_count: 0,
+    });
   });
 
   it("reports pieces as the panel reads them, and a reader", async () => {
@@ -562,10 +744,70 @@ describe("a download", () => {
     const { downloaded, arriving } = pieceCounts(statistics.pieces);
     expect(downloaded).toBeGreaterThan(0);
     expect(downloaded).toBeLessThan(count);
-    expect(arriving).toBe(1);
+    expect(arriving).toBe(0);
     expect(pieceState(statistics.pieces, 0)).toBe("downloaded");
     expect(pieceState(statistics.pieces, count - 1)).toBe("missing");
     expect(statistics.readers[0]?.state).toBe("active");
+  });
+
+  it("advances the active reader and verifies the pieces it reaches", async () => {
+    const { backend, advance } = start();
+    const before = await backend.getTorrentStatistics(LIGHTHOUSE);
+    const firstReader = before.readers[0];
+    if (!firstReader || !before.pieces) throw new Error("the fixture has an active reader");
+
+    advance(4000);
+
+    const after = await backend.getTorrentStatistics(LIGHTHOUSE);
+    const lastReader = after.readers[0];
+    if (!lastReader || !after.pieces) throw new Error("the reader is still active");
+    expect(lastReader.offset_bytes).toBeGreaterThan(firstReader.offset_bytes);
+    expect(pieceState(before.pieces, lastReader.piece_index)).toBe("missing");
+    expect(pieceState(after.pieces, lastReader.piece_index)).toBe("downloaded");
+    expect(after.downloaded_bytes).toBeGreaterThan(before.downloaded_bytes);
+
+    advance(10 * 60_000);
+    expect((await backend.getTorrentStatistics(LIGHTHOUSE)).readers).toEqual([]);
+    const cache = await backend.getCacheStatistics();
+    expect(cache.usage_bytes).toBeLessThanOrEqual(cache.capacity_bytes);
+  });
+
+  it("keeps the fixture reader's current piece through a cache shrink", async () => {
+    const { backend, advance } = start();
+    const before = await backend.getTorrentStatistics(LIGHTHOUSE);
+    const [reader] = before.readers;
+    if (!reader || !before.pieces) throw new Error("the fixture has a reader and piece map");
+    const next = reader.piece_index + 1;
+    expect(pieceState(before.pieces, next)).toBe("downloaded");
+
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ cache_capacity_bytes: 4 * 1024 ** 2 }, etag);
+    const shrunk = await backend.getTorrentStatistics(LIGHTHOUSE);
+    if (!shrunk.pieces) throw new Error("the piece map is available");
+    expect(pieceState(shrunk.pieces, reader.piece_index)).toBe("downloaded");
+    expect(pieceState(shrunk.pieces, next)).toBe("missing");
+
+    advance(2000);
+    const after = await backend.getTorrentStatistics(LIGHTHOUSE);
+    expect(after.readers[0]?.piece_index).toBe(next);
+    expect(after.downloaded_bytes - before.downloaded_bytes).toBe(4 * 1024 ** 2);
+  });
+
+  it("pauses the reader's clock and resumes from its last position", async () => {
+    const { backend, advance } = start();
+    const before = (await backend.getTorrentStatistics(LIGHTHOUSE)).readers[0];
+    if (!before) throw new Error("the fixture has an active reader");
+
+    await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
+    advance(60_000);
+    expect((await backend.getTorrentStatistics(LIGHTHOUSE)).readers).toEqual([]);
+
+    await changeTorrent(backend, LIGHTHOUSE, { desired_state: "started" });
+    expect((await backend.getTorrentStatistics(LIGHTHOUSE)).readers[0]).toEqual(before);
+    advance(4000);
+    expect(
+      (await backend.getTorrentStatistics(LIGHTHOUSE)).readers[0]?.offset_bytes,
+    ).toBeGreaterThan(before.offset_bytes);
   });
 
   it("reports no pieces for a failed torrent", async () => {
@@ -576,16 +818,90 @@ describe("a download", () => {
     expect(failed.failure).not.toBeNull();
     expect((await backend.getTorrentStatistics(ORCHARD_ROAD)).pieces).toBeNull();
   });
+
+  it("finishes a restarted disk download with all previously verified pieces", async () => {
+    const { backend, advance } = start();
+    await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
+    await changeTorrent(backend, ORCHARD_ROAD, { desired_state: "started" });
+    const restarted = await backend.getTorrentStatistics(ORCHARD_ROAD);
+    if (!restarted.pieces) throw new Error("the restarted torrent has a piece map");
+    expect(pieceState(restarted.pieces, 0)).toBe("downloaded");
+
+    advance(10 * 60_000);
+    const finished = await backend.getTorrentStatistics(ORCHARD_ROAD);
+    if (!finished.pieces) throw new Error("the finished torrent has a piece map");
+    expect(pieceCounts(finished.pieces).downloaded).toBe(finished.pieces.piece_count);
+    expect(finished.completion_ratio).toBe(1);
+    expect(finished.download_rate_bytes_per_second).toBe(0);
+  });
 });
 
 describe("a preload", () => {
-  it("queues, downloads, and becomes ready", async () => {
-    const { backend, advance } = start();
+  it("is immediately ready for a fully downloaded file", async () => {
+    const { backend } = start();
+    const [video] = await backend.listFiles(GLASS_HARBOR);
+    if (!video) throw new Error("the fixture has files");
+
+    const created = await backend.createPreload(GLASS_HARBOR, video.id, undefined);
+    expect(created.state).toBe("ready");
+    expect(created.completed_bytes).toBe(created.target_bytes);
+    expect(await backend.getPreload(GLASS_HARBOR, video.id, created.id)).toEqual(created);
+  });
+
+  it("rejects a preload at the exact file size and accepts its last byte", async () => {
+    const { backend } = start();
+    const [file] = await backend.listFiles(GLASS_HARBOR);
+    if (!file) throw new Error("the fixture has files");
+
+    await expect(
+      backend.createPreload(GLASS_HARBOR, file.id, file.size_bytes),
+    ).rejects.toMatchObject({
+      status: 422,
+      type: "validation-failed",
+      problem: { errors: [{ pointer: "/offset_bytes", detail: "Must be below the file's size." }] },
+    });
+    expect(await backend.createPreload(GLASS_HARBOR, file.id, file.size_bytes - 1)).toMatchObject({
+      offset_bytes: file.size_bytes - 1,
+      state: "ready",
+    });
+  });
+
+  it.each([-1, 0.5])("rejects an offset of %s as an invalid body member", async (offset) => {
+    const { backend } = start();
+    const [file] = await backend.listFiles(GLASS_HARBOR);
+    if (!file) throw new Error("the fixture has files");
+
+    await expect(backend.createPreload(GLASS_HARBOR, file.id, offset)).rejects.toMatchObject({
+      status: 422,
+      type: "validation-failed",
+      problem: {
+        errors: [
+          {
+            pointer: "/offset_bytes",
+            detail: "Must be a non-negative integer below the file's size.",
+          },
+        ],
+      },
+    });
+  });
+
+  it("is immediately ready for a verified episode in an unfinished torrent", async () => {
+    const { backend } = start();
     const [video] = await backend.listFiles(LIGHTHOUSE);
     if (!video) throw new Error("the fixture has files");
 
     const created = await backend.createPreload(LIGHTHOUSE, video.id, undefined);
-    expect(created.state).toBe("queued");
+    expect(created.state).toBe("ready");
+    expect(created.completed_bytes).toBe(created.target_bytes);
+  });
+
+  it("downloads and becomes ready when the preload budget is free", async () => {
+    const { backend, advance } = start();
+    const video = (await backend.listFiles(LIGHTHOUSE))[4];
+    if (!video) throw new Error("the fixture has files");
+
+    const created = await backend.createPreload(LIGHTHOUSE, video.id, undefined);
+    expect(created.state).toBe("downloading");
 
     advance(2000);
     const running = await backend.getPreload(LIGHTHOUSE, video.id, created.id);
@@ -598,16 +914,835 @@ describe("a preload", () => {
     expect(ready.completed_bytes).toBe(ready.target_bytes);
   });
 
+  it("readies an overlapping preload when the first download verifies their shared pieces", async () => {
+    const { backend, advance } = start();
+    const video = (await backend.listFiles(LIGHTHOUSE))[7];
+    if (!video) throw new Error("the fixture has files");
+
+    const first = await backend.createPreload(LIGHTHOUSE, video.id, undefined);
+    advance(1000);
+    const later = await backend.createPreload(LIGHTHOUSE, video.id, undefined);
+    expect(first.state).toBe("downloading");
+    expect(later.state).toBe("downloading");
+
+    advance(2500);
+    expect((await backend.getPreload(LIGHTHOUSE, video.id, first.id)).state).toBe("ready");
+    expect(await backend.getPreload(LIGHTHOUSE, video.id, later.id)).toMatchObject({
+      state: "ready",
+      completed_bytes: later.target_bytes,
+    });
+  });
+
+  it("waits for an episode's missing tail", async () => {
+    const { backend } = start();
+    const video = (await backend.listFiles(LIGHTHOUSE))[3];
+    if (!video) throw new Error("the fixture has files");
+
+    const mib = 1024 * 1024;
+    const created = await backend.createPreload(LIGHTHOUSE, video.id, undefined);
+    expect(created).toMatchObject({
+      state: "downloading",
+      ranges: [
+        { start_bytes: 0, length_bytes: 28 * mib },
+        { start_bytes: 1396 * mib, length_bytes: 4 * mib },
+      ],
+      completed_bytes: 28 * mib,
+      target_bytes: 32 * mib,
+    });
+  });
+
+  it("covers missing pieces around a resume offset as well as the file boundaries", async () => {
+    const { backend } = start();
+    const video = (await backend.listFiles(LIGHTHOUSE))[3];
+    if (!video) throw new Error("the fixture has files");
+
+    const mib = 1024 * 1024;
+    const created = await backend.createPreload(LIGHTHOUSE, video.id, 1024 * mib);
+    expect(created).toMatchObject({
+      state: "downloading",
+      ranges: [
+        { start_bytes: 0, length_bytes: 4 * mib },
+        { start_bytes: 1020 * mib, length_bytes: 24 * mib },
+        { start_bytes: 1396 * mib, length_bytes: 4 * mib },
+      ],
+      completed_bytes: 4 * mib,
+      target_bytes: 32 * mib,
+    });
+  });
+
+  it("queues a verified episode while another ready preload holds the budget", async () => {
+    const { backend, advance } = start();
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ cache_capacity_bytes: 64 * 1024 * 1024 }, etag);
+    const [video] = await backend.listFiles(LIGHTHOUSE);
+    if (!video) throw new Error("the fixture has files");
+
+    const first = await backend.createPreload(LIGHTHOUSE, video.id, undefined);
+    advance(3500);
+    expect((await backend.getPreload(LIGHTHOUSE, video.id, first.id)).state).toBe("ready");
+    const second = await backend.createPreload(LIGHTHOUSE, video.id, undefined);
+    expect(second.state).toBe("queued");
+
+    advance(14_999);
+    expect((await backend.getPreload(LIGHTHOUSE, video.id, second.id)).state).toBe("queued");
+    advance(1);
+    expect(await backend.getPreload(LIGHTHOUSE, video.id, second.id)).toMatchObject({
+      state: "ready",
+      completed_bytes: second.target_bytes,
+    });
+    expect((await backend.getPreload(LIGHTHOUSE, video.id, first.id)).state).toBe("failed");
+  });
+
+  it("reclaims a ready preload as soon as playback starts on its file", async () => {
+    const { backend, advance } = start();
+    const id = torrentId(2);
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ cache_capacity_bytes: 64 * 1024 * 1024 }, etag);
+    const [first, second] = await backend.listFiles(id);
+    if (!first || !second) throw new Error("the fixture has both episodes");
+
+    const older = await backend.createPreload(id, first.id, undefined);
+    advance(3500);
+    expect((await backend.getPreload(id, first.id, older.id)).state).toBe("ready");
+
+    const releaseOther = backend.beginPlayback?.(id, second.id);
+    if (!releaseOther) throw new Error("the second episode can play");
+    const newer = await backend.createPreload(id, second.id, undefined);
+    expect(newer.state).toBe("queued");
+    releaseOther.release();
+
+    const release = backend.beginPlayback?.(id, first.id);
+    if (!release) throw new Error("the first episode can play");
+    try {
+      expect((await backend.getPreload(id, first.id, older.id)).state).toBe("failed");
+      expect((await backend.getPreload(id, second.id, newer.id)).state).toBe("downloading");
+    } finally {
+      release.release();
+    }
+  });
+
+  it("reclaims the preload with a reader before an older unclaimed preload", async () => {
+    const { backend, advance } = start();
+    const id = torrentId(2);
+    const [playing, next, , older] = await backend.listFiles(id);
+    if (!playing || !next || !older) throw new Error("the fixture has three episodes");
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ cache_capacity_bytes: 256 * 1024 ** 2 }, etag);
+
+    const old = await backend.createPreload(id, older.id, undefined);
+    advance(3500);
+    expect((await backend.getPreload(id, older.id, old.id)).state).toBe("ready");
+    const active = await backend.createPreload(id, playing.id, undefined);
+    advance(15_000);
+    expect((await backend.getPreload(id, playing.id, active.id)).state).toBe("ready");
+
+    const session = backend.beginPlayback?.(id, playing.id);
+    if (!session) throw new Error("the episode can play");
+    const newest = await backend.createPreload(id, next.id, undefined);
+    expect(newest.state).toBe("downloading");
+    expect((await backend.getPreload(id, older.id, old.id)).state).toBe("ready");
+    expect((await backend.getPreload(id, playing.id, active.id)).state).toBe("failed");
+    session.release();
+  });
+
+  it("keeps resumed playback pieces pinned after reclaiming its preload", async () => {
+    const { backend, advance } = start();
+    const mib = 1024 * 1024;
+    const offset = 64 * mib;
+    const current = 16;
+    const id = torrentId(2);
+    await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
+    const initial = await backend.getSettings();
+    await backend.updateSettings({ cache_capacity_bytes: 64 * mib }, initial.etag);
+    const [playing, other] = await backend.listFiles(id);
+    if (!playing || !other) throw new Error("the fixture has both episodes");
+
+    const old = await backend.createPreload(id, playing.id, offset);
+    advance(3500);
+    expect((await backend.getPreload(id, playing.id, old.id)).state).toBe("ready");
+
+    const release = backend.beginPlayback?.(id, playing.id, offset);
+    if (!release) throw new Error("the first episode can play");
+    const newer = await backend.createPreload(id, other.id, undefined);
+    expect((await backend.getPreload(id, playing.id, old.id)).state).toBe("failed");
+    advance(3500);
+    await backend.deletePreload(id, other.id, newer.id);
+
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ cache_capacity_bytes: 4 * mib }, etag);
+    const before = await backend.getTorrentStatistics(id);
+    if (!before.pieces) throw new Error("the piece map is available");
+    expect(pieceState(before.pieces, current)).toBe("downloaded");
+    expect(await backend.getCacheStatistics()).toMatchObject({
+      pinned_bytes: 4 * mib,
+      usage_bytes: 4 * mib,
+    });
+
+    release.release();
+    expect((await backend.getCacheStatistics()).pinned_bytes).toBe(0);
+    const refill = await backend.createPreload(id, other.id, undefined);
+    advance(3500);
+    expect((await backend.getPreload(id, other.id, refill.id)).state).toBe("ready");
+    const after = await backend.getTorrentStatistics(id);
+    if (!after.pieces) throw new Error("the piece map is available");
+    expect(pieceState(after.pieces, current)).toBe("missing");
+  });
+
+  it("keeps both current pieces after a shrink and waits for room before preloading", async () => {
+    const { backend, advance } = start();
+    const mib = 1024 * 1024;
+    const id = torrentId(2);
+    const [playing, other] = await backend.listFiles(id);
+    if (!playing || !other) throw new Error("the fixture has both episodes");
+    await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
+
+    const first = backend.beginPlayback?.(id, playing.id, 0);
+    const second = backend.beginPlayback?.(id, playing.id, 4 * mib);
+    if (!first || !second) throw new Error("both sessions can play");
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ cache_capacity_bytes: 4 * mib }, etag);
+    expect(await backend.getCacheStatistics()).toMatchObject({
+      capacity_bytes: 4 * mib,
+      pinned_bytes: 8 * mib,
+      usage_bytes: 8 * mib,
+    });
+
+    const queued = await backend.createPreload(id, other.id, undefined);
+    expect(queued.state).toBe("queued");
+    advance(3500);
+    expect((await backend.getPreload(id, other.id, queued.id)).state).toBe("queued");
+
+    first.move(4 * mib, "progress");
+    const { pieces } = await backend.getTorrentStatistics(id);
+    if (!pieces) throw new Error("the piece map is available");
+    expect(pieceState(pieces, 0)).toBe("missing");
+    expect(pieceState(pieces, 1)).toBe("downloaded");
+    expect(await backend.getCacheStatistics()).toMatchObject({
+      pinned_bytes: 4 * mib,
+      usage_bytes: 4 * mib,
+    });
+
+    first.release();
+    expect((await backend.getCacheStatistics()).pinned_bytes).toBe(4 * mib);
+    expect((await backend.getPreload(id, other.id, queued.id)).state).toBe("queued");
+
+    second.release();
+    expect((await backend.getPreload(id, other.id, queued.id)).state).toBe("downloading");
+    advance(3500);
+    expect((await backend.getPreload(id, other.id, queued.id)).state).toBe("ready");
+  });
+
+  it("fetches a cold browser seek within the cache budget", async () => {
+    const { backend, advance } = start();
+    const mib = 1024 * 1024;
+    const id = torrentId(2);
+    const [file] = await backend.listFiles(id);
+    if (!file) throw new Error("the fixture has a file");
+    await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
+    const session = backend.beginPlayback?.(id, file.id);
+    if (!session) throw new Error("the browser session can play");
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ cache_capacity_bytes: 4 * mib }, etag);
+    const before = await backend.getTorrentStatistics(id);
+
+    const cold = 25;
+    session.move(cold * 4 * mib, "seek");
+    const seeking = await backend.getTorrentStatistics(id);
+    if (!seeking.pieces) throw new Error("the piece map is available");
+    expect(pieceState(seeking.pieces, cold)).toBe("arriving");
+    expect(seeking.download_rate_bytes_per_second).toBeGreaterThan(0);
+    expect(seeking.readers[0]?.piece_index).toBe(cold);
+    expect((await backend.getStatistics()).waiting_reader_count).toBe(1);
+
+    advance(1000);
+    const after = await backend.getTorrentStatistics(id);
+    if (!after.pieces) throw new Error("the piece map is available");
+    expect(pieceState(after.pieces, cold)).toBe("downloaded");
+    expect(after.downloaded_bytes - before.downloaded_bytes).toBe(4 * mib);
+    expect((await backend.getStatistics()).waiting_reader_count).toBe(0);
+    expect(await backend.getCacheStatistics()).toMatchObject({
+      usage_bytes: 4 * mib,
+      pinned_bytes: 4 * mib,
+    });
+    session.release();
+  });
+
+  it("finishes the pending piece during progress and replaces it on a seek", async () => {
+    async function play(poll: boolean) {
+      const { backend, advance } = start();
+      const id = torrentId(2);
+      const pieceBytes = 4 * 1024 ** 2;
+      const [file] = await backend.listFiles(id);
+      if (!file) throw new Error("the fixture has a file");
+      await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
+      const before = await backend.getTorrentStatistics(id);
+      const session = backend.beginPlayback?.(id, file.id, 25 * pieceBytes);
+      if (!session) throw new Error("the browser session can play");
+      for (const piece of [26, 27, 28]) {
+        advance(250);
+        session.move(piece * pieceBytes, "progress");
+        if (poll) await backend.getStatistics();
+      }
+      advance(250);
+      session.move(40 * pieceBytes, "seek");
+      advance(1000);
+      const after = await backend.getTorrentStatistics(id);
+      if (!after.pieces) throw new Error("the piece map is available");
+      expect(pieceState(after.pieces, 25)).toBe("downloaded");
+      for (const piece of [26, 27, 28]) {
+        expect(pieceState(after.pieces, piece)).toBe("missing");
+      }
+      expect(pieceState(after.pieces, 40)).toBe("downloaded");
+      expect(after.downloaded_bytes - before.downloaded_bytes).toBe(2 * pieceBytes);
+      session.release();
+      return after;
+    }
+
+    expect(await play(true)).toEqual(await play(false));
+  });
+
+  it("releases a blocked fixture reader at its piece deadline", async () => {
+    const { backend, advance } = start();
+    const id = torrentId(2);
+    const disk = torrentId(4);
+    const pieceBytes = 4 * 1024 ** 2;
+    const pieceWaitSeconds = 2;
+    await changeTorrent(backend, disk, { storage_mode: "disk" });
+    const release = await playFirstFile(backend, id);
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings(
+      { cache_capacity_bytes: pieceBytes, piece_wait_seconds: pieceWaitSeconds },
+      etag,
+    );
+
+    advance(1000);
+    expect((await backend.getStatistics()).waiting_reader_count).toBe(1);
+    advance(pieceWaitSeconds * 1000);
+    expect((await backend.getStatistics()).waiting_reader_count).toBe(0);
+    expect((await backend.getTorrentStatistics(LIGHTHOUSE)).readers).toHaveLength(0);
+
+    const before = await backend.getTorrentStatistics(disk);
+    release();
+    advance(5000);
+    expect((await backend.getTorrentStatistics(disk)).downloaded_bytes).toBeGreaterThan(
+      before.downloaded_bytes,
+    );
+  });
+
+  it("tracks temporary browser playback after a piece timeout until the video stops", async () => {
+    const { backend, advance } = start();
+    const disk = torrentId(4);
+    const pieceBytes = 4 * 1024 ** 2;
+    const [file] = await backend.listFiles(TEMPORARY);
+    if (!file) throw new Error("the temporary torrent has a file");
+    await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
+    const releaseWarm = await playFirstFile(backend, torrentId(2));
+    await changeTorrent(backend, disk, { storage_mode: "disk" });
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings(
+      { cache_capacity_bytes: pieceBytes, piece_wait_seconds: 2, temporary_idle_seconds: 60 },
+      etag,
+    );
+    const playing = backend.beginPlayback?.(TEMPORARY, file.id, 25 * pieceBytes);
+    if (!playing) throw new Error("the temporary file can play");
+
+    advance(1999);
+    expect((await backend.getStatistics()).waiting_reader_count).toBe(1);
+    advance(1);
+    expect((await backend.getStatistics()).waiting_reader_count).toBe(0);
+    const before = await backend.getTorrentStatistics(disk);
+    releaseWarm();
+
+    playing.move(26 * pieceBytes, "progress");
+    advance(60_000);
+    expect((await torrentOf(backend, TEMPORARY)).id).toBe(TEMPORARY);
+    const statistics = await backend.getTorrentStatistics(TEMPORARY);
+    expect(statistics.readers[0]?.piece_index).toBe(26);
+    if (!statistics.pieces) throw new Error("the piece map is available");
+    expect(pieceState(statistics.pieces, 26)).toBe("downloaded");
+    expect(await backend.getTorrentStatistics(disk)).toMatchObject({
+      download_rate_bytes_per_second: 0,
+      downloaded_bytes: before.downloaded_bytes,
+    });
+
+    playing.release();
+    advance(60_000);
+    expect((await backend.getTorrentStatistics(disk)).downloaded_bytes).toBeGreaterThan(
+      before.downloaded_bytes,
+    );
+    await expect(backend.getTorrent(TEMPORARY)).rejects.toMatchObject({ type: "not-found" });
+  });
+
+  it("retries a timed-out piece when the browser seeks within it", async () => {
+    const { backend, advance } = start();
+    const id = torrentId(2);
+    const pieceBytes = 4 * 1024 ** 2;
+    const piece = 25;
+    const offset = piece * pieceBytes;
+    const [file] = await backend.listFiles(id);
+    if (!file) throw new Error("the fixture has a file");
+    await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
+    const releaseWarm = await playFirstFile(backend, id);
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ cache_capacity_bytes: pieceBytes, piece_wait_seconds: 2 }, etag);
+    const playing = backend.beginPlayback?.(id, file.id, offset);
+    if (!playing) throw new Error("the cold session can start");
+
+    expect((await backend.getStatistics()).waiting_reader_count).toBe(1);
+    advance(2000);
+    releaseWarm();
+    const before = await backend.getTorrentStatistics(id);
+    expect((await backend.getStatistics()).waiting_reader_count).toBe(0);
+
+    playing.move(offset + 1, "progress");
+    expect((await backend.getStatistics()).waiting_reader_count).toBe(0);
+    playing.move(offset + 1, "seek");
+    expect((await backend.getStatistics()).waiting_reader_count).toBe(1);
+    advance(900);
+    playing.move(offset + 2, "seek");
+    advance(100);
+
+    const after = await backend.getTorrentStatistics(id);
+    if (!after.pieces) throw new Error("the piece map is available");
+    expect(pieceState(after.pieces, piece)).toBe("downloaded");
+    expect(after.downloaded_bytes - before.downloaded_bytes).toBe(pieceBytes);
+    playing.release();
+  });
+
+  it("keeps a pending reader's deadline across a storage change", async () => {
+    const { backend, advance } = start();
+    const id = torrentId(2);
+    const pieceBytes = 4 * 1024 ** 2;
+    const [file] = await backend.listFiles(id);
+    if (!file) throw new Error("the fixture has a file");
+    await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
+    const warm = backend.beginPlayback?.(id, file.id);
+    if (!warm) throw new Error("the warm session can play");
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ cache_capacity_bytes: pieceBytes, piece_wait_seconds: 2 }, etag);
+    const blocked = backend.beginPlayback?.(id, file.id, 25 * pieceBytes);
+    if (!blocked) throw new Error("the cold session can start");
+
+    advance(1500);
+    await changeTorrent(backend, id, { storage_mode: "disk" });
+    advance(499);
+    expect((await backend.getStatistics()).waiting_reader_count).toBe(1);
+
+    advance(1);
+    expect((await backend.getStatistics()).waiting_reader_count).toBe(0);
+    expect((await backend.getTorrentStatistics(id)).readers).toHaveLength(2);
+    blocked.release();
+    warm.release();
+  });
+
+  it("copies the current disk playback piece into a one-piece memory cache", async () => {
+    const { backend } = start();
+    const mib = 1024 * 1024;
+    const [file] = await backend.listFiles(GLASS_HARBOR);
+    if (!file) throw new Error("the fixture has files");
+    await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ cache_capacity_bytes: 4 * mib }, etag);
+
+    const release = backend.beginPlayback?.(GLASS_HARBOR, file.id, 64 * mib);
+    if (!release) throw new Error("the file can play");
+    await changeTorrent(backend, GLASS_HARBOR, { storage_mode: "memory" });
+
+    const { pieces } = await backend.getTorrentStatistics(GLASS_HARBOR);
+    if (!pieces) throw new Error("the piece map is available");
+    expect(pieceState(pieces, 16)).toBe("downloaded");
+    expect(pieceState(pieces, 0)).toBe("missing");
+    expect((await backend.getCacheStatistics()).pinned_bytes).toBe(4 * mib);
+
+    release.release();
+    expect((await backend.getCacheStatistics()).pinned_bytes).toBe(0);
+  });
+
+  it.each([
+    { name: "within a torrent", newerTorrent: LIGHTHOUSE, newerIndex: 7 },
+    { name: "across torrents", newerTorrent: torrentId(2), newerIndex: 3 },
+  ])(
+    "evicts older fetched pieces $name when the memory cache shrinks",
+    async ({ newerTorrent, newerIndex }) => {
+      const { backend, advance } = start();
+      const before = await backend.getSettings();
+      await backend.updateSettings({ cache_capacity_bytes: 64 * 1024 * 1024 }, before.etag);
+      const older = (await backend.listFiles(LIGHTHOUSE))[6];
+      const newer = (await backend.listFiles(newerTorrent))[newerIndex];
+      if (!older || !newer) throw new Error("the fixtures have both episodes");
+
+      for (const [torrent, file] of [
+        [LIGHTHOUSE, older],
+        [newerTorrent, newer],
+      ] as const) {
+        const preload = await backend.createPreload(torrent, file.id, undefined);
+        expect(preload.state).toBe("downloading");
+        advance(3500);
+        await backend.deletePreload(torrent, file.id, preload.id);
+      }
+      const { etag } = await backend.getSettings();
+      await backend.updateSettings({ cache_capacity_bytes: 16 * 1024 * 1024 }, etag);
+
+      const recent = await backend.createPreload(newerTorrent, newer.id, undefined);
+      expect(recent.state).toBe("ready");
+      await backend.deletePreload(newerTorrent, newer.id, recent.id);
+
+      const evicted = await backend.createPreload(LIGHTHOUSE, older.id, undefined);
+      expect(evicted).toMatchObject({ state: "downloading", completed_bytes: 0 });
+    },
+  );
+
+  it("releases a warm preload whose verified fixture pieces no longer fit", async () => {
+    const { backend, advance } = start();
+    const [file] = await backend.listFiles(LIGHTHOUSE);
+    if (!file) throw new Error("the fixture has files");
+
+    const mib = 1024 * 1024;
+    const original = await backend.createPreload(LIGHTHOUSE, file.id, undefined);
+    expect(original.state).toBe("ready");
+    expect(original.target_bytes).toBeGreaterThan(16 * mib);
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ cache_capacity_bytes: 16 * mib }, etag);
+
+    expect((await backend.getPreload(LIGHTHOUSE, file.id, original.id)).state).toBe("failed");
+    const smaller = await backend.createPreload(LIGHTHOUSE, file.id, undefined);
+    expect(smaller.target_bytes).toBe(4 * mib);
+    advance(3500);
+    expect((await backend.getPreload(LIGHTHOUSE, file.id, smaller.id)).state).toBe("ready");
+  });
+
+  it("evicts warm fixture pieces and makes a later preload fetch them again", async () => {
+    const { backend, advance } = start();
+    const mib = 1024 * 1024;
+    const otherTorrent = torrentId(2);
+    const [lighthouse] = await backend.listFiles(LIGHTHOUSE);
+    const [paperMoons] = await backend.listFiles(otherTorrent);
+    if (!lighthouse || !paperMoons) throw new Error("the fixtures have files");
+
+    const older = await backend.createPreload(LIGHTHOUSE, lighthouse.id, undefined);
+    expect(older.state).toBe("ready");
+    await backend.deletePreload(LIGHTHOUSE, lighthouse.id, older.id);
+    advance(1);
+    const newer = await backend.createPreload(otherTorrent, paperMoons.id, undefined);
+    expect(newer.state).toBe("ready");
+    await backend.deletePreload(otherTorrent, paperMoons.id, newer.id);
+
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ cache_capacity_bytes: 16 * mib }, etag);
+    const cache = await backend.getCacheStatistics();
+    expect(await backend.createPreload(LIGHTHOUSE, lighthouse.id, undefined)).toMatchObject({
+      state: "downloading",
+      completed_bytes: 0,
+    });
+    expect(cache.usage_bytes).toBe(16 * mib);
+    expect(cache.pinned_bytes).toBe(4 * mib);
+    expect(cache.eviction_count).toBeGreaterThan(0);
+  });
+
+  it("evicts a paused torrent's recent pieces before older started pieces", async () => {
+    const { backend, advance } = start();
+    const mib = 1024 * 1024;
+    await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
+    const initial = await backend.getSettings();
+    await backend.updateSettings({ cache_capacity_bytes: 64 * mib }, initial.etag);
+    const started = torrentId(2);
+    const paused = torrentId(4);
+    const older = (await backend.listFiles(started))[3];
+    const [newer] = await backend.listFiles(paused);
+    if (!older || !newer) throw new Error("the fixtures have files");
+
+    for (const [id, file] of [
+      [started, older],
+      [paused, newer],
+    ] as const) {
+      const preload = await backend.createPreload(id, file.id, undefined);
+      advance(3500);
+      expect((await backend.getPreload(id, file.id, preload.id)).state).toBe("ready");
+      await backend.deletePreload(id, file.id, preload.id);
+    }
+    await changeTorrent(backend, paused, { desired_state: "paused" });
+
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ cache_capacity_bytes: 16 * mib }, etag);
+    expect((await backend.createPreload(started, older.id, undefined)).state).toBe("ready");
+
+    await changeTorrent(backend, paused, { desired_state: "started" });
+    expect(await backend.createPreload(paused, newer.id, undefined)).toMatchObject({
+      state: "queued",
+      completed_bytes: 0,
+    });
+  });
+
+  it("updates completion and transfer counts when a preload verifies pieces", async () => {
+    const { backend, advance } = start();
+    const id = torrentId(2);
+    const file = (await backend.listFiles(id))[3];
+    if (!file) throw new Error("the fixture has this episode");
+
+    const before = await backend.getTorrentStatistics(id);
+    const preload = await backend.createPreload(id, file.id, undefined);
+    expect(preload).toMatchObject({ state: "downloading", completed_bytes: 0 });
+    advance(3500);
+
+    const after = await backend.getTorrentStatistics(id);
+    if (!after.pieces) throw new Error("the piece map is available");
+    expect(after.completion_ratio).toBeGreaterThan(before.completion_ratio ?? 0);
+    expect(after.completion_ratio).toBe(
+      pieceCounts(after.pieces).downloaded / after.pieces.piece_count,
+    );
+    expect(after.downloaded_bytes - before.downloaded_bytes).toBe(preload.target_bytes);
+  });
+
+  it("readmits disk preloads within the memory share after a storage change", async () => {
+    const { backend } = start();
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ cache_capacity_bytes: 64 * 1024 * 1024 }, etag);
+    const [file] = await backend.listFiles(GLASS_HARBOR);
+    if (!file) throw new Error("the fixture has files");
+
+    const older = await backend.createPreload(GLASS_HARBOR, file.id, undefined);
+    const newer = await backend.createPreload(GLASS_HARBOR, file.id, undefined);
+    expect(older.state).toBe("ready");
+    expect(newer.state).toBe("ready");
+
+    await changeTorrent(backend, GLASS_HARBOR, { storage_mode: "memory" });
+    expect((await backend.getPreload(GLASS_HARBOR, file.id, newer.id)).state).toBe("ready");
+    expect((await backend.getPreload(GLASS_HARBOR, file.id, older.id)).state).toBe("queued");
+
+    await changeTorrent(backend, GLASS_HARBOR, { storage_mode: "disk" });
+    expect((await backend.getPreload(GLASS_HARBOR, file.id, older.id)).state).toBe("ready");
+  });
+
+  it("copies the newest disk preload first when the older one has different pieces", async () => {
+    const { backend, advance } = start();
+    const id = torrentId(2);
+    const mib = 1024 ** 2;
+    const [first, second] = await backend.listFiles(id);
+    if (!first || !second) throw new Error("the fixture has two episodes");
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ cache_capacity_bytes: 64 * mib }, etag);
+    await changeTorrent(backend, id, { storage_mode: "disk" });
+
+    const older = await backend.createPreload(id, first.id, undefined);
+    const newer = await backend.createPreload(id, second.id, undefined);
+    advance(3500);
+    expect((await backend.getPreload(id, first.id, older.id)).state).toBe("ready");
+    expect((await backend.getPreload(id, second.id, newer.id)).state).toBe("ready");
+    const before = await backend.getTorrentStatistics(id);
+
+    await changeTorrent(backend, id, { storage_mode: "memory" });
+    expect(await backend.getPreload(id, second.id, newer.id)).toMatchObject({
+      state: "ready",
+      completed_bytes: newer.target_bytes,
+    });
+    expect((await backend.getPreload(id, first.id, older.id)).state).toBe("queued");
+    advance(3500);
+    expect((await backend.getTorrentStatistics(id)).downloaded_bytes).toBe(before.downloaded_bytes);
+  });
+
+  it("starts ready protection at the same time with or without polling disk downloads", async () => {
+    async function preloadAfterSwitch(poll: boolean) {
+      const { backend, advance } = start();
+      const id = torrentId(2);
+      const mib = 1024 ** 2;
+      const [first, second] = await backend.listFiles(id);
+      if (!first || !second) throw new Error("the fixture has two episodes");
+      const { etag } = await backend.getSettings();
+      await backend.updateSettings({ cache_capacity_bytes: 64 * mib }, etag);
+      await changeTorrent(backend, id, { storage_mode: "disk" });
+
+      // Warm the first and last pieces without fetching the rest of the head.
+      const tail = await backend.createPreload(id, first.id, first.size_bytes - 1);
+      advance(3500);
+      await backend.deletePreload(id, first.id, tail.id);
+      await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
+      const head = await backend.createPreload(id, first.id, undefined);
+      expect(head.state).toBe("downloading");
+
+      advance(2700);
+      if (poll) expect((await backend.getPreload(id, first.id, head.id)).state).toBe("ready");
+      advance(15_000);
+      await changeTorrent(backend, id, { storage_mode: "memory" });
+      return backend.createPreload(id, second.id, undefined);
+    }
+
+    expect((await preloadAfterSwitch(true)).state).toBe("downloading");
+    expect((await preloadAfterSwitch(false)).state).toBe("downloading");
+  });
+
+  it("reports copied bytes for a disk preload that returns to the queue", async () => {
+    const { backend } = start();
+    const mib = 1024 * 1024;
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ cache_capacity_bytes: 36 * mib }, etag);
+    const [file] = await backend.listFiles(GLASS_HARBOR);
+    if (!file) throw new Error("the fixture has files");
+
+    const older = await backend.createPreload(GLASS_HARBOR, file.id, undefined);
+    const newer = await backend.createPreload(GLASS_HARBOR, file.id, undefined);
+    expect(older).toMatchObject({ state: "ready", completed_bytes: 32 * mib });
+    expect(newer.state).toBe("ready");
+
+    await changeTorrent(backend, GLASS_HARBOR, { storage_mode: "memory" });
+    expect(await backend.getPreload(GLASS_HARBOR, file.id, older.id)).toMatchObject({
+      state: "queued",
+      completed_bytes: 16 * mib,
+      target_bytes: older.target_bytes,
+    });
+    expect((await backend.getPreload(GLASS_HARBOR, file.id, newer.id)).state).toBe("downloading");
+  });
+
+  it("copies only what fits in the storage transition budget", async () => {
+    const { backend } = start();
+    const mib = 1024 * 1024;
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ cache_capacity_bytes: 36 * mib }, etag);
+    const [file] = await backend.listFiles(GLASS_HARBOR);
+    if (!file) throw new Error("the fixture has files");
+
+    const preload = await backend.createPreload(GLASS_HARBOR, file.id, undefined);
+    expect(preload).toMatchObject({ state: "ready", target_bytes: 32 * mib });
+    await changeTorrent(backend, GLASS_HARBOR, { storage_mode: "memory" });
+
+    const statistics = await backend.getTorrentStatistics(GLASS_HARBOR);
+    if (!statistics.pieces) throw new Error("the piece map is available");
+    expect(pieceCounts(statistics.pieces).downloaded).toBe(4);
+    expect(statistics.completion_ratio).toBe(4 / statistics.pieces.piece_count);
+
+    expect(await backend.getPreload(GLASS_HARBOR, file.id, preload.id)).toMatchObject({
+      state: "downloading",
+      completed_bytes: 16 * mib,
+    });
+  });
+
+  it.each([0, 6])(
+    "drops unplanned disk pieces of episode index %s on a switch to memory",
+    async (index) => {
+      const { backend, advance } = start();
+      await changeTorrent(backend, LIGHTHOUSE, { storage_mode: "disk" });
+      const file = (await backend.listFiles(LIGHTHOUSE))[index];
+      if (!file) throw new Error("the fixture has this episode");
+
+      const preload = await backend.createPreload(LIGHTHOUSE, file.id, undefined);
+      advance(3500);
+      expect((await backend.getPreload(LIGHTHOUSE, file.id, preload.id)).state).toBe("ready");
+      await backend.deletePreload(LIGHTHOUSE, file.id, preload.id);
+      const disk = await backend.getTorrentStatistics(LIGHTHOUSE);
+      await changeTorrent(backend, LIGHTHOUSE, { storage_mode: "memory" });
+      const memory = await backend.getTorrentStatistics(LIGHTHOUSE);
+
+      expect(memory.downloaded_bytes).toBe(disk.downloaded_bytes);
+      expect(await backend.createPreload(LIGHTHOUSE, file.id, undefined)).toMatchObject({
+        state: "downloading",
+        completed_bytes: 0,
+      });
+    },
+  );
+
+  it("releases preload pins on pause so another torrent can use them", async () => {
+    const { backend, advance } = start();
+    const { etag } = await backend.getSettings();
+    await backend.updateSettings({ cache_capacity_bytes: 64 * 1024 * 1024 }, etag);
+    const otherTorrent = torrentId(2);
+    const [first] = await backend.listFiles(LIGHTHOUSE);
+    const [second] = await backend.listFiles(otherTorrent);
+    if (!first || !second) throw new Error("the fixtures have files");
+
+    const prior = await backend.createPreload(otherTorrent, second.id, undefined);
+    advance(3500);
+    await backend.deletePreload(otherTorrent, second.id, prior.id);
+    const pinned = await backend.createPreload(LIGHTHOUSE, first.id, undefined);
+    advance(3500);
+    const waiting = await backend.createPreload(otherTorrent, second.id, undefined);
+    expect((await backend.getPreload(LIGHTHOUSE, first.id, pinned.id)).state).toBe("ready");
+    expect(waiting.state).toBe("queued");
+
+    await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
+    expect(await backend.getPreload(LIGHTHOUSE, first.id, pinned.id)).toMatchObject({
+      state: "failed",
+      failure: { detail: "The torrent was paused." },
+    });
+    expect((await backend.getPreload(otherTorrent, second.id, waiting.id)).state).toBe("ready");
+    await expect(backend.createPreload(LIGHTHOUSE, first.id, undefined)).rejects.toMatchObject({
+      type: "lifecycle-conflict",
+    });
+  });
+
+  it("does not finish a download after its torrent is paused", async () => {
+    const { backend, advance } = start();
+    const file = (await backend.listFiles(LIGHTHOUSE))[7];
+    if (!file) throw new Error("the fixture has this episode");
+
+    const preload = await backend.createPreload(LIGHTHOUSE, file.id, undefined);
+    expect(preload.state).toBe("downloading");
+    await changeTorrent(backend, LIGHTHOUSE, { desired_state: "paused" });
+    advance(3500);
+    await changeTorrent(backend, LIGHTHOUSE, { desired_state: "started" });
+
+    expect((await backend.getPreload(LIGHTHOUSE, file.id, preload.id)).state).toBe("failed");
+    expect(await backend.createPreload(LIGHTHOUSE, file.id, undefined)).toMatchObject({
+      state: "downloading",
+      completed_bytes: 0,
+    });
+  });
+
+  it("reuses the last piece when reopening an external subtitle", async () => {
+    const { backend, advance } = start();
+    const subtitle = (await backend.listFiles(LIGHTHOUSE)).find((file) =>
+      file.path.at(-1)?.endsWith(".en.srt"),
+    );
+    if (!subtitle) throw new Error("the fixture has a subtitle file");
+
+    const preload = await backend.createPreload(LIGHTHOUSE, subtitle.id, undefined);
+    expect(preload.state).toBe("downloading");
+    advance(3500);
+    await backend.deletePreload(LIGHTHOUSE, subtitle.id, preload.id);
+
+    expect(await backend.createPreload(LIGHTHOUSE, subtitle.id, undefined)).toMatchObject({
+      state: "ready",
+      completed_bytes: subtitle.size_bytes,
+    });
+  });
+
   it("is gone once cancelled", async () => {
     const { backend } = start();
-    const created = await backend.createPreload(LIGHTHOUSE, "fil", undefined);
+    const [video] = await backend.listFiles(LIGHTHOUSE);
+    if (!video) throw new Error("the fixture has files");
+    const created = await backend.createPreload(LIGHTHOUSE, video.id, undefined);
 
-    await backend.deletePreload(LIGHTHOUSE, "fil", created.id);
+    await backend.deletePreload(LIGHTHOUSE, video.id, created.id);
 
-    await expect(backend.getPreload(LIGHTHOUSE, "fil", created.id)).rejects.toMatchObject({
+    await expect(backend.getPreload(LIGHTHOUSE, video.id, created.id)).rejects.toMatchObject({
       type: "not-found",
     });
   });
+
+  it.each([false, true])(
+    "reuses fetched pieces on reopen when the old preload is deleted: %s",
+    async (deleted) => {
+      const { backend, advance } = start();
+      const video = (await backend.listFiles(LIGHTHOUSE))[3];
+      if (!video) throw new Error("the fixture has files");
+
+      const first = await backend.createPreload(LIGHTHOUSE, video.id, undefined);
+      expect(first.state).toBe("downloading");
+      advance(3500);
+      expect((await backend.getPreload(LIGHTHOUSE, video.id, first.id)).state).toBe("ready");
+      const session = backend.beginPlayback?.(LIGHTHOUSE, video.id);
+      if (!session) throw new Error("the browser session can play");
+      session.release();
+      if (deleted) await backend.deletePreload(LIGHTHOUSE, video.id, first.id);
+
+      const before = await backend.getTorrentStatistics(LIGHTHOUSE);
+      const reopened = await backend.createPreload(LIGHTHOUSE, video.id, undefined);
+      expect(reopened.state).toBe("ready");
+      expect(reopened.ranges).toEqual(first.ranges);
+      expect(reopened.completed_bytes).toBe(reopened.target_bytes);
+      expect((await backend.getTorrentStatistics(LIGHTHOUSE)).downloaded_bytes).toBe(
+        before.downloaded_bytes,
+      );
+    },
+  );
 });
 
 describe("progress and up next", () => {
@@ -1107,7 +2242,12 @@ describe("system", () => {
     const statistics = await backend.getStatistics();
     const counts = Object.values(statistics.torrent_counts_by_observed_state);
     expect(counts.reduce((total, count) => total + count, 0)).toBe(statistics.torrent_count);
-    expect(statistics.download_rate_bytes_per_second).toBeGreaterThan(0);
+    const torrentStatistics = await Promise.all(
+      (await listedTorrents(backend)).map(({ id }) => backend.getTorrentStatistics(id)),
+    );
+    expect(statistics.download_rate_bytes_per_second).toBe(
+      torrentStatistics.reduce((total, entry) => total + entry.download_rate_bytes_per_second, 0),
+    );
   });
 
   it("follows the cache capacity setting", async () => {

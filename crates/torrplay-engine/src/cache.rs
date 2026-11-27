@@ -156,6 +156,14 @@ pub enum CacheError {
         /// The piece index.
         piece: u32,
     },
+    /// A pin protects this piece from eviction.
+    #[error("piece {piece} of torrent {torrent} is pinned, so it cannot be evicted")]
+    PiecePinned {
+        /// The torrent.
+        torrent: TorrentKey,
+        /// The piece index.
+        piece: u32,
+    },
     /// The torrent is not registered with the cache.
     #[error("torrent {0} is not registered with the cache")]
     UnknownTorrent(TorrentKey),
@@ -1009,6 +1017,22 @@ impl PieceCache {
         Ok(())
     }
 
+    /// Whether the cache currently holds verified buffers and published
+    /// pins for all of the requested pieces.
+    pub(crate) fn has_verified_pins(&self, torrent: TorrentKey, pieces: &[u32]) -> bool {
+        self.lock().is_ok_and(|state| {
+            state.torrents.get(&torrent).is_some_and(|entry| {
+                pieces.iter().all(|&piece| {
+                    entry.pins.contains(&piece)
+                        && state
+                            .slots
+                            .get(&(torrent, piece))
+                            .is_some_and(|slot| slot.verified)
+                })
+            })
+        })
+    }
+
     /// Replaces a torrent's plan: the pieces eviction must skip, and the
     /// pieces it requests, most urgent first, whose places order the waiting
     /// reservations across torrents. Waiting pieces the plan dropped leave
@@ -1277,6 +1301,10 @@ impl PieceCache {
     pub(crate) fn evict(&self, torrent: TorrentKey, piece: u32) -> Result<(), CacheError> {
         let freed = {
             let mut state = self.lock()?;
+            // A reader or preload may have pinned it since selection.
+            if state.is_pinned(torrent, piece) {
+                return Err(CacheError::PiecePinned { torrent, piece });
+            }
             match state.slots.get(&(torrent, piece)) {
                 None => return Err(CacheError::PieceMissing { torrent, piece }),
                 Some(slot) if !slot.verified => {
@@ -1546,6 +1574,23 @@ impl PieceCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verified_pins_require_both_a_published_pin_and_verified_data() {
+        let cache = PieceCache::new(100);
+        let torrent = cache.register_torrent(10).unwrap();
+        cache.seed(torrent, 0, &[1; 10]).unwrap();
+        assert!(!cache.has_verified_pins(torrent, &[0]));
+
+        cache
+            .set_plan(torrent, HashSet::from([0, 1]), &[0, 1])
+            .unwrap();
+        assert!(cache.has_verified_pins(torrent, &[0]));
+        assert!(!cache.has_verified_pins(torrent, &[0, 1]));
+
+        cache.seed(torrent, 1, &[2; 10]).unwrap();
+        assert!(cache.has_verified_pins(torrent, &[0, 1]));
+    }
 
     #[cfg(target_os = "linux")]
     #[test]
@@ -2299,6 +2344,22 @@ mod tests {
             Err(CacheError::PieceMissing { torrent, piece: 0 }),
             "a partial piece is not a verified one"
         );
+    }
+
+    #[test]
+    fn an_eviction_candidate_is_kept_if_pinned_before_invalidation() {
+        let cache = PieceCache::new(10);
+        let torrent = evictable(&cache);
+        cache.seed(torrent, 0, &[1; 10]).unwrap();
+        assert_eq!(candidates(&cache, 10), [vec![0]]);
+
+        cache.set_plan(torrent, HashSet::from([0]), &[0]).unwrap();
+        assert!(matches!(
+            cache.evict(torrent, 0),
+            Err(CacheError::PiecePinned { .. })
+        ));
+        assert!(cache.has_verified_pins(torrent, &[0]));
+        assert_eq!(cache.audit().unwrap().eviction_count, 0);
     }
 
     #[test]
