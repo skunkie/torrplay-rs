@@ -72,7 +72,7 @@ jobs:
               end tell
           end tell
           APPLESCRIPT
-          /usr/bin/osascript -e 'tell application "Finder" to set bounds of front Finder window to {100, 100, 740, 528}'
+          /usr/bin/osascript -e 'tell application "System Events" to tell process "Finder" to set size of front window to {640, 428}'
           sleep 5
           screencapture -x -o -l "$window" target/dmg/TorrPlay-Finder-With-Bars.png
           test -s target/dmg/TorrPlay-Finder-With-Bars.png
