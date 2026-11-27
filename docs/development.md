@@ -625,10 +625,10 @@ decides: `torrplay-service` from `[package.metadata.deb]` in
 `crates/torrplay/Cargo.toml`, which holds `torrplay`, the files above, and a
 firewalld service and a ufw profile for the default ports, which the
 administrator enables, and `torrplay-client` from the one in `desktop/Cargo.toml`,
-which holds the client with its desktop entry and icon. The client's package
-depends on the service's at its own version, which cargo-deb cannot fill in, so
-that manifest names it and the test checks it; the service's only suggests the
-client's, so a server installs no desktop libraries. cargo-deb writes the maintainer scripts: they
+which holds the client, its desktop entries, its icon, and its offline help.
+The client manifest pins the service dependency to the same package version,
+and the smoke test checks the pin. The service package suggests the client so
+a server can install without desktop libraries. cargo-deb writes the maintainer scripts: they
 create the account, enable and start the unit on install, restart it on upgrade,
 and stop it on removal. `/etc/torrplay/torrplay.env` is a conffile, which a
 removal keeps and a purge deletes; neither deletes `/var/lib/torrplay` or the
@@ -644,9 +644,10 @@ and the client first, then package and test them:
 cargo build --release --locked -p torrplay
 (cd desktop && cargo build --release --locked --no-default-features --features client --target-dir target/client)
 scripts/build-man-pages.sh target/man
+python3 scripts/build-debian-client.py stage-help
 python3 scripts/build-notices.py target/notices/THIRD-PARTY-NOTICES.txt
 cargo deb --no-build --locked -p torrplay --output target/debian/torrplay-service.deb
-cargo deb --no-build --locked --manifest-path desktop/Cargo.toml --output target/debian/torrplay-client.deb
+python3 scripts/build-debian-client.py package target/debian/torrplay-client.deb
 scripts/test-linux-service.sh --package target/debian/torrplay-service.deb target/debian/torrplay-client.deb
 ```
 
@@ -657,9 +658,21 @@ include shared Markdown fragments from `docs/reference/fragments/`.
 Pandoc 3.12.1 and Python 3.11 or later. Set `PANDOC` to a path if that version
 is outside `PATH`. Preview a page with `man -l <(zcat target/man/torrplay.1.gz)`.
 
-The test then also checks what the package installs, that the settings file is
-a conffile, and what removing and purging keep. CI builds and tests the package
-on Ubuntu 24.04, the oldest supported system, in the Linux service package job.
+The client package command verifies the staged HTML at
+`target/reference/debian/help/index.html` before running `cargo deb --no-build`.
+It accepts a reference staged by CI or generated locally with `stage-help`.
+The page must match the Debian client target and the full package version,
+including the Debian revision. After installation, click **Help** in the
+client title bar to open
+`/usr/share/doc/torrplay-client/help/index.html` in the system's HTML handler.
+If the service is stopped and the client window cannot open, choose
+**TorrPlay Client Help** from the applications menu. That launcher uses
+`xdg-open` from `xdg-utils`. Both routes work offline.
+
+The package smoke test requires `desktop-file-utils`. It checks the installed
+HTML and its links, the launcher target, the settings conffile, and what
+removing and purging keep. CI renders the Debian references once, then builds
+and tests both architectures on Ubuntu 24.04 using those files.
 
 The password and backup commands need the service stopped, and they run as its
 account on its data directory. A backup goes where that account can write,
@@ -687,26 +700,34 @@ repository root:
 python3 scripts/build-reference.py html --platform macos --edition application target/reference/macos
 python3 scripts/build-reference.py html --platform windows --edition application target/reference/nsis
 python3 scripts/build-reference.py html --platform windows --edition service target/reference/msi
-python3 scripts/build-reference.py html --platform linux --edition client --distribution debian target/reference/debian
+python3 scripts/build-debian-client.py stage-help
 python3 scripts/build-reference.py html --platform linux --edition client --distribution fedora target/reference/fedora
 python3 scripts/build-reference.py man --distribution fedora target/reference/fedora/man
 ```
 
 The Fedora references describe the proposed packaging in
 [ADR 16](adr/0016-rpm-packaging.md). Each HTML command writes
-`help/index.html` under its output directory. Open that file directly in a
-browser to check navigation, browser find, and copying examples offline.
+`help/index.html` under its output directory. The Debian command uses
+`target/reference/debian` and includes the Debian package revision. Open the
+HTML file directly in a browser to check navigation, browser find, and copying
+examples offline.
 The theme icon follows the system by default. Click it to cycle through
 **System**, **Light**, and **Dark**, or use the arrow keys when the control
 has keyboard focus. Check that the contents are accessible from the sidebar
 on wide screens and above the article on narrow screens.
-The package entry points and installer integration follow in the next
-increment.
 
-`--version` overrides the version from `crates/torrplay/Cargo.toml` for
-a reference generated for a different package version. The client references
-use `--client-mode local`. To review the assembled Markdown, add
-`--markdown`, which runs without Pandoc.
+With `scripts/build-reference.py`, `--version` overrides the version from
+`crates/torrplay/Cargo.toml`, and `--markdown` writes the assembled Markdown
+without Pandoc. The client references use `--client-mode local`. For a custom
+Debian preview, use the renderer with a separate output directory so it
+doesn't overwrite staged package help:
+
+```sh
+python3 scripts/build-reference.py html --platform linux --edition client \
+  --distribution debian --version 0.1.0-2 target/reference/debian-preview
+```
+
+Add `--markdown` to this command to preview `help/index.md` instead.
 
 The Linux service package job checks deterministic generation, titles,
 versions, internal links, and applicable platform sections. It checks

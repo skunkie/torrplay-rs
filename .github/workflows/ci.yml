@@ -143,10 +143,38 @@ jobs:
         shell: pwsh
         run: scripts/test-windows-service.ps1 target/release/torrplay.exe
 
-  service-package:
-    name: Linux service packages (${{ matrix.arch }})
+  debian-references:
+    name: Debian package references
     needs: stage
     if: needs.stage.outputs.rust == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PANDOC_VERSION: 3.12.1
+      PANDOC_SHA256: d0c90410e90204c9ca83b8539fac5c7aed01fd537207e4585849f8abc5df20b8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Pandoc
+        run: scripts/install-pandoc.sh "${PANDOC_VERSION}" "${PANDOC_SHA256}" "${RUNNER_TEMP}" >> "$GITHUB_PATH"
+      - name: Render the manual pages and client help
+        run: |
+          scripts/build-man-pages.sh target/man
+          python3 scripts/build-debian-client.py stage-help
+      - name: Upload the Debian references
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: debian-references
+          path: |
+            target/man/*.gz
+            target/reference/debian/help/index.html
+          if-no-files-found: error
+          retention-days: 7
+
+  service-package:
+    name: Linux service packages (${{ matrix.arch }})
+    needs: debian-references
     # The oldest supported system, as ADR 13 decides: a binary needs the C
     # library and WebKitGTK it was linked against or newer.
     runs-on: ${{ matrix.os }}
@@ -157,10 +185,8 @@ jobs:
         include:
           - os: ubuntu-24.04
             arch: x86_64
-            pandoc-sha256: d0c90410e90204c9ca83b8539fac5c7aed01fd537207e4585849f8abc5df20b8
           - os: ubuntu-24.04-arm
             arch: arm64
-            pandoc-sha256: 445d96fd08801fe636cab1158b4f017ee320ac3b7446328b4fe2f902117b19b9
     env:
       # Corepack fetches the pnpm release package.json names and checks it
       # against the SHA-512 written there.
@@ -171,10 +197,6 @@ jobs:
       # A release at least two weeks old, which the third-party notices are
       # written with; cargo verifies it as above.
       CARGO_ABOUT_VERSION: 0.9.2
-      # A release at least two weeks old, with the SHA-256 GitHub publishes for
-      # the archive.
-      PANDOC_VERSION: 3.12.1
-      PANDOC_SHA256: ${{ matrix.pandoc-sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -210,10 +232,14 @@ jobs:
         run: cargo build --release --locked --no-default-features --features client --target-dir target/client
       - name: Install cargo-deb
         run: cargo install cargo-deb --version "${CARGO_DEB_VERSION}" --locked
-      - name: Install pandoc
-        run: scripts/install-pandoc.sh "${PANDOC_VERSION}" "${PANDOC_SHA256}" "${RUNNER_TEMP}" >> "$GITHUB_PATH"
-      - name: Render the manual pages
-        run: scripts/build-man-pages.sh target/man
+      - name: Download the Debian references
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: debian-references
+          path: target
+      - name: Install Pandoc for reference checks
+        if: matrix.arch == 'x86_64'
+        run: scripts/install-pandoc.sh 3.12.1 d0c90410e90204c9ca83b8539fac5c7aed01fd537207e4585849f8abc5df20b8 "${RUNNER_TEMP}" >> "$GITHUB_PATH"
       - name: Verify the shared man pages and offline help
         if: matrix.arch == 'x86_64'
         run: |
@@ -226,7 +252,7 @@ jobs:
       - name: Build the packages
         run: |
           cargo deb --no-build --locked -p torrplay --output target/debian/torrplay-service.deb
-          cargo deb --no-build --locked --manifest-path desktop/Cargo.toml --output target/debian/torrplay-client.deb
+          python3 scripts/build-debian-client.py package target/debian/torrplay-client.deb
       # The runner is disposable, so the test installs the packages on it.
       - name: Install and test the packages
         run: scripts/test-linux-service.sh --package target/debian/torrplay-service.deb target/debian/torrplay-client.deb

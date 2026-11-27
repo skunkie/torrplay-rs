@@ -13,7 +13,8 @@
 # the packages install and what removing and purging the service's keeps. It
 # changes the system it runs on, so CI runs it on a disposable
 # runner; it needs systemd 254 or later, passwordless sudo, curl, ss, nsenter,
-# python3, and nothing listening on ports 8642 and 8643.
+# Python 3.11 or later, and nothing listening on ports 8642 and 8643. The
+# package test also requires desktop-file-validate from desktop-file-utils.
 #
 #   scripts/test-linux-service.sh target/release/torrplay
 #   scripts/test-linux-service.sh --package torrplay-service.deb torrplay-client.deb
@@ -33,6 +34,8 @@ fi
 scripts=$(dirname "$0")
 settings=/etc/torrplay/torrplay.env
 drop_in=/etc/systemd/system/torrplay.service.d
+client_help=/usr/share/doc/torrplay-client/help/index.html
+client_help_launcher=/usr/share/applications/org.torrplay.client.help.desktop
 holder=
 
 fail() {
@@ -142,18 +145,20 @@ check_package_files() {
     fail "the service's package does not suggest the client"
   [[ "$(dpkg-deb --field "$client_package" Depends)" == *"torrplay-service (= $full_version)"* ]] ||
     fail "the client's package does not depend on this version of the service's"
+  dpkg-deb --field "$client_package" Depends | grep -Eq '(^|, )xdg-utils(,|$)' ||
+    fail "the client's package does not depend on xdg-utils"
 }
 
 # Installs the client's package over the service's and checks what it adds.
 install_client_package() {
-  local path version
-  version=$(dpkg-query --showformat='${Version}' --show torrplay-service)
-  version=${version%-*}
+  local path version full_version
+  full_version=$(dpkg-query --showformat='${Version}' --show torrplay-service)
+  version=${full_version%-*}
   sudo DEBIAN_FRONTEND=noninteractive apt-get install --yes "$client_package"
   for path in /usr/bin/torrplay-client /usr/share/applications/org.torrplay.client.desktop \
     /usr/share/icons/hicolor/512x512/apps/org.torrplay.client.png \
     /usr/share/man/man1/torrplay-client.1.gz /usr/share/doc/torrplay-client/copyright \
-    /usr/share/doc/torrplay-client/THIRD-PARTY-NOTICES.txt; do
+    /usr/share/doc/torrplay-client/THIRD-PARTY-NOTICES.txt "$client_help" "$client_help_launcher"; do
     [[ -e $path ]] || fail "the client's package installed no $path"
   done
   cmp -s /usr/share/doc/torrplay-service/THIRD-PARTY-NOTICES.txt \
@@ -163,9 +168,10 @@ install_client_package() {
   # display.
   [[ "$(/usr/bin/torrplay-client --version)" == "torrplay-client $version" ]] ||
     fail "/usr/bin/torrplay-client is not this version's client"
-  if command -v desktop-file-validate >/dev/null; then
-    desktop-file-validate /usr/share/applications/org.torrplay.client.desktop
-  fi
+  desktop-file-validate /usr/share/applications/org.torrplay.client.desktop "$client_help_launcher"
+  grep -Fxq "Exec=xdg-open $client_help" "$client_help_launcher" ||
+    fail "the help launcher does not open the installed reference"
+  python3 "$scripts/check-reference.py" --debian-client-help "$client_help" --version "$full_version"
 }
 
 # Removes the service's package, and with it the client's, which depends on
@@ -175,7 +181,7 @@ remove_package() {
   local path
   sudo DEBIAN_FRONTEND=noninteractive apt-get remove --yes torrplay-service
   for path in /usr/bin/torrplay /usr/bin/torrplay-client \
-    /usr/lib/systemd/system/torrplay.service; do
+    /usr/lib/systemd/system/torrplay.service "$client_help" "$client_help_launcher"; do
     [[ ! -e $path ]] || fail "removing the package left $path"
   done
   if dpkg-query --show torrplay-client >/dev/null 2>&1 &&

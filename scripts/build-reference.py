@@ -88,7 +88,10 @@ def cli():
         if target not in HTML_TARGETS:
             parser.error("unsupported platform, edition, and distribution combination")
     version = args.version if args.version is not None else package_version()
-    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?", version):
+    pattern = r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?"
+    if args.format == "html" and target == ("linux", "client", "debian"):
+        pattern = r"[0-9]+\.[0-9]+\.[0-9]+(?:[~+-][0-9A-Za-z.+~-]+)?"
+    if not re.fullmatch(pattern, version):
         parser.error("version must be a package version such as 0.1.0")
     return args, version
 

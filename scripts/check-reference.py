@@ -19,6 +19,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 GENERATOR = ROOT / "scripts/build-reference.py"
 SETTING_NAME = r"TORRPLAY_[A-Z0-9_]+"
+CLIENT_TITLE = "TorrPlay Client Help"
+CLIENT_SECTIONS = {"client-usage", "client-options", "client-connection", "troubleshooting"}
 
 
 @dataclass
@@ -244,11 +246,24 @@ def check_man(directory, distribution, version, cli, client):
         assert "ufw" not in service and "purged" not in settings
 
 
-def check_html_header(parsed, title, label, version, target):
-    assert "".join(parsed.title).strip() == title, f"{target}: expected title {title}"
+def check_html_file(path, title, label, version, sections):
+    page = path.read_text(encoding="utf-8")
+    if re.search(r"@import|url\s*\(", page, re.IGNORECASE):
+        raise ValueError(f"{path}: CSS resource references are not allowed in offline help")
+    parsed = ReferenceHTML()
+    parsed.feed(page)
+    parsed.close()
+    if "".join(parsed.title).strip() != title:
+        raise ValueError(f"{path}: expected title {title!r}")
     header = " ".join("".join(parsed.header).split())
     expected_header = f"{title} Version {version} · {label}"
-    assert header == expected_header, f"{target}: expected header {expected_header}"
+    if header != expected_header:
+        raise ValueError(f"{path}: expected {expected_header!r}, found {header!r}")
+    if missing_links := parsed.links - parsed.ids:
+        raise ValueError(f"{path}: unresolved links {sorted(missing_links)}")
+    if missing_sections := sections - parsed.toc_links:
+        raise ValueError(f"{path}: missing sections {sorted(missing_sections)}")
+    return page, parsed
 
 
 def check_html(directory, target, title, label, sections, names, version, *, override=False):
@@ -263,28 +278,44 @@ def check_html(directory, target, title, label, sections, names, version, *, ove
         generate(output, *args)
     generated = first / "help/index.html"
     assert generated.read_bytes() == (second / "help/index.html").read_bytes(), target
-    page = generated.read_text(encoding="utf-8")
-    parsed = ReferenceHTML()
-    parsed.feed(page)
-    parsed.close()
-    check_html_header(parsed, title, label, version, target)
-    assert parsed.links <= parsed.ids, f"{target}: unresolved links {parsed.links - parsed.ids}"
-    assert sections <= parsed.toc_links, f"{target}: missing sections {sections - parsed.toc_links}"
+    page, parsed = check_html_file(generated, title, label, version, sections)
     if platform != "linux":
         settings_links = {"allowed-hosts", "download-directory", "listen-address", "log-format"}
         assert settings_links <= parsed.body_links, f"{target}: missing setting cross-links"
         for linux_detail in ("systemctl", "/etc/torrplay", "journalctl", "/var/lib/torrplay"):
             assert linux_detail not in page, f"{target}: unexpected {linux_detail}"
     assert str(ROOT) not in page, target
-    assert not re.search(r"@import|url\s*\(", page, re.IGNORECASE), target
     check_names(parsed.terms, names, target)
+
+
+def check_debian_client_preflight(directory, version):
+    original = directory / "first/help/index.html"
+    command = [sys.executable, __file__, "--version", version, "--debian-client-help"]
+    subprocess.run([*command, original], check=True, stdout=subprocess.DEVNULL)
+    page = original.read_text(encoding="utf-8")
+    fixture = directory / "network-css.html"
+    for css in ('@import "https://example.invalid/help.css";',
+                'body { background-image: url("https://example.invalid/help.png"); }'):
+        fixture.write_text(page.replace("</head>", f"<style>{css}</style></head>", 1), encoding="utf-8")
+        result = subprocess.run([*command, fixture], capture_output=True, encoding="utf-8", check=False)
+        assert result.returncode == 1 and "CSS resource references" in result.stderr, css
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--torrplay", type=Path, help="built torrplay executable")
     parser.add_argument("--client", type=Path, help="built torrplay-client executable")
+    parser.add_argument("--debian-client-help", type=Path, help="check staged or installed Debian client HTML")
+    parser.add_argument("--version", help="expected Debian package version, including its revision")
     args = parser.parse_args()
+    if args.debian_client_help:
+        if not args.version or args.torrplay or args.client:
+            parser.error("use --debian-client-help with --version only")
+        check_html_file(args.debian_client_help, CLIENT_TITLE, "Linux (Debian)", args.version, CLIENT_SECTIONS)
+        print(f"Verified Debian client help {args.version} at {args.debian_client_help}.")
+        return
+    if args.version:
+        parser.error("--version requires --debian-client-help")
     if bool(args.torrplay) != bool(args.client):
         parser.error("supply both executables to check CLI coverage")
     check_names_with_digits()
@@ -298,13 +329,12 @@ def main():
     with (ROOT / "crates/torrplay/Cargo.toml").open("rb") as manifest:
         version = tomllib.load(manifest)["package"]["version"]
     app_sections = {"startup-settings", "options", "commands", "example"}
-    client_sections = {"client-usage", "client-options", "client-connection", "troubleshooting"}
     with tempfile.TemporaryDirectory(prefix="torrplay-reference-") as scratch:
         directory = Path(scratch)
         for distribution in ("debian", "fedora"):
             check_man(directory / f"man-{distribution}", distribution, version, cli, client)
         msi = (("windows", "service", None), "TorrPlay Service Help", "Windows (MSI)",
-               client_sections | {"service-administration", "startup-settings", "options", "commands"},
+               CLIENT_SECTIONS | {"service-administration", "startup-settings", "options", "commands"},
                cli | client | template_settings("windows"))
         targets = [
             (("macos", "application", None), "TorrPlay Help", "macOS",
@@ -314,11 +344,12 @@ def main():
             msi,
         ]
         for distribution in ("debian", "fedora"):
-            targets.append((("linux", "client", distribution), "TorrPlay Client Help",
-                            f"Linux ({distribution.title()})", client_sections, client))
+            targets.append((("linux", "client", distribution), CLIENT_TITLE,
+                            f"Linux ({distribution.title()})", CLIENT_SECTIONS, client))
         for target, title, label, sections, names in targets:
             check_html(directory / "-".join(part for part in target if part),
                        target, title, label, sections, names, version)
+        check_debian_client_preflight(directory / "linux-client-debian", version)
         fixture_version = "2.3.5" if version == "2.3.4" else "2.3.4"
         check_html(directory / "msi-version-override", *msi, fixture_version, override=True)
     print("Verified deterministic man pages and offline HTML for every target.")
@@ -329,4 +360,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (OSError, ValueError) as error:
+        sys.exit(f"check-reference: {error}")

@@ -188,7 +188,7 @@ fn handle_drag(app: &AppHandle, window: &WebviewWindow, drag: &DragDropEvent) {
 pub fn open_window(app: &AppHandle, own: Url) -> anyhow::Result<()> {
     let opener = app.clone();
     let saver = app.clone();
-    let window = WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::External(own.clone()))
+    let builder = WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::External(own.clone()))
         // The product's name, so the client's window is named TorrPlay Client and the
         // application's TorrPlay.
         .title(&app.package_info().name)
@@ -212,9 +212,14 @@ pub fn open_window(app: &AppHandle, own: Url) -> anyhow::Result<()> {
             let app = window.app_handle();
             let loaded = matches!(payload.event(), PageLoadEvent::Finished);
             app.state::<Pages>().page_loaded(app, loaded);
-        })
-        .build()
-        .context("opening the window")?;
+        });
+    #[cfg(all(target_os = "linux", feature = "client"))]
+    let (builder, has_help) = {
+        let has_help = std::path::Path::new(crate::client::HELP_PATH).is_file();
+        // GTK must attach the header bar before showing the native window.
+        (builder.visible(!has_help), has_help)
+    };
+    let window = builder.build().context("opening the window")?;
     let dragged = window.clone();
     let handle = app.clone();
     window.on_window_event(move |event| {
@@ -222,6 +227,19 @@ pub fn open_window(app: &AppHandle, own: Url) -> anyhow::Result<()> {
             handle_drag(&handle, &dragged, drag);
         }
     });
+    #[cfg(all(target_os = "linux", feature = "client"))]
+    if has_help {
+        let native = window.clone();
+        window.run_on_main_thread(move || {
+            if let Err(error) = crate::client::install_help_header(&native) {
+                tracing::warn!(%error, "could not add the Help button to the window");
+            }
+            if let Err(error) = native.show() {
+                tracing::error!(%error, "could not show the client window");
+                native.app_handle().exit(1);
+            }
+        })?;
+    }
     Ok(())
 }
 
