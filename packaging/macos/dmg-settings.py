@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+from pathlib import Path
+
+# dmgbuild provides defines from the -D arguments.
+app = Path(defines["app"])
+files = [str(app)]
+symlinks = {"Applications": "/Applications"}
+hide_extensions = [app.name]
+icon = "desktop/icons/icon.icns"
+license = {"licenses": {"en_US": "LICENSES/MIT.txt"}}
+format = "UDZO"
+compression_level = 9
+
+# Match the canvas and arrow in scripts/render-logo.py.
+background = "packaging/macos/dmg-background.png"
+window_rect = ((100, 100), (640, 340))
+default_view = "icon-view"
+icon_size = 112
+icon_locations = {app.name: (174, 215), "Applications": (466, 215)}

@@ -84,7 +84,8 @@ light palette: `brand/logo-dark.svg`, `brand/logo-light.svg`, the adaptive
 `brand/logo.svg` that follows the viewer's color scheme, and the DLNA media
 server's PNG and JPEG icons in `crates/torrplay-server/assets/dlna/`, and
 the adaptive logo again as the web client's `client/public/favicon.svg`.
-It also renders the NSIS and WiX setup wizard bitmaps in `desktop/icons/`.
+It also renders the NSIS and WiX setup wizard bitmaps in `desktop/icons/` and
+the standard and Retina Finder backgrounds in `packaging/macos/`.
 For macOS it draws `desktop/icons/icon.icns`, the light tile inside the
 margin and shadow of Apple's icon grid, which the Dock shows at the size of
 other applications' icons, and `desktop/icons/icon.icon`, an Icon Composer
@@ -915,10 +916,13 @@ gh run download RUN_ID -n application-linux-x86_64
 chmod +x appimage/torrplay.AppImage
 ```
 
-The macOS disk image contains an ad hoc signed application and CLI. CI mounts
-the image, compares the license and notices in `TorrPlay.app/Contents/Resources`
-with the source files, checks both architecture slices, verifies the app
-signature and icons, and runs the bundled CLI. Run the following commands
+Tauri builds the ad hoc signed universal application with its bundled CLI.
+`dmgbuild` uses `packaging/macos/dmg-settings.py` to package it in an image
+with an Applications shortcut, a drag-to-install background, and the MIT
+license prompt. CI mounts the image and checks the shortcut and Finder
+metadata. It also verifies the app signature, icons, and both architecture
+slices, compares the bundled license and notices with their source files,
+and runs the bundled CLI. Run the following commands
 from the repository root on macOS with Xcode 26 and Python 3.11 or later
 available as `python3` on PATH to build the image locally.
 
@@ -927,8 +931,15 @@ available as `python3` on PATH to build the image locally.
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
 cargo install tauri-cli --version 2.12.4 --locked
 cargo install cargo-about --version 0.9.2 --locked --features cli
+python3 -m venv target/dmgbuild
+target/dmgbuild/bin/python -m pip install --require-hashes --only-binary=:all: \
+  -r packaging/macos/dmg-requirements.txt
+export PATH="$PWD/target/dmgbuild/bin:$PATH"
 scripts/build-application-macos.sh target/dmg/TorrPlay.dmg
 ```
+
+Open the resulting image in Finder to check the artwork and confirm that
+dragging TorrPlay onto Applications copies the app.
 
 ### Windows 11 manual install
 
