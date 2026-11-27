@@ -229,11 +229,9 @@ manifest chooses between two.
   packages are built. The service's `.deb` installs `torrplay(1)` and
   `torrplay.env(5)`, the client's `torrplay-client(1)`, and the
   application's `.deb` `torrplay(1)`, since it ships `torrplay`.
-- A test checks each page against what it describes, so none can fall
-  behind: `torrplay(1)` names every option and command `torrplay --help`
-  prints, `torrplay-client(1)` every option the client's usage gives, and
-  `torrplay.env(5)` every variable the Linux and Windows settings templates
-  list.
+- [ADR 14](0014-offline-help.md) defines offline HTML for desktop packages
+  and the shared Markdown fragments used by both formats. The build checks
+  the assembled references against CLI usage and the settings templates.
 - `torrplay-desktop` has no page of its own: it is started from the
   desktop, and its options are `torrplay`'s, which `torrplay(1)` describes.
 

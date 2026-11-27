@@ -99,7 +99,7 @@ SPDX-License-Identifier: MIT
                     <Publish Event="NewDialog" Value="TorrPlayBrowseDlg">1</Publish>
                 </Control>
                 <Control Id="FolderHelp" Type="Text" X="24" Y="96" Width="320" Height="34"
-                    Text="Use a local folder with no existing TorrPlay data and write access for NT SERVICE\torrplay. The default is %ProgramData%\TorrPlay\downloads." />
+                    Text="Use a local folder with no existing TorrPlay data and Modify access for NT SERVICE\torrplay. The default is %ProgramData%\TorrPlay\downloads." />
                 <Control Id="HostsLabel" Type="Text" X="24" Y="134" Width="320" Height="12" TabSkip="no" Text="Allowed hostnames" />
                 <Control Id="Hosts" Type="Edit" X="24" Y="148" Width="322" Height="17"
                     Property="TORRPLAY_SETUP_ALLOWED_HOSTS" Text="{1023}" />

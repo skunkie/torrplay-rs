@@ -188,11 +188,11 @@ jobs:
           cache-workspaces: |
             .
             desktop
-      - name: Install WebKitGTK and the desktop entry validator
+      - name: Install WebKitGTK and reference check tools
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev librsvg2-dev \
-            desktop-file-utils
+            desktop-file-utils groff-base
       - name: Enable pnpm
         working-directory: client
         run: corepack enable pnpm
@@ -214,6 +214,11 @@ jobs:
         run: scripts/install-pandoc.sh "${PANDOC_VERSION}" "${PANDOC_SHA256}" "${RUNNER_TEMP}" >> "$GITHUB_PATH"
       - name: Render the manual pages
         run: scripts/build-man-pages.sh target/man
+      - name: Verify the shared man pages and offline help
+        if: matrix.arch == 'x86_64'
+        run: |
+          python3 scripts/check-reference.py --torrplay target/release/torrplay \
+            --client desktop/target/client/release/torrplay-desktop
       - name: Install cargo-about
         run: cargo install cargo-about --version "${CARGO_ABOUT_VERSION}" --locked --features cli
       - name: Write the third-party notices

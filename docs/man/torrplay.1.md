@@ -42,121 +42,41 @@ and **torrplay-client**(1) opens the service's page.
 
 With no command, **torrplay** runs the application with the *OPTIONS* below.
 
-**torrplay service**
-:   Runs as the Windows service of the service edition, which the Windows
-    service manager starts, with the **TORRPLAY_** settings in
-    *%ProgramData%\\TorrPlay\\torrplay.env* and its data in that directory
-    unless **\--data-dir** names another. It takes the options of a run.
-    Anywhere else, or started by hand, it says so and exits with status 2.
-    On Linux, systemd runs **torrplay** itself.
+<!-- include: service-command-windows.md -->
 
-**torrplay password set**
-:   Reads a new password from the first line of standard input and stores
-    it, which turns authentication on. The application must be stopped.
-
-**torrplay password remove**
-:   Turns authentication off and revokes every token. The application must
-    be stopped.
-
-**torrplay backup create**
-:   Writes the archive that *GET /api/v1/backup* returns to the file
-    **\--output** names, by default *torrplay-backup-*TIME*.zip* in the
-    current directory, with TIME in UTC. It never writes over an existing
-    file. The application must be stopped.
-
-**torrplay backup restore** *FILE*
-:   Replaces every record but the credentials with those of the archive
-    *FILE*, as *PUT /api/v1/backup* does, checking the archive whole first.
-    The application must be stopped; its next start adds the restored
-    torrents.
-
-**torrplay mcp**
-:   Serves a running application's API to an MCP client. **\--url** sets
-    the application's origin and overrides **TORRPLAY_URL**. The default
-    origin is *http://127.0.0.1:8642*. The command sends
-    **TORRPLAY_TOKEN**, an API access token, as its credential. It speaks
-    on standard input and output, or with **\--transport http** at */mcp*
-    on **\--listen**, a loopback address, by default *127.0.0.1:8643*.
+<!-- include: cli-commands.md -->
 
 # OPTIONS
 
-**\--listen** *ADDRESS*
-:   The API's address and port. Overrides **TORRPLAY_LISTEN**. The default is
-    *[::]:8642*, every interface.
-
-**\--allowed-host** *NAME*
-:   An exact HTTP hostname, such as `torrplay`, or a suffix wildcard such as
-    `*.home.arpa`. Quote wildcards in the shell. Repeat the option to add
-    each entry to **TORRPLAY_ALLOWED_HOSTS**.
-
-**\--peer-port** *PORT*
-:   The BitTorrent peer port on every interface, which takes TCP. The
-    default is 4240. Use 0 to let the operating system assign a port for
-    this run. The DHT has a UDP port of its own.
+<!-- include: cli-listen-options.md -->
 
 **\--data-dir** *DIR*
 :   Where the database lives, on a local filesystem. On Linux the default is
     *~/.local/share/torrplay*, or *$XDG_DATA_HOME/torrplay* when that is set.
     On macOS it is *~/Library/Application Support/org.torrplay.desktop*.
 
-**\--download-dir** *DIR*
-:   Where torrents in disk storage keep their files, a directory for
-    TorrPlay alone. Overrides **TORRPLAY_DOWNLOAD_DIR**. The default is
-    *downloads* in the data directory.
-
-**\--log-format** *FORMAT*
-:   **text** or **json**. Overrides **TORRPLAY_LOG_FORMAT**. The default is
-    **text** when standard error is a terminal and **json** otherwise.
-
-These override a stored setting for this run only:
-
-**\--log-level** *LEVEL*
-:   **error**, **warn**, **info**, **debug**, or **trace**, instead of the
-    *log_level* setting.
-
-**\--log-filter** *TARGETS*
-:   Per-target levels, as in *librqbit=debug,torrplay=info*, instead of the
-    *log_level* setting, for diagnosing the engine.
-
-**\--no-dht**
-:   Finds peers through trackers only, whatever the *dht_enabled* setting
-    says.
-
-**-h**, **\--help**
-:   Prints the usage and exits.
-
-**-V**, **\--version**
-:   Prints the version and exits.
-
-The DLNA media server, its name, and the DHT are settings of the API, not
-options.
+<!-- include: cli-run-options.md -->
 
 # ENVIRONMENT
 
-**TORRPLAY_ALLOWED_HOSTS**
+<span id="allowed-hosts">**TORRPLAY_ALLOWED_HOSTS**</span>
 :   A comma-separated list of extra HTTP hostnames and suffix wildcards.
     For example, `torrplay,*.home.arpa` permits `torrplay` and names such as
     `nas.home.arpa`. `home.arpa` itself requires a separate entry. Use
     wildcards for DNS zones you control. An unset or blank value adds no
     entries. Invalid entries cause a startup error.
 
-**TORRPLAY_DOWNLOAD_DIR**
+<span id="download-directory">**TORRPLAY_DOWNLOAD_DIR**</span>
 :   The download directory where **\--download-dir** is not given. An empty
     value causes a startup error.
 
-**TORRPLAY_LISTEN**
+<span id="listen-address">**TORRPLAY_LISTEN**</span>
 :   The API's address where **\--listen** is not given.
 
-**TORRPLAY_LOG_FORMAT**
-:   The log format where **\--log-format** is not given.
+<span id="log-format">**TORRPLAY_LOG_FORMAT**</span>
+:   The format for standard error where **\--log-format** is not given.
 
-**TORRPLAY_TOKEN**
-:   The API access token **torrplay mcp** sends. There is no option for it,
-    since every user can read a process's arguments.
-
-**TORRPLAY_URL**
-:   The application's origin for **torrplay mcp** where **\--url** is not
-    given.
+<!-- include: cli-mcp-environment.md -->
 
 The service reads **TORRPLAY_ALLOWED_HOSTS**, **TORRPLAY_DOWNLOAD_DIR**,
 **TORRPLAY_LISTEN**, and **TORRPLAY_LOG_FORMAT** from its settings file.
@@ -170,7 +90,7 @@ See **torrplay.env**(5).
 :   The library: torrents, settings, profiles, and credentials.
 
 *DATA_DIR/logs/*
-:   The log files, which **torrplay** writes beside standard error.
+:   The log files, which **torrplay** writes in JSON Lines.
 
 *DATA_DIR/downloads/*
 :   The files of torrents in disk storage, unless **\--download-dir** or
@@ -184,9 +104,6 @@ With the **torrplay-service** package there are also these:
 */var/lib/torrplay*
 :   The service's data directory.
 
-*/usr/lib/firewalld/services/torrplay.xml*, */etc/ufw/applications.d/torrplay*
-:   A firewalld service and a ufw profile for the default ports.
-
 # SIGNALS
 
 **SIGTERM** and **SIGINT** start the shutdown: the API refuses changes while
@@ -197,65 +114,7 @@ shutdown takes longer than 30 seconds.
 
 # THE SERVICE
 
-The **torrplay-service** package runs **torrplay** as the system service
-*torrplay.service*, which starts at boot as the **torrplay** account with its
-data in */var/lib/torrplay*, confined to that directory and the network.
-The **torrplay-client** package adds **torrplay-client**(1), a window on the
-service's page; a computer reached only over the network needs only
-**torrplay-service**.
-
-Start, stop, and follow it with:
-
-    sudo systemctl restart torrplay
-    sudo systemctl stop torrplay
-    journalctl -u torrplay -f
-
-**restart** also starts the service when it is waiting to restart after a
-failure, which **start** waits out. After a failure, such as its port being
-taken, it restarts after 5 seconds, then about twice as long each time, up to
-every 5 minutes; after a usage error, such as an invalid **TORRPLAY_LISTEN**,
-it stays stopped, and **systemctl status torrplay** and the journal say why.
-
-Its settings are in */etc/torrplay/torrplay.env*. Options without a variable,
-such as **\--peer-port**, go in a drop-in that
-**sudo systemctl edit torrplay** opens, clearing *ExecStart=* and setting it
-again:
-
-    [Service]
-    ExecStart=
-    ExecStart=/usr/bin/torrplay --data-dir ${STATE_DIRECTORY} --peer-port 4250
-
-A download directory outside */var/lib/torrplay* must be writable by the
-**torrplay** account and named in *ReadWritePaths=*, or, under */home*, which
-the service cannot otherwise see, with *ProtectHome=tmpfs* and *BindPaths=*.
-
-The package's firewall profiles are not enabled. With firewalld or ufw on,
-open the default ports with one of:
-
-    sudo firewall-cmd --add-service=torrplay --permanent && sudo firewall-cmd --reload
-    sudo ufw allow torrplay
-
-When the settings change the ports, open TCP for the API's port and the peer
-port, and UDP 1900 for SSDP, instead. The DHT's replies need no rule.
-
-The **password** and **backup** commands need the service stopped, and run as
-its account on its data directory. A backup goes where that account can write,
-under a new name each time, since **backup create** never replaces a file:
-
-    sudo systemctl stop torrplay
-    printf '%s\n' 'a long passphrase' |
-      sudo -u torrplay torrplay password set --data-dir /var/lib/torrplay
-    sudo install -d -o torrplay -g torrplay -m 0750 /var/backups/torrplay
-    sudo -u torrplay torrplay backup create --data-dir /var/lib/torrplay \
-      --output "/var/backups/torrplay/torrplay-backup-$(date -u +%Y%m%dT%H%M%SZ).zip"
-    sudo systemctl start torrplay
-
-Removing the package keeps the settings, and purging it deletes them;
-neither deletes the library or its account. To delete those for good, after
-purging the package:
-
-    sudo rm -r /var/lib/torrplay /var/backups/torrplay
-    sudo userdel torrplay
+<!-- include: {distribution}-service.md -->
 
 # EXIT STATUS
 
@@ -275,5 +134,4 @@ purging the package:
 
 # SEE ALSO
 
-**torrplay-client**(1), **torrplay.env**(5), **systemctl**(1),
-**journalctl**(1), **firewall-cmd**(1), **ufw**(8)
+<!-- include: {distribution}-service-see-also.md -->

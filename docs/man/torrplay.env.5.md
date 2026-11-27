@@ -32,21 +32,14 @@ restart it after a change:
 
     sudo systemctl restart torrplay
 
-The package installs the file with comments showing the settings. It keeps
-an administrator's changes when it is upgraded or removed, and deletes the
-file when it is purged.
+<!-- include: {distribution}-settings-retention.md -->
 
 These settings start the service; the API's own settings, such as the DLNA
 media server's, are kept in its library and changed through the API.
 
 # SETTINGS
 
-**TORRPLAY_ALLOWED_HOSTS**
-:   A comma-separated list of extra HTTP hostnames and suffix wildcards,
-    such as `torrplay,*.home.arpa`. The default adds no names. Wildcards match
-    names below a suffix. Add the zone apex separately if needed. Use
-    wildcards for DNS zones you control. The client must be able to resolve
-    each name. Restart the service after changing the list.
+<!-- include: settings-allowed-hosts.md -->
 
 **TORRPLAY_DOWNLOAD_DIR**
 :   Where torrents in disk storage keep their files. The default is
@@ -56,28 +49,21 @@ media server's, are kept in its library and changed through the API.
     *ReadWritePaths=*. For a directory under */home*, use
     *ProtectHome=tmpfs* and *BindPaths=* to expose it to the service.
 
-    To keep existing downloads, stop TorrPlay before changing this value.
     Use **systemctl cat torrplay** to check the service's *ExecStart=*
     command for **\--download-dir**, which overrides this setting. If a
-    drop-in supplies that option, remove it and its argument. Update any
+    drop-in supplies that option, update its argument or remove the option
+    and its argument to use the settings file. Update any
     directory access settings for the new path and run
-    **sudo systemctl daemon-reload** after editing the drop-in. Move the
-    torrent directories and their accompanying *.have* files directly into
-    the new directory before starting TorrPlay again. If the files stay at
-    the old path, TorrPlay may download them again.
+    **sudo systemctl daemon-reload** after editing the drop-in.
 
-    Use a directory dedicated to this TorrPlay instance. At startup, TorrPlay
-    deletes entries named like torrent IDs, including *.have* files, unless
-    the corresponding torrent uses disk storage or is switching to or from
-    it in this instance's database.
+<!-- include: download-directory.md -->
 
-**TORRPLAY_LISTEN**
-:   The API's address and port. Until a password is set, only local networks
-    may use it. The default is *[::]:8642*, every interface.
+<!-- include: settings-listen.md -->
 
 **TORRPLAY_LOG_FORMAT**
-:   The log's format, **text** or **json**. The service logs to the journal,
-    which is not a terminal, so the default is **json**.
+:   The format for standard error, **text** or **json**. Standard error
+    goes to the journal, so the service defaults to **json**. Log files
+    always use JSON Lines.
 
 An invalid value stops the service with a usage error, which it does not
 restart after.

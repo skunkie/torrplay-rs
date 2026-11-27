@@ -1078,8 +1078,11 @@ retention. The contract gives each one's bounds and default.
 Startup configuration includes the listen address, allowed hosts, peer port,
 data directory, download directory, and log format. The
 [CLI manual](man/torrplay.1.md#environment) describes how options interact
-with environment variables. The [settings-file manual](man/torrplay.env.5.md#settings)
-lists the variables the service reads from its settings file.
+with environment variables. The service settings file supports
+[`TORRPLAY_ALLOWED_HOSTS`](reference/fragments/settings-allowed-hosts.md),
+[`TORRPLAY_LISTEN`](reference/fragments/settings-listen.md),
+`TORRPLAY_DOWNLOAD_DIR`, and `TORRPLAY_LOG_FORMAT`. Run `man torrplay.env`
+on an installed Linux service for the complete settings reference.
 
 A few command-line options override a stored setting for one run:
 `--no-dht` turns the DHT off, and `--log-level` and `--log-filter` set the

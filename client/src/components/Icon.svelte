@@ -4,9 +4,11 @@ SPDX-FileCopyrightText: 2026 TorrPlay
 SPDX-License-Identifier: MIT
 -->
 <script lang="ts">
+  import themeIcons from "./theme-icons.json";
+
   interface Props {
     /** The icons several places use. */
-    name: "back" | "drive" | "file" | "film" | "play" | "search" | "tv";
+    name: "back" | "drive" | "file" | "film" | "moon" | "play" | "search" | "sun" | "system" | "tv";
     /** The icon's size, and anything else about it. */
     class?: string;
   }
@@ -59,6 +61,8 @@ SPDX-License-Identifier: MIT
     {:else if name === "tv"}
       <rect x="3" y="8" width="18" height="12" rx="2" />
       <path d="m8 4 4 4 4-4M7 20l-1 2m11-2 1 2m-1.5-10h.5m-.5 3h.5" />
+    {:else if name === "system" || name === "sun" || name === "moon"}
+      <path d={themeIcons[name]} />
     {:else}
       <path d="M5.5 3h8l5 5v13h-13zM13.5 3v5h5" />
     {/if}
