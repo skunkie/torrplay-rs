@@ -21,7 +21,7 @@ jobs:
           name: application-macos-universal
           path: ${{ runner.temp }}/previous-dmg
           github-token: ${{ github.token }}
-          run-id: 46007253944
+          run-id: 46012821346
       - name: Install dmgbuild
         run: |
           python3 -m venv "${RUNNER_TEMP}/dmgbuild"
@@ -145,10 +145,28 @@ jobs:
           sleep 15
           screencapture -x -o -l "$window" target/dmg/TorrPlay-Finder.png
           test -s target/dmg/TorrPlay-Finder.png
+          defaults write -g AppleShowScrollBars -string Always
+          /usr/bin/osascript <<'APPLESCRIPT'
+          tell application "System Events"
+              set dark mode of appearance preferences to true
+              tell process "Finder"
+                  set frontmost to true
+                  tell menu "View" of menu bar 1
+                      if exists menu item "Show Path Bar" then click menu item "Show Path Bar"
+                      if exists menu item "Show Status Bar" then click menu item "Show Status Bar"
+                      if not (exists menu item "Hide Path Bar") then error "Path bar is not visible"
+                      if not (exists menu item "Hide Status Bar") then error "Status bar is not visible"
+                  end tell
+              end tell
+          end tell
+          APPLESCRIPT
+          sleep 5
+          screencapture -x -o -l "$window" target/dmg/TorrPlay-Finder-With-Bars.png
+          test -s target/dmg/TorrPlay-Finder-With-Bars.png
       - name: Upload the Finder screenshot
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: torrplay-dmg-finder
-          path: target/dmg/TorrPlay-Finder.png
+          path: target/dmg/TorrPlay-Finder*.png
           if-no-files-found: error
           retention-days: 7
