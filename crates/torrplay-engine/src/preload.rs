@@ -31,7 +31,7 @@ use torrplay_core::preload::{
 };
 
 use crate::playback::Playback;
-use crate::scheduler::{ScheduledPreload, TorrentScheduler};
+use crate::scheduler::{PreloadBinding, ScheduledPreload, TorrentScheduler};
 use crate::storage::Layout;
 
 /// How often downloading preloads check which of their pieces arrived.
@@ -145,6 +145,7 @@ struct Entry {
     first_ready: Option<Instant>,
     // Whether a reader had its file open when last observed.
     read: bool,
+    observation_revision: u64,
 }
 
 impl Entry {
@@ -172,6 +173,35 @@ impl Entry {
                     .is_none_or(|at| now.duration_since(at) >= preload::READY_PROTECTION))
     }
 
+    fn apply_observation(&mut self, observation: Observation, now: Instant) {
+        match observation {
+            Observation::Closed => self.end(PreloadState::Failed, Some(PAUSED), now),
+            Observation::Failed { .. } => self.end(PreloadState::Failed, Some(TORRENT_FAILED), now),
+            Observation::Swapping => {}
+            Observation::Live {
+                cached,
+                received,
+                verified,
+                read,
+                ..
+            } => {
+                self.read = read;
+                if cached != self.cached {
+                    // Memory storage queues for room. Disk storage pins nothing.
+                    self.cached = cached;
+                    if self.is_scheduled() {
+                        self.status.state = if cached {
+                            PreloadState::Queued
+                        } else {
+                            PreloadState::Downloading
+                        };
+                    }
+                }
+                self.observe_progress(received, verified, now);
+            }
+        }
+    }
+
     /// Records what has arrived. Progress is counted by chunk, so a large piece
     /// arriving slowly does not count as a stall, and readiness by verified
     /// pieces, so a reader finds what it was promised.
@@ -191,6 +221,7 @@ impl Entry {
     }
 
     fn end(&mut self, state: PreloadState, failure: Option<&str>, now: Instant) {
+        self.observation_revision += 1;
         self.status.state = state;
         self.status.ended_at = Some(SystemTime::now());
         self.status.failure = failure.map(|detail| Failure {
@@ -208,6 +239,7 @@ struct State {
 /// Every preload of one engine; see the [module documentation](self).
 pub struct Preloads {
     playback: Arc<Playback>,
+    plan_publication: Mutex<()>,
     state: Mutex<State>,
     // Wakes the timer when a preload was created or changed.
     changed: Arc<Notify>,
@@ -219,6 +251,7 @@ impl Preloads {
     pub fn new(playback: &Arc<Playback>, piece_wait: Duration) -> Arc<Self> {
         let preloads = Arc::new(Self {
             playback: playback.clone(),
+            plan_publication: Mutex::new(()),
             state: Mutex::new(State {
                 entries: Vec::new(),
                 piece_wait,
@@ -231,6 +264,56 @@ impl Preloads {
 
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn observe_entry<T>(
+        &self,
+        id: &PreloadId,
+        mut read: impl FnMut(&Weak<TorrentScheduler>, &PreloadId, &Coverage, FileIndex) -> Observation,
+        mut apply: impl FnMut(&mut Entry, Observation, Duration) -> T,
+    ) -> Option<T> {
+        // Read without holding the collection lock. If another observation
+        // or a lifecycle change wins, retry against the current entry once.
+        for _ in 0..2 {
+            let (revision, scheduler, coverage, file) = {
+                let state = self.lock();
+                let entry = state.entries.iter().find(|entry| entry.status.id == *id)?;
+                (
+                    entry.observation_revision,
+                    entry.scheduler.clone(),
+                    entry.coverage.clone(),
+                    entry.status.file,
+                )
+            };
+            let observation = read(&scheduler, id, &coverage, file);
+            let mut state = self.lock();
+            let piece_wait = state.piece_wait;
+            let entry = state
+                .entries
+                .iter_mut()
+                .find(|entry| entry.status.id == *id)?;
+            if entry.observation_revision != revision {
+                continue;
+            }
+            let epoch = observation.epoch();
+            let commit = || {
+                entry.observation_revision += 1;
+                apply(entry, observation, piece_wait)
+            };
+            // Acquire the scheduler lock only to validate and commit the
+            // sample. No torrent or cache operation runs under both locks.
+            if let Some(epoch) = epoch {
+                if let Some(result) = scheduler
+                    .upgrade()
+                    .and_then(|scheduler| scheduler.with_preload_epoch(epoch, commit))
+                {
+                    return Some(result);
+                }
+            } else {
+                return Some(commit());
+            }
+        }
+        None
     }
 
     /// Sets how long a downloading preload may go without a piece.
@@ -315,14 +398,44 @@ impl Preloads {
                 ended: None,
                 first_ready: None,
                 read: false,
+                observation_revision: 0,
             });
             trim_ended(&mut state.entries, torrent, file);
             self.admit(&mut state, now);
             state.entries.last().map(|entry| entry.status.clone())
-        };
+        }
+        .ok_or_else(|| EngineError::Internal("the new preload is missing".into()))?;
         self.reschedule(None);
+        if status.state == PreloadState::Queued {
+            // A later admission publishes its own plan.
+            self.changed.notify_one();
+            return Ok(status);
+        }
+        // A warm preload can be ready in its first response. Observation
+        // checks the cache's published pins, including on concurrent admission.
+        let current = self.observe_entry(&status.id, observe, |entry, observation, _| {
+            if entry.is_active()
+                && matches!(observation, Observation::Live { cached, .. } if cached == entry.cached)
+            {
+                entry.apply_observation(observation, Instant::now());
+            } else if entry.status.state == PreloadState::Ready {
+                // A prior sample cannot promise readiness during a swap.
+                return status.clone();
+            }
+            entry.status.clone()
+        });
         self.changed.notify_one();
-        status.ok_or_else(|| EngineError::Internal("the new preload is missing".into()))
+        Ok(current
+            .or_else(|| {
+                self.lock()
+                    .entries
+                    .iter()
+                    .find(|entry| {
+                        entry.status.id == status.id && entry.status.state != PreloadState::Ready
+                    })
+                    .map(|entry| entry.status.clone())
+            })
+            .unwrap_or(status))
     }
 
     /// The file's preloads, in creation order.
@@ -416,6 +529,35 @@ impl Preloads {
     /// schedulers in `only`. Both replan torrents, which takes scheduler locks, so this
     /// runs outside the lock.
     fn reschedule(&self, only: Option<&HashSet<*const TorrentScheduler>>) {
+        self.publish_schedule(only, |pinned, plans| {
+            self.playback.set_preload_pinned_bytes(pinned);
+            for scheduler in self.playback.schedulers() {
+                if only.is_some_and(|only| !only.contains(&Arc::as_ptr(&scheduler))) {
+                    continue;
+                }
+                let preloads = plans
+                    .iter()
+                    .find(|(other, _)| Arc::ptr_eq(other, &scheduler))
+                    .map(|(_, preloads)| preloads.clone())
+                    .unwrap_or_default();
+                // A failure leaves the old plan in place; the next change tries
+                // again.
+                let _ = scheduler.set_preloads(preloads);
+            }
+        });
+    }
+
+    fn publish_schedule(
+        &self,
+        only: Option<&HashSet<*const TorrentScheduler>>,
+        publish: impl FnOnce(u64, Vec<(Arc<TorrentScheduler>, Vec<ScheduledPreload>)>),
+    ) {
+        // Snapshot and publication must be ordered together. The snapshot
+        // releases the preload state before publishing through the schedulers.
+        let _publication = self
+            .plan_publication
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let mut plans: Vec<(Arc<TorrentScheduler>, Vec<ScheduledPreload>)> = Vec::new();
         let pinned = {
             let state = self.lock();
@@ -438,6 +580,7 @@ impl Preloads {
                 };
                 if entry.is_scheduled() {
                     plans[index].1.push(ScheduledPreload {
+                        id: entry.status.id.clone(),
                         pieces: entry.coverage.pieces.clone(),
                         pinned: entry.cached,
                     });
@@ -450,20 +593,7 @@ impl Preloads {
                 .map(|entry| entry.pin_bytes)
                 .sum()
         };
-        self.playback.set_preload_pinned_bytes(pinned);
-        for scheduler in self.playback.schedulers() {
-            if only.is_some_and(|only| !only.contains(&Arc::as_ptr(&scheduler))) {
-                continue;
-            }
-            let preloads = plans
-                .iter()
-                .find(|(other, _)| Arc::ptr_eq(other, &scheduler))
-                .map(|(_, preloads)| preloads.clone())
-                .unwrap_or_default();
-            // A failure leaves the old plan in place; the next change tries
-            // again.
-            let _ = scheduler.set_preloads(preloads);
-        }
+        publish(pinned, plans);
     }
 
     /// Moves every preload on as its torrent and pieces did, then returns
@@ -471,63 +601,21 @@ impl Preloads {
     fn tick(&self, now: Instant) -> Option<Instant> {
         // The torrents are read outside the lock: reading pieces takes the
         // torrent's lock. Preloads canceled meanwhile are no longer found.
-        let observed: Vec<(PreloadId, Observation)> = {
-            let state = self.lock();
-            state
-                .entries
-                .iter()
-                .filter(|entry| entry.is_active())
-                .map(|entry| {
-                    let id = entry.status.id.clone();
-                    let file = entry.status.file;
-                    (id, entry.scheduler.clone(), entry.coverage.clone(), file)
-                })
-                .collect::<Vec<_>>()
-        }
-        .into_iter()
-        .map(|(id, scheduler, coverage, file)| (id, observe(&scheduler, &coverage, file)))
-        .collect();
+        let ids: Vec<_> = self
+            .lock()
+            .entries
+            .iter()
+            .filter(|entry| entry.is_active())
+            .map(|entry| entry.status.id.clone())
+            .collect();
         let mut changed = HashSet::new();
-        let next = {
-            let mut state = self.lock();
-            let piece_wait = state.piece_wait;
-            for (id, observation) in observed {
-                let Some(entry) = state.entries.iter_mut().find(|entry| entry.status.id == id)
-                else {
-                    continue;
-                };
+        for id in ids {
+            self.observe_entry(&id, observe, |entry, observation, piece_wait| {
                 if !entry.is_active() {
-                    continue;
+                    return;
                 }
                 let before = (entry.status.state, entry.cached);
-                match observation {
-                    Observation::Closed => entry.end(PreloadState::Failed, Some(PAUSED), now),
-                    Observation::Failed => {
-                        entry.end(PreloadState::Failed, Some(TORRENT_FAILED), now);
-                    }
-                    Observation::Swapping => {}
-                    Observation::Live {
-                        cached,
-                        received,
-                        verified,
-                        read,
-                    } => {
-                        entry.read = read;
-                        if cached != entry.cached {
-                            // A storage mode transition: memory storage
-                            // queues it for room, disk storage pins nothing.
-                            entry.cached = cached;
-                            if entry.is_scheduled() {
-                                entry.status.state = if cached {
-                                    PreloadState::Queued
-                                } else {
-                                    PreloadState::Downloading
-                                };
-                            }
-                        }
-                        entry.observe_progress(received, verified, now);
-                    }
-                }
+                entry.apply_observation(observation, now);
                 if entry.is_active() && now >= entry.expires {
                     entry.end(PreloadState::Expired, None, now);
                 } else if entry.status.state == PreloadState::Downloading
@@ -540,7 +628,10 @@ impl Preloads {
                 {
                     changed.insert(Arc::as_ptr(&scheduler));
                 }
-            }
+            });
+        }
+        let next = {
+            let mut state = self.lock();
             state.entries.retain(|entry| {
                 entry
                     .ended
@@ -586,12 +677,12 @@ fn trim_ended(entries: &mut Vec<Entry>, torrent: &TorrentId, file: FileIndex) {
     });
 }
 
-/// What a tick found of a preload's torrent.
+/// What an observation found of a preload's torrent.
 enum Observation {
     /// The scheduler closed: the torrent paused, or is being deleted.
     Closed,
     /// librqbit stopped the torrent with an error.
-    Failed,
+    Failed { epoch: u64 },
     /// The torrent is being added again with other storage.
     Swapping,
     /// The torrent runs, in memory storage if `cached`, having received
@@ -599,6 +690,7 @@ enum Observation {
     /// in pieces that passed their hash checks.
     /// A reader has its file open if `read`.
     Live {
+        epoch: u64,
         cached: bool,
         received: u64,
         verified: u64,
@@ -606,8 +698,18 @@ enum Observation {
     },
 }
 
+impl Observation {
+    fn epoch(&self) -> Option<u64> {
+        match self {
+            Self::Failed { epoch } | Self::Live { epoch, .. } => Some(*epoch),
+            Self::Closed | Self::Swapping => None,
+        }
+    }
+}
+
 fn observe(
     scheduler: &Weak<TorrentScheduler>,
+    id: &PreloadId,
     coverage: &Coverage,
     file: FileIndex,
 ) -> Observation {
@@ -617,11 +719,17 @@ fn observe(
     if scheduler.is_closed() {
         return Observation::Closed;
     }
-    let (Some(torrent), Some(layout)) = (scheduler.torrent(), scheduler.layout()) else {
+    let Some(PreloadBinding {
+        epoch,
+        torrent,
+        layout,
+        cached,
+    }) = scheduler.preload_binding()
+    else {
         return Observation::Swapping;
     };
     if matches!(torrent.stats().state, librqbit::TorrentStatsState::Error) {
-        return Observation::Failed;
+        return Observation::Failed { epoch };
     }
     let Ok(have) = torrent.have_pieces() else {
         return Observation::Swapping;
@@ -630,10 +738,20 @@ fn observe(
         return Observation::Swapping;
     };
     let verified = verified_bytes(&layout, coverage, &have);
+    let received = received_bytes(&layout, coverage, &pieces).max(verified);
+    // Admission and plan publication happen separately. This preload
+    // must own the verified pins before it can promise them to a reader.
+    let target: u64 = coverage.ranges.iter().map(|range| range.len_bytes()).sum();
+    let verified = if cached && verified == target && !scheduler.has_verified_preload(&torrent, id)
+    {
+        0
+    } else {
+        verified
+    };
     Observation::Live {
-        cached: scheduler.is_cached(),
-        // The two reads are not atomic: a piece can pass its check between them.
-        received: received_bytes(&layout, coverage, &pieces).max(verified),
+        epoch,
+        cached,
+        received,
         verified,
         read: scheduler.has_reader_of(file.0),
     }
@@ -723,6 +841,7 @@ fn admit_within(
         let entry = &mut entries[index];
         pinned += pin;
         entry.status.state = PreloadState::Downloading;
+        entry.observation_revision += 1;
         entry.progress_at = now;
         if let Some(scheduler) = entry.scheduler.upgrade() {
             changed.insert(Arc::as_ptr(&scheduler));
@@ -934,6 +1053,7 @@ mod tests {
             ended: None,
             first_ready: None,
             read: false,
+            observation_revision: 0,
         }
     }
 
@@ -978,6 +1098,148 @@ mod tests {
 
         admit_within(&mut entries, 2, now + preload::READY_PROTECTION);
         assert_eq!(states(&entries), [Failed, Downloading]);
+    }
+
+    #[test]
+    fn a_new_preload_plan_publishes_after_the_previous_plan() {
+        let playback = Playback::new(crate::playback::PlaybackConfig::new(8 * PIECE));
+        let preloads = Preloads::new(&playback, Duration::from_secs(30));
+        preloads.lock().entries.push(pinning(1, Ready, 1));
+
+        let published = Mutex::new(Vec::new());
+        let timeout = Duration::from_secs(5);
+        std::thread::scope(|scope| {
+            let preloads = &preloads;
+            let published = &published;
+            let (snapshot, snapshot_rx) = std::sync::mpsc::channel();
+            let (release, release_rx) = std::sync::mpsc::channel();
+            let first = scope.spawn(move || {
+                preloads.publish_schedule(None, |pinned, _| {
+                    snapshot.send(()).unwrap();
+                    release_rx.recv_timeout(timeout).unwrap();
+                    published.lock().unwrap().push(pinned);
+                });
+            });
+
+            snapshot_rx.recv_timeout(timeout).unwrap();
+            assert!(matches!(
+                preloads.plan_publication.try_lock(),
+                Err(std::sync::TryLockError::WouldBlock)
+            ));
+            preloads.lock().entries.push(pinning(2, Downloading, 2));
+            let second = scope.spawn(move || {
+                preloads.publish_schedule(None, |pinned, _| {
+                    published.lock().unwrap().push(pinned);
+                });
+            });
+            release.send(()).unwrap();
+            first.join().unwrap();
+            second.join().unwrap();
+        });
+
+        assert_eq!(*published.lock().unwrap(), [1, 3]);
+    }
+
+    #[test]
+    fn an_observation_retries_when_a_newer_sample_has_been_applied() {
+        let playback = Playback::new(crate::playback::PlaybackConfig::new(4 * PIECE));
+        let preloads = Preloads::new(&playback, Duration::from_secs(30));
+        let scheduler = TorrentScheduler::new(&playback);
+        let mut entry = pinning(1, Downloading, 2);
+        entry.scheduler = Arc::downgrade(&scheduler);
+        entry.status.target_bytes = 100;
+        let id = entry.status.id.clone();
+        preloads.lock().entries.push(entry);
+
+        let observed = |bytes| Observation::Live {
+            epoch: 0,
+            cached: true,
+            received: bytes,
+            verified: bytes,
+            read: false,
+        };
+        let apply = |entry: &mut Entry, observation, _| {
+            entry.apply_observation(observation, Instant::now());
+            entry.status.state
+        };
+        let mut reads = 0;
+        let status = preloads.observe_entry(
+            &id,
+            |_, _, _, _| {
+                reads += 1;
+                if reads == 1 {
+                    let partial = observed(40);
+                    // Publish a newer sample after the partial read but
+                    // before it can update the preload.
+                    assert_eq!(
+                        preloads.observe_entry(&id, |_, _, _, _| observed(100), apply),
+                        Some(Ready)
+                    );
+                    partial
+                } else {
+                    observed(100)
+                }
+            },
+            apply,
+        );
+        assert_eq!(reads, 2);
+        assert_eq!(status, Some(Ready));
+        assert_eq!(preloads.lock().entries[0].status.completed_bytes, 100);
+    }
+
+    #[test]
+    fn a_disk_observation_cannot_make_a_preload_ready_after_a_swap() {
+        let playback = Playback::new(crate::playback::PlaybackConfig::new(4 * PIECE));
+        let preloads = Preloads::new(&playback, Duration::from_secs(30));
+        let scheduler = TorrentScheduler::new(&playback);
+        let mut entry = pinning(1, Downloading, 2);
+        entry.cached = false;
+        entry.scheduler = Arc::downgrade(&scheduler);
+        entry.status.target_bytes = 100;
+        let id = entry.status.id.clone();
+        preloads.lock().entries.push(entry);
+
+        let mut reads = 0;
+        let status = preloads.observe_entry(
+            &id,
+            |_, _, _, _| {
+                reads += 1;
+                if reads == 1 {
+                    let disk = Observation::Live {
+                        epoch: 0,
+                        cached: false,
+                        received: 100,
+                        verified: 100,
+                        read: false,
+                    };
+                    // Replace storage after reading disk progress but
+                    // before applying it to the preload.
+                    scheduler.begin_swap().unwrap();
+                    scheduler.end_swap().unwrap();
+                    disk
+                } else {
+                    Observation::Live {
+                        epoch: 1,
+                        cached: true,
+                        received: 40,
+                        verified: 40,
+                        read: false,
+                    }
+                }
+            },
+            |entry, observation, _| {
+                // Create leaves a storage change for the timer to reconcile.
+                if matches!(observation, Observation::Live { cached, .. } if cached == entry.cached)
+                {
+                    entry.apply_observation(observation, Instant::now());
+                }
+                entry.status.clone()
+            },
+        );
+        assert_eq!(reads, 2);
+        let status = status.unwrap();
+        assert_eq!(status.state, Downloading);
+        assert_eq!(status.completed_bytes, 0);
     }
 
     #[test]

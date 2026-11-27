@@ -250,9 +250,10 @@ IDs are ([ADR 4](adr/0004-resource-identity.md)), and names its preload
 only until the application restarts.
 
 - A `POST` creates a preload of a started torrent's file and returns
-  `201 Created` at once, while the preload downloads. A torrent that is
-  paused or failed is a `lifecycle-conflict`, and so is a torrent without
-  metadata, whose files are not listed yet.
+  `201 Created` at once. An admitted preload can be returned as `ready`
+  immediately if all its pieces are already verified and, in memory storage,
+  the preload holds pins on them. A paused or failed torrent is a
+  `lifecycle-conflict`, as is a torrent without metadata.
 - Without `offset_bytes`, a preload covers the file's head and tail, where
   players read container headers and indexes: the last 4 MiB of the file,
   or its last piece if that is longer, and as much of its beginning as the

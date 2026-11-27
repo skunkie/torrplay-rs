@@ -227,6 +227,44 @@ it("saves the position when playback pauses and keeps the viewed mark", async ()
   );
 });
 
+it("updates demo playback pins with progress, seeks, and the live resume position", async () => {
+  const episode = { ...e1, size_bytes: 64 * 1024 ** 2 };
+  const fake = backend(show, [episode], [progress(episode, 0.25)]);
+  const move = vi.fn();
+  const release = vi.fn();
+  fake.beginPlayback = vi.fn(() => ({ move, release }));
+  navigate(watchPath(show.id, episode.id));
+  render(App, { backend: fake });
+  const media = await video();
+
+  media.currentTime = 900;
+  await fireEvent.play(media);
+  expect(fake.beginPlayback).toHaveBeenCalledWith(
+    show.id,
+    episode.id,
+    Math.floor(episode.size_bytes / 4),
+  );
+  media.currentTime = 1800;
+  await fireEvent.timeUpdate(media);
+  expect(move).toHaveBeenLastCalledWith(Math.floor(episode.size_bytes / 2), "progress");
+  media.currentTime = 2700;
+  await fireEvent.seeked(media);
+  expect(move).toHaveBeenLastCalledWith(Math.floor((episode.size_bytes * 3) / 4), "seek");
+
+  await fireEvent.pause(media);
+  expect(release).toHaveBeenCalledTimes(1);
+  move.mockClear();
+  media.currentTime = 450;
+  await fireEvent.seeked(media);
+  expect(move).not.toHaveBeenCalled();
+  await fireEvent.play(media);
+  expect(fake.beginPlayback).toHaveBeenLastCalledWith(
+    show.id,
+    episode.id,
+    Math.floor(episode.size_bytes / 8),
+  );
+});
+
 it("stops the demo player when a temporary torrent expires during a pause", async () => {
   let now = Date.now();
   const demo = demoBackend(() => now);

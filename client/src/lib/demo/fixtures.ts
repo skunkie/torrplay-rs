@@ -190,7 +190,11 @@ lighthouse.files.push(
   makeFile(1, 90, "The.Lighthouse.Keepers.S01E04.1080p.en.srt", 40_000),
   makeFile(1, 91, "The.Lighthouse.Keepers.S01E04.1080p.ru.srt", 42_000),
 );
-lighthouse.torrent = { ...lighthouse.torrent, file_count: lighthouse.files.length };
+lighthouse.torrent = {
+  ...lighthouse.torrent,
+  file_count: lighthouse.files.length,
+  size_bytes: lighthouse.files.reduce((bytes, file) => bytes + file.size_bytes, 0),
+};
 
 const paperMoons = series(2, "Paper.Moons", [4], {
   title: "Paper Moons",

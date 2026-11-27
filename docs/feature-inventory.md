@@ -64,7 +64,7 @@ document that schedules it.
 | Adaptive streaming with HLS or DASH | Not present | Deferred | Its own milestone, decided with the client's playback path: it needs repackaging or transcoding and a segment cache within the cache capacity |
 | Readers that continue across range requests | Stream pool | Verified | RDR-01 to RDR-06 |
 | Memory cache with eviction and pinning | Piece storage | Verified | CAC-01 to CAC-11 ([ADR 5](adr/0005-storage.md)) |
-| Preload a file's head and tail, or at a byte offset | `PUT /api/v1/torrents/{hash}/preload` | Verified | PRL-01 to PRL-09 |
+| Preload a file's head and tail, or at a byte offset | `PUT /api/v1/torrents/{hash}/preload` | Verified | PRL-01 to PRL-11 |
 | Preload at a playback position in seconds | `playback_position_seconds` | Deferred | Additive to the preload contract, through the seek index that [ADR 10](adr/0010-media-seek-index.md) reads |
 | Background downloads of disk torrents | `internal/downloader` | Verified | BGD-01 to BGD-04 |
 | Mark files viewed, with the time | `viewed`, `viewed_at` | Verified | PRG-02 |

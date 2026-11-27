@@ -1144,10 +1144,10 @@ test.describe("the demo", () => {
       .first()
       .click();
     await expect(page).toHaveURL(/\/demo\/watch\//);
-    await page.getByRole("button", { name: "Play now" }).click();
     const video = page.locator("video");
     const time = () => video.evaluate((media: HTMLVideoElement) => media.currentTime);
-    // It resumes partway, so only moving on from there shows it plays.
+    // Glass Harbor is already on disk. It resumes automatically, and moving
+    // on from the saved position shows the video is playing.
     await expect.poll(time).toBeGreaterThan(0);
     const resumed = await time();
     await expect.poll(time, { message: "the sample plays" }).toBeGreaterThan(resumed);
@@ -2079,10 +2079,9 @@ test.describe("with only a remote's arrows and confirming key", () => {
 
   test("goes back through the history from the player, not around in a loop", async ({ page }) => {
     await page.goto("/demo/library");
-    await page.locator('main a[href*="/titles/"]').first().click();
+    await page.getByRole("link", { name: /Glass Harbor/ }).click();
     await expect(page).toHaveURL(/\/demo\/titles\//);
     await page.getByRole("link", { name: /^(Resume|Play)/ }).click();
-    await page.getByRole("button", { name: "Play now" }).click();
     await expect(page.locator("video")).toBeVisible();
 
     await page.keyboard.press("Escape");
@@ -2093,10 +2092,9 @@ test.describe("with only a remote's arrows and confirming key", () => {
 
   test("goes back through the history from the player's Back link too", async ({ page }) => {
     await page.goto("/demo/library");
-    await page.locator('main a[href*="/titles/"]').first().click();
+    await page.getByRole("link", { name: /Glass Harbor/ }).click();
     await expect(page).toHaveURL(/\/demo\/titles\//);
     await page.getByRole("link", { name: /^(Resume|Play)/ }).click();
-    await page.getByRole("button", { name: "Play now" }).click();
     await expect(page.locator("video")).toBeVisible();
     await page.keyboard.press("ArrowUp");
     await page.keyboard.press("ArrowUp");
@@ -2141,9 +2139,8 @@ test.describe("with only a remote's arrows and confirming key", () => {
 
   test("goes back once for a held key", async ({ page }) => {
     await page.goto("/demo/library");
-    await page.locator('main a[href*="/titles/"]').first().click();
+    await page.getByRole("link", { name: /Glass Harbor/ }).click();
     await page.getByRole("link", { name: /^(Resume|Play)/ }).click();
-    await page.getByRole("button", { name: "Play now" }).click();
     await expect(page.locator("video")).toBeVisible();
     await page.evaluate(() => {
       for (const repeat of [false, true, true]) {

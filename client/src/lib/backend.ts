@@ -90,6 +90,11 @@ export interface PlaybackGrant {
   expiresAt: Date;
 }
 
+interface PlaybackSession {
+  move(offset: number, kind: "progress" | "seek"): void;
+  release(): void;
+}
+
 /** What the client's pages read and change, which the API serves and the
  * demo imitates. */
 export interface Backend {
@@ -143,8 +148,8 @@ export interface Backend {
   getPreload(torrentId: string, fileId: string, preloadId: string): Promise<Preload>;
   /** Cancels a preload. */
   deletePreload(torrentId: string, fileId: string, preloadId: string): Promise<void>;
-  /** Tracks local playback in the demo until released. Throws if the torrent is gone. */
-  beginPlayback?(torrentId: string): (() => void) | undefined;
+  /** Tracks local playback of the file in the demo until released. */
+  beginPlayback?(torrentId: string, fileId: string, offset?: number): PlaybackSession | undefined;
   /** Every profile, person and device, oldest first. */
   listProfiles(): Promise<Profile[]>;
   /** Adds a person. */

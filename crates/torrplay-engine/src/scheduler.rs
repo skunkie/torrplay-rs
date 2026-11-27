@@ -62,6 +62,7 @@ use librqbit_core::lengths::ValidPieceIndex;
 use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 use torrplay_core::engine::{ReaderState, TorrentReader};
+use torrplay_core::id::PreloadId;
 use torrplay_core::metadata::FileIndex;
 
 use crate::cache::{CacheError, PieceCache, TorrentKey};
@@ -107,14 +108,15 @@ pub(crate) struct Plan {
     pub(crate) priorities: Vec<u32>,
     /// The pieces eviction must skip.
     pub(crate) pins: HashSet<u32>,
-    /// Each reader's current and next pieces, which several peers may
-    /// fetch at once, with their tiers: every current piece first, in tier
-    /// 0, then the next ones, in tier 1.
+    /// Pieces that several peers may fetch at once, with their tiers.
+    /// Readers' current pieces use tier 0 and their next pieces use tier 1.
+    /// Preloads use tier 1 when readers are present and tier 0 otherwise.
     pub(crate) shared: Vec<(u32, u8)>,
 }
 
-/// Appends `preloads`' pieces to `plan`, after every reader's and each
-/// once, shares them, and pins those of preloads that pin when the torrent is
+/// Appends new preload pieces after readers' pieces in the ordered list.
+/// Adds them to the shared plan without changing an existing piece's tier.
+/// Pins the pieces of each preload that requests pins when the torrent is
 /// `cached`.
 pub(crate) fn add_preloads(plan: &mut Plan, preloads: &[ScheduledPreload], cached: bool) {
     let mut planned: HashSet<u32> = plan.priorities.iter().copied().collect();
@@ -240,10 +242,18 @@ struct Binding {
     torrent: Weak<ManagedTorrent>,
 }
 
-/// A preload's pieces as a scheduler requests them: after every reader's,
-/// and pinned while its torrent is in memory storage.
+/// A storage binding sampled before reading a preload's progress.
+pub(crate) struct PreloadBinding {
+    pub(crate) epoch: u64,
+    pub(crate) torrent: Arc<ManagedTorrent>,
+    pub(crate) layout: Layout,
+    pub(crate) cached: bool,
+}
+
+/// A preload's piece requests and whether it needs cache pins.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ScheduledPreload {
+    pub(crate) id: PreloadId,
     pub(crate) pieces: Vec<u32>,
     pub(crate) pinned: bool,
 }
@@ -397,16 +407,62 @@ impl TorrentScheduler {
         Some(self.state.lock().ok()?.binding.as_ref()?.layout.clone())
     }
 
+    /// Samples the handle, layout, and storage mode from one binding.
+    pub(crate) fn preload_binding(&self) -> Option<PreloadBinding> {
+        let state = self.lock().ok()?;
+        if state.closed || state.swapping.is_some() {
+            return None;
+        }
+        let binding = state.binding.as_ref()?;
+        Some(PreloadBinding {
+            epoch: state.epoch,
+            torrent: binding.torrent.upgrade()?,
+            layout: binding.layout.clone(),
+            cached: binding.cache.is_some(),
+        })
+    }
+
+    /// Applies sampled progress while a storage swap cannot invalidate it.
+    /// The callback touches only preload state already locked by the caller.
+    pub(crate) fn with_preload_epoch<T>(&self, epoch: u64, apply: impl FnOnce() -> T) -> Option<T> {
+        let state = self.lock().ok()?;
+        if state.epoch != epoch || state.closed || state.swapping.is_some() {
+            return None;
+        }
+        Some(apply())
+    }
+
+    /// Checks that this preload's verified pieces are pinned in the plan
+    /// for the same torrent whose progress was read.
+    pub(crate) fn has_verified_preload(
+        &self,
+        torrent: &Arc<ManagedTorrent>,
+        id: &PreloadId,
+    ) -> bool {
+        self.lock().is_ok_and(|state| {
+            if state.closed {
+                return false;
+            }
+            let Some(preload) = state
+                .preloads
+                .iter()
+                .find(|entry| entry.id == *id && entry.pinned)
+            else {
+                return false;
+            };
+            state.binding.as_ref().is_some_and(|binding| {
+                std::ptr::eq(binding.torrent.as_ptr(), Arc::as_ptr(torrent))
+                    && binding
+                        .cache
+                        .as_ref()
+                        .is_some_and(|(cache, key)| cache.has_verified_pins(*key, &preload.pieces))
+            })
+        })
+    }
+
     /// Requests and pins `preloads` from now on, replacing the earlier ones.
     pub(crate) fn set_preloads(&self, preloads: Vec<ScheduledPreload>) -> anyhow::Result<()> {
-        {
-            let mut state = self.lock()?;
-            if state.preloads == preloads || state.closed {
-                return Ok(());
-            }
-            state.preloads = preloads;
-        }
-        self.replan()
+        self.replan_with_preloads(Some(preloads))
     }
 
     /// Starts adding the torrent again with other storage: its readers stop
@@ -593,20 +649,39 @@ impl TorrentScheduler {
     // nothing takes the other way round; the torrent is called with neither
     // held, because it calls priority_pieces() under its own lock.
     pub(crate) fn replan(&self) -> anyhow::Result<()> {
-        // The torrent's live state is read before the scheduler's lock is
-        // taken: the torrent calls priority_pieces() under its own lock.
-        let bound = self
-            .lock()?
-            .binding
-            .as_ref()
-            .map(|binding| binding.torrent.clone());
+        self.replan_with_preloads(None)
+    }
+
+    fn replan_with_preloads(&self, preloads: Option<Vec<ScheduledPreload>>) -> anyhow::Result<()> {
+        let unchanged = |state: &State| {
+            preloads
+                .as_ref()
+                .is_some_and(|preloads| state.closed || state.preloads == *preloads)
+        };
+        let bound = {
+            let state = self.lock()?;
+            if unchanged(&state) {
+                return Ok(());
+            }
+            state
+                .binding
+                .as_ref()
+                .map(|binding| binding.torrent.clone())
+        };
+        // The torrent calls priority_pieces() under its own lock.
         let live_peers = bound
             .and_then(|torrent| torrent.upgrade()?.live())
             .map_or(0, |live| live.stats_snapshot().peer_stats.live as u64);
         let torrent = {
             let mut state = self.lock()?;
             let state = &mut *state;
+            if unchanged(state) {
+                return Ok(());
+            }
             let Some(binding) = &state.binding else {
+                if let Some(preloads) = preloads {
+                    state.preloads = preloads;
+                }
                 return Ok(());
             };
             let readers: Vec<_> = state.readers.values().copied().collect();
@@ -627,7 +702,23 @@ impl TorrentScheduler {
                 self.playback.readahead_ramp_bytes(),
                 live_peers,
             );
-            add_preloads(&mut plan, &state.preloads, binding.cache.is_some());
+            add_preloads(
+                &mut plan,
+                preloads.as_deref().unwrap_or(&state.preloads),
+                binding.cache.is_some(),
+            );
+            // Publish cache pins before recording their owning preloads.
+            // Both become visible to readiness checks under this lock.
+            if let Some((cache, key)) = &binding.cache {
+                match cache.set_plan(*key, plan.pins, &plan.priorities) {
+                    // The torrent's storage left the cache; there is nothing to pin.
+                    Ok(()) | Err(CacheError::UnknownTorrent(_)) => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            if let Some(preloads) = preloads {
+                state.preloads = preloads;
+            }
             state.priorities = plan
                 .priorities
                 .iter()
@@ -649,14 +740,6 @@ impl TorrentScheduler {
                 shared = ?plan.shared,
                 "replanned"
             );
-            if let Some((cache, key)) = &binding.cache {
-                match cache.set_plan(*key, plan.pins, &plan.priorities) {
-                    // The torrent's storage left the cache, as librqbit's
-                    // failure or deletion does; there is nothing left to pin.
-                    Ok(()) | Err(CacheError::UnknownTorrent(_)) => {}
-                    Err(error) => return Err(error.into()),
-                }
-            }
             binding.torrent.clone()
         };
         if let Some(torrent) = torrent.upgrade() {
@@ -1016,6 +1099,73 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn a_preload_needs_its_own_published_pins() -> anyhow::Result<()> {
+        let folder = tempfile::tempdir()?;
+        let session = librqbit::Session::new_with_opts(
+            folder.path().to_owned(),
+            librqbit::SessionOptions {
+                dht: None,
+                disable_trackers: true,
+                disable_local_service_discovery: true,
+                ..Default::default()
+            },
+        )
+        .await?;
+        let spec = torrplay_fixtures::catalog::single_small();
+        let torrent = session
+            .add_torrent(
+                librqbit::AddTorrent::from_bytes(spec.metainfo().bytes),
+                Some(librqbit::AddTorrentOptions {
+                    paused: true,
+                    ..Default::default()
+                }),
+            )
+            .await?
+            .into_handle()
+            .ok_or_else(|| anyhow::anyhow!("the session did not add the torrent"))?;
+        let layout = torrent.with_metadata(|metadata| Layout::of(metadata))?;
+        let length = layout.lengths.default_piece_length();
+        let cache = PieceCache::new(4 * u64::from(length));
+        let key = cache.register_torrent(length)?;
+        cache.seed(key, 0, &vec![1; length as usize])?;
+        let playback = Playback::new(crate::playback::PlaybackConfig::new(4 * u64::from(length)));
+        let scheduler = TorrentScheduler::new(&playback);
+        {
+            let mut state = scheduler.lock()?;
+            state.binding = Some(Binding {
+                cache: Some((cache.clone(), key)),
+                layout,
+                torrent: Arc::downgrade(&torrent),
+            });
+            state.readers.insert(0, ReaderPosition::new(0, 0));
+        }
+        scheduler.replan()?;
+
+        let id = PreloadId::from_random_bytes([1; 16]);
+        assert!(
+            cache.has_verified_pins(key, &[0]),
+            "the reader pins the piece"
+        );
+        assert!(!scheduler.has_verified_preload(&torrent, &id));
+
+        scheduler.set_preloads(vec![ScheduledPreload {
+            id: id.clone(),
+            pieces: vec![0],
+            pinned: true,
+        }])?;
+        assert!(scheduler.has_verified_preload(&torrent, &id));
+
+        scheduler.set_preloads(Vec::new())?;
+        assert!(
+            cache.has_verified_pins(key, &[0]),
+            "the reader still pins the piece"
+        );
+        assert!(!scheduler.has_verified_preload(&torrent, &id));
+        session.stop().await;
+        Ok(())
+    }
+
     /// Two files: 0..1000 and 1000..2050, in pieces of 100 bytes.
     fn layout() -> Layout {
         Layout {
@@ -1152,10 +1302,12 @@ mod tests {
         let readers = planned.priorities.clone();
         let preloads = [
             ScheduledPreload {
+                id: PreloadId::from_random_bytes([1; 16]),
                 pieces: vec![3, 15, 16],
                 pinned: true,
             },
             ScheduledPreload {
+                id: PreloadId::from_random_bytes([2; 16]),
                 pieces: vec![16, 17],
                 pinned: true,
             },
@@ -1183,6 +1335,7 @@ mod tests {
     fn preload_pieces_lead_a_torrent_without_readers() {
         let mut planned = plan(&layout(), &[], 2 * PIECE, 0, 0);
         let preloads = [ScheduledPreload {
+            id: PreloadId::from_random_bytes([3; 16]),
             pieces: vec![15, 16],
             pinned: true,
         }];
@@ -1197,6 +1350,7 @@ mod tests {
         let (current, next) = (readers[0], readers[1]);
         assert_eq!((current.1, next.1), (0, 1));
         let preloads = [ScheduledPreload {
+            id: PreloadId::from_random_bytes([4; 16]),
             pieces: vec![current.0, next.0, 15],
             pinned: true,
         }];

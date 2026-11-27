@@ -9,7 +9,7 @@ import { feedOf, sampleOf, seekWhenReady, trackPlayback } from "./media";
 it("holds activity once per playback and releases it on pause or detach", () => {
   const video = document.createElement("video");
   const release = vi.fn();
-  const begin = vi.fn(() => release);
+  const begin = vi.fn(() => ({ release, update: vi.fn() }));
   const detach = trackPlayback(video, begin);
 
   video.dispatchEvent(new Event("play"));

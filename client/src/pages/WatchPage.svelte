@@ -126,6 +126,9 @@ SPDX-License-Identifier: MIT
   });
 
   const startAt = $derived(progress === null ? 0 : startPosition(progress));
+  const startOffset = $derived(
+    file ? resumeOffset(startAt, progress?.duration_seconds ?? 0, file.size_bytes) : undefined,
+  );
 
   $effect(() => {
     if (progress === null) return;
@@ -134,7 +137,7 @@ SPDX-License-Identifier: MIT
 
   $effect(() => {
     if (!file || progress === null) return;
-    const offset = resumeOffset(startAt, progress?.duration_seconds ?? 0, file.size_bytes);
+    const offset = startOffset;
     // Reading its progress must not start another one.
     const started = untrack(() => new PlaybackPreload(backend, torrentId, fileId, offset));
     preload = started;
@@ -147,11 +150,30 @@ SPDX-License-Identifier: MIT
 
   $effect(() => {
     const beginPlayback = backend.beginPlayback;
-    if (!media || !url || !beginPlayback) return;
+    if (!media || !url || !file || !beginPlayback) return;
     const id = torrentId;
-    return trackPlayback(media, () => {
+    const playingFileId = fileId;
+    const size = file.size_bytes;
+    const offsetOf = ({ position, duration }: Sample) =>
+      Number.isFinite(position) && Number.isFinite(duration) && duration > 0
+        ? (resumeOffset(position, duration, size) ?? 0)
+        : undefined;
+    return trackPlayback(media, (sample) => {
       try {
-        return beginPlayback.call(backend, id);
+        const session = beginPlayback.call(
+          backend,
+          id,
+          playingFileId,
+          offsetOf(sample) ?? untrack(() => startOffset),
+        );
+        if (!session) return;
+        return {
+          release: session.release,
+          update: (position, kind) => {
+            const offset = offsetOf(position);
+            if (offset !== undefined) session.move(offset, kind);
+          },
+        };
       } catch (failure) {
         error =
           failure instanceof ApiError && failure.type === "not-found"
