@@ -83,6 +83,7 @@ path = [
   "client/.node-version",
   "client/package.json",
   "client/pnpm-lock.yaml",
+  "client/src/components/theme-icons.json",
   "client/tsconfig.json",
   "client/vercel.json",
 ]

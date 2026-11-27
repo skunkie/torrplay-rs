@@ -12,13 +12,14 @@ SPDX-License-Identifier: MIT
 ## Context
 
 [ADR 12](0012-editions.md#decision) defines TorrPlay Client as a desktop
-shell that opens the local service over loopback. It obtains the port from
-startup settings and checks who owns the listener before displaying the
-sign-in page. A user can already open a remote service in a browser. This
-proposal covers an explicit remote mode for the Linux and Windows service
-clients. On Linux the client currently ships as a Debian package. On Windows
-it is an optional feature of the service MSI. [ADR 14](0014-offline-help.md)
-covers offline help, and [ADR 16](0016-rpm-packaging.md) covers RPM delivery.
+shell that opens the local service at the listen address and port from startup
+settings. It uses `127.0.0.1` for wildcard addresses and checks who owns the
+listener before displaying the sign-in page. A user can already open a remote
+service in a browser. This proposal covers an explicit remote mode for the
+Linux and Windows service clients. The client ships as a Debian package on
+Linux and as an optional feature of the service MSI on Windows.
+[ADR 14](0014-offline-help.md) covers offline help, and
+[ADR 16](0016-rpm-packaging.md) covers RPM delivery.
 Remote mode uses these existing packages and their local service
 requirements. Browser access is available for a machine where the user
 only wants to connect to a remote service.
@@ -38,7 +39,7 @@ only wants to connect to a remote service.
 ## Proposed decision
 
 Add an explicit `torrplay-client --server https://torrplay.example` mode.
-Without `--server`, use the current local port lookup and listener ownership
+Without `--server`, use the current local address lookup and listener ownership
 checks. With it, open the specified service's web UI in a dedicated window.
 The option applies to that launch. Saved servers, a server picker, and
 service discovery can be considered after the command works on both

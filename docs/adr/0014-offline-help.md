@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT
 
 # 14. Offline help for desktop packages
 
-- Status: proposed
+- Status: accepted on 2026-11-27
 - Date: 2026-11-26
 
 ## Context
@@ -19,14 +19,14 @@ paths, systemd, and distribution-specific permissions.
 The macOS application ships as an app bundle in a disk image. Windows has a
 per-user application installer and a system-wide service MSI with an optional
 client. The Linux service client has its own Debian package and opens the
-local service over loopback. Users need a reference for their installed
-version, including when the service is unreachable or the Windows MSI was
-installed without its client.
+local service, using loopback for the default listen address. Users need a
+reference for their installed version, including when the service is
+unreachable or the Windows MSI was installed without its client.
 
 ## Options
 
 1. **Offline HTML from the reference Markdown.** A browser can display it on
-   all three platforms with a table of contents, in-page search, and copyable
+   all three platforms with a table of contents, browser find, and copyable
    commands. The package provides the entry point and the applicable content.
 2. **Native help formats.** macOS Help Books provide Help Viewer search.
    A separate Windows format would need its own delivery and validation.
@@ -36,14 +36,14 @@ installed without its client.
    to pick the installed version. CLI help covers syntax and is too brief for
    service setup and recovery.
 
-## Proposed decision
+## Decision
 
 Keep the Linux man pages and concise CLI help. Generate a standalone HTML
 reference from the same Markdown sources for the macOS and Windows packages
 and the Linux service client's Debian and planned RPM packages.
 Open the local file with the system's HTML handler, normally a browser.
 Help works independently of the TorrPlay server and its WebView. Start
-with a table of contents, section anchors, and in-page search.
+with a table of contents, section anchors, and browser find.
 
 | Package | Reference | Entry point |
 | --- | --- | --- |
@@ -86,8 +86,8 @@ report it. The menu and recovery route use the same bundled file.
   and download directory permissions for `NT SERVICE\torrplay`. Include log
   locations and the Event Viewer diagnostic for a failed setup download
   directory check. Explain how to connect the optional client to the service.
-- For the Linux client, explain how it chooses the local service port and
-  what to check if the loopback connection fails. Cover browser access
+- For the Linux client, explain how it chooses the local service address
+  and port and what to check if the connection fails. Cover browser access
   to a remote service. Include `--server` instructions for Linux and
   Windows client builds that ship the remote mode from
   [ADR 15](0015-remote-service-client.md). Keep Linux service administration
@@ -130,8 +130,7 @@ report it. The menu and recovery route use the same bundled file.
    smoke test uses `-Version` to build an upgrade. Keep the reference in
    package resources, separate from editable settings.
 4. Document the generation command, prerequisites, installed locations,
-   and manual checks in the development guide. Link this decision from
-   ADR 13 once accepted.
+   and manual checks in the development guide.
 
 The [Linux RPM packaging proposal](0016-rpm-packaging.md) covers support
 targets, dependencies, and service installation and removal.
@@ -165,10 +164,13 @@ targets, dependencies, and service installation and removal.
    help checks to the RPM once available.
 3. **Manual acceptance.** Open help from each entry point with networking
    and TorrPlay unavailable. Verify section navigation, browser search,
-   and copying commands. On macOS, exercise the Finder route from the
-   mounted disk image and after moving the installed app. Verify it still
-   opens after startup fails because of invalid settings or an occupied
-   API port.
+   and copying commands. Check that the theme icon follows the system by
+   default and cycles through themes using both pointer and keyboard. On
+   narrow screens, verify the contents appear above the article and long
+   commands scroll within their code blocks. On macOS, exercise the Finder
+   route from the mounted disk image and after moving the installed app.
+   Verify help still opens after startup fails because of invalid settings
+   or an occupied API port.
    On Windows, test a custom install directory with spaces and non-ASCII
    characters. On Linux, open the client help before connecting the client
    to a service.

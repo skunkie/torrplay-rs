@@ -65,10 +65,11 @@ Option 4: two editions.
     `%ProgramData%\TorrPlay\torrplay.env` on Windows. The client reads the
     listen address there too, so a service on another port is still found.
 - **The client** is the desktop shell built without the engine. It opens the
-  same window on the service's loopback address, `http://127.0.0.1:8642` at
-  the port the service's settings give, so the page's origin, sign-in, and
-  stored language are the same as the application's. It opens dropped files
-  and links as the application does, and logs each run to a file of its own.
+  service's web page at the address and port from startup settings. A wildcard
+  listen address maps to `127.0.0.1`, which gives the default URL
+  `http://127.0.0.1:8642`. An explicit IP address is used as configured. The
+  page's sign-in and stored language belong to its origin. It opens dropped
+  files and links as the application does, and logs each run to a file of its own.
   Closing it leaves the service running. When the service does not answer, a
   dialog says so, with how to start the service, as one does for any other
   reason the client cannot go on.

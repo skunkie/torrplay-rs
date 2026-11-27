@@ -75,6 +75,7 @@ These requirements apply when the corresponding milestone introduces an adapter.
 These requirements apply when reusing or adding the client; they do not expand the initial backend prototype.
 
 - Separate stateful containers from pure presentation layouts so UI behavior can be tested without mocking stores or networking. Restore focus to the trigger after dialogs close and make background containers inert while a modal is active.
+- Reuse the shared UI icon set in [`Icon.svelte`](client/src/components/Icon.svelte). Use a `24 × 24` view box and inherit `currentColor`. For outlined icons, match the stroke weight, caps, and joins of related icons. Share path data when the client and offline help use the same icon.
 - Maintain a standalone `/demo` route with the same presentation layouts, realistic torrent and reader fixtures, simulated downloads, and audio-track fixtures. Mirror settings and feature changes in demo state handlers and their tests.
 - Keep browser-supported audio codecs on native media playback when supported by the actual browser and container. Route unsupported codecs through the demuxing and synchronized decoding path. Probe audio tracks across supported containers, honor the declared default track, and keep alternate track selection working.
 - When reusing TorrPlay's player, preserve its Mediabunny/WASM audio path and bounded Matroska/WebM subtitle extractor until an alternative provides equivalent behavior. Subtitle selection and seeking must use bounded ranges and seek indexes rather than scanning or downloading whole files.

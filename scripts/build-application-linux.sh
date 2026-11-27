@@ -9,9 +9,9 @@
 # desktop/tauri.bundle.conf.json merged over it, into the .deb `torrplay`,
 # with its manual page, and an AppImage. Run it from the repository root on
 # x86_64 or aarch64 once the web client is built (`pnpm build` in client),
-# with the Tauri CLI, pandoc, patchelf, cargo-about, and GStreamer's plugins
-# installed;
-# DEB and APPIMAGE are the packages to write:
+# with the Tauri CLI, Python 3.11 or later, Pandoc 3.12.1, patchelf,
+# cargo-about, and GStreamer's plugins installed. DEB and APPIMAGE are the
+# packages to write:
 #
 #   scripts/build-application-linux.sh target/debian/torrplay.deb target/appimage/torrplay.AppImage
 

@@ -16,42 +16,30 @@ torrplay-client - open the TorrPlay service on this computer
 
 # SYNOPSIS
 
-**torrplay-client** [*TORRENT_FILE* | *MAGNET_URI*]...
+<!-- include: client-synopsis.md -->
 
 # DESCRIPTION
 
-**torrplay-client**, TorrPlay Client, is the service edition's window on the
-page of the TorrPlay service running on this computer, which
-**torrplay**(1) describes. It has no engine of its own: the library, the
-streams, and the DLNA media server are the service's, which keeps running when
-the window closes.
+<!-- include: client-description.md -->
 
-It finds the service at the port of the listen address its settings file
-gives in **TORRPLAY_LISTEN**, by default *[::]:8642*, and opens the page on
-the loopback address at that port. When nothing answers there, it says so and
-how to start the service, as **sudo systemctl restart torrplay**. It opens the
-page only when the service's own account, or the user running the client,
-listens there, since another user's program there could read the page's
-sign-in.
+<!-- include: client-address.md -->
 
-A *TORRENT_FILE* or *MAGNET_URI* opens on the page's add page. When the client
-is already running, it hands them to that window and exits.
+When nothing answers there, the client suggests starting the service with
+**sudo systemctl restart torrplay**. Use
+**systemctl show -p ExecStart --value torrplay** to check the service
+command for a **\--listen** override. The client opens the page only when the
+listener belongs to the **torrplay** account or the user running the
+client, since another user's program could read the page's sign-in.
+
+<!-- include: client-opening.md -->
 
 # OPTIONS
 
-**-h**, **\--help**
-:   Prints the usage and exits.
-
-**-V**, **\--version**
-:   Prints the version and exits.
+<!-- include: client-options.md -->
 
 # ENVIRONMENT
 
-**TORRPLAY_LISTEN**
-:   The service's listen address where its settings file gives none.
-
-**TORRPLAY_SETTINGS_FILE**
-:   Another settings file to read than the service's, as for tests.
+<!-- include: client-environment.md -->
 
 # FILES
 

@@ -228,6 +228,14 @@ release build, which embeds it as what ships does. After a failed run,
 `client/test-results` holds a trace, which `pnpm exec playwright show-trace`
 opens, and `client/test-logs` each process's log; CI keeps both as an artifact.
 
+Reuse the shared UI icons in
+[`Icon.svelte`](../client/src/components/Icon.svelte). New icons use a
+`24 × 24` view box and inherit `currentColor`. Match the stroke weight of
+related icons. Outlined icons generally use a `1.4`-unit stroke with rounded
+caps and joins. The monitor, sun, and moon paths live in
+[`theme-icons.json`](../client/src/components/theme-icons.json), which both
+the Svelte component and the offline help generator read.
+
 The client's messages live in `client/src/lib/i18n`: `en.ts` in American
 English is the source, and its type requires `ru.ts` to have every message
 with the same parameters. Write Russian messages with the [Russian
@@ -381,10 +389,10 @@ recorded when it was pinned. Pinning a newer one means recording its digest the
 same way, from a download checked against the release's asset size. After the
 build, the script checks that the AppImage starts with the pinned runtime.
 
-The build needs the Tauri CLI 2.12.4, pandoc, which `scripts/install-pandoc.sh`
-installs as CI does, and patchelf; the AppImage's test also needs PyGObject
-with GStreamer's introspection data. From the repository root, once the web
-client is built:
+The build needs the Tauri CLI 2.12.4, Python 3.11 or later,
+[Pandoc 3.12.1](#installing-the-pinned-pandoc-on-linux), and patchelf.
+The AppImage test also needs PyGObject and GStreamer's
+introspection data. From the repository root, once the web client is built:
 
 ```bash
 cargo install tauri-cli --version 2.12.4 --locked
@@ -642,16 +650,12 @@ cargo deb --no-build --locked --manifest-path desktop/Cargo.toml --output target
 scripts/test-linux-service.sh --package target/debian/torrplay-service.deb target/debian/torrplay-client.deb
 ```
 
-The packages also install the manual pages, the service's `torrplay(1)` and
-`torrplay.env(5)` and the client's `torrplay-client(1)`, which are Markdown in
-`docs/man`. `scripts/build-man-pages.sh`
-renders them with pandoc, which CI pins at 3.12.1, compressed and without a
-date, so the same sources give the same bytes; `PANDOC` names another pandoc.
-Tests beside each page's source check that it names everything that source
-does: `torrplay(1)` every command, option, and variable of `torrplay --help`,
-`torrplay-client(1)` those of the client's usage, and `torrplay.env(5)` every
-setting of the Linux and Windows templates. Preview a page with
-`man -l <(zcat target/man/torrplay.1.gz)`.
+The packages also install the service's `torrplay(1)` and `torrplay.env(5)`
+and the client's `torrplay-client(1)`. The entry points in `docs/man/`
+include shared Markdown fragments from `docs/reference/fragments/`.
+`scripts/build-man-pages.sh` renders the Debian references with the pinned
+Pandoc 3.12.1 and Python 3.11 or later. Set `PANDOC` to a path if that version
+is outside `PATH`. Preview a page with `man -l <(zcat target/man/torrplay.1.gz)`.
 
 The test then also checks what the package installs, that the settings file is
 a conffile, and what removing and purging keep. CI builds and tests the package
@@ -672,6 +676,74 @@ sudo -u torrplay torrplay backup create --data-dir /var/lib/torrplay \
 sudo systemctl start torrplay
 ```
 
+## Generating offline help
+
+[ADR 14](adr/0014-offline-help.md) uses the same Markdown assembler for
+the man pages and standalone HTML. With Python 3.11 or later and
+[Pandoc 3.12.1](#installing-the-pinned-pandoc-on-linux), run from the
+repository root:
+
+```sh
+python3 scripts/build-reference.py html --platform macos --edition application target/reference/macos
+python3 scripts/build-reference.py html --platform windows --edition application target/reference/nsis
+python3 scripts/build-reference.py html --platform windows --edition service target/reference/msi
+python3 scripts/build-reference.py html --platform linux --edition client --distribution debian target/reference/debian
+python3 scripts/build-reference.py html --platform linux --edition client --distribution fedora target/reference/fedora
+python3 scripts/build-reference.py man --distribution fedora target/reference/fedora/man
+```
+
+The Fedora references describe the proposed packaging in
+[ADR 16](adr/0016-rpm-packaging.md). Each HTML command writes
+`help/index.html` under its output directory. Open that file directly in a
+browser to check navigation, browser find, and copying examples offline.
+The theme icon follows the system by default. Click it to cycle through
+**System**, **Light**, and **Dark**, or use the arrow keys when the control
+has keyboard focus. Check that the contents are accessible from the sidebar
+on wide screens and above the article on narrow screens.
+The package entry points and installer integration follow in the next
+increment.
+
+`--version` overrides the version from `crates/torrplay/Cargo.toml` for
+a reference generated for a different package version. The client references
+use `--client-mode local`. To review the assembled Markdown, add
+`--markdown`, which runs without Pandoc.
+
+The Linux service package job checks deterministic generation, titles,
+versions, internal links, and applicable platform sections. It checks
+the reference entries in rendered HTML and man pages against the built
+executables and settings templates. To run the same checks locally, install
+`groff` (from `groff-base` on Debian and Ubuntu) and use the binaries from
+the package build above:
+
+```sh
+python3 scripts/check-reference.py --torrplay target/release/torrplay \
+  --client desktop/target/client/release/torrplay-desktop
+```
+
+Run the check without the two executable paths to verify rendering and
+settings-template coverage before building the binaries.
+
+### Installing the pinned Pandoc on Linux
+
+From the repository root, run this in Bash. It uses the checksum for your
+architecture from [CI](../.github/workflows/ci.yml) and sets `PANDOC` for
+the build and reference commands you run in the same shell.
+
+```bash
+if pandoc_bin=$(
+  case "$(uname -m)" in
+    x86_64) pandoc_sha256=d0c90410e90204c9ca83b8539fac5c7aed01fd537207e4585849f8abc5df20b8 ;;
+    aarch64) pandoc_sha256=445d96fd08801fe636cab1158b4f017ee320ac3b7446328b4fe2f902117b19b9 ;;
+    *) echo 'The pinned Linux installer supports x86_64 and aarch64.' >&2; exit 1 ;;
+  esac
+  mkdir -p target/tools &&
+    scripts/install-pandoc.sh 3.12.1 "$pandoc_sha256" "$PWD/target/tools"
+); then
+  export PANDOC="$pandoc_bin/pandoc"
+  "$PANDOC" --version
+fi
+```
+
 ## Running the service on Windows
 
 `torrplay service` runs the application as the service edition's Windows
@@ -682,7 +754,8 @@ settings from `%ProgramData%\TorrPlay\torrplay.env`, whose template is
 back to the process environment. The service keeps its data and its
 `logs` subdirectory there unless `--data-dir` names another directory.
 `TORRPLAY_DOWNLOAD_DIR` in the settings file can select a separate
-download directory. The service account needs write access to it. The service
+download directory. Grant the service account Modify permission on the
+directory, inherited by its files and subdirectories. The service
 reports itself running once the API listens. Its stop control and the system's
 shutdown begin the shutdown sequence; the service manager refuses controls
 while a service stops, so a second stop cannot hurry it as a second signal
@@ -747,7 +820,8 @@ directory and extra allowed hostnames. It saves supplied values in
 `%ProgramData%\TorrPlay\torrplay.env` before starting the service. The service
 account must be able to write to the chosen folder on a local drive. Setup
 validates the path syntax and hostnames on the settings page. Before starting,
-the service checks write access to the download folder under its own account.
+the service checks that its account can create, rename, and remove files and
+clean up a temporary subdirectory in the download folder.
 If the download field is blank, the service checks the folder named by
 `TORRPLAY_DOWNLOAD_DIR` in its environment, or the built-in default if the
 variable is unset. A custom folder must be free of TorrPlay data. In the
