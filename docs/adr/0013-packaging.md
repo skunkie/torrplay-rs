@@ -20,7 +20,7 @@ The [repository's rules](../../AGENTS.md#ci-and-releases) require documenting
 supported platforms and packaging before adding release automation. This
 decision defines both.
 
-The desktop shell uses Tauri 2, whose bundler builds `.deb`, `.rpm`, and
+The desktop shell uses Tauri 2. Its bundler supports `.deb`, `.rpm`, and
 AppImage packages on Linux, NSIS and MSI (WiX 3) installers on Windows, and
 `.app` and `.dmg` on macOS. Its updater, which ADR 12 uses for the
 application, updates NSIS and MSI installs, AppImages, and `.app` bundles,
@@ -83,7 +83,9 @@ manifest chooses between two.
 
 ### The application
 
-- Tauri's bundler builds every package, from `desktop/tauri.conf.json`.
+- Tauri's bundler builds the application packages from
+  `desktop/tauri.conf.json`. On macOS, `dmgbuild` wraps the bundled app in the
+  distribution image so CI can set the Finder layout without automating Finder.
 - On Windows, an NSIS installer for the current user, with no
   administrator rights, in `%LOCALAPPDATA%`, which the updater replaces.
   The installer and uninstaller both use TorrPlay's Windows app icon.
@@ -101,8 +103,8 @@ manifest chooses between two.
   AppImage brings them, since a host's plugins need not match the GStreamer
   libraries bundled with it, leaving out large ones that play nothing
   TorrPlay serves, such as machine learning, editing, and WebRTC.
-- On macOS, a `.dmg` holding `TorrPlay.app`, and the `.app.tar.gz` the
-  updater reads.
+- On macOS, a `.dmg` with a drag-to-Applications layout for `TorrPlay.app`
+  and the `.app.tar.gz` the updater reads.
 - It ships `torrplay` beside `torrplay-desktop`: the window runs its own
   server, but MCP clients reach a running application through `torrplay
   mcp`, and a library moves to the service edition through `torrplay
