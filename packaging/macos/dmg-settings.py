@@ -15,10 +15,10 @@ license = {"licenses": {"en_US": "LICENSES/MIT.txt"}}
 format = "UDZO"
 compression_level = 9
 
-# The Finder window's height includes the 32-point title bar. Leave 340 points
-# below it for the background drawn by scripts/render-logo.py.
+# Allow 88 points for Finder's title bar, path bar, and status bar above and
+# below the 340-point background.
 background = "packaging/macos/dmg-background.png"
-window_rect = ((100, 100), (640, 372))
+window_rect = ((100, 100), (640, 428))
 default_view = "icon-view"
 icon_size = 112
 icon_locations = {app.name: (174, 215), "Applications": (466, 215)}
