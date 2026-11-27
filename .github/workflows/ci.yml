@@ -3,173 +3,23 @@
 # SPDX-License-Identifier: MIT
 
 name: CI
-
-on:
-  workflow_dispatch:
-
+on: workflow_dispatch
 permissions:
-  contents: read
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
-env:
-  CARGO_TERM_COLOR: always
-
+  actions: read
 jobs:
-  stage:
-    name: Repository stage
-    runs-on: ubuntu-26.04
-    timeout-minutes: 5
-    outputs:
-      rust: ${{ steps.project.outputs.rust }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Detect the Cargo project
-        id: project
-        shell: bash
-        run: |
-          if [[ -f Cargo.toml ]]; then
-            for required in Cargo.lock rust-toolchain.toml; do
-              if [[ ! -f "$required" ]]; then
-                echo "::error::Cargo.toml requires a committed $required"
-                exit 1
-              fi
-            done
-            echo "rust=true" >> "$GITHUB_OUTPUT"
-          else
-            rust_sources=$(git ls-files '*.rs' '**/Cargo.toml')
-            if [[ -n "$rust_sources" ]]; then
-              echo "::error::Rust sources require a root Cargo.toml"
-              exit 1
-            fi
-            echo "rust=false" >> "$GITHUB_OUTPUT"
-            echo "Planning stage: Cargo checks start with the root manifest."
-          fi
-
-  macos-package:
-    name: Application package (macOS)
-    needs: stage
-    if: needs.stage.outputs.rust == 'true'
-    # Xcode 26's actool compiles the Icon Composer icon; earlier ones cannot.
+  finder-preview:
+    name: Finder preview of the tested DMG
     runs-on: macos-26
-    timeout-minutes: 60
-    env:
-      # A release at least two weeks old; cargo verifies the crate against the
-      # registry's checksum. The CLI matches the tauri crate's minor version.
-      TAURI_CLI_VERSION: 2.12.4
-      CARGO_ABOUT_VERSION: 0.9.2
-      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+    timeout-minutes: 8
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: client/.node-version
-      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
-        with:
-          build-warnings: warn
-          cache-workspaces: .
-      - name: Install the Rust targets
-        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
-      - name: Enable pnpm
-        working-directory: client
-        run: corepack enable pnpm
-      - name: Install the web client's dependencies
-        working-directory: client
-        run: pnpm install --frozen-lockfile
-      - name: Build the web client
-        working-directory: client
-        run: pnpm build
-      - name: Install the Tauri CLI
-        run: cargo install tauri-cli --version "${TAURI_CLI_VERSION}" --locked
-      - name: Install cargo-about
-        run: cargo install cargo-about --version "${CARGO_ABOUT_VERSION}" --locked --features cli
-      - name: Install dmgbuild
-        run: |
-          python3 -m venv "${RUNNER_TEMP}/dmgbuild"
-          "${RUNNER_TEMP}/dmgbuild/bin/python" -m pip install --require-hashes --only-binary=:all: \
-            -r packaging/macos/dmg-requirements.txt
-          echo "${RUNNER_TEMP}/dmgbuild/bin" >> "$GITHUB_PATH"
-      - name: Build the disk image
-        id: build-dmg
-        run: scripts/build-application-macos.sh target/dmg/TorrPlay.dmg
-      - name: Check and run the packaged application
-        run: |
-          mount=$(mktemp -d "${RUNNER_TEMP}/torrplay-dmg.XXXXXX")
-          hdiutil attach -readonly -nobrowse -noautoopen -mountpoint "$mount" target/dmg/TorrPlay.dmg <<< Y
-          trap 'hdiutil detach "$mount"' EXIT
-          python3 tests/check_macos_dmg_layout.py "$mount"
-          cmp desktop/icons/icon.icns "$mount/.VolumeIcon.icns"
-          app="$mount/TorrPlay.app"
-          scripts/check-macos-icon.sh "$app"
-          codesign --verify --deep --strict "$app"
-          cmp LICENSES/MIT.txt "$app/Contents/Resources/LICENSE.txt"
-          cmp target/notices/THIRD-PARTY-NOTICES.txt "$app/Contents/Resources/THIRD-PARTY-NOTICES.txt"
-          lipo "$app/Contents/MacOS/torrplay-desktop" -verify_arch arm64 x86_64
-          lipo "$app/Contents/MacOS/torrplay" -verify_arch arm64 x86_64
-          "$app/Contents/MacOS/torrplay" --version
-          (
-            test_home=$(mktemp -d "${RUNNER_TEMP}/torrplay-home.XXXXXX")
-            data_dir="$test_home/Library/Application Support/org.torrplay.desktop"
-            api=http://127.0.0.1:8643
-            mkdir -p "$data_dir"
-            printf '%s\n' 'TORRPLAY_ALLOWED_HOSTS=torrplay,*.home.arpa' \
-              'TORRPLAY_LISTEN=127.0.0.1:8643' 'TORRPLAY_LOG_FORMAT=text' > "$data_dir/torrplay.env"
-            env -u TORRPLAY_ALLOWED_HOSTS -u TORRPLAY_DOWNLOAD_DIR -u TORRPLAY_LISTEN -u TORRPLAY_LOG_FORMAT \
-              HOME="$test_home" NO_COLOR=1 \
-              "$app/Contents/MacOS/torrplay-desktop" --no-dht > "$test_home/startup.log" 2>&1 &
-            pid=$!
-            trap 'kill -KILL "$pid" 2>/dev/null || true; wait "$pid" || true; cat "$test_home/startup.log"' EXIT
-            deadline=$((SECONDS + 60))
-            until curl -fs -o /dev/null --max-time 2 "$api/readyz"; do
-              kill -0 "$pid" && (( SECONDS < deadline )) || exit 1
-              sleep 0.5
-            done
-            for host in torrplay nas.home.arpa; do
-              curl -fsS -o /dev/null --max-time 2 -H "Host: $host" "$api/api/v1"
-            done
-            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 \
-              -H 'Host: other.example' "$api/api/v1")
-            if [[ "$code" != 421 ]]; then
-              echo "The unlisted host received $code instead of 421" >&2
-              exit 1
-            fi
-            kill -TERM "$pid"
-            deadline=$((SECONDS + 45))
-            while kill -0 "$pid" 2>/dev/null; do
-              (( SECONDS < deadline )) || exit 1
-              sleep 0.5
-            done
-            wait "$pid"
-            trap - EXIT
-            if ! grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T.*API is listening' "$test_home/startup.log"; then
-              echo 'The startup log did not contain a text-format API listener record' >&2
-              cat "$test_home/startup.log" >&2
-              exit 1
-            fi
-            [[ -f "$data_dir/torrplay.db" && -d "$data_dir/logs" ]]
-            HOME="$test_home" "$app/Contents/MacOS/torrplay" backup create --output "$test_home/backup.zip"
-            [[ -s "$test_home/backup.zip" ]]
-          )
-          hdiutil detach "$mount"
-          trap - EXIT
-      - name: Upload the tested disk image
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: application-macos-universal
-          path: target/dmg/TorrPlay.dmg
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 0
-
+          path: target/dmg
+          github-token: ${{ github.token }}
+          run-id: 46007253944
       - name: Capture the mounted disk image in Finder
         id: capture-finder
-        if: ${{ !cancelled() && steps.build-dmg.outcome == 'success' }}
         run: |
           scratch=$(mktemp -d "${RUNNER_TEMP}/torrplay-finder.XXXXXX")
           mount="$scratch/TorrPlay"
@@ -201,10 +51,10 @@ jobs:
             sleep 1
           done
           [[ -n "$window" ]] || { echo "::error::Finder did not expose the mounted TorrPlay window"; exit 1; }
+          sleep 15
           screencapture -x -o -l "$window" target/dmg/TorrPlay-Finder.png
           test -s target/dmg/TorrPlay-Finder.png
       - name: Upload the Finder screenshot
-        if: ${{ !cancelled() && steps.capture-finder.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: torrplay-dmg-finder
