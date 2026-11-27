@@ -6,8 +6,8 @@
 form a T, for torst, and the last piece of its crossbar, read left to right
 as a stream reads, is on its way.
 
-One geometry in two palettes yields every file, so the SVGs and the
-bitmaps cannot drift:
+The SVG and bitmap logos share one geometry and two palettes. This script
+also draws the installation artwork:
 
 - brand/logo-dark.svg and brand/logo-light.svg, a rounded tile on a
   transparent background, for dark and light surroundings;
@@ -20,6 +20,8 @@ bitmaps cannot drift:
 - crates/torrplay-server/assets/dlna/icon-{48,120}.jpg, the same filled to
   the corners, since JPEG has no transparency;
 - desktop/icons/{nsis,wix}-*.bmp, the Windows setup wizard artwork;
+- packaging/macos/dmg-background*.png, the Finder installation artwork at
+  standard and Retina resolutions;
 - desktop/icons/icon.icns, the light tile inside the margin and shadow of
   Apple's 1024-point icon grid, so the Dock shows it at the size of other
   icons, where the full-bleed icon.png looks larger;
@@ -63,6 +65,7 @@ ICONS = Path("crates/torrplay-server/assets/dlna")
 BRAND = Path("brand")
 CLIENT = Path("client/public")
 DESKTOP = Path("desktop/icons")
+MAC_PACKAGING = Path("packaging/macos")
 
 # Apple's macOS icon grid: a 1024-point canvas holding an 824-point tile,
 # with a shadow below it.
@@ -194,6 +197,33 @@ def windows_wizard_artwork():
         image.save(DESKTOP / name)
 
 
+def mac_dmg_artwork():
+    """Draw the instruction and arrow around the icons that Finder will show."""
+    # Draw at 2x, then downsample for displays with standard resolution.
+    image = Image.new("RGB", (1280, 680), LIGHT["tile"])
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, image.width - 1, 235), fill=DARK["tile"])
+    draw.text(
+        (640, 118),
+        "Drag TorrPlay to Applications",
+        fill=LIGHT["tile"],
+        font=ImageFont.load_default(size=56),
+        anchor="mm",
+    )
+    draw.rounded_rectangle((560, 386, 720, 474), radius=44, fill="#E0F2FE")
+    draw.line(((602, 430), (676, 430)), fill="#0369A1", width=6)
+    draw.line(
+        ((656, 410), (676, 430), (656, 450)),
+        fill="#0369A1",
+        width=6,
+        joint="curve",
+    )
+    image.save(MAC_PACKAGING / "dmg-background@2x.png", optimize=True)
+    image.resize((640, 340), Image.Resampling.LANCZOS).save(
+        MAC_PACKAGING / "dmg-background.png", optimize=True
+    )
+
+
 def mac_icon():
     """The light tile on Apple's grid, with its shadow."""
     tile = bitmap(MAC_TILE, rounded=True, palette=LIGHT, supersample=MAC_SUPERSAMPLE)
@@ -260,6 +290,8 @@ def main():
         )
     DESKTOP.mkdir(parents=True, exist_ok=True)
     windows_wizard_artwork()
+    MAC_PACKAGING.mkdir(parents=True, exist_ok=True)
+    mac_dmg_artwork()
     mac_icon().save(DESKTOP / "icon.icns")
     assets = DESKTOP / "icon.icon" / "Assets"
     assets.mkdir(parents=True, exist_ok=True)

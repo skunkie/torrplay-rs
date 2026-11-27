@@ -84,7 +84,8 @@ light palette: `brand/logo-dark.svg`, `brand/logo-light.svg`, the adaptive
 `brand/logo.svg` that follows the viewer's color scheme, and the DLNA media
 server's PNG and JPEG icons in `crates/torrplay-server/assets/dlna/`, and
 the adaptive logo again as the web client's `client/public/favicon.svg`.
-It also renders the NSIS and WiX setup wizard bitmaps in `desktop/icons/`.
+It also renders the NSIS and WiX setup wizard bitmaps in `desktop/icons/` and
+the standard and Retina Finder backgrounds in `packaging/macos/`.
 For macOS it draws `desktop/icons/icon.icns`, the light tile inside the
 margin and shadow of Apple's icon grid, which the Dock shows at the size of
 other applications' icons, and `desktop/icons/icon.icon`, an Icon Composer
@@ -958,12 +959,14 @@ gh run download RUN_ID -n application-linux-x86_64
 chmod +x appimage/torrplay.AppImage
 ```
 
-The macOS disk image contains an ad hoc signed application and CLI. CI stages
-the offline help from the Linux reference job. It mounts the disk image,
-compares the bundled resources with their inputs, verifies the version in the
-help, checks both architecture slices, verifies the signature and icons, and
-runs the bundled CLI. To build locally, run from the repository root with
-Xcode 26, Python 3.11 or later as `python3`, and Pandoc 3.12.1.
+Tauri builds the ad hoc signed universal application with its bundled CLI
+and offline help. `dmgbuild` uses `packaging/macos/dmg-settings.py` to package
+it in an image with an Applications shortcut, a drag-to-install background,
+and the MIT license prompt. CI stages the help from the Linux reference job,
+then mounts the disk image and checks the Finder layout, bundled resources,
+help version, both architecture slices, signature, icons, and bundled CLI.
+To build locally, run from the repository root with Xcode 26, Python 3.11 or
+later as `python3`, and Pandoc 3.12.1.
 
 ```sh
 (cd client && pnpm install --frozen-lockfile && pnpm build)
@@ -971,11 +974,19 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin
 cargo install tauri-cli --version 2.12.4 --locked
 cargo install cargo-about --version 0.9.2 --locked --features cli
 python3 scripts/build-reference.py html --platform macos --edition application target/reference/macos
+python3 -m venv target/dmgbuild
+target/dmgbuild/bin/python -m pip install --require-hashes --only-binary=:all: \
+  -r packaging/macos/dmg-requirements.txt
+export PATH="$PWD/target/dmgbuild/bin:$PATH"
 scripts/build-application-macos.sh target/dmg/TorrPlay.dmg
 ```
 
 With a staged reference from CI, skip the generation command. The build
 checks the target and app version before bundling the help.
+
+Open the resulting image in Finder with the path bar and status bar visible.
+Check that both icons and labels fit without scrolling, then drag TorrPlay
+onto Applications. Confirm that Finder copies the app.
 
 Use **Help → TorrPlay Help** to open the reference in the system's HTML
 handler. If the app cannot start, select **Show Package Contents** on

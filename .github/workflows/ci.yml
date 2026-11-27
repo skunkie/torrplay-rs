@@ -726,6 +726,12 @@ jobs:
         with:
           name: macos-reference
           path: target/reference/macos
+      - name: Install dmgbuild
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/dmgbuild"
+          "${RUNNER_TEMP}/dmgbuild/bin/python" -m pip install --require-hashes --only-binary=:all: \
+            -r packaging/macos/dmg-requirements.txt
+          echo "${RUNNER_TEMP}/dmgbuild/bin" >> "$GITHUB_PATH"
       - name: Build the disk image
         run: scripts/build-application-macos.sh target/dmg/TorrPlay.dmg
       - name: Check and run the packaged application
@@ -733,6 +739,8 @@ jobs:
           mount=$(mktemp -d "${RUNNER_TEMP}/torrplay-dmg.XXXXXX")
           hdiutil attach -readonly -nobrowse -noautoopen -mountpoint "$mount" target/dmg/TorrPlay.dmg <<< Y
           trap 'hdiutil detach "$mount"' EXIT
+          python3 tests/check_macos_dmg_layout.py "$mount"
+          cmp desktop/icons/icon.icns "$mount/.VolumeIcon.icns"
           app="$mount/TorrPlay.app"
           scripts/check-macos-icon.sh "$app"
           codesign --verify --deep --strict "$app"

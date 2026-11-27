@@ -122,3 +122,9 @@ SPDX-License-Identifier = "MIT"
 path = "packaging/windows/license.txt"
 SPDX-FileCopyrightText = "2026 TorrPlay"
 SPDX-License-Identifier = "MIT"
+
+# Finder backgrounds drawn by scripts/render-logo.py.
+[[annotations]]
+path = "packaging/macos/dmg-background*.png"
+SPDX-FileCopyrightText = "2026 TorrPlay"
+SPDX-License-Identifier = "MIT"
