@@ -7,6 +7,7 @@
 
 import argparse
 import gzip
+import json
 import re
 import subprocess
 import sys
@@ -21,6 +22,8 @@ GENERATOR = ROOT / "scripts/build-reference.py"
 SETTING_NAME = r"TORRPLAY_[A-Z0-9_]+"
 CLIENT_TITLE = "TorrPlay Client Help"
 CLIENT_SECTIONS = {"client-usage", "client-options", "client-connection", "troubleshooting"}
+APPLICATION_SECTIONS = {"startup-settings", "options", "commands", "example"}
+MACOS_SECTIONS = APPLICATION_SECTIONS | {"startup-recovery"}
 
 
 @dataclass
@@ -305,17 +308,27 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--torrplay", type=Path, help="built torrplay executable")
     parser.add_argument("--client", type=Path, help="built torrplay-client executable")
-    parser.add_argument("--debian-client-help", type=Path, help="check staged or installed Debian client HTML")
-    parser.add_argument("--version", help="expected Debian package version, including its revision")
+    packaged_help = parser.add_mutually_exclusive_group()
+    packaged_help.add_argument("--debian-client-help", type=Path, help="check staged or installed Debian client HTML")
+    packaged_help.add_argument("--macos-help", type=Path, help="check staged or bundled macOS application HTML")
+    parser.add_argument("--version", help="expected package version (required for Debian, including its revision)")
     args = parser.parse_args()
-    if args.debian_client_help:
-        if not args.version or args.torrplay or args.client:
-            parser.error("use --debian-client-help with --version only")
-        check_html_file(args.debian_client_help, CLIENT_TITLE, "Linux (Debian)", args.version, CLIENT_SECTIONS)
-        print(f"Verified Debian client help {args.version} at {args.debian_client_help}.")
+    if path := args.debian_client_help or args.macos_help:
+        if args.torrplay or args.client:
+            parser.error("packaged help checks do not take executable paths")
+        if args.debian_client_help:
+            if not args.version:
+                parser.error("--debian-client-help requires --version")
+            title, label, sections = CLIENT_TITLE, "Linux (Debian)", CLIENT_SECTIONS
+            version = args.version
+        else:
+            title, label, sections = "TorrPlay Help", "macOS", MACOS_SECTIONS
+            version = args.version or macos_version()
+        check_html_file(path, title, label, version, sections)
+        print(f"Verified {label} help {version} at {path}.")
         return
     if args.version:
-        parser.error("--version requires --debian-client-help")
+        parser.error("--version requires --debian-client-help or --macos-help")
     if bool(args.torrplay) != bool(args.client):
         parser.error("supply both executables to check CLI coverage")
     check_names_with_digits()
@@ -328,7 +341,6 @@ def main():
     desktop = cli - {"torrplay service"}
     with (ROOT / "crates/torrplay/Cargo.toml").open("rb") as manifest:
         version = tomllib.load(manifest)["package"]["version"]
-    app_sections = {"startup-settings", "options", "commands", "example"}
     with tempfile.TemporaryDirectory(prefix="torrplay-reference-") as scratch:
         directory = Path(scratch)
         for distribution in ("debian", "fedora"):
@@ -338,17 +350,18 @@ def main():
                cli | client | template_settings("windows"))
         targets = [
             (("macos", "application", None), "TorrPlay Help", "macOS",
-             app_sections | {"startup-recovery"}, desktop | template_settings("macos")),
+             MACOS_SECTIONS, desktop | template_settings("macos")),
             (("windows", "application", None), "TorrPlay Help", "Windows (NSIS)",
-             app_sections, desktop | template_settings("windows")),
+             APPLICATION_SECTIONS, desktop | template_settings("windows")),
             msi,
         ]
         for distribution in ("debian", "fedora"):
             targets.append((("linux", "client", distribution), CLIENT_TITLE,
                             f"Linux ({distribution.title()})", CLIENT_SECTIONS, client))
         for target, title, label, sections, names in targets:
+            target_version = macos_version() if target[0] == "macos" else version
             check_html(directory / "-".join(part for part in target if part),
-                       target, title, label, sections, names, version)
+                       target, title, label, sections, names, target_version)
         check_debian_client_preflight(directory / "linux-client-debian", version)
         fixture_version = "2.3.5" if version == "2.3.4" else "2.3.4"
         check_html(directory / "msi-version-override", *msi, fixture_version, override=True)
@@ -357,6 +370,11 @@ def main():
         print("Verified reference coverage against both packaged executables.")
     else:
         print("CLI coverage skipped because no executables were supplied.")
+
+
+def macos_version():
+    config = (ROOT / "desktop/tauri.conf.json").read_text(encoding="utf-8")
+    return json.loads(config)["version"]
 
 
 if __name__ == "__main__":
