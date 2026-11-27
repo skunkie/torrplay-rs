@@ -717,10 +717,10 @@ has keyboard focus. Check that the contents are accessible from the sidebar
 on wide screens and above the article on narrow screens.
 
 With `scripts/build-reference.py`, `--version` overrides the version from
-`crates/torrplay/Cargo.toml`, and `--markdown` writes the assembled Markdown
-without Pandoc. The client references use `--client-mode local`. For a custom
-Debian preview, use the renderer with a separate output directory so it
-doesn't overwrite staged package help:
+`desktop/tauri.conf.json` for macOS HTML and `crates/torrplay/Cargo.toml` for
+other targets. `--markdown` writes the assembled Markdown without Pandoc.
+The client references use `--client-mode local`. For a custom Debian preview,
+use a separate output directory to keep the staged package help intact:
 
 ```sh
 python3 scripts/build-reference.py html --platform linux --edition client \
@@ -936,20 +936,34 @@ gh run download RUN_ID -n application-linux-x86_64
 chmod +x appimage/torrplay.AppImage
 ```
 
-The macOS disk image contains an ad hoc signed application and CLI. CI mounts
-the image, compares the license and notices in `TorrPlay.app/Contents/Resources`
-with the source files, checks both architecture slices, verifies the app
-signature and icons, and runs the bundled CLI. Run the following commands
-from the repository root on macOS with Xcode 26 and Python 3.11 or later
-available as `python3` on PATH to build the image locally.
+The macOS disk image contains an ad hoc signed application and CLI. CI stages
+the offline help from the Linux reference job. It mounts the disk image,
+compares the bundled resources with their inputs, verifies the version in the
+help, checks both architecture slices, verifies the signature and icons, and
+runs the bundled CLI. To build locally, run from the repository root with
+Xcode 26, Python 3.11 or later as `python3`, and Pandoc 3.12.1.
 
 ```sh
 (cd client && pnpm install --frozen-lockfile && pnpm build)
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
 cargo install tauri-cli --version 2.12.4 --locked
 cargo install cargo-about --version 0.9.2 --locked --features cli
+python3 scripts/build-reference.py html --platform macos --edition application target/reference/macos
 scripts/build-application-macos.sh target/dmg/TorrPlay.dmg
 ```
+
+With a staged reference from CI, skip the generation command. The build
+checks the target and app version before bundling the help.
+
+Use **Help → TorrPlay Help** to open the reference in the system's HTML
+handler. If the app cannot start, select **Show Package Contents** on
+`TorrPlay.app` in Finder and open `Contents/Resources/help/index.html`. The
+path is also printed in startup diagnostics for the bundled application.
+
+For manual acceptance, disconnect the network and open help from the menu
+after copying the app. Use the Finder route from the mounted disk image and
+again after moving the copy. Verify in a disposable setup that the page still
+opens when invalid settings or an occupied listen port prevent startup.
 
 ### Windows 11 manual install
 

@@ -61,7 +61,10 @@ def assemble(source, selections, parents=()):
     return assembled
 
 
-def package_version():
+def package_version(platform):
+    if platform == "macos":
+        config = (ROOT / "desktop/tauri.conf.json").read_text(encoding="utf-8")
+        return json.loads(config)["version"]
     with (ROOT / "crates/torrplay/Cargo.toml").open("rb") as manifest:
         return tomllib.load(manifest)["package"]["version"]
 
@@ -79,15 +82,16 @@ def cli():
                       help="connection mode supported by the packaged client")
     for command in (man, html):
         command.add_argument("out_dir", type=Path)
-        command.add_argument("--version", help="override the version from Cargo.toml")
+        command.add_argument("--version", help="override the version from the package configuration")
         command.add_argument("--markdown", action="store_true",
                              help="write the assembled Markdown for review or checks")
     args = parser.parse_args()
+    platform = args.platform if args.format == "html" else None
     if args.format == "html":
-        target = (args.platform, args.edition, args.distribution)
+        target = (platform, args.edition, args.distribution)
         if target not in HTML_TARGETS:
             parser.error("unsupported platform, edition, and distribution combination")
-    version = args.version if args.version is not None else package_version()
+    version = args.version if args.version is not None else package_version(platform)
     pattern = r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?"
     if args.format == "html" and target == ("linux", "client", "debian"):
         pattern = r"[0-9]+\.[0-9]+\.[0-9]+(?:[~+-][0-9A-Za-z.+~-]+)?"
