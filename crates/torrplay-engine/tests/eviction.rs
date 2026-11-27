@@ -343,8 +343,8 @@ async fn a_paused_torrent_is_evicted_before_a_started_one() -> anyhow::Result<()
     Ok(())
 }
 
-/// CAC-09: opening, streaming, and deleting 100 torrents in a loop returns
-/// cache usage, torrents, and peer connections to their starting levels.
+/// CAC-09: after 100 stream and removal cycles, only reusable buffers
+/// remain charged, and the torrents and peer connections are gone.
 /// The torrents are added as the adapter adds them, with a scheduler, so
 /// they download only what their reader needs.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

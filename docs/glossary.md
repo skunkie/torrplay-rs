@@ -146,9 +146,9 @@ of each.
   does not bound total process memory.
 
 **Cache usage**
-: The bytes counted against cache capacity: resident piece buffers, pending
-  allocations, and retained reusable buffers. Reported separately from
-  process resident set size (RSS).
+: The bytes counted against cache capacity: pending allocations, resident
+  piece buffers, retained reusable buffers, and detached buffers awaiting
+  teardown. Reported separately from process resident set size (RSS).
 
 **Eviction**
 : Removing a verified piece from the piece cache to free capacity. Eviction

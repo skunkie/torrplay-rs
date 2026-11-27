@@ -14,7 +14,7 @@ use std::time::Duration;
 use anyhow::Context;
 use librqbit::api::TorrentIdOrHash;
 use librqbit::{AddTorrent, AddTorrentOptions, ManagedTorrent, TorrentStatsState};
-use support::{Leecher, Seeder, bounded};
+use support::{Leecher, MemoryCache, Seeder, bounded};
 use tokio::io::AsyncReadExt;
 use torrplay_engine::cache::{CacheStats, PieceCache};
 use torrplay_engine::storage::MemoryStorageFactory;
@@ -146,9 +146,10 @@ async fn deleting_a_torrent_releases_only_its_cache_usage() -> anyhow::Result<()
     let small_seeder = Seeder::start(&small, &small.metainfo().bytes).await?;
     let multi_seeder = Seeder::start(&multi, &multi.metainfo().bytes).await?;
     let leecher = Leecher::start().await?;
-    let cache = PieceCache::new(8 * MIB);
-    let small_handle = add_in_memory(&leecher, &small_seeder, &small, &cache).await?;
-    let multi_handle = add_in_memory(&leecher, &multi_seeder, &multi, &cache).await?;
+    let memory = MemoryCache::start(8 * MIB);
+    let cache = &memory.cache;
+    let small_handle = add_in_memory(&leecher, &small_seeder, &small, cache).await?;
+    let multi_handle = add_in_memory(&leecher, &multi_seeder, &multi, cache).await?;
     bounded(
         "completing the first download",
         small_handle.wait_until_completed(),
@@ -160,7 +161,7 @@ async fn deleting_a_torrent_releases_only_its_cache_usage() -> anyhow::Result<()
     )
     .await?;
     let both = small.total_size_bytes() + multi.total_size_bytes();
-    cache_reaches(&cache, "both torrents resident", |stats| {
+    cache_reaches(cache, "both torrents resident", |stats| {
         stats.usage_bytes == both
     })
     .await?;
@@ -173,7 +174,7 @@ async fn deleting_a_torrent_releases_only_its_cache_usage() -> anyhow::Result<()
     )
     .await?;
     drop(small_handle);
-    let stats = cache_reaches(&cache, "the first torrent's bytes released", |stats| {
+    let stats = cache_reaches(cache, "the first torrent's bytes released", |stats| {
         stats.usage_bytes - stats.retained_bytes == multi.total_size_bytes()
     })
     .await?;
@@ -192,7 +193,7 @@ async fn deleting_a_torrent_releases_only_its_cache_usage() -> anyhow::Result<()
     )
     .await?;
     drop(multi_handle);
-    cache_reaches(&cache, "the cache emptied", |stats| {
+    cache_reaches(cache, "the cache emptied", |stats| {
         stats.usage_bytes == stats.retained_bytes
     })
     .await?;
@@ -200,6 +201,7 @@ async fn deleting_a_torrent_releases_only_its_cache_usage() -> anyhow::Result<()
     leecher.session.stop().await;
     small_seeder.session.stop().await;
     multi_seeder.session.stop().await;
+    memory.shutdown().await?;
     Ok(())
 }
 

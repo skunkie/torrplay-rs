@@ -15,9 +15,10 @@
 //! invalidation, which calls [`TorrentStorage::on_piece_invalidated`] under
 //! the torrent's state lock; the piece leaves the cache there, so a reader
 //! that finds it gone also finds it marked missing. A write to a piece
-//! nobody reserved evicts from the write path, and is dropped if that
-//! finds no room: failing it would stop the torrent, while a piece missing
-//! its chunk fails its hash check and is fetched again.
+//! nobody reserved may evict from the write path to cover any shortfall
+//! beyond the capacity already being released. If room is still unavailable,
+//! the write is dropped. The missing chunk causes the piece to fail its hash
+//! check and be fetched again.
 //!
 //! A failed write fails the torrent in librqbit. The storage records the
 //! failure and reports the torrent's key to the factory's failure channel,
@@ -39,7 +40,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::cache::{CacheError, EngineTorrent, PieceCache, Reservation, TorrentKey};
 
-/// How many times a write evicts and retries before it fails.
+/// The maximum eviction rounds before the final attempt to write a block.
 const EVICTION_ROUNDS: usize = 4;
 
 /// Creates a [`MemoryStorage`] for each torrent added with it.
@@ -210,11 +211,11 @@ impl CachedTorrent {
         self.cache.set_started(self.key, started)
     }
 
-    /// Releases every piece of the torrent and returns their bytes to the
-    /// capacity. Call it once the torrent is deleted: librqbit drops a
-    /// deleted torrent's storage only when its last peer task ends, and until
-    /// then the pieces would hold capacity that nothing can evict. Later
-    /// reads and writes of the torrent fail.
+    /// Detaches every piece after torrent deletion so cleanup can start
+    /// before librqbit drops the storage on its last peer task. Detached
+    /// buffers stay charged until freed. Reusable buffers stay charged in
+    /// the retained pool until reused or freed. Later reads and writes of
+    /// the torrent fail.
     pub fn release(&self) -> Result<(), CacheError> {
         self.cache.release_torrent(self.key)
     }
@@ -401,7 +402,7 @@ impl TorrentPieces {
                 .write(self.key, piece, piece_length, offset, data)
             {
                 Err(CacheError::CapacityExceeded { needed_bytes, .. }) => {
-                    let batches = self.cache.eviction_candidates(needed_bytes)?;
+                    let batches = self.cache.write_eviction_candidates(needed_bytes)?;
                     if batches.is_empty() {
                         break;
                     }
@@ -552,6 +553,65 @@ impl TorrentStorage for MemoryStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_late_write_preserves_verified_pieces_when_teardown_covers_the_shortfall() {
+        struct TestTorrent {
+            cache: Weak<PieceCache>,
+            key: TorrentKey,
+        }
+
+        impl EngineTorrent for TestTorrent {
+            fn invalidate(&self, pieces: &[u32]) -> anyhow::Result<usize> {
+                let cache = self.cache.upgrade().context("the cache was released")?;
+                for &piece in pieces {
+                    cache.evict(self.key, piece)?;
+                }
+                Ok(pieces.len())
+            }
+
+            fn reselect(&self) {}
+        }
+
+        let cache = PieceCache::new(100);
+        let verified = cache.register_torrent(60).unwrap();
+        cache.seed(verified, 0, &[3; 60]).unwrap();
+        cache
+            .attach_engine(
+                verified,
+                Arc::new(TestTorrent {
+                    cache: Arc::downgrade(&cache),
+                    key: verified,
+                }),
+            )
+            .unwrap();
+        let detached = cache.register_torrent(40).unwrap();
+        cache.write(detached, 0, 40, 0, &[1]).unwrap();
+        let writer = cache.register_torrent(40).unwrap();
+        assert_eq!(cache.reserve(writer, 1, 40).unwrap(), Reservation::Waiting);
+        cache.release_unverified(detached, 0).unwrap();
+        assert_eq!(cache.audit().unwrap().usage_bytes, 100);
+
+        let pieces = TorrentPieces {
+            cache: Arc::clone(&cache),
+            key: writer,
+            lengths: Lengths::new(80, 40).unwrap(),
+            file_offsets: vec![0],
+            health: Arc::default(),
+            failures: None,
+        };
+        pieces.write(0, 40, 0, &[2; 40]).unwrap();
+        assert_eq!(cache.verified_pieces(verified).unwrap(), [0]);
+        assert!(!cache.is_resident(writer, 0).unwrap());
+        assert_eq!(cache.audit().unwrap().eviction_count, 0);
+
+        cache.drain_teardown().unwrap();
+        pieces.write(0, 40, 0, &[2; 40]).unwrap();
+        let mut data = [0; 40];
+        cache.read(writer, 0, 0, &mut data).unwrap();
+        assert_eq!(data, [2; 40]);
+        assert_eq!(cache.verified_pieces(verified).unwrap(), [0]);
+    }
 
     /// librqbit stops a torrent whose storage fails a write. A write to a
     /// piece nobody reserved, while pinned and partial pieces fill the

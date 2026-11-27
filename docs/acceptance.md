@@ -14,8 +14,9 @@ the [glossary](glossary.md); behavior follows the
 `api/openapi.yaml`.
 
 Correctness and the cache capacity bound are mandatory regardless of speed.
-Numerical performance thresholds are set from the Go TorrPlay baseline before
-Rust results are evaluated, as [Thresholds](#thresholds) describes.
+The [milestone 5 thresholds](#thresholds) record the feasibility decision.
+Performance regression checks compare Rust builds before and after the
+change under matching conditions.
 
 ## Test environment
 
@@ -116,7 +117,7 @@ milestones. Later milestones keep every scenario passing.
 | LIF-04 | Pause a torrent with streams and idle readers | Streams canceled individually, readers released, content returns `409`; metadata, files, and statistics remain readable (M4) |
 | LIF-05 | Set the current desired state again | `200`, configuration ETag unchanged |
 | LIF-06 | Storage write failure injected | `failed` with `failure.detail`; streams canceled; content `409`; pause then start clears `failure` (M4) |
-| LIF-07 | Delete during metadata retrieval, during a stream, and twice | `204`; the stream is canceled; the second delete and every subresource return `404`; cache usage falls (M4) |
+| LIF-07 | Delete during metadata retrieval, during a stream, and twice | The first delete returns `204` and cancels the stream. The second delete and every subresource return `404`. Discarded buffers release their charges when teardown finishes (M4) |
 | LIF-08 | Create the same info hash after deletion | New torrent with a new ID |
 | LIF-09 | Requests before the engine is ready | `/readyz` `503`; engine-backed operations `503 engine-unavailable`; others served (M3) |
 | LIF-10 | Termination signal with streams in progress | `/readyz` `503` while connections are accepted; new streams and state changes `503`; streams finish or are canceled after the drain period; exit within 30 seconds with all tasks joined (M4) |
@@ -167,11 +168,11 @@ engine can pass them, and memory storage (M4) must pass them.
 | CAC-02 | Evict a verified piece, then read it | Completion invalidation marks it missing; it is downloaded and verified again; no peer is treated as corrupt |
 | CAC-03 | Evict while the torrent is finished and while peers are connected | Re-download works; peers dropped as not needed reconnect |
 | CAC-04 | Evict pieces of a paused torrent, then start it | Evicted pieces count as missing after start |
-| CAC-05 | Pinned ranges exceed capacity | Cache usage never exceeds capacity; pins are reduced in the order [ADR 5](adr/0005-storage.md) defines, down to each reader's current piece; waiting pieces are readmitted in piece priority order, so no reader waits indefinitely behind others |
+| CAC-05 | Pinned ranges exceed capacity | Cache usage stays within capacity. [ADR 5](adr/0005-storage.md#bounded-fallback) defines how pins are reduced, how waiting pieces are readmitted by priority, and how long readers can wait |
 | CAC-06 | `oversized-piece` with capacity below one piece, uploaded and from a magnet URI | Cache usage never exceeds capacity and no write fails the torrent; the upload is `422 unsupported-torrent`, and the magnet torrent becomes `failed` with a `failure` detail once metadata arrives |
-| CAC-07 | Partial pieces under eviction pressure | Stay resident until verified; count as pending allocations |
+| CAC-07 | Pending and partial pieces under eviction pressure | Reservations count as pending allocations until a buffer exists. Partial buffers count as resident at full length and are protected from eviction while unverified |
 | CAC-08 | Paused and started torrents share the cache | Unpinned pieces of paused and failed torrents are evicted first |
-| CAC-09 | Open and remove 100 torrents with streams in a loop | Cache usage, tasks, readers, and peer connections return to their starting levels |
+| CAC-09 | Open and remove 100 torrents with streams in a loop | Readers and peer connections clear. Cache usage settles to the retained reusable buffers. Live task count returns to the warmed baseline or below |
 | CAC-10 | Stream `multi-boundary` files under sustained eviction | The first and last pieces of each file being read stay pinned and resident while its readers exist |
 | CAC-11 | One local peer sends corrupt blocks for a piece, another sends valid ones | The piece fails its hash check and is downloaded again from the valid peer; corrupt bytes are never served |
 
@@ -482,16 +483,16 @@ These scenarios accept [the MCP contract](mcp.md) (M7).
 
 Cache usage is the quantity cache capacity bounds.
 
-- **Counted:** resident piece buffers, verified or partial; allocations
-  reserved for pieces being written; retained reusable buffers kept for
-  later pieces.
+- **Counted.** Pending allocations for pieces whose buffers do not exist yet,
+  resident piece buffers (verified or partial), retained reusable buffers, and
+  detached buffers awaiting teardown.
 - **Not counted:** metadata, per-peer and socket buffers, HTTP response
   buffers, hashing scratch space, runtime and allocator overhead, and the
   engine's own bookkeeping.
-- **Invariant:** cache usage never exceeds capacity at any point, including
-  between reservation and release. Tests check it at every accounting change
-  through an instrumented accountant, not only by sampling
-  `/api/v1/cache/statistics`.
+- **Invariant.** Cache usage stays within capacity from reservation through
+  teardown. A shrink can leave already charged bytes above the new capacity.
+  New reservations wait until they fit. Tests audit the running accounting
+  and its recorded peak in addition to sampling `/api/v1/cache/statistics`.
 - **Process memory:** benchmarks report RSS separately and record the
   difference between RSS and cache usage. That difference has no hard bound,
   but it must return to within 10 percent of its starting level after the
@@ -499,27 +500,29 @@ Cache usage is the quantity cache capacity bounds.
 
 ## Benchmark protocol
 
-The benchmark runs identical access traces against Go TorrPlay and the Rust
-prototype to support the milestone 5 decision. Requests are adapted to each
-API; wire compatibility is not expected.
+For streaming changes, replay identical access traces with builds from the
+base revision and the proposed Rust revision. Match the build profile,
+features, settings, hardware, and seeder conditions and record both
+revisions. The Go baseline and thresholds in this section describe the
+completed milestone 5 feasibility benchmark.
 
 ### Environment
 
-Each run records the device, CPU model, core count, memory, OS and kernel,
-CPU frequency policy, Rust toolchain, Go version, both implementations'
-commits, the librqbit revision, cache capacity, seeder count, and network
-shaping. Both implementations use the same cache capacity, payloads, seeders,
-and shaping on the same device. Go TorrPlay runs with seeding disabled, its
-default, so neither implementation uploads.
+Record the device, CPU model, core count, memory, OS and kernel, CPU
+frequency policy, toolchain and source revisions, librqbit revision, cache
+capacity, seeder count, and network profile. Match the device, cache
+capacity, payloads, seeders, and network profile across the builds.
+The milestone 5 comparison also recorded the Go version and ran Go
+TorrPlay with seeding disabled to match Rust's memory storage behavior.
 
 Benchmarks use their own payloads, made by the same generator: `bench-video`,
 one 2 GiB file named `bench-video.mkv` with 2 MiB pieces, and
 `bench-episodes`, four 512 MiB files with 1 MiB pieces. Cache capacity is
 256 MiB unless a trace says otherwise.
 
-Seeders are three local peers. Network namespaces with `tc netem` shape each
-peer link: one profile at 50 Mbit/s with 20 ms delay, and one at 10 Mbit/s
-with 80 ms delay and 0.5 percent loss.
+The shaped matrix uses three local seeders. Network namespaces with
+`tc netem` give each peer link 50 Mbit/s and 20 ms delay in the fast profile,
+or 10 Mbit/s, 80 ms delay, and 0.5 percent loss in the slow profile.
 
 ### Target devices and baseline
 
@@ -531,11 +534,10 @@ deferred; without them, the benchmark does not show behavior under tight
 memory or on x86_64, and [ADR 7](adr/0007-feasibility-decision.md) records
 that limit.
 
-The baseline is Go TorrPlay at commit `84412a1`. Its cache size setting,
-`max_memory`, is set to the trace's cache capacity before each run; it
-accepts 32 MiB to 2 GiB, which covers every trace. Each device's baseline is
-captured, and its thresholds written, before any Rust result on that device
-is evaluated.
+The milestone 5 baseline was Go TorrPlay at commit `84412a1`. Its cache
+size setting, `max_memory`, was set to the trace's cache capacity before
+each run. Its range of 32 MiB to 2 GiB covered every trace. The baseline and
+thresholds were established before Rust results were evaluated.
 
 ### Access traces
 
@@ -614,14 +616,14 @@ seeders had checked their content; the new runs tightened the limits of
 `cold-start` slightly, and no other limit changed. Correctness scenarios and
 the cache capacity invariant are mandatory regardless of speed.
 
-Every run of the Rust prototype must:
+Every Rust run in the milestone 5 comparison had these requirements.
 
 - end every request without an error;
 - keep sampled cache usage at or below the trace's cache capacity;
 - stop cleanly on SIGTERM.
 
-Against Go's distribution of the same measurement, trace, and profile, the
-Rust prototype must stay within these limits:
+The milestone 5 comparison applied these limits to the Rust prototype
+using Go's distribution for the same measurement, trace, and profile.
 
 | Measurement | Limit |
 |---|---|
@@ -631,13 +633,12 @@ Rust prototype must stay within these limits:
 | Excess downloaded bytes | Median at most 125 percent of Go's median plus 16 MiB |
 | Throughput | Cold and uncached reads at least 90 percent of Go's median; cached reads at least 75 percent |
 
-The additive terms keep small values, such as a 3 ms cached seek, from
-turning noise into failures. Stalls of `max-throughput` are not compared:
-its reads have no consumption limit, so every wait for the network counts
-as a stall, and its throughput limits cover it instead. A limit the
-prototype misses fails acceptance unless
-[ADR 7](adr/0007-feasibility-decision.md) records why the difference
-is intentional, such as more readahead traded for fewer stalls.
+The additive terms kept noise in small values, such as a 3 ms cached seek,
+from determining the outcome. The comparison applied throughput limits to
+`max-throughput` because its unpaced reads count every network wait as
+a stall. A missed threshold failed milestone 5 acceptance unless
+[ADR 7](adr/0007-feasibility-decision.md) recorded an intentional tradeoff,
+such as using more readahead to reduce stalls.
 
 On this machine, the rules give these limits, as median, or median / 90th
 percentile:

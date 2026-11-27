@@ -39,6 +39,12 @@ path = "bench/traces/*.jsonl"
 SPDX-FileCopyrightText = "2026 TorrPlay"
 SPDX-License-Identifier = "MIT"
 
+# Raw measurements generated from the synthetic Linux piece-buffer runs.
+[[annotations]]
+path = "bench/results/linux-piece-buffers-runs.zip"
+SPDX-FileCopyrightText = "2026 TorrPlay"
+SPDX-License-Identifier = "MIT"
+
 # JSON has no comment syntax for a header.
 [[annotations]]
 path = "fixtures/*.json"

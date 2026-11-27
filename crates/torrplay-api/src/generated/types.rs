@@ -1274,7 +1274,7 @@ pub struct Settings {
     ///Whether started torrents in disk storage download the pieces they lack while no reader exists. Applies at once: turned off, torrents request only the pieces readers need, and requests already sent finish; turned on, background downloads resume unless playback is active.
     #[serde(default)]
     pub background_downloads_enabled: bool,
-    ///The capacity of the global piece cache that every torrent in memory storage mode shares; the readahead budget is half of it. It must be at least the piece length of every torrent with metadata. Applies at once. Growing it admits the pieces waiting for room. Shrinking it evicts verified, unpinned pieces down to the new capacity, releasing idle readers when nothing else can be evicted; until partial pieces complete and active readers leave their current pieces, cache usage may stay above the capacity, and no new piece is admitted.
+    ///The capacity of the global piece cache that every torrent in memory storage mode shares. The readahead budget is half of it. It must be at least the piece length of every torrent with metadata. Applies at once. Growing it admits the pieces waiting for room. Shrinking it evicts verified, unpinned pieces and releases idle readers when nothing else can be evicted. Cache usage can remain above the new capacity while buffers await teardown, partial pieces are in progress, or active readers pin their current pieces. No new piece is admitted while usage exceeds capacity.
     ///Constraint: minimum=4194304, maximum=68719476736
     #[serde(default)]
     pub cache_capacity_bytes: i64,
@@ -1953,7 +1953,7 @@ pub struct CacheStatistics {
     ///The full length of each resident piece covered by at least one pinned range, counted once. Eviction skips these pieces.
     ///Constraint: minimum=0
     pub pinned_bytes: i64,
-    ///The bytes counted against capacity, including pending allocations and retained reusable buffers. It stays within capacity_bytes, except after the capacity shrinks, until eviction and readers leaving their pieces bring it down.
+    ///Cache usage includes pending allocations, resident piece buffers, retained reusable buffers, and detached buffers awaiting teardown. After a capacity shrink, usage can exceed capacity_bytes until enough of the existing charge is released.
     ///Constraint: minimum=0
     pub usage_bytes: i64,
 }

@@ -873,10 +873,9 @@ async fn readers_need_a_started_torrent_and_wait_a_bounded_time() -> anyhow::Res
     Ok(())
 }
 
-/// Removing a torrent releases its cache usage before returning, and the
-/// engine no longer knows it; statistics count what was downloaded, for the
-/// torrent and across the engine, and the connection to the seeder
-/// (OBS-07).
+/// Removing a torrent removes its cache slots and the evictor frees the
+/// detached buffers. Statistics count the downloaded bytes and the
+/// connection to the seeder (OBS-07).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn removing_releases_the_torrent_and_its_cache_usage() -> anyhow::Result<()> {
     let spec = catalog::single_small();
@@ -913,8 +912,9 @@ async fn removing_releases_the_torrent_and_its_cache_usage() -> anyhow::Result<(
     assert_eq!(totals.piece_waits.waiting_reader_count, 0);
 
     engine.remove(&id(1)).await?;
-    let stats = engine.cache().expect("a started cache").audit()?;
-    assert_eq!(stats.usage_bytes - stats.retained_bytes, 0);
+    let cache = engine.cache().expect("a started cache");
+    let stats = cache.audit()?;
+    assert_eq!((stats.pending_pieces, stats.resident_pieces), (0, 0));
     assert!(matches!(
         engine.status(&id(1)).await,
         Err(EngineError::UnknownTorrent)
@@ -923,6 +923,11 @@ async fn removing_releases_the_torrent_and_its_cache_usage() -> anyhow::Result<(
         engine.remove(&id(1)).await,
         Err(EngineError::UnknownTorrent)
     ));
+    eventually("the evictor freeing the removed torrent's buffers", || {
+        let stats = cache.audit()?;
+        Ok((stats.usage_bytes == stats.retained_bytes).then_some(()))
+    })
+    .await?;
 
     engine.shutdown().await?;
     seeder.stop().await;

@@ -3765,6 +3765,7 @@ dependencies = [
  "librqbit",
  "librqbit-bencode",
  "librqbit-core",
+ "memmap2",
  "serde",
  "tempfile",
  "thiserror 2.0.21",

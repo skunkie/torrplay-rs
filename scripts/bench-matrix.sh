@@ -12,7 +12,7 @@
 # round-robin so slow drift spreads across them, and tears it all down.
 #
 #   sudo scripts/bench-matrix.sh go-torrplay <BINARY>
-#   sudo scripts/bench-matrix.sh torrplay <BINARY>
+#   sudo env COMMIT=<REVISION> scripts/bench-matrix.sh torrplay <BINARY>
 #   sudo scripts/bench-matrix.sh stop
 #
 # stop ends a running matrix: it stops the run in progress, whose result is
@@ -32,8 +32,8 @@
 #   OUT        result directory (default target/bench-results)
 #   BENCH      torrplay-bench binary (default target/release/torrplay-bench)
 #   BENCH_USER the user benchmark commands run as
-#   COMMIT     the commit label (default: the Go binary's vcs.revision, or
-#              this checkout's HEAD for torrplay)
+#   COMMIT     source revision of the supplied binary, required for torrplay.
+#              Defaults to the Go binary's vcs.revision for go-torrplay.
 #   SERVER_LOG_FILTER
 #              TorrPlay's --log-filter for every run, as in librqbit=debug,
 #              for diagnosis; its logs go to each run's log file
@@ -113,6 +113,11 @@ readonly OUT=${OUT:-target/bench-results}
 readonly BENCH=${BENCH:-target/release/torrplay-bench}
 dry_run=${DRY_RUN:-0}
 
+if [[ $implementation == torrplay && -z ${COMMIT:-} ]]; then
+    echo "set COMMIT to the source revision of the supplied TorrPlay binary" >&2
+    exit 2
+fi
+
 if [[ $dry_run != 1 && $EUID != 0 ]]; then
     echo "$0 needs root for the network namespaces; run it with sudo" >&2
     exit 1
@@ -188,14 +193,10 @@ profile_matrix() {
 }
 
 if [[ -z ${COMMIT:-} ]]; then
-    if [[ $implementation == go-torrplay ]]; then
-        COMMIT=$(as_user go version -m "$binary" |
-            sed -n 's/^[[:space:]]*build[[:space:]]*vcs\.revision=\(.\{7\}\).*/\1/p')
-    else
-        COMMIT=$(as_user git rev-parse --short HEAD)
-    fi
+    COMMIT=$(as_user go version -m "$binary" |
+        sed -n 's/^[[:space:]]*build[[:space:]]*vcs\.revision=\([^[:space:]]*\).*/\1/p')
 fi
-[[ -n $COMMIT ]] || { echo "set COMMIT; the binary names none" >&2; exit 1; }
+[[ -n $COMMIT ]] || { echo "set COMMIT to the source revision of the supplied binary" >&2; exit 1; }
 
 services=()
 
@@ -315,12 +316,12 @@ for profile in $PROFILES; do
             if [[ $dry_run == 1 ]]; then
                 in_netns "$CLIENT" "$BENCH" run --trace "bench/traces/$trace.jsonl" \
                     --dir "$DIR" "$flag" "$binary" --out "$file" \
-                    --label "commit=$COMMIT" --label "profile=$profile" \
+                    --label "revision=$COMMIT" --label "profile=$profile" \
                     "${diagnosis[@]}"
             elif ! ip netns exec "$CLIENT" runuser -u "$user" -- \
                 "$BENCH" run --trace "bench/traces/$trace.jsonl" \
                 --dir "$DIR" "$flag" "$binary" --out "$file" \
-                --label "commit=$COMMIT" --label "profile=$profile" \
+                --label "revision=$COMMIT" --label "profile=$profile" \
                 "${diagnosis[@]}" >"$results/$name.log" 2>&1; then
                 echo "$name failed; see $results/$name.log" >&2
                 rm -f "$file"

@@ -5877,6 +5877,7 @@ dependencies = [
  "librqbit",
  "librqbit-bencode",
  "librqbit-core",
+ "memmap2",
  "serde",
  "thiserror 2.0.21",
  "tokio",

@@ -152,9 +152,9 @@ the open file limit raised at startup, and the ramp with its peer floor.
   the internet are not exercised, and the peer limit never binds.
 - **A reduced slow profile.** It runs five traces five times each, so its
   90th percentiles are close to its maxima.
-- **Short runs.** Each run is a fresh process for a few minutes. Growth over
-  days is checked only by lifecycle tests such as CAC-09's loop of opening
-  and removing torrents, not by long benchmarks.
+- **Short runs.** Each run used a fresh process for a few minutes.
+  CAC-09 checks cleanup after repeated torrent removal. Confirming memory
+  behavior over days requires a longer run.
 - **Field tests, anecdotally:** on the developer's Mac, a 26 GB torrent from
   a public swarm streamed well with about 290 MB of RSS, and two streams
   together played without freezes at 311 MB. A third stream exhausted
@@ -260,6 +260,7 @@ share of the maintenance cost this decision accepted.
   `idle-resume` and `player-ranges` stall totals remain unresolved misses
   until more runs separate them from run-to-run spread.
 - The benchmark harness stays as a regression check for streaming changes,
-  as AGENTS.md asks, with the Go baseline above as its reference.
+  using the Rust base and candidate revisions as described in the
+  [development guide](../development.md#benchmarks).
 - The deferred devices and the public swarm remain open evidence. A rerun on
   a low-memory ARM device is the most informative next measurement.

@@ -1942,7 +1942,7 @@ export interface components {
             peer_limit: number;
             /**
              * Format: int64
-             * @description The capacity of the global piece cache that every torrent in memory storage mode shares; the readahead budget is half of it. It must be at least the piece length of every torrent with metadata. Applies at once. Growing it admits the pieces waiting for room. Shrinking it evicts verified, unpinned pieces down to the new capacity, releasing idle readers when nothing else can be evicted; until partial pieces complete and active readers leave their current pieces, cache usage may stay above the capacity, and no new piece is admitted.
+             * @description The capacity of the global piece cache that every torrent in memory storage mode shares. The readahead budget is half of it. It must be at least the piece length of every torrent with metadata. Applies at once. Growing it admits the pieces waiting for room. Shrinking it evicts verified, unpinned pieces and releases idle readers when nothing else can be evicted. Cache usage can remain above the new capacity while buffers await teardown, partial pieces are in progress, or active readers pin their current pieces. No new piece is admitted while usage exceeds capacity.
              * @default 268435456
              * @example 268435456
              */
@@ -2970,7 +2970,7 @@ export interface components {
             capacity_bytes: number;
             /**
              * Format: int64
-             * @description The bytes counted against capacity, including pending allocations and retained reusable buffers. It stays within capacity_bytes, except after the capacity shrinks, until eviction and readers leaving their pieces bring it down.
+             * @description Cache usage includes pending allocations, resident piece buffers, retained reusable buffers, and detached buffers awaiting teardown. After a capacity shrink, usage can exceed capacity_bytes until enough of the existing charge is released.
              * @example 201326592
              */
             usage_bytes: number;
