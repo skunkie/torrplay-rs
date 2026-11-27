@@ -143,8 +143,8 @@ jobs:
         shell: pwsh
         run: scripts/test-windows-service.ps1 target/release/torrplay.exe
 
-  debian-references:
-    name: Debian package references
+  package-references:
+    name: Package references
     needs: stage
     if: needs.stage.outputs.rust == 'true'
     runs-on: ubuntu-24.04
@@ -158,10 +158,11 @@ jobs:
           persist-credentials: false
       - name: Install Pandoc
         run: scripts/install-pandoc.sh "${PANDOC_VERSION}" "${PANDOC_SHA256}" "${RUNNER_TEMP}" >> "$GITHUB_PATH"
-      - name: Render the manual pages and client help
+      - name: Render the manual pages and offline help
         run: |
           scripts/build-man-pages.sh target/man
           python3 scripts/build-debian-client.py stage-help
+          python3 scripts/build-reference.py html --platform macos --edition application target/reference/macos
       - name: Upload the Debian references
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -171,10 +172,17 @@ jobs:
             target/reference/debian/help/index.html
           if-no-files-found: error
           retention-days: 7
+      - name: Upload the macOS reference
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-reference
+          path: target/reference/macos/
+          if-no-files-found: error
+          retention-days: 7
 
   service-package:
     name: Linux service packages (${{ matrix.arch }})
-    needs: debian-references
+    needs: package-references
     # The oldest supported system, as ADR 13 decides: a binary needs the C
     # library and WebKitGTK it was linked against or newer.
     runs-on: ${{ matrix.os }}
@@ -665,8 +673,7 @@ jobs:
 
   macos-package:
     name: Application package (macOS)
-    needs: stage
-    if: needs.stage.outputs.rust == 'true'
+    needs: package-references
     # Xcode 26's actool compiles the Icon Composer icon; earlier ones cannot.
     runs-on: macos-26
     timeout-minutes: 60
@@ -702,6 +709,11 @@ jobs:
         run: cargo install tauri-cli --version "${TAURI_CLI_VERSION}" --locked
       - name: Install cargo-about
         run: cargo install cargo-about --version "${CARGO_ABOUT_VERSION}" --locked --features cli
+      - name: Download the macOS reference
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: macos-reference
+          path: target/reference/macos
       - name: Build the disk image
         run: scripts/build-application-macos.sh target/dmg/TorrPlay.dmg
       - name: Check and run the packaged application
@@ -714,11 +726,39 @@ jobs:
           codesign --verify --deep --strict "$app"
           cmp LICENSES/MIT.txt "$app/Contents/Resources/LICENSE.txt"
           cmp target/notices/THIRD-PARTY-NOTICES.txt "$app/Contents/Resources/THIRD-PARTY-NOTICES.txt"
+          help="$app/Contents/Resources/help/index.html"
+          cmp target/reference/macos/help/index.html "$help"
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")
+          python3 scripts/check-reference.py --macos-help "$help" --version "$version"
           lipo "$app/Contents/MacOS/torrplay-desktop" -verify_arch arm64 x86_64
           lipo "$app/Contents/MacOS/torrplay" -verify_arch arm64 x86_64
           "$app/Contents/MacOS/torrplay" --version
           (
             test_home=$(mktemp -d "${RUNNER_TEMP}/torrplay-home.XXXXXX")
+            moved="$test_home/Moved TorrPlay.app"
+            ditto "$app" "$moved"
+            moved=$(cd "$moved" && pwd -P)
+            invalid_log="$test_home/invalid-startup.log"
+            if ! HOME="$test_home" TORRPLAY_LISTEN=invalid python3 - \
+              "$moved/Contents/MacOS/torrplay-desktop" > "$invalid_log" 2>&1 <<'PY'
+          import subprocess
+          import sys
+
+          try:
+              result = subprocess.run([sys.argv[1]], timeout=10)
+          except subprocess.TimeoutExpired:
+              sys.exit("The invalid-startup probe timed out.")
+          if result.returncode != 2:
+              sys.exit(f"The invalid-startup probe exited with {result.returncode}, expected 2.")
+          PY
+            then
+              cat "$invalid_log"
+              exit 1
+            fi
+            grep -F "$moved/Contents/Resources/help/index.html" "$invalid_log" || {
+              cat "$invalid_log"
+              exit 1
+            }
             data_dir="$test_home/Library/Application Support/org.torrplay.desktop"
             api=http://127.0.0.1:8643
             mkdir -p "$data_dir"

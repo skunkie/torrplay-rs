@@ -7,10 +7,14 @@
 
 use std::io::IsTerminal;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+#[cfg(any(target_os = "macos", test))]
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Mutex;
 
 use anyhow::{Context, anyhow};
+#[cfg(target_os = "macos")]
+use tauri::menu::{HELP_SUBMENU_ID, Menu, MenuItem};
 use tauri::{AppHandle, Manager, RunEvent, WebviewWindow};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tokio::sync::oneshot;
@@ -106,12 +110,130 @@ fn failure_notice(stage: Stage, error: &anyhow::Error) -> Option<Notice> {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn bundle_help_path(executable: &Path) -> Option<PathBuf> {
+    let binary_dir = executable.parent()?;
+    let contents = binary_dir.parent()?;
+    if binary_dir.file_name()? != "MacOS" || contents.file_name()? != "Contents" {
+        return None;
+    }
+    let path = contents.join("Resources/help/index.html");
+    path.is_file().then_some(path)
+}
+
+#[cfg(target_os = "macos")]
+fn bundled_help() -> Option<PathBuf> {
+    bundle_help_path(&std::env::current_exe().ok()?.canonicalize().ok()?)
+}
+
+#[cfg(target_os = "macos")]
+const HELP_ITEM_ID: &str = "torrplay-offline-help";
+
+#[cfg(target_os = "macos")]
+fn help_labels(locale: Option<&str>) -> (&'static str, &'static str) {
+    if locale.is_some_and(|locale| locale.starts_with("ru")) {
+        ("Справка", "Справка TorrPlay")
+    } else {
+        ("Help", "TorrPlay Help")
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let menu = Menu::default(app)?;
+    if bundled_help().is_some()
+        && let Some(entry) = menu.get(HELP_SUBMENU_ID)
+        && let Some(help) = entry.as_submenu()
+    {
+        let (title, label) = help_labels(sys_locale::get_locale().as_deref());
+        help.set_text(title)?;
+        help.append(&MenuItem::with_id(
+            app,
+            HELP_ITEM_ID,
+            label,
+            true,
+            None::<&str>,
+        )?)?;
+    }
+    Ok(menu)
+}
+
+#[cfg(target_os = "macos")]
+fn open_macos_help(app: &AppHandle) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static OPENING_HELP: AtomicBool = AtomicBool::new(false);
+    if OPENING_HELP.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        // On macOS the opener waits for LaunchServices through /usr/bin/open.
+        let result = tauri::async_runtime::spawn_blocking(|| {
+            let path = bundled_help().context("finding bundled offline help")?;
+            tauri_plugin_opener::open_path(&path, None::<&str>)
+                .with_context(|| format!("opening {}", path.display()))
+        })
+        .await
+        .context("waiting for the offline help opener")
+        .and_then(|result| result);
+        OPENING_HELP.store(false, Ordering::Relaxed);
+        if let Err(error) = result {
+            tracing::error!(error = %format!("{error:#}"), "could not open TorrPlay Help");
+            let locale = sys_locale::get_locale();
+            let (_, label) = help_labels(locale.as_deref());
+            let message = if locale
+                .as_deref()
+                .is_some_and(|locale| locale.starts_with("ru"))
+            {
+                "Не удалось открыть справку TorrPlay. В Finder выберите «Показать содержимое \
+                 пакета» для TorrPlay.app и откройте Contents/Resources/help/index.html."
+            } else {
+                "Could not open TorrPlay Help. In Finder, choose Show Package Contents for \
+                 TorrPlay.app and open Contents/Resources/help/index.html."
+            };
+            app.dialog()
+                .message(message)
+                .title(label)
+                .kind(MessageDialogKind::Error)
+                .show(|_| {});
+        }
+    });
+}
+
+#[cfg(target_os = "macos")]
+fn help_location() -> Option<String> {
+    let path = bundled_help()?;
+    let (_, label) = help_labels(sys_locale::get_locale().as_deref());
+    Some(format!("{label}: {}", path.display()))
+}
+
+fn report_startup_error(error: impl std::fmt::Display, usage: bool) {
+    eprintln!("torrplay-desktop: {error}");
+    #[cfg(target_os = "macos")]
+    if let Some(location) = help_location() {
+        eprintln!("{location}");
+    }
+    if usage {
+        eprintln!("\n{}", torrplay::USAGE);
+    }
+}
+
 /// Logs why the application is ending and, with a `notice`, says so in a dialog, since
 /// nothing shows standard error to someone who opened it from a menu. The window goes
 /// first, since its server has gone and it would only show a blank page behind this.
 fn report_failure(app: &AppHandle, error: &anyhow::Error, notice: Option<Notice>) {
-    tracing::error!(error = %format!("{error:#}"), "torrplay failed");
-    eprintln!("torrplay-desktop: {error:#}");
+    let message = format!("{error:#}");
+    #[cfg(target_os = "macos")]
+    let message = if notice == Some(Notice::CouldNotStart)
+        && let Some(location) = help_location()
+    {
+        format!("{message}\n\n{location}")
+    } else {
+        message
+    };
+    tracing::error!(error = %message, "torrplay failed");
+    eprintln!("torrplay-desktop: {message}");
     if let Some(notice) = notice {
         if let Some(window) = app.get_webview_window(window::MAIN_WINDOW)
             && let Err(error) = window.hide()
@@ -119,7 +241,7 @@ fn report_failure(app: &AppHandle, error: &anyhow::Error, notice: Option<Notice>
             tracing::warn!(%error, "the window cannot be hidden");
         }
         app.dialog()
-            .message(format!("{error:#}"))
+            .message(message)
             .title(window::notice_text(
                 notice,
                 sys_locale::get_locale().as_deref(),
@@ -304,19 +426,19 @@ pub fn main() -> ExitCode {
             return ExitCode::from(2);
         }
         Err(error) => {
-            eprintln!("torrplay-desktop: {error}\n\n{}", torrplay::USAGE);
+            report_startup_error(error, true);
             return ExitCode::from(2);
         }
     };
     if let Some(value) = std::env::var_os(torrplay::ALLOWED_HOSTS_VARIABLE)
         && let Err(error) = config.add_allowed_hosts(&value.to_string_lossy())
     {
-        eprintln!("torrplay-desktop: {error}\n\n{}", torrplay::USAGE);
+        report_startup_error(error, true);
         return ExitCode::from(2);
     }
     let download_dir_variable = std::env::var_os(torrplay::DOWNLOAD_DIR_VARIABLE);
     if let Err(error) = config.apply_download_dir_variable(download_dir_variable) {
-        eprintln!("torrplay-desktop: {error:#}\n\n{}", torrplay::USAGE);
+        report_startup_error(format_args!("{error:#}"), true);
         return ExitCode::from(2);
     }
     if let Some(value) = std::env::var_os(torrplay::LOG_FORMAT_VARIABLE) {
@@ -327,7 +449,7 @@ pub fn main() -> ExitCode {
         ) {
             Ok(format) => config.log_format = Some(format),
             Err(error) => {
-                eprintln!("torrplay-desktop: {error}\n\n{}", torrplay::USAGE);
+                report_startup_error(error, true);
                 return ExitCode::from(2);
             }
         }
@@ -335,7 +457,7 @@ pub fn main() -> ExitCode {
     match run(config, options, requests) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("torrplay-desktop: {error:#}");
+            report_startup_error(format_args!("{error:#}"), false);
             ExitCode::FAILURE
         }
     }
@@ -363,7 +485,14 @@ fn run(config: Config, options: Vec<String>, requests: Vec<Request>) -> anyhow::
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(Shell::new(stop, options))
-        .manage(Pages::default())
+        .manage(Pages::default());
+    #[cfg(target_os = "macos")]
+    let app = app.menu(macos_menu).on_menu_event(|app, event| {
+        if event.id() == HELP_ITEM_ID {
+            open_macos_help(app);
+        }
+    });
+    let app = app
         .setup(move |app| {
             let handle = app.handle().clone();
             for request in requests {
@@ -451,6 +580,32 @@ fn run(config: Config, options: Vec<String>, requests: Vec<Request>) -> anyhow::
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn help_is_found_in_a_moved_bundle_with_resources() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let original = directory.path().join("TorrPlay.app");
+        let bundle = original.join("Contents");
+        let binary_dir = bundle.join("MacOS");
+        let executable = binary_dir.join("torrplay-desktop");
+        let help = bundle.join("Resources/help/index.html");
+        std::fs::create_dir_all(&binary_dir)?;
+        assert_eq!(bundle_help_path(&executable), None);
+        std::fs::create_dir_all(bundle.join("Resources/help"))?;
+        std::fs::write(&help, "offline help")?;
+        assert_eq!(bundle_help_path(&executable), Some(help));
+        let moved = directory.path().join("Moved TorrPlay.app");
+        std::fs::rename(original, &moved)?;
+        assert_eq!(
+            bundle_help_path(&moved.join("Contents/MacOS/torrplay-desktop")),
+            Some(moved.join("Contents/Resources/help/index.html"))
+        );
+        assert_eq!(
+            bundle_help_path(&directory.path().join("torrplay-desktop")),
+            None
+        );
+        Ok(())
+    }
 
     #[test]
     fn startup_settings_create_a_template_and_preserve_edits() -> anyhow::Result<()> {
