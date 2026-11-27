@@ -19,6 +19,7 @@
         ],
         "componentRefs": [
           "TorrPlayService",
+          "TorrPlayServiceHelp",
           "TorrPlayData",
           "TorrPlayRetainedInstall",
           "TorrPlaySettings"

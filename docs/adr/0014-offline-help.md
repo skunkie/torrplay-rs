@@ -119,9 +119,9 @@ report it. The menu and recovery route use the same bundled file.
    running app bundle when the Help menu item is used. On Windows, install
    it under the selected program directory. Use a per-user NSIS Start
    shortcut and open the same file with **F1** in the application window.
-   Add WiX file and all-users Start shortcut components under
-   the required Service feature, using machine-scoped key paths. Let
-   Windows Installer manage both. Install the Linux client
+   Add the WiX help file and its all-users Start shortcut under the
+   required Service feature, using the installed file as the machine-wide
+   key path. Let Windows Installer manage both. Install the Linux client
    reference at `/usr/share/doc/torrplay-client/help/index.html` through
    the client's Debian and RPM packages. Add a freedesktop launcher that
    opens the installed file with `xdg-open`. Declare `xdg-utils` as a

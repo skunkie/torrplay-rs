@@ -12,6 +12,7 @@ param(
     [string] $DownloadDirectory,
     [Parameter(Mandatory)]
     [string] $AllowedHosts,
+    [string] $InstallDirectory,
     [ValidateSet('Settings', 'Copy')]
     [string] $ApplicationFailure,
     [string] $UnwritableDownloadDirectory,
@@ -32,6 +33,7 @@ if ($PSVersionTable.PSEdition -eq 'Core') {
         '-File', "`"$PSCommandPath`"", '-Edition', $Edition, '-Installer', "`"$Installer`"",
         '-DownloadDirectory', "`"$DownloadDirectory`"", '-AllowedHosts', "`"$AllowedHosts`"")
     if ($ApplicationFailure) { $arguments += @('-ApplicationFailure', $ApplicationFailure) }
+    if ($InstallDirectory) { $arguments += @('-InstallDirectory', "`"$InstallDirectory`"") }
     if ($ExpectServiceStartFailure) { $arguments += '-ExpectServiceStartFailure' }
     if ($UseDefaults) { $arguments += '-UseDefaults' }
     if ($DownloadCollision) {
@@ -263,6 +265,7 @@ try {
         $log = [IO.Path]::GetTempFileName()
         $msiArguments = @(
             '/i', "`"$Installer`"", 'ADDLOCAL=Service', '/qf', '/norestart', '/l*v!', "`"$log`"")
+        if ($InstallDirectory) { $msiArguments += "INSTALLDIR=`"$InstallDirectory`"" }
         # Seed the existing MSI properties because its Edit controls only
         # commit on focus loss, which is unreliable in unattended sessions.
         if (-not $UseDefaults) {
