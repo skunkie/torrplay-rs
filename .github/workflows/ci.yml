@@ -96,6 +96,7 @@ jobs:
             -r packaging/macos/dmg-requirements.txt
           echo "${RUNNER_TEMP}/dmgbuild/bin" >> "$GITHUB_PATH"
       - name: Build the disk image
+        id: build-dmg
         run: scripts/build-application-macos.sh target/dmg/TorrPlay.dmg
       - name: Check and run the packaged application
         run: |
@@ -167,6 +168,8 @@ jobs:
           compression-level: 0
 
       - name: Capture the mounted disk image in Finder
+        id: capture-finder
+        if: ${{ !cancelled() && steps.build-dmg.outcome == 'success' }}
         run: |
           scratch=$(mktemp -d "${RUNNER_TEMP}/torrplay-finder.XXXXXX")
           mount="$scratch/TorrPlay"
@@ -201,6 +204,7 @@ jobs:
           screencapture -x -o -l "$window" target/dmg/TorrPlay-Finder.png
           test -s target/dmg/TorrPlay-Finder.png
       - name: Upload the Finder screenshot
+        if: ${{ !cancelled() && steps.capture-finder.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: torrplay-dmg-finder
