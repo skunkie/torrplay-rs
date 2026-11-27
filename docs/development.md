@@ -420,7 +420,7 @@ since runners have no FUSE. Nothing plays media yet, so a plugin that loads but
 cannot play its format would pass.
 
 On Windows, the same overlay makes the application's NSIS installer, which
-installs for the current user, without administrator rights, in
+installs for the current user without administrator rights. It defaults to
 `%LOCALAPPDATA%\TorrPlay`, with `torrplay.exe` beside `torrplay-desktop.exe`.
 The desktop app runs its own server. The separate executable provides CLI
 commands such as `torrplay mcp` and `torrplay backup`.
@@ -455,15 +455,36 @@ The bundler downloads NSIS itself. From the repository root in PowerShell
 ```powershell
 cargo install tauri-cli --version 2.12.4 --locked
 cargo install cargo-about --version 0.9.2 --locked --features cli
+python scripts\build-reference.py html --platform windows --edition application target\reference\nsis
 scripts\build-application-nsis.ps1 target\nsis\torrplay-setup.exe
 scripts\test-application-nsis.ps1 target\nsis\torrplay-setup.exe
 ```
+
+The generation command uses Pandoc 3.12.1. When using the `nsis-reference`
+artifact from CI, extract it into `target/reference/nsis` instead. The build
+checks the target and installer version before bundling the page.
+
+After installation, open **TorrPlay Help** from Start (**Справка TorrPlay**
+on a Russian Windows desktop), or press **F1** while TorrPlay is focused.
+Both open `help\index.html` from the install directory with the default
+HTML handler, even offline. The installed `torrplay.exe --help` also prints
+the page's absolute path.
+Setup preserves user-owned Help shortcuts in Start and updates its own shortcut
+when the installation directory changes. It uses the other Help shortcut name
+when a user-owned shortcut occupies the preferred name and the alternate is
+available.
+A silent install with `/S /NS` includes the HTML and CLI entry point and skips
+Start and desktop shortcut creation. **F1** remains available in the app.
 
 `scripts\test-application-nsis.ps1` stands in for the service edition in the
 machine's registry and checks that the installer refuses, then installs the
 application, checks its files, versions, and shortcuts, verifies that a
 silent install leaves the startup settings alone, and starts the application
 with a configured download directory and hostname before uninstalling it.
+It also checks the HTML, shortcut target, CLI help path, and removal in a
+custom directory containing spaces and non-ASCII characters. It exercises
+silent installs without shortcuts, Start menu name collisions, and Help
+shortcut cleanup after relocation or a locked shortcut.
 It changes the system and needs an elevated PowerShell, so CI runs it on
 disposable `windows-latest` and `windows-11-arm` runners, in the application
 installer jobs.
@@ -717,8 +738,9 @@ has keyboard focus. Check that the contents are accessible from the sidebar
 on wide screens and above the article on narrow screens.
 
 With `scripts/build-reference.py`, `--version` overrides the version from
-`desktop/tauri.conf.json` for macOS HTML and `crates/torrplay/Cargo.toml` for
-other targets. `--markdown` writes the assembled Markdown without Pandoc.
+`desktop/tauri.conf.json` for macOS and NSIS HTML and from
+`crates/torrplay/Cargo.toml` for other targets. `--markdown` writes the
+assembled Markdown without Pandoc.
 The client references use `--client-mode local`. For a custom Debian preview,
 use a separate output directory to keep the staged package help intact:
 
@@ -974,14 +996,22 @@ blocks. If Windows blocks an installer or executable, record where it
 stopped.
 
 1. Run the NSIS installer as a standard user. Verify the MIT license page
-   and the TorrPlay settings page after choosing the installation folder.
+   and choose an installation folder with spaces and non-ASCII characters.
+   Verify that the TorrPlay settings page follows the folder page.
    Check that the help text fits, choose a writable download directory with
    no existing TorrPlay data, and enter an extra hostname. Finish without
    elevation and verify both values
    in `%APPDATA%\org.torrplay.desktop\torrplay.env`. Launch TorrPlay from
    Start, check that it opens the library, and record any firewall prompt.
-   Verify both notice files beside the application in `%LOCALAPPDATA%\TorrPlay`.
-   Uninstall from Settings before testing the service edition.
+   Verify both notice files beside the application in the selected folder.
+   Disconnect the network and open **TorrPlay Help** from Start
+   (**Справка TorrPlay** on a Russian Windows desktop). Switch back to TorrPlay
+   and press **F1**. Verify that the same page opens and TorrPlay stays on the
+   current screen. In PowerShell in the selected folder, run
+   `.\torrplay.exe --help` and check that it prints the absolute path to
+   `help\index.html` in that folder. Reconnect to the network, uninstall from
+   Settings, and confirm that the Help shortcut is gone before testing the
+   service edition.
 2. Before running the MSI, create a new local folder and grant the TorrPlay
    service account Modify access. In elevated PowerShell, use the account's
    SID so the grant works before the service is registered, as the

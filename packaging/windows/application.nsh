@@ -15,6 +15,10 @@
 
 !include nsDialogs.nsh
 !define TORRPLAY_SETTINGS_TIMEOUT 15000
+!define TORRPLAY_HELP_SHORTCUT_EN "TorrPlay Help"
+!define TORRPLAY_HELP_SHORTCUT_RU "Справка TorrPlay"
+!define TORRPLAY_HELP_SHORTCUT_KEY "Software\${BUNDLEID}\OfflineHelp"
+!define TORRPLAY_HELP_UNREADABLE "unreadable"
 
 Var TorrPlayDownloadDirectory
 Var TorrPlayAllowedHosts
@@ -23,6 +27,12 @@ Var TorrPlayHostsEdit
 Var TorrPlaySettingsAction
 Var TorrPlaySettingsCreated
 Var TorrPlayExistingInstall
+Var TorrPlayEnglishHelpShortcutId
+Var TorrPlayRussianHelpShortcutId
+Var TorrPlayEnglishHelpShortcutTarget
+Var TorrPlayRussianHelpShortcutTarget
+Var TorrPlayEnglishHelpShortcutState
+Var TorrPlayRussianHelpShortcutState
 
 !macro TorrPlayRunSettingsCheck arguments
   Delete "$PLUGINSDIR\torrplay-error.txt"
@@ -208,7 +218,229 @@ FunctionEnd
   Pop $0
 !macroend
 
+; Read the file identity without following or modifying the shortcut target.
+; Keep the volume serial number and the full FILE_ID_128 together.
+!macro TorrPlayReadHelpShortcutId path output
+  Push $0
+  Push $1
+  Push $2
+  Push $3
+  Push $4
+  StrCpy ${output} "${TORRPLAY_HELP_UNREADABLE}"
+  ; FILE_READ_ATTRIBUTES, share read/write/delete, OPEN_EXISTING,
+  ; FILE_FLAG_OPEN_REPARSE_POINT. Identify the link entry itself.
+  System::Call 'kernel32::CreateFileW(w "${path}", i 0x80, i 7, p 0, i 3, i 0x00200000, p 0) p .r0 ?e'
+  Pop $1
+  ${If} $0 P<> -1
+    System::Alloc 52
+    Pop $1
+    ${If} $1 P<> 0
+      ; BY_HANDLE_FILE_INFORMATION has nNumberOfLinks at byte offset 40.
+      System::Call 'kernel32::GetFileInformationByHandle(p r0, p r1) i .r2'
+      ${If} $2 <> 0
+        System::Call '*$1(i,i,i,i,i,i,i,i,i,i,i .r2)'
+        ${If} $2 = 1
+          ; FileIdInfo = 18. FILE_ID_INFO is three 64-bit fields.
+          System::Call 'kernel32::GetFileInformationByHandleEx(p r0, i 18, p r1, i 24) i .r2'
+          ${If} $2 <> 0
+            System::Call '*$1(l .r2, l .r3, l .r4)'
+            StrCpy ${output} "$2:$3:$4"
+          ${EndIf}
+        ${Else}
+          StrCpy ${output} ""
+        ${EndIf}
+      ${EndIf}
+      System::Free $1
+    ${EndIf}
+    System::Call 'kernel32::CloseHandle(p r0)'
+  ${ElseIf} $1 = 2
+  ${OrIf} $1 = 3
+    ; ERROR_FILE_NOT_FOUND or ERROR_PATH_NOT_FOUND.
+    StrCpy ${output} ""
+  ${EndIf}
+  Pop $4
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+!macroend
+
+!macro TorrPlayMatchHelpShortcutTarget path target output
+  Push $0
+  Push $1
+  Push $2
+  Push $3
+  StrCpy ${output} "${TORRPLAY_HELP_UNREADABLE}"
+  !insertmacro ComHlpr_CreateInProcInstance ${CLSID_ShellLink} ${IID_IShellLink} r0 ""
+  ${If} $0 P<> 0
+    ${IUnknown::QueryInterface} $0 '("${IID_IPersistFile}", .r1)'
+    ${If} $1 P<> 0
+      ${IPersistFile::Load} $1 '("${path}", ${STGM_READ}).r3'
+      ${If} $3 = 0
+        ${IShellLink::GetPath} $0 '(.r2, ${NSIS_MAX_STRLEN}, 0, ${SLGP_RAWPATH}).r3'
+        ${If} $3 >= 0
+          StrCpy ${output} 0
+          ${If} $3 = 0
+          ${AndIf} $2 == "${target}"
+            StrCpy ${output} 1
+          ${EndIf}
+        ${EndIf}
+      ${EndIf}
+      ${IUnknown::Release} $1 ""
+    ${EndIf}
+    ${IUnknown::Release} $0 ""
+  ${EndIf}
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+!macroend
+
+!macro TorrPlayDeleteHelpShortcut name id target retire
+  Push $R0
+  Push $R1
+  ${If} ${id} != ""
+  ${AndIf} ${target} != ""
+    StrCpy $R0 "$SMPROGRAMS\${name}.lnk"
+    !insertmacro TorrPlayReadHelpShortcutId "$R0" $R1
+    ${If} $R1 == ${id}
+      !insertmacro TorrPlayMatchHelpShortcutTarget "$R0" "${target}" $R1
+      ${If} $R1 == "1"
+        ClearErrors
+        Delete "$R0"
+        ${If} ${Errors}
+          StrCpy $R1 "${TORRPLAY_HELP_UNREADABLE}"
+        ${EndIf}
+      ${EndIf}
+    ${EndIf}
+    ${If} $R1 != "${TORRPLAY_HELP_UNREADABLE}"
+      DeleteRegValue SHCTX "${TORRPLAY_HELP_SHORTCUT_KEY}" "${name}"
+    ${ElseIf} ${retire} = 1
+      WriteRegStr SHCTX "${TORRPLAY_HELP_SHORTCUT_KEY}" "${name}" "${id}|${target}|retired"
+    ${EndIf}
+  ${EndIf}
+  Pop $R1
+  Pop $R0
+!macroend
+
+!macro TorrPlayReadHelpShortcut name id target state
+  Push $0
+  StrCpy ${id} ""
+  StrCpy ${target} ""
+  StrCpy ${state} ""
+  ReadRegStr $0 SHCTX "${TORRPLAY_HELP_SHORTCUT_KEY}" "${name}"
+  ${If} $0 != ""
+    ${WordFind} "$0" "|" "+1" ${id}
+    ${WordFind} "$0" "|" "+2" ${target}
+    ${WordFind} "$0" "|" "+3" ${state}
+  ${EndIf}
+  Pop $0
+!macroend
+
+!macro TorrPlayReadHelpShortcuts
+  !insertmacro TorrPlayReadHelpShortcut "${TORRPLAY_HELP_SHORTCUT_EN}" $TorrPlayEnglishHelpShortcutId $TorrPlayEnglishHelpShortcutTarget $TorrPlayEnglishHelpShortcutState
+  !insertmacro TorrPlayReadHelpShortcut "${TORRPLAY_HELP_SHORTCUT_RU}" $TorrPlayRussianHelpShortcutId $TorrPlayRussianHelpShortcutTarget $TorrPlayRussianHelpShortcutState
+!macroend
+
+!macro TorrPlayCreateHelpShortcut name id target output
+  Push $R0
+  Push $R1
+  Push $R3
+  StrCpy ${output} 0
+  StrCpy $R3 0
+  StrCpy $R0 "$SMPROGRAMS\${name}.lnk"
+  ${If} ${FileExists} "$R0"
+    !insertmacro TorrPlayReadHelpShortcutId "$R0" $R1
+    ${If} $R1 != ""
+    ${AndIf} $R1 == ${id}
+    ${AndIf} ${target} != ""
+      !insertmacro TorrPlayMatchHelpShortcutTarget "$R0" "${target}" $R1
+      ${If} $R1 == "1"
+        ${If} ${target} == "$INSTDIR\help\index.html"
+          WriteRegStr SHCTX "${TORRPLAY_HELP_SHORTCUT_KEY}" "${name}" "${id}|${target}|installed"
+          StrCpy ${output} 1
+        ${Else}
+          StrCpy $R3 1
+        ${EndIf}
+      ${EndIf}
+    ${EndIf}
+  ${Else}
+    StrCpy $R3 1
+  ${EndIf}
+  ${If} $R3 = 1
+    ClearErrors
+    CreateShortCut "$R0" "$INSTDIR\help\index.html" "" "$INSTDIR\${MAINBINARYNAME}.exe"
+    ${IfNot} ${Errors}
+      !insertmacro TorrPlayReadHelpShortcutId "$R0" $R1
+      ${If} $R1 != ""
+      ${AndIf} $R1 != "${TORRPLAY_HELP_UNREADABLE}"
+        ClearErrors
+        ; A pipe cannot occur in either the identity or a Windows file path.
+        WriteRegStr SHCTX "${TORRPLAY_HELP_SHORTCUT_KEY}" "${name}" "$R1|$INSTDIR\help\index.html|installed"
+        ${If} ${Errors}
+          Delete "$R0"
+        ${Else}
+          StrCpy ${output} 1
+        ${EndIf}
+      ${Else}
+        Delete "$R0"
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+  Pop $R3
+  Pop $R1
+  Pop $R0
+!macroend
+
 !macro NSIS_HOOK_POSTINSTALL
   ; Files and registration are in place, so retain the settings when setup closes.
   StrCpy $TorrPlaySettingsCreated ""
+
+  ${If} $NoShortcutMode <> 1
+    Push $0
+    Push $R2
+    !insertmacro TorrPlayReadHelpShortcuts
+    ; Use the current user's display language independently of the wizard.
+    System::Call 'kernel32::GetUserDefaultUILanguage() i .r0'
+    IntOp $0 $0 & 0x03ff
+    ; Primary language ID for Russian.
+    ${If} $0 = 0x19
+      !insertmacro TorrPlayCreateHelpShortcut "${TORRPLAY_HELP_SHORTCUT_RU}" $TorrPlayRussianHelpShortcutId $TorrPlayRussianHelpShortcutTarget $R2
+      ${If} $R2 = 1
+        !insertmacro TorrPlayDeleteHelpShortcut "${TORRPLAY_HELP_SHORTCUT_EN}" $TorrPlayEnglishHelpShortcutId $TorrPlayEnglishHelpShortcutTarget 0
+      ${Else}
+        !insertmacro TorrPlayCreateHelpShortcut "${TORRPLAY_HELP_SHORTCUT_EN}" $TorrPlayEnglishHelpShortcutId $TorrPlayEnglishHelpShortcutTarget $R2
+      ${EndIf}
+    ${Else}
+      !insertmacro TorrPlayCreateHelpShortcut "${TORRPLAY_HELP_SHORTCUT_EN}" $TorrPlayEnglishHelpShortcutId $TorrPlayEnglishHelpShortcutTarget $R2
+      ${If} $R2 = 1
+        !insertmacro TorrPlayDeleteHelpShortcut "${TORRPLAY_HELP_SHORTCUT_RU}" $TorrPlayRussianHelpShortcutId $TorrPlayRussianHelpShortcutTarget 0
+      ${Else}
+        !insertmacro TorrPlayCreateHelpShortcut "${TORRPLAY_HELP_SHORTCUT_RU}" $TorrPlayRussianHelpShortcutId $TorrPlayRussianHelpShortcutTarget $R2
+      ${EndIf}
+    ${EndIf}
+    Pop $R2
+    Pop $0
+  ${EndIf}
+!macroend
+
+!macro TorrPlayUninstallHelpShortcut name id target state
+  ${If} ${target} == "$INSTDIR\help\index.html"
+    !insertmacro TorrPlayDeleteHelpShortcut "${name}" ${id} ${target} 1
+  ${ElseIf} ${state} == "retired"
+  ${AndIfNot} ${FileExists} "${target}"
+    ; A previous uninstall could not remove this link. A reinstall at its
+    ; recorded target makes the link live again.
+    !insertmacro TorrPlayDeleteHelpShortcut "${name}" ${id} ${target} 1
+  ${EndIf}
+!macroend
+
+!macro NSIS_HOOK_POSTUNINSTALL
+  ; Tauri's uninstall registration is shared by installs in different
+  ; directories. Match the saved target to this uninstaller's directory.
+  !insertmacro TorrPlayReadHelpShortcuts
+  !insertmacro TorrPlayUninstallHelpShortcut "${TORRPLAY_HELP_SHORTCUT_EN}" $TorrPlayEnglishHelpShortcutId $TorrPlayEnglishHelpShortcutTarget $TorrPlayEnglishHelpShortcutState
+  !insertmacro TorrPlayUninstallHelpShortcut "${TORRPLAY_HELP_SHORTCUT_RU}" $TorrPlayRussianHelpShortcutId $TorrPlayRussianHelpShortcutTarget $TorrPlayRussianHelpShortcutState
+  DeleteRegKey /ifempty SHCTX "${TORRPLAY_HELP_SHORTCUT_KEY}"
+  DeleteRegKey /ifempty SHCTX "Software\${BUNDLEID}"
 !macroend

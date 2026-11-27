@@ -126,10 +126,15 @@ fn bundled_help() -> Option<PathBuf> {
     bundle_help_path(&std::env::current_exe().ok()?.canonicalize().ok()?)
 }
 
+#[cfg(windows)]
+fn bundled_help() -> Option<std::path::PathBuf> {
+    torrplay::windows_help_path(&std::env::current_exe().ok()?)
+}
+
 #[cfg(target_os = "macos")]
 const HELP_ITEM_ID: &str = "torrplay-offline-help";
 
-#[cfg(target_os = "macos")]
+#[cfg(any(windows, target_os = "macos"))]
 fn help_labels(locale: Option<&str>) -> (&'static str, &'static str) {
     if locale.is_some_and(|locale| locale.starts_with("ru")) {
         ("Справка", "Справка TorrPlay")
@@ -158,8 +163,8 @@ fn macos_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     Ok(menu)
 }
 
-#[cfg(target_os = "macos")]
-fn open_macos_help(app: &AppHandle) {
+#[cfg(any(windows, target_os = "macos"))]
+pub(crate) fn open_help(app: &AppHandle) {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     static OPENING_HELP: AtomicBool = AtomicBool::new(false);
@@ -168,7 +173,7 @@ fn open_macos_help(app: &AppHandle) {
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        // On macOS the opener waits for LaunchServices through /usr/bin/open.
+        // The system opener can block while handing the file to the browser.
         let result = tauri::async_runtime::spawn_blocking(|| {
             let path = bundled_help().context("finding bundled offline help")?;
             tauri_plugin_opener::open_path(&path, None::<&str>)
@@ -182,15 +187,24 @@ fn open_macos_help(app: &AppHandle) {
             tracing::error!(error = %format!("{error:#}"), "could not open TorrPlay Help");
             let locale = sys_locale::get_locale();
             let (_, label) = help_labels(locale.as_deref());
-            let message = if locale
+            let russian = locale
                 .as_deref()
-                .is_some_and(|locale| locale.starts_with("ru"))
-            {
+                .is_some_and(|locale| locale.starts_with("ru"));
+            #[cfg(target_os = "macos")]
+            let message = if russian {
                 "Не удалось открыть справку TorrPlay. В Finder выберите «Показать содержимое \
                  пакета» для TorrPlay.app и откройте Contents/Resources/help/index.html."
             } else {
                 "Could not open TorrPlay Help. In Finder, choose Show Package Contents for \
                  TorrPlay.app and open Contents/Resources/help/index.html."
+            };
+            #[cfg(windows)]
+            let message = if russian {
+                "Не удалось открыть справку TorrPlay. Откройте help\\index.html в папке \
+                 установки TorrPlay. Если файла нет, переустановите TorrPlay."
+            } else {
+                "Could not open TorrPlay Help. Open help\\index.html in the TorrPlay \
+                 installation folder. If the file is missing, reinstall TorrPlay."
             };
             app.dialog()
                 .message(message)
@@ -489,7 +503,7 @@ fn run(config: Config, options: Vec<String>, requests: Vec<Request>) -> anyhow::
     #[cfg(target_os = "macos")]
     let app = app.menu(macos_menu).on_menu_event(|app, event| {
         if event.id() == HELP_ITEM_ID {
-            open_macos_help(app);
+            open_help(app);
         }
     });
     let app = app

@@ -8,6 +8,7 @@
 import argparse
 import gzip
 import json
+import os
 import re
 import subprocess
 import sys
@@ -304,6 +305,18 @@ def check_debian_client_preflight(directory, version):
         assert result.returncode == 1 and "CSS resource references" in result.stderr, css
 
 
+def check_nsis_unicode_path(directory, version):
+    generated = directory / "first/help/index.html"
+    installed = directory / "TorrPlay Média 雪/index.html"
+    installed.parent.mkdir()
+    installed.write_bytes(generated.read_bytes())
+    output = subprocess.check_output(
+        [sys.executable, __file__, "--nsis-help", installed, "--version", version],
+        env={**os.environ, "PYTHONIOENCODING": "cp1252:strict"},
+    )
+    assert b"Verified Windows (NSIS) help" in output
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--torrplay", type=Path, help="built torrplay executable")
@@ -311,9 +324,10 @@ def main():
     packaged_help = parser.add_mutually_exclusive_group()
     packaged_help.add_argument("--debian-client-help", type=Path, help="check staged or installed Debian client HTML")
     packaged_help.add_argument("--macos-help", type=Path, help="check staged or bundled macOS application HTML")
+    packaged_help.add_argument("--nsis-help", type=Path, help="check staged or installed NSIS application HTML")
     parser.add_argument("--version", help="expected package version (required for Debian, including its revision)")
     args = parser.parse_args()
-    if path := args.debian_client_help or args.macos_help:
+    if path := args.debian_client_help or args.macos_help or args.nsis_help:
         if args.torrplay or args.client:
             parser.error("packaged help checks do not take executable paths")
         if args.debian_client_help:
@@ -322,13 +336,16 @@ def main():
             title, label, sections = CLIENT_TITLE, "Linux (Debian)", CLIENT_SECTIONS
             version = args.version
         else:
-            title, label, sections = "TorrPlay Help", "macOS", MACOS_SECTIONS
-            version = args.version or macos_version()
+            title = "TorrPlay Help"
+            label, sections = ("macOS", MACOS_SECTIONS) if args.macos_help else (
+                "Windows (NSIS)", APPLICATION_SECTIONS)
+            version = args.version or application_version()
         check_html_file(path, title, label, version, sections)
+        sys.stdout.reconfigure(errors="backslashreplace")
         print(f"Verified {label} help {version} at {path}.")
         return
     if args.version:
-        parser.error("--version requires --debian-client-help or --macos-help")
+        parser.error("--version requires --debian-client-help, --macos-help, or --nsis-help")
     if bool(args.torrplay) != bool(args.client):
         parser.error("supply both executables to check CLI coverage")
     check_names_with_digits()
@@ -359,10 +376,11 @@ def main():
             targets.append((("linux", "client", distribution), CLIENT_TITLE,
                             f"Linux ({distribution.title()})", CLIENT_SECTIONS, client))
         for target, title, label, sections, names in targets:
-            target_version = macos_version() if target[0] == "macos" else version
+            target_version = application_version() if target[1] == "application" else version
             check_html(directory / "-".join(part for part in target if part),
                        target, title, label, sections, names, target_version)
         check_debian_client_preflight(directory / "linux-client-debian", version)
+        check_nsis_unicode_path(directory / "windows-application", application_version())
         fixture_version = "2.3.5" if version == "2.3.4" else "2.3.4"
         check_html(directory / "msi-version-override", *msi, fixture_version, override=True)
     print("Verified deterministic man pages and offline HTML for every target.")
@@ -372,7 +390,7 @@ def main():
         print("CLI coverage skipped because no executables were supplied.")
 
 
-def macos_version():
+def application_version():
     config = (ROOT / "desktop/tauri.conf.json").read_text(encoding="utf-8")
     return json.loads(config)["version"]
 

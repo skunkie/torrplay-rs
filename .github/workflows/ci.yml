@@ -163,6 +163,7 @@ jobs:
           scripts/build-man-pages.sh target/man
           python3 scripts/build-debian-client.py stage-help
           python3 scripts/build-reference.py html --platform macos --edition application target/reference/macos
+          python3 scripts/build-reference.py html --platform windows --edition application target/reference/nsis
       - name: Upload the Debian references
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -177,6 +178,13 @@ jobs:
         with:
           name: macos-reference
           path: target/reference/macos/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload the NSIS reference
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nsis-reference
+          path: target/reference/nsis/
           if-no-files-found: error
           retention-days: 7
 
@@ -370,8 +378,7 @@ jobs:
 
   application-installer:
     name: Application installer (${{ matrix.os }})
-    needs: stage
-    if: needs.stage.outputs.rust == 'true'
+    needs: package-references
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
@@ -414,6 +421,11 @@ jobs:
         run: cargo install tauri-cli --version "${env:TAURI_CLI_VERSION}" --locked
       - name: Install cargo-about
         run: cargo install cargo-about --version "${env:CARGO_ABOUT_VERSION}" --locked --features cli
+      - name: Download the NSIS reference
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nsis-reference
+          path: target/reference/nsis
       - name: Build the installer
         shell: pwsh
         run: scripts/build-application-nsis.ps1 target/nsis/torrplay-setup.exe

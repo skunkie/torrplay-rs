@@ -109,6 +109,7 @@ path = [
     "desktop/tauri.bundle.conf.json",
     "desktop/tauri.service.conf.json",
     "desktop/tauri.notices.conf.json",
+    "desktop/tauri.nsis-help.conf.json",
     "desktop/icons/**",
     "desktop/gen/**",
 ]

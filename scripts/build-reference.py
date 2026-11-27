@@ -61,8 +61,8 @@ def assemble(source, selections, parents=()):
     return assembled
 
 
-def package_version(platform):
-    if platform == "macos":
+def package_version(edition):
+    if edition == "application":
         config = (ROOT / "desktop/tauri.conf.json").read_text(encoding="utf-8")
         return json.loads(config)["version"]
     with (ROOT / "crates/torrplay/Cargo.toml").open("rb") as manifest:
@@ -86,12 +86,13 @@ def cli():
         command.add_argument("--markdown", action="store_true",
                              help="write the assembled Markdown for review or checks")
     args = parser.parse_args()
-    platform = args.platform if args.format == "html" else None
+    edition = None
     if args.format == "html":
-        target = (platform, args.edition, args.distribution)
+        edition = args.edition
+        target = (args.platform, edition, args.distribution)
         if target not in HTML_TARGETS:
             parser.error("unsupported platform, edition, and distribution combination")
-    version = args.version if args.version is not None else package_version(platform)
+    version = args.version if args.version is not None else package_version(edition)
     pattern = r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?"
     if args.format == "html" and target == ("linux", "client", "debian"):
         pattern = r"[0-9]+\.[0-9]+\.[0-9]+(?:[~+-][0-9A-Za-z.+~-]+)?"
