@@ -97,7 +97,8 @@ Restart the service after the operation succeeds:
 
 ## Troubleshoot the optional client {#troubleshooting}
 
-If you installed TorrPlay Client, open it from Start. The client checks
+If you installed TorrPlay Client, open it from Start. Press **F1** while the
+client is focused to open this guide. The client checks
 that the listener at the selected address and port belongs to the running
 TorrPlay service process. If it cannot connect, check the service status
 and the address in `%ProgramData%\TorrPlay\torrplay.env` or the file

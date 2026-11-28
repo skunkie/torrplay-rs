@@ -52,7 +52,7 @@ pub use torrplay_server::log_files::{LogFiles, LogWriter};
 use torrplay_server::{App, delete_temporary_files};
 use torrplay_store::{Contents, Store};
 
-/// The offline help installed beside either Windows application executable.
+/// The offline help installed beside the Windows CLI.
 #[cfg(any(windows, test))]
 pub fn windows_help_path(executable: &Path) -> Option<PathBuf> {
     let help = executable.parent()?.join("help").join("index.html");
@@ -1657,19 +1657,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn windows_help_is_found_beside_either_executable_in_a_custom_installation()
-    -> anyhow::Result<()> {
+    fn windows_help_is_found_beside_the_cli_in_a_custom_installation() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
         let install = root.path().join("TorrPlay Média 雪");
         let cli = install.join("torrplay.exe");
-        let desktop = install.join("torrplay-desktop.exe");
         let help = install.join("help").join("index.html");
-        assert_eq!(windows_help_path(&desktop), None);
+        assert_eq!(windows_help_path(&cli), None);
         std::fs::create_dir_all(&help)?;
-        assert_eq!(windows_help_path(&desktop), None);
+        assert_eq!(windows_help_path(&cli), None);
         std::fs::remove_dir(&help)?;
         std::fs::write(&help, "offline help")?;
-        assert_eq!(windows_help_path(&desktop).as_ref(), Some(&help));
         assert_eq!(windows_help_path(&cli), Some(help));
         assert_eq!(windows_help_path(&root.path().join("torrplay.exe")), None);
         Ok(())

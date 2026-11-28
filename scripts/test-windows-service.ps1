@@ -24,8 +24,9 @@ MSI tests also need Python 3.11 or later as python on PATH.
   scripts\test-windows-service.ps1 -Package target\msi\torrplay-service.msi -Upgrade target\msi\torrplay-service-next.msi
 
 Add -Wizard to supply startup settings through MSI properties and verify that
-the wizard displays them. This mode requires a logged-in English-language
-desktop with no retained service data.
+the wizard displays them, and to verify F1 in the installed client. This mode
+requires Node.js 24 and a logged-in English-language desktop with no retained
+service data.
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'Binary')]
@@ -108,6 +109,74 @@ function Assert-InstalledHelp([string] $Version) {
 function Assert-NoInstalledHelp {
     foreach ($path in @($sharedHelpShortcut, $userHelpShortcut, (Join-Path $programDirectory 'help\index.html'))) {
         if (Test-Path -LiteralPath $path) { Fail "the service help still exists at $path" }
+    }
+}
+
+function Assert-ClientF1Help([string] $Client) {
+    $log = Join-Path $env:LOCALAPPDATA 'org.torrplay.client\logs\client.log'
+    $helpFile = Join-Path $programDirectory 'help\index.html'
+    $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+    $listener.Start()
+    try {
+        $port = $listener.LocalEndpoint.Port
+    } finally {
+        $listener.Stop()
+    }
+
+    # Elevated WebView2 ignores the environment override. Scope the machine
+    # policy to the installed client and restore it after testing.
+    $policyPath = 'SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
+    $clientName = Split-Path -Path $Client -Leaf
+    $machine = [Microsoft.Win32.Registry]::LocalMachine
+    $policy = $machine.OpenSubKey($policyPath, $true)
+    $createdPolicy = $null -eq $policy
+    if ($createdPolicy) { $policy = $machine.CreateSubKey($policyPath) }
+    $previous = $null
+    $previousKind = $null
+    if ($clientName -in $policy.GetValueNames()) {
+        $previous = $policy.GetValue($clientName, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        $previousKind = $policy.GetValueKind($clientName)
+    }
+
+    try {
+        $policy.SetValue($clientName, "--remote-debugging-address=127.0.0.1 --remote-debugging-port=$port",
+            [Microsoft.Win32.RegistryValueKind]::String)
+        $process = Start-Process -FilePath $Client -WorkingDirectory $env:SystemRoot -PassThru
+        try {
+            & node (Join-Path $PSScriptRoot 'press-webview-f1.mjs') $port 'http://127.0.0.1:8642'
+            if ($LASTEXITCODE -ne 0 -or -not (Wait-Until {
+                (Test-Path -LiteralPath $log) -and
+                    (Select-String -LiteralPath $log -SimpleMatch -Pattern 'opened offline help' |
+                        Where-Object { $_.Line.Contains("path=$helpFile") })
+            } 15)) {
+                $process.Refresh()
+                $webviews = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='msedgewebview2.exe'")
+                $debugging = @($webviews | Where-Object { $_.CommandLine -like "*--remote-debugging-port=$port*" })
+                Write-Host "Client exited: $($process.HasExited). WebView2 processes: $($webviews.Count). On the test debugger port: $($debugging.Count)."
+                if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 12 | Write-Host }
+                Fail "pressing F1 in the MSI client did not open $helpFile"
+            }
+            Write-Host "Verified MSI client F1 opens $helpFile."
+        } finally {
+            if (-not $process.HasExited) {
+                $process.Kill()
+                if (-not $process.WaitForExit(10000)) { Fail 'the MSI client did not exit after the F1 check' }
+            }
+            $process.Dispose()
+        }
+    } finally {
+        $removePolicy = $false
+        try {
+            if ($null -eq $previousKind) {
+                $policy.DeleteValue($clientName, $false)
+            } else {
+                $policy.SetValue($clientName, $previous, $previousKind)
+            }
+            $removePolicy = $createdPolicy -and $policy.ValueCount -eq 0 -and $policy.SubKeyCount -eq 0
+        } finally {
+            $policy.Dispose()
+        }
+        if ($removePolicy) { $machine.DeleteSubKey($policyPath, $false) }
     }
 }
 
@@ -506,6 +575,10 @@ try {
         if (-not (Test-Path -Path $client)) { Fail 'the MSI installed no client by default' }
         Assert-InstalledNotices $Package
         Assert-InstalledHelp $packageVersion
+        if ($Wizard) {
+            Write-Host '== F1 in the installed client'
+            Assert-ClientF1Help $client
+        }
         if ((Get-TorrPlay).PathName -ne "`"$executable`" service") {
             Fail "the service runs $((Get-TorrPlay).PathName)"
         }
