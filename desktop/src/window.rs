@@ -23,10 +23,10 @@ use crate::opening::{self, Request};
 /// The label of the application's one window.
 pub const MAIN_WINDOW: &str = "main";
 
-#[cfg(all(windows, feature = "engine"))]
+#[cfg(windows)]
 const HELP_REQUEST_PATH: &str = "/__torrplay_desktop/help";
 
-#[cfg(all(windows, feature = "engine"))]
+#[cfg(windows)]
 fn help_shortcut_script(help_url: &Url) -> String {
     format!(
         "(() => {{\n{}\ninstallHelpShortcut({});\n}})();",
@@ -200,9 +200,9 @@ fn handle_drag(app: &AppHandle, window: &WebviewWindow, drag: &DragDropEvent) {
 pub fn open_window(app: &AppHandle, own: Url) -> anyhow::Result<()> {
     let opener = app.clone();
     let saver = app.clone();
-    #[cfg(all(windows, feature = "engine"))]
+    #[cfg(windows)]
     let help_url = own.join(HELP_REQUEST_PATH)?;
-    #[cfg(all(windows, feature = "engine"))]
+    #[cfg(windows)]
     let help_script = help_shortcut_script(&help_url);
     let builder = WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::External(own.clone()))
         // The product's name, so the client's window is named TorrPlay Client and the
@@ -212,9 +212,9 @@ pub fn open_window(app: &AppHandle, own: Url) -> anyhow::Result<()> {
         .min_inner_size(360.0, 480.0)
         .on_navigation(move |url| {
             // The window handles the help request without a server route or page load.
-            #[cfg(all(windows, feature = "engine"))]
+            #[cfg(windows)]
             if url == &help_url {
-                crate::application::open_help(&opener);
+                crate::help::open_help(&opener);
                 return false;
             }
             match navigation(url, &own) {
@@ -237,7 +237,7 @@ pub fn open_window(app: &AppHandle, own: Url) -> anyhow::Result<()> {
             let loaded = matches!(payload.event(), PageLoadEvent::Finished);
             app.state::<Pages>().page_loaded(app, loaded);
         });
-    #[cfg(all(windows, feature = "engine"))]
+    #[cfg(windows)]
     let builder = builder.initialization_script(help_script);
     #[cfg(all(target_os = "linux", feature = "client"))]
     let (builder, has_help) = {

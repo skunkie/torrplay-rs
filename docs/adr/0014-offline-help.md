@@ -49,7 +49,7 @@ with a table of contents, section anchors, and browser find.
 | --- | --- | --- |
 | macOS application | **TorrPlay Help**, with macOS startup settings and CLI examples | **Help → TorrPlay Help** opens the app bundle resource |
 | Windows NSIS application | **TorrPlay Help**, with Windows desktop startup settings and CLI examples | **F1** in the application and **TorrPlay Help** in the user's Start menu |
-| Windows service MSI | **TorrPlay Service Help**, with service administration, startup settings, and optional client usage | An all-users **TorrPlay Service Help** shortcut in Start, including service-only installs |
+| Windows service MSI | **TorrPlay Service Help**, with service administration, startup settings, and optional client usage | **F1** in the optional client and an all-users **TorrPlay Service Help** shortcut in Start, including service-only installs |
 | Linux service client Debian and planned RPM packages | **TorrPlay Client Help**, with client commands, connection settings, and troubleshooting | **Help** in the client title bar and **TorrPlay Client Help** in the applications menu |
 
 On Windows, the console executable `torrplay.exe --help` in both installers
@@ -121,7 +121,8 @@ report it. The menu and recovery route use the same bundled file.
    shortcut and open the same file with **F1** in the application window.
    Add the WiX help file and its all-users Start shortcut under the
    required Service feature, using the installed file as the machine-wide
-   key path. Let Windows Installer manage both. Install the Linux client
+   key path. Let Windows Installer manage both. Open the same file with
+   **F1** in the optional client. Install the Linux client
    reference at `/usr/share/doc/torrplay-client/help/index.html` through
    the client's Debian and RPM packages. Add a freedesktop launcher that
    opens the installed file with `xdg-open`. Declare `xdg-utils` as a
@@ -153,16 +154,16 @@ targets, dependencies, and service installation and removal.
    verify the installed HTML and shortcut target on x64 and ARM64. Run
    installed `torrplay.exe --help` from a different working directory
    after using a custom install directory, and verify it prints the actual
-   help path. Check the MSI with and without the client. Verify that a
-   standard user who did not install the MSI can open the service-only
-   shortcut. Verify the reference version after an MSI upgrade and check
-   that either Windows uninstaller removes its help file and shortcut.
-   Resolve shortcut targets directly
-   in CI to avoid depending on browser focus or layout. On Linux, check
-   that the client package installs its HTML, man page, and a valid desktop
-   entry pointing to the installed reference. Verify that removing the
-   client package removes the help file and its launcher. Apply the same
-   help checks to the RPM once available.
+   help path. Check the MSI with and without the client. Press **F1** in the
+   installed client and verify that Windows accepts the request to open the
+   installed guide. Verify that a standard user who did not install the MSI
+   can open the service-only shortcut, that an MSI upgrade replaces the
+   reference version, and that each Windows uninstaller removes its help
+   file and shortcut. Resolve Start shortcut targets directly in CI.
+   On Linux, check that the client package installs its HTML, man page, and
+   a valid desktop entry pointing to the installed reference. Verify that
+   removing the client package removes the help file and launcher. Apply
+   the same help checks to the RPM once available.
 3. **Manual acceptance.** Open help from each entry point without internet
    access. Verify section navigation, browser search,
    and copying commands. Check that the theme icon follows the system by
@@ -173,8 +174,10 @@ targets, dependencies, and service installation and removal.
    Verify help still opens after startup fails because of invalid settings
    or an occupied API port.
    On Windows, test a custom install directory with spaces and non-ASCII
-   characters. On Linux, open help from the client window while connected to
-   the service, then stop the service and open help from the applications menu.
+   characters. Press **F1** in both the NSIS app and the MSI client and
+   check that each opens its installed guide. On Linux, open help from the
+   client window while connected to the service, then stop the service and
+   open help from the applications menu.
 4. **Implementation order.** Build the shared content and generator first.
    Add the macOS, NSIS, and Linux Debian client packaging and entry points,
    then add the MSI service help and exercise service-only install, upgrade,

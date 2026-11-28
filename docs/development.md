@@ -908,7 +908,8 @@ the reference is the Windows service guide and matches the selected version.
 Open **TorrPlay Service Help** from Start. The shortcut is available to all
 users, including when the service is installed without the client. It opens
 `help\index.html` from the selected program directory with the system's HTML
-handler. From that directory, `.\torrplay.exe --help` prints the absolute path.
+handler. Press **F1** while TorrPlay Client is focused to open the same guide.
+From the program directory, `.\torrplay.exe --help` prints the absolute path.
 
 With `-Package`, the service test installs the MSI and uses `-Upgrade`
 for the upgrade.
@@ -921,8 +922,11 @@ the installed notices with the `.notices.txt` file saved alongside each MSI
 before and after both kinds of upgrade. It verifies the shared Help shortcut,
 checks that a standard user can read the shortcut and guide with the service
 installed alone in a custom directory, and checks that upgrades replace the
-guide and removal deletes it and its shortcut. CI builds the upgrade MSI with
-the next patch version, matching help, and a distinct notice fixture.
+guide and removal deletes it and its shortcut. With `-Wizard`, the test also
+uses Node.js 24 to send **F1** through the installed client's WebView2 and
+checks that Windows accepts the request to open the guide. CI builds the
+upgrade MSI with the next patch version, matching help, and a distinct
+notice fixture.
 The service installer jobs test both packages on disposable `windows-latest`
 and `windows-11-arm` runners.
 
@@ -1059,7 +1063,9 @@ stopped.
    settings in `%ProgramData%\TorrPlay\torrplay.env`. Open the client from
    Start and confirm that it connects to the service. Verify both notice
    files in the selected program directory. Disconnect from the network
-   and open **TorrPlay Service Help** from Start. Reconnect after the check.
+   and open **TorrPlay Service Help** from Start. Switch back to the client
+   and press **F1**. Verify that the same guide opens and the client stays on
+   the current screen. Reconnect after the check.
 3. In **Settings → Apps**, uninstall **TorrPlay Service**. Verify that the
    client, service, program files, Help shortcut, and firewall rules are
    removed, and that `%ProgramData%\TorrPlay` remains.

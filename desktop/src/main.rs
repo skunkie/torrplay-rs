@@ -26,6 +26,8 @@ compile_error!(
 mod application;
 #[cfg(feature = "client")]
 mod client;
+#[cfg(any(windows, all(target_os = "macos", feature = "engine"), test))]
+mod help;
 // For its tests only: `build.rs` uses it.
 #[cfg(test)]
 mod merge_patch;
