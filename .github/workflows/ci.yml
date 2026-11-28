@@ -164,6 +164,17 @@ jobs:
           python3 scripts/build-debian-client.py stage-help
           python3 scripts/build-reference.py html --platform macos --edition application target/reference/macos
           python3 scripts/build-reference.py html --platform windows --edition application target/reference/nsis
+          python3 scripts/build-reference.py html --platform windows --edition service target/reference/msi
+          next=$(PYTHONPATH=scripts python3 - <<'PY'
+          from reference_versions import desktop_bundle_version, msi_product_version
+
+          version = msi_product_version(desktop_bundle_version("."))
+          major, minor, patch = map(int, version.split(".")[:3])
+          print(f"{major}.{minor}.{patch + 1}")
+          PY
+          )
+          python3 scripts/build-reference.py html --platform windows --edition service target/reference/msi/upgrade --version "$next"
+          printf '%s\n' "$next" > target/reference/msi/upgrade/version.txt
       - name: Upload the Debian references
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -185,6 +196,13 @@ jobs:
         with:
           name: nsis-reference
           path: target/reference/nsis/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload the MSI references
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: msi-references
+          path: target/reference/msi/
           if-no-files-found: error
           retention-days: 7
 
@@ -445,8 +463,7 @@ jobs:
 
   service-installer:
     name: Service installer (${{ matrix.os }})
-    needs: stage
-    if: needs.stage.outputs.rust == 'true'
+    needs: package-references
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
@@ -488,6 +505,11 @@ jobs:
         run: cargo install tauri-cli --version "${env:TAURI_CLI_VERSION}" --locked
       - name: Install cargo-about
         run: cargo install cargo-about --version "${env:CARGO_ABOUT_VERSION}" --locked --features cli
+      - name: Download the MSI references
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: msi-references
+          path: target/reference/msi
       - name: Build the installer
         shell: pwsh
         run: scripts/build-service-msi.ps1 target/msi/torrplay-service.msi
@@ -495,14 +517,13 @@ jobs:
       - name: Build a later installer to upgrade to
         shell: pwsh
         run: |
-          $version = [version](Get-Content -Raw desktop/tauri.conf.json | ConvertFrom-Json).version
-          $next = "$($version.Major).$($version.Minor).$($version.Build + 1)"
+          $next = (Get-Content -Raw target/reference/msi/upgrade/version.txt).Trim()
           $originalNotices = 'target/msi/torrplay-service.msi.notices.txt'
           $fixture = 'target/msi/upgrade-notice-fixture.txt'
           Copy-Item -LiteralPath $originalNotices -Destination $fixture
           Add-Content -LiteralPath $fixture -Value "MSI upgrade test fixture." -Encoding utf8NoBOM
           $upgrade = 'target/msi/torrplay-service-next.msi'
-          scripts/build-service-msi.ps1 $upgrade -Version $next -Notices $fixture
+          scripts/build-service-msi.ps1 $upgrade -Version $next -Notices $fixture -HelpFile target/reference/msi/upgrade/help/index.html
           if ((Get-FileHash "$upgrade.notices.txt").Hash -eq (Get-FileHash $originalNotices).Hash) {
             throw 'The upgrade test requires different notices in the two packages'
           }

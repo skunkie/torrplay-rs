@@ -55,6 +55,10 @@ the bundler's when the Tauri CLI is upgraded.
         <!-- reinstall all files; rewrite all registry entries; reinstall all shortcuts -->
         <Property Id="REINSTALLMODE" Value="amus" />
 
+        <!-- WiX binds the Help shortcut to its machine-wide file. Windows
+             Installer writes a regular link so opening help never calls MSI. -->
+        <Property Id="DISABLEADVTSHORTCUTS" Value="1" />
+
         <!-- Auto launch app after installation, useful for passive mode which usually used in updates -->
         <Property Id="AUTOLAUNCHAPP" Secure="yes" />
         <!-- Property to forward cli args to the launched app to not lose those of the pre-update instance -->

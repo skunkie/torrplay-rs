@@ -68,6 +68,15 @@ runs candle with the rest of its environment cleared.
         </ComponentGroup>
 
         <DirectoryRef Id="INSTALLDIR">
+            <Directory Id="TorrPlayServiceHelpDirectory" Name="help">
+                <Component Id="TorrPlayServiceHelp" Guid="*" Win64="$(var.Win64)">
+                    <File Id="TorrPlayServiceHelpFile" Name="index.html" Source="$(env.TAURI_TORRPLAY_SERVICE_HELP)" KeyPath="yes">
+                        <Shortcut Id="TorrPlayServiceHelpLink" Directory="ProgramMenuFolder" Name="TorrPlay Service Help"
+                            WorkingDirectory="INSTALLDIR" Advertise="yes" />
+                    </File>
+                    <RemoveFolder Id="RemoveTorrPlayServiceHelpDirectory" On="uninstall" />
+                </Component>
+            </Directory>
             <Component Id="TorrPlayService" Guid="07FE7E62-DEB3-4B80-8C9F-7E046D18FF87" Win64="$(var.Win64)">
                 <File Id="TorrPlayExe" Name="torrplay.exe" Source="$(env.TAURI_TORRPLAY_SERVICE_EXE)" KeyPath="yes" Checksum="yes">
                     <!-- A service gets no prompt to allow its listeners: the API,

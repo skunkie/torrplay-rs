@@ -17,6 +17,8 @@ import tomllib
 from html import escape
 from pathlib import Path
 
+from reference_versions import desktop_bundle_version, msi_product_version
+
 ROOT = Path(__file__).resolve().parents[1]
 REFERENCE = ROOT / "docs/reference"
 PANDOC_VERSION = "3.12.1"
@@ -61,10 +63,9 @@ def assemble(source, selections, parents=()):
     return assembled
 
 
-def package_version(edition):
-    if edition == "application":
-        config = (ROOT / "desktop/tauri.conf.json").read_text(encoding="utf-8")
-        return json.loads(config)["version"]
+def package_version(platform):
+    if platform in ("macos", "windows"):
+        return desktop_bundle_version(ROOT)
     with (ROOT / "crates/torrplay/Cargo.toml").open("rb") as manifest:
         return tomllib.load(manifest)["package"]["version"]
 
@@ -86,18 +87,20 @@ def cli():
         command.add_argument("--markdown", action="store_true",
                              help="write the assembled Markdown for review or checks")
     args = parser.parse_args()
-    edition = None
+    platform = None
     if args.format == "html":
-        edition = args.edition
-        target = (args.platform, edition, args.distribution)
+        platform = args.platform
+        target = (platform, args.edition, args.distribution)
         if target not in HTML_TARGETS:
             parser.error("unsupported platform, edition, and distribution combination")
-    version = args.version if args.version is not None else package_version(edition)
+    version = args.version if args.version is not None else package_version(platform)
     pattern = r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?"
     if args.format == "html" and target == ("linux", "client", "debian"):
         pattern = r"[0-9]+\.[0-9]+\.[0-9]+(?:[~+-][0-9A-Za-z.+~-]+)?"
     if not re.fullmatch(pattern, version):
         parser.error("version must be a package version such as 0.1.0")
+    if platform == "windows" and args.edition == "service":
+        version = msi_product_version(version)
     return args, version
 
 

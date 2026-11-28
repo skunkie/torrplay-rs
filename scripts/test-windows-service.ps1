@@ -12,12 +12,13 @@ shutdown, installing again, and removal.
 Given a torrplay build, it installs that with scripts\windows-service.ps1.
 Given -Package, the service edition's MSI, it installs that instead, upgrades
 it to -Upgrade, a later version's MSI, as installing again, and also checks
-the license agreement, bundled notices, optional client, firewall rules,
-and refusal to install when the application is installed for the user.
+the license agreement, bundled notices, offline help, optional client,
+firewall rules, and refusal to install beside the application.
 Keep each MSI's .notices.txt file beside the MSI.
 
 It changes the system it runs on, so CI runs it on a disposable runner. It needs
-an elevated PowerShell 7 and nothing listening on ports 8642 and 8643:
+an elevated PowerShell 7 and nothing listening on ports 8642 and 8643. The
+MSI tests also need Python 3.11 or later as python on PATH.
 
   scripts\test-windows-service.ps1 target\release\torrplay.exe
   scripts\test-windows-service.ps1 -Package target\msi\torrplay-service.msi -Upgrade target\msi\torrplay-service-next.msi
@@ -48,8 +49,12 @@ $dataDirectory = Join-Path $env:ProgramData 'TorrPlay'
 $settings = Join-Path $dataDirectory 'torrplay.env'
 $packaged = $PSCmdlet.ParameterSetName -eq 'Package'
 # The MSI installs in a directory named for its product, the client.
-$programDirectory = Join-Path $env:ProgramFiles ($packaged ? 'TorrPlay Client' : 'TorrPlay')
+$defaultProgramDirectory = Join-Path $env:ProgramFiles ($packaged ? 'TorrPlay Client' : 'TorrPlay')
+$programDirectory = $defaultProgramDirectory
 $executable = Join-Path $programDirectory 'torrplay.exe'
+$helpName = 'TorrPlay Service Help.lnk'
+$sharedHelpShortcut = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) $helpName
+$userHelpShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) $helpName
 $applicationKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\TorrPlay'
 $holder = $null
 $wizardDownloads = $null
@@ -65,6 +70,7 @@ if ($packaged) {
 
 . (Join-Path $PSScriptRoot 'windows-service-config.ps1')
 . (Join-Path $PSScriptRoot 'windows-service-edition.ps1')
+. (Join-Path $PSScriptRoot 'windows-offline-help.ps1')
 
 function Fail([string] $Message) {
     throw "FAIL: $Message"
@@ -82,6 +88,47 @@ function Assert-InstalledNotices([string] $Msi) {
         if ((Get-FileHash -LiteralPath $installed).Hash -ne (Get-FileHash -LiteralPath $source).Hash) {
             Fail "the installed $file differs from $source"
         }
+    }
+}
+
+function Assert-InstalledHelp([string] $Version) {
+    $helpFile = Join-Path $programDirectory 'help\index.html'
+    & python (Join-Path $PSScriptRoot 'check-reference.py') --msi-help $helpFile --version $Version
+    if ($LASTEXITCODE -ne 0) { Fail "the installed service reference is invalid at $helpFile" }
+    if (-not (Test-Path -LiteralPath $sharedHelpShortcut -PathType Leaf)) {
+        Fail "the MSI did not install $sharedHelpShortcut"
+    }
+    if (Test-Path -LiteralPath $userHelpShortcut) { Fail "the MSI installed a per-user Help shortcut" }
+    Assert-ShortcutTarget $sharedHelpShortcut $helpFile
+    if ("Offline help: $helpFile" -cnotin (Read-CliHelp $executable $env:SystemRoot)) {
+        Fail "the installed CLI did not print the absolute reference path $helpFile"
+    }
+}
+
+function Assert-NoInstalledHelp {
+    foreach ($path in @($sharedHelpShortcut, $userHelpShortcut, (Join-Path $programDirectory 'help\index.html'))) {
+        if (Test-Path -LiteralPath $path) { Fail "the service help still exists at $path" }
+    }
+}
+
+function Assert-HelpReadableByStandardUser {
+    $password = ConvertTo-SecureString "Tp!7$([guid]::NewGuid().ToString('N'))" -AsPlainText -Force
+    try {
+        $account = New-LocalUser -Name "tphelp-$PID" -Password $password
+        try {
+            $users = [System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-545')
+            $members = @(Get-LocalGroupMember -SID $users | ForEach-Object { $_.SID })
+            if ($account.SID -notin $members) {
+                Add-LocalGroupMember -SID $users -Member $account
+            }
+            Initialize-OfflineHelpInterop
+            [TorrPlaySmoke.StandardUserHelp]::CheckFiles($account.Name, $env:COMPUTERNAME, $password,
+                $account.SID.Value, $sharedHelpShortcut, (Join-Path $programDirectory 'help\index.html'))
+        } finally {
+            Remove-LocalUser -SID $account.SID
+        }
+    } finally {
+        $password.Dispose()
     }
 }
 
@@ -208,9 +255,11 @@ function Invoke-Msi([string[]] $Arguments, [int] $Expected = 0) {
     $process.ExitCode
 }
 
-function Install-TorrPlay([string] $From) {
+function Install-TorrPlay([string] $From, [string] $InstallDirectory) {
     if ($packaged) {
-        $code = Invoke-Msi @('/i', "`"$From`"")
+        $arguments = @('/i', "`"$From`"")
+        if ($InstallDirectory) { $arguments += "INSTALLDIR=`"$InstallDirectory`"" }
+        $code = Invoke-Msi $arguments
         if ($code -notin @(0, 3010)) { Fail "installing $From exited with $code" }
     } else {
         & $install install $From
@@ -227,6 +276,7 @@ function Get-FirewallProfiles {
 function Assert-FailedWizardInstall {
     if (Get-Service -Name $name -ErrorAction SilentlyContinue) { Fail 'the failed MSI left the service registered' }
     if (Test-Path -LiteralPath $programDirectory) { Fail 'the failed MSI left the program directory' }
+    Assert-NoInstalledHelp
     if (Test-Path -LiteralPath $settings) { Fail 'the failed MSI left service settings' }
     if (Test-Path -Path (Get-ServiceEditionKey)) { Fail 'the failed MSI left the upgrade code registered' }
     if (@(Get-FirewallProfiles).Count -ne 0) { Fail 'the failed MSI left firewall rules' }
@@ -252,21 +302,19 @@ function Assert-RejectedDirectoryEvent([string] $Directory, [datetime] $Started,
     }
 }
 
-# The license paragraphs stored in the MSI dialog, separated by RTF \par.
-function Get-LicenseParagraphs([string] $Msi) {
+function Read-MsiValue([string] $Msi, [string] $Query) {
     $installer = New-Object -ComObject WindowsInstaller.Installer
-    $database = $installer.OpenDatabase($Msi, 0)
-    $view = $database.OpenView(
-        "SELECT ``Text`` FROM ``Control`` WHERE ``Dialog_`` = 'LicenseAgreementDlg' AND ``Type`` = 'ScrollableText'")
+    $database = $null
+    $view = $null
     $record = $null
     try {
-        # What a function does not capture it returns, and these return $null.
+        $database = $installer.OpenDatabase($Msi, 0)
+        $view = $database.OpenView($Query)
         [void] $view.Execute()
         $record = $view.Fetch()
         [void] $view.Close()
-        if (-not $record) { return @() }
-        $text = $record.StringData(1) -replace '(?s)^.*?\\fs\d+ ', '' -replace '}\s*$', ''
-        ($text -split '\\par\b') | ForEach-Object { $_.Trim() -replace '\\([\\{}])', '$1' }
+        if (-not $record) { Fail "the MSI at $Msi returned no row for $Query" }
+        $record.StringData(1)
     } finally {
         # Released now, not when the collector runs, since msiexec opens the
         # same file next.
@@ -276,8 +324,21 @@ function Get-LicenseParagraphs([string] $Msi) {
     }
 }
 
+# The license paragraphs stored in the MSI dialog, separated by RTF \par.
+function Get-LicenseParagraphs([string] $Msi) {
+    $text = Read-MsiValue $Msi `
+        "SELECT ``Text`` FROM ``Control`` WHERE ``Dialog_`` = 'LicenseAgreementDlg' AND ``Type`` = 'ScrollableText'"
+    $text = $text -replace '(?s)^.*?\\fs\d+ ', '' -replace '}\s*$', ''
+    ($text -split '\\par\b') | ForEach-Object { $_.Trim() -replace '\\([\\{}])', '$1' }
+}
+
 try {
     if ($packaged) {
+        Assert-NoInstalledHelp
+        $versionQuery = "SELECT ``Value`` FROM ``Property`` WHERE ``Property`` = 'ProductVersion'"
+        $packageVersion = [version](Read-MsiValue $Package $versionQuery)
+        $upgradeVersion = [version](Read-MsiValue $Upgrade $versionQuery)
+        if ($upgradeVersion -le $packageVersion) { Fail 'the upgrade MSI must have a later version' }
         Write-Host '== the license agreement'
         $license = Get-Content -Raw -Path (Join-Path $PSScriptRoot '../LICENSES/MIT.txt')
         $expected = @($license.Trim() -split '(?:\r?\n){2,}' | ForEach-Object { $_ -replace '\s+', ' ' })
@@ -300,11 +361,15 @@ try {
             if ($code -ne 1603) { Fail "the MSI exited with $code beside the application, not 1603" }
             if (Get-Service -Name $name -ErrorAction SilentlyContinue) { Fail 'a refused install registered the service' }
             if (Test-Path -Path $programDirectory) { Fail "a refused install made $programDirectory" }
+            Assert-NoInstalledHelp
         } finally {
             Remove-Item -Path $applicationKey -Recurse -Force -ErrorAction SilentlyContinue
         }
 
         Write-Host '== the service alone, which an upgrade keeps alone'
+        $programDirectory = Join-Path $env:ProgramFiles "TorrPlay Média 雪 Service $PID"
+        if (Test-Path -LiteralPath $programDirectory) { Fail "the custom program directory already exists at $programDirectory" }
+        $executable = Join-Path $programDirectory 'torrplay.exe'
         $client = Join-Path $programDirectory 'torrplay-client.exe'
         if ($Wizard) {
             if (Test-Path -LiteralPath $dataDirectory) { Fail "the wizard requires a fresh install without $dataDirectory" }
@@ -320,7 +385,10 @@ try {
             Set-Acl -LiteralPath $wizardDownloads -AclObject $acl
 
             $wizardScript = Join-Path $PSScriptRoot 'test-windows-installer-wizard.ps1'
-            $wizardArguments = @{ Edition = 'Service'; Installer = $Package; AllowedHosts = 'torrplay,*.home.arpa' }
+            $wizardArguments = @{
+                Edition = 'Service'; Installer = $Package; AllowedHosts = 'torrplay,*.home.arpa'
+                InstallDirectory = $programDirectory
+            }
             Write-Host '== a fresh MSI rolls back when the service cannot write to the chosen folder'
             $lockedDownloads = (New-Item -ItemType Directory -Path (Join-Path $wizardDownloads 'Read Only')).FullName
             # Deny files in the root only. Inherited Modify still allows
@@ -392,13 +460,16 @@ try {
             $wizardSettingsHash = (Get-FileHash -LiteralPath $settings).Hash
         } else {
             $previousSettingsHash = Get-SettingsHash
-            $code = Invoke-Msi @('/i', "`"$Package`"", 'ADDLOCAL=Service')
+            $code = Invoke-Msi @('/i', "`"$Package`"", 'ADDLOCAL=Service', "INSTALLDIR=`"$programDirectory`"")
             if ($code -notin @(0, 3010)) { Fail "installing the service alone exited with $code" }
             Assert-SilentSettings $previousSettingsHash
         }
         if (-not (Wait-Until { Test-Ready 8642 } 60)) { Fail 'the service alone did not become ready' }
         if (Test-Path -Path $client) { Fail 'the service alone came with the client' }
         Assert-InstalledNotices $Package
+        Assert-InstalledHelp $packageVersion
+        Assert-HelpReadableByStandardUser
+        Write-Host 'Verified that a standard user can read the shared Help shortcut and guide.'
         if ($Wizard) {
             Assert-DownloadDirectory $serviceDownloads
             if ((Get-Logged 'the service can write to the setup download directory') -eq 0) {
@@ -408,16 +479,22 @@ try {
             Assert-Hostname 8642 'nas.home.arpa' '200'
             Assert-Hostname 8642 'other.example' '421'
         }
-        Install-TorrPlay $Upgrade
+        Install-TorrPlay $Upgrade -InstallDirectory $programDirectory
         if (-not (Wait-Until { Test-Ready 8642 } 60)) { Fail 'the upgraded service did not become ready' }
         if (Test-Path -Path $client) { Fail 'the upgrade added the client left out' }
         Assert-InstalledNotices $Upgrade
+        Assert-InstalledHelp $upgradeVersion
         if ($Wizard -and (Get-FileHash -LiteralPath $settings).Hash -ne $wizardSettingsHash) {
             Fail 'the upgrade changed the wizard settings'
         }
         $code = Invoke-Msi @('/x', "`"$Upgrade`"")
         if ($code -notin @(0, 3010)) { Fail "removing the service alone exited with $code" }
         if (Get-Service -Name $name -ErrorAction SilentlyContinue) { Fail 'removal left the service registered' }
+        Assert-NoInstalledHelp
+        if (Test-Path -LiteralPath $programDirectory) { Fail "removal left $programDirectory" }
+        $programDirectory = $defaultProgramDirectory
+        $executable = Join-Path $programDirectory 'torrplay.exe'
+        $client = Join-Path $programDirectory 'torrplay-client.exe'
     }
 
     Write-Host '== install'
@@ -428,6 +505,7 @@ try {
     if ($packaged) {
         if (-not (Test-Path -Path $client)) { Fail 'the MSI installed no client by default' }
         Assert-InstalledNotices $Package
+        Assert-InstalledHelp $packageVersion
         if ((Get-TorrPlay).PathName -ne "`"$executable`" service") {
             Fail "the service runs $((Get-TorrPlay).PathName)"
         }
@@ -484,7 +562,10 @@ try {
     Install-TorrPlay ($packaged ? $Upgrade : $Binary)
     if (-not (Wait-Until { Test-Ready 8643 } 60)) { Fail 'the service did not listen at the kept address' }
     if ((Get-TorrPlay).ProcessId -eq $before) { Fail 'installing again did not restart the service' }
-    if ($packaged) { Assert-InstalledNotices $Upgrade }
+    if ($packaged) {
+        Assert-InstalledNotices $Upgrade
+        Assert-InstalledHelp $upgradeVersion
+    }
     Assert-DownloadDirectory $downloadDir
     Assert-Hostname 8643 'torrplay' '200'
     Assert-Hostname 8643 'nas.home.arpa' '200'
@@ -535,6 +616,7 @@ try {
         # By the upgrade's package, which is the one installed now.
         $code = Invoke-Msi @('/x', "`"$Upgrade`"")
         if ($code -notin @(0, 3010)) { Fail "removing the MSI exited with $code" }
+        Assert-NoInstalledHelp
         # In @(), since PowerShell returns no rules as $null.
         if (@(Get-FirewallProfiles).Count -ne 0) { Fail 'removal left the firewall rules' }
         if (Test-Path -Path (Get-ServiceEditionKey)) { Fail 'removal left the upgrade code registered' }

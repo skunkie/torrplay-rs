@@ -12,13 +12,15 @@ crate built with its client feature, with desktop\tauri.client.conf.json and
 desktop\tauri.service.conf.json merged over desktop\tauri.conf.json. The
 latter adds packaging\windows\service.wxs, which installs torrplay.exe as the
 torrplay service. Run it from the repository root once the web client is built
-(pnpm build in client), with the Tauri CLI installed. Generating notices
-requires cargo-about and Python 3.11 or later available as python on PATH.
+(pnpm build in client), with the Tauri CLI installed and Python 3.11 or
+later available as python on PATH. Generating notices requires cargo-about.
 Out is the MSI to write. A copy of its third-party notices is written beside
-it with .notices.txt appended to the MSI's name.
+it with .notices.txt appended to the MSI's name. Stage the Windows service
+reference at target\reference\msi\help\index.html or pass its path as HelpFile.
 Version, when given, replaces the version the MSI carries, so a test can
-build a later package to upgrade to. Notices, when given, supplies the
-notice file to bundle instead of generating it. The bundler downloads
+build a later package to upgrade to. Stage help with that same version.
+Notices, when given, supplies the notice file to bundle instead of
+generating it. The bundler downloads
 WiX itself and checks it against the hash it carries.
 
   scripts\build-service-msi.ps1 target\msi\torrplay-service.msi
@@ -28,7 +30,8 @@ param(
     [Parameter(Mandatory)]
     [string] $Out,
     [string] $Version,
-    [string] $Notices
+    [string] $Notices,
+    [string] $HelpFile = 'target/reference/msi/help/index.html'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -42,11 +45,17 @@ function Invoke-Checked([string] $Command, [string[]] $Arguments) {
 if (-not (Test-Path -Path 'client/dist/index.html')) {
     throw 'the web client is not built: run pnpm build in client'
 }
+$checkHelp = @('scripts/check-reference.py', '--msi-help', $HelpFile)
+if ($Version) { $checkHelp += @('--version', $Version) }
+Invoke-Checked python $checkHelp
+$helpPath = (Resolve-Path -LiteralPath $HelpFile).Path
+
 $repository = (Get-Location).Path
 # The variables this sets, which a script shares with the session that runs
 # it, so they are put back as they were.
 $variables = @('CARGO_TARGET_DIR', 'TAURI_TORRPLAY_SERVICE_EXE', 'TAURI_TORRPLAY_SETTINGS_TEMPLATE',
-    'TAURI_TORRPLAY_SETTINGS_ACTION', 'TAURI_TORRPLAY_LICENSE', 'TAURI_TORRPLAY_LICENSE_RTF', 'TAURI_TORRPLAY_NOTICES')
+    'TAURI_TORRPLAY_SETTINGS_ACTION', 'TAURI_TORRPLAY_LICENSE', 'TAURI_TORRPLAY_LICENSE_RTF',
+    'TAURI_TORRPLAY_NOTICES', 'TAURI_TORRPLAY_SERVICE_HELP')
 $saved = @{}
 foreach ($variable in $variables) {
     $saved[$variable] = [Environment]::GetEnvironmentVariable($variable)
@@ -68,6 +77,7 @@ try {
     $env:TAURI_TORRPLAY_LICENSE = Join-Path $repository 'LICENSES/MIT.txt'
     $env:TAURI_TORRPLAY_NOTICES = $noticePath
     $env:TAURI_TORRPLAY_SETTINGS_TEMPLATE = Join-Path $repository 'packaging/windows/torrplay.env'
+    $env:TAURI_TORRPLAY_SERVICE_HELP = $helpPath
 
     # Give WiX the RTF directly so Tauri does not convert it as plain text.
     $license = [IO.File]::ReadAllText($env:TAURI_TORRPLAY_LICENSE)

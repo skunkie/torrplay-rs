@@ -739,9 +739,10 @@ has keyboard focus. Check that the contents are accessible from the sidebar
 on wide screens and above the article on narrow screens.
 
 With `scripts/build-reference.py`, `--version` overrides the version from
-`desktop/tauri.conf.json` for macOS and NSIS HTML and from
-`crates/torrplay/Cargo.toml` for other targets. `--markdown` writes the
-assembled Markdown without Pandoc.
+`desktop/tauri.conf.json` for macOS and Windows HTML and from
+`crates/torrplay/Cargo.toml` for other targets. The MSI guide displays a
+numeric prerelease or build suffix as a fourth version field, like the
+installer. `--markdown` writes the assembled Markdown without Pandoc.
 The client references use `--client-mode local`. For a custom Debian preview,
 use a separate output directory to keep the staged package help intact:
 
@@ -881,20 +882,33 @@ built and `python` on PATH is Python 3.11 or later:
 ```powershell
 cargo install tauri-cli --version 2.12.4 --locked
 cargo install cargo-about --version 0.9.2 --locked --features cli
+python scripts/build-reference.py html --platform windows --edition service target/reference/msi
 scripts\build-service-msi.ps1 target\msi\torrplay-service.msi
 
-$version = [version](Get-Content -Raw desktop/tauri.conf.json | ConvertFrom-Json).version
+$bundleVersion = (Get-Content -Raw desktop/tauri.conf.json | ConvertFrom-Json).version
+$version = [version](($bundleVersion -split '[-+]', 2)[0])
 $next = "$($version.Major).$($version.Minor).$($version.Build + 1)"
+python scripts/build-reference.py html --platform windows --edition service target/reference/msi/upgrade --version $next
 $originalNotices = 'target/msi/torrplay-service.msi.notices.txt'
 $fixture = 'target/msi/upgrade-notice-fixture.txt'
 Copy-Item -LiteralPath $originalNotices -Destination $fixture
 Add-Content -LiteralPath $fixture -Value "MSI upgrade test fixture." -Encoding utf8NoBOM
 $upgrade = 'target/msi/torrplay-service-next.msi'
-scripts/build-service-msi.ps1 $upgrade -Version $next -Notices $fixture
+scripts/build-service-msi.ps1 $upgrade -Version $next -Notices $fixture -HelpFile target/reference/msi/upgrade/help/index.html
 if ((Get-FileHash "$upgrade.notices.txt").Hash -eq (Get-FileHash $originalNotices).Hash) {
     throw 'The upgrade test requires different notices in the two packages'
 }
 ```
+
+The generation commands use Pandoc 3.12.1. To use the `msi-references`
+artifact from CI, extract it into `target/reference/msi` and read the upgrade
+version from `target/reference/msi/upgrade/version.txt`. The build checks that
+the reference is the Windows service guide and matches the selected version.
+
+Open **TorrPlay Service Help** from Start. The shortcut is available to all
+users, including when the service is installed without the client. It opens
+`help\index.html` from the selected program directory with the system's HTML
+handler. From that directory, `.\torrplay.exe --help` prints the absolute path.
 
 With `-Package`, the service test installs the MSI and uses `-Upgrade`
 for the upgrade.
@@ -904,8 +918,11 @@ refuses beside a stand-in for the application, that its license dialog shows
 `LICENSES/MIT.txt`, and that the service installed alone stays alone through
 an upgrade. It compares the installed license with `LICENSES/MIT.txt` and
 the installed notices with the `.notices.txt` file saved alongside each MSI
-before and after both kinds of upgrade. CI builds the upgrade MSI with the
-next patch version and a distinct notice fixture to verify replacement.
+before and after both kinds of upgrade. It verifies the shared Help shortcut,
+checks that a standard user can read the shortcut and guide with the service
+installed alone in a custom directory, and checks that upgrades replace the
+guide and removal deletes it and its shortcut. CI builds the upgrade MSI with
+the next patch version, matching help, and a distinct notice fixture.
 The service installer jobs test both packages on disposable `windows-latest`
 and `windows-11-arm` runners.
 
@@ -1041,12 +1058,15 @@ stopped.
    Install with the client selected and verify both
    settings in `%ProgramData%\TorrPlay\torrplay.env`. Open the client from
    Start and confirm that it connects to the service. Verify both notice
-   files in `%ProgramFiles%\TorrPlay Client`.
+   files in the selected program directory. Disconnect from the network
+   and open **TorrPlay Service Help** from Start. Reconnect after the check.
 3. In **Settings → Apps**, uninstall **TorrPlay Service**. Verify that the
-   client, service, program files, and firewall rules are removed, and that
-   `%ProgramData%\TorrPlay` remains.
+   client, service, program files, Help shortcut, and firewall rules are
+   removed, and that `%ProgramData%\TorrPlay` remains.
    Repeat from a clean snapshot with the client deselected. Verify the
    service starts and both notice files are present in the service-only install.
+   Sign in as a standard user who did not run the installer and open
+   **TorrPlay Service Help** from Start. Verify that the reference opens offline.
 
 ### macOS unnotarized updates
 
